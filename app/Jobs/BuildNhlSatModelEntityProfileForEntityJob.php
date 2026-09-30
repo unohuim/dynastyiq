@@ -42,14 +42,27 @@ class BuildNhlSatModelEntityProfileForEntityJob implements ShouldQueue
      */
     public int $timeout = 300;
 
+    /** Default also applies when deserializing a pre-generation job payload. */
+    public ?string $predictionBuildId = null;
+
+    public ?string $receiptPage = null;
+
+    public int $receiptIndex = 0;
+
     public function __construct(
         public int $modelRunId,
         public int $satModelId,
         public ?int $sogModelId,
         public string $profileType,
         public string $entityKey,
-        public ?string $snapshotSeasonId = null
+        public ?string $snapshotSeasonId = null,
+        ?string $predictionBuildId = null,
+        ?string $receiptPage = null,
+        int $receiptIndex = 0
     ) {
+        $this->predictionBuildId = $predictionBuildId;
+        $this->receiptPage = $receiptPage;
+        $this->receiptIndex = $receiptIndex;
         $this->afterCommit = true;
     }
 
@@ -79,48 +92,53 @@ class BuildNhlSatModelEntityProfileForEntityJob implements ShouldQueue
         ];
     }
 
+    /** Commit an entity and its progress receipt together, once per build. */
     public function handle(NhlSatModelEntityProfileBuilder $builder): void
     {
-        if ($this->batch()?->cancelled()) {
+        if ($this->predictionBuildId === null || $this->batch()?->cancelled()) {
             return;
         }
-
-        $run = NhlModelRun::query()->findOrFail($this->modelRunId);
-        $satModel = NhlExpectedGoalsModel::query()->findOrFail($this->satModelId);
-        $sogModel = $this->sogModelId === null ? null : NhlExpectedGoalsModel::query()->findOrFail($this->sogModelId);
-
-        if ($this->snapshotSeasonId !== null) {
-            $builder->buildSeasonSnapshotEntity(
-                run: $run,
-                satModel: $satModel,
-                sogModel: $sogModel,
-                profileType: $this->profileType,
-                entityKey: $this->entityKey,
-                seasonId: $this->snapshotSeasonId
-            );
-        } else {
-            $builder->buildEntity(
-                run: $run,
-                satModel: $satModel,
-                sogModel: $sogModel,
-                profileType: $this->profileType,
-                entityKey: $this->entityKey
-            );
+        $receipt = $this->receiptPage ?? sha1(($this->snapshotSeasonId ?? 'training') . ':' . $this->profileType . ':' . $this->entityKey);
+        if ($this->receiptIndex < 0 || $this->receiptIndex >= 100) {
+            throw new \RuntimeException('Invalid profile completion receipt index.');
         }
+        DB::beginTransaction();
+        try {
+            $run = NhlModelRun::query()->findOrFail($this->modelRunId);
+            if (! $run->acceptsPredictionStage($this->predictionBuildId, 'profiles')
+                || ($run->metrics['profile_build']['completed_pages'][$receipt][$this->receiptIndex] ?? '0') === '1') {
+                DB::rollBack();
 
-        DB::transaction(function (): void {
-            $run = NhlModelRun::query()->whereKey($this->modelRunId)->lockForUpdate()->first();
-
-            if ($run === null) {
                 return;
             }
+            $satModel = NhlExpectedGoalsModel::query()->findOrFail($this->satModelId);
+            $sogModel = $this->sogModelId === null ? null : NhlExpectedGoalsModel::query()->findOrFail($this->sogModelId);
+            if ($this->snapshotSeasonId !== null) {
+                $builder->buildSeasonSnapshotEntity($run, $satModel, $sogModel, $this->profileType, $this->entityKey, $this->snapshotSeasonId);
+            } else {
+                $builder->buildEntity($run, $satModel, $sogModel, $this->profileType, $this->entityKey);
+            }
 
+            // Keep expensive independent entity writes parallel. Recheck ownership
+            // under the run lock before committing either rows or progress.
+            $run = NhlModelRun::query()->whereKey($this->modelRunId)->lockForUpdate()->firstOrFail();
+            if (! $run->acceptsPredictionStage($this->predictionBuildId, 'profiles')
+                || ($run->metrics['profile_build']['completed_pages'][$receipt][$this->receiptIndex] ?? '0') === '1'
+                || $this->batch()?->cancelled()) {
+                DB::rollBack();
+
+                return;
+            }
             $metrics = $run->metrics ?? [];
+            // One 100-character receipt per page avoids a run-sized hash map
+            // being rewritten for every entity completion.
+            $page = str_pad($metrics['profile_build']['completed_pages'][$receipt] ?? '', 100, '0');
+            $page[$this->receiptIndex] = '1';
+            $metrics['profile_build']['completed_pages'][$receipt] = $page;
             $metricKey = $this->snapshotSeasonId === null ? 'profile_entities_completed' : 'season_snapshot_entities_completed';
-            $metrics[$metricKey] = ((int) ($metrics[$metricKey] ?? 0)) + 1;
-
+            $metrics[$metricKey] = (int) ($metrics[$metricKey] ?? 0) + 1;
             $run->forceFill(['metrics' => $metrics])->save();
-            if (data_get($metrics, 'prediction_build.status') === 'running' && ((int) ($metrics['profile_entities_completed'] ?? 0) + (int) ($metrics['season_snapshot_entities_completed'] ?? 0)) % 25 === 0) {
+            if (((int) ($metrics['profile_entities_completed'] ?? 0) + (int) ($metrics['season_snapshot_entities_completed'] ?? 0)) % 25 === 0) {
                 DB::afterCommit(function (): void {
                     try {
                         broadcast(new \App\Events\NhlSatModelUpdated($this->modelRunId, 'predictions-progress'));
@@ -129,7 +147,11 @@ class BuildNhlSatModelEntityProfileForEntityJob implements ShouldQueue
                     }
                 });
             }
-        });
+            DB::commit();
+        } catch (Throwable $exception) {
+            DB::rollBack();
+            throw new \RuntimeException(BuildNhlSatModelEntityProfilesJob::failureMessage($exception));
+        }
     }
 
     public function failed(Throwable $exception): void

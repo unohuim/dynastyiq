@@ -63,6 +63,42 @@ class NhlSatModelEntityProfileBuilder
     }
 
     /**
+     * List the small, fixed set of profile type/season partitions.
+     *
+     * @return array<int, array{profile_type:string,season_id:?string}>
+     */
+    public function profilePartitions(NhlModelRun $run): array
+    {
+        $partitions = [];
+        foreach ([null, ...$this->snapshotSeasonIds($run)] as $seasonId) {
+            foreach (array_keys($this->profileDefinitions()) as $profileType) {
+                $partitions[] = ['profile_type' => $profileType, 'season_id' => $seasonId];
+            }
+        }
+
+        return $partitions;
+    }
+
+    /** Clear prior outputs once, inside the owning build's initialization transaction. */
+    public function clearProfileOutputs(NhlModelRun $run): void
+    {
+        DB::table(self::PROFILE_TABLE)->where('model_run_id', $run->id)->delete();
+        DB::table(self::TEST_PROFILE_TABLE)->where('model_run_id', $run->id)->delete();
+    }
+
+    /**
+     * Discover at most one page of entity identifiers; never materialize the full run.
+     *
+     * @return array<int, string>
+     */
+    public function profileEntityPage(NhlModelRun $run, string $profileType, ?string $seasonId, ?string $after): array
+    {
+        $definition = $this->profileDefinitions()[$profileType] ?? throw new RuntimeException('Unknown profile partition.');
+
+        return $this->profileEntities($seasonId === null ? $this->seasonIds($run) : [$seasonId], $definition, $after, 100);
+    }
+
+    /**
      * Clear existing rows and list profile entities that should be queued.
      *
      * @return array<int, array{profile_type:string,entity_key:string}>
@@ -623,7 +659,7 @@ SQL;
      * @param array{joins:string,entity_id:string,entity_key:string,entity_name:string,entity_role:string,team_context:string,where:string} $definition
      * @return array<int, string>
      */
-    private function profileEntities(array $seasonIds, array $definition): array
+    private function profileEntities(array $seasonIds, array $definition, ?string $after = null, ?int $limit = null): array
     {
         if ($seasonIds === []) {
             return [];
@@ -643,10 +679,17 @@ WHERE facts.season_id IN ({$seasonPlaceholders})
 ORDER BY entity_key
 SQL;
 
-        return collect(DB::select($sql, [
+        $bindings = [
             ...$seasonIds,
             self::REGULAR_SEASON_GAME_TYPE,
-        ]))
+        ];
+        if ($limit !== null) {
+            $sql = 'SELECT entity_key FROM (' . $sql . ') entities WHERE entity_key > ? ORDER BY entity_key LIMIT ?';
+            $bindings[] = $after ?? '';
+            $bindings[] = $limit;
+        }
+
+        return collect(DB::select($sql, $bindings))
             ->pluck('entity_key')
             ->map(fn (mixed $entityKey): string => (string) $entityKey)
             ->filter(fn (string $entityKey): bool => $entityKey !== '')

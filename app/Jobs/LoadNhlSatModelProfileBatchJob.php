@@ -9,42 +9,43 @@ use App\Services\NhlSatModelEntityProfileBuilder;
 use Illuminate\Bus\Batchable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
+use Illuminate\Support\Facades\DB;
 use RuntimeException;
 use Throwable;
 
-/**
- * Hydrates one profile batch in bounded inserts while keeping its loader pending.
- */
+/** Loads one bounded entity page and its continuation into the same batch. */
 class LoadNhlSatModelProfileBatchJob implements ShouldQueue
 {
     use Batchable;
     use Queueable;
 
-    private const JOBS_PER_INSERT = 100;
-
     public int $tries = 1;
 
-    public int $timeout = 1800;
+    public int $timeout = 300;
 
-    /**
-     * Carry identifiers only; discover profile entities inside the worker.
-     */
+    public bool $failOnTimeout = true;
+
+    public int $partition = 0;
+
+    public ?string $after = null;
+
+    /** Carry a partition and cursor, never the full list of profile jobs. */
     public function __construct(
         public int $modelRunId,
         public int $satModelId,
         public ?int $sogModelId = null,
-        public ?string $predictionBuildId = null
+        public ?string $predictionBuildId = null,
+        int $partition = 0,
+        ?string $after = null,
     ) {
+        $this->partition = $partition;
+        $this->after = $after;
         $this->afterCommit = true;
     }
 
-    /**
-     * Add child jobs without constructing or serializing the full job list at once.
-     */
+    /** Initialize once and submit at most 100 entities plus one continuation. */
     public function handle(NhlSatModelEntityProfileBuilder $builder): void
     {
-        $submitted = 0;
-        $total = 0;
         try {
             $batch = $this->batch();
             if ($batch === null) {
@@ -54,80 +55,81 @@ class LoadNhlSatModelProfileBatchJob implements ShouldQueue
                 return;
             }
 
-            $run = NhlModelRun::query()->findOrFail($this->modelRunId);
-            if (! $run->acceptsPredictionStage($this->predictionBuildId, 'profiles')) {
-                return;
-            }
-
-            $entities = $builder->prepareBuild($run);
-            $snapshots = $builder->prepareSeasonSnapshotBuilds($run);
-            $total = count($entities) + count($snapshots);
-            $run->forceFill([
-                'metrics' => array_merge($run->metrics ?? [], [
-                    'profile_entities_queued' => count($entities),
-                    'profile_entities_completed' => 0,
-                    'season_snapshot_entities_queued' => count($snapshots),
-                    'season_snapshot_entities_completed' => 0,
-                ]),
-            ])->save();
-
-            if ($entities === [] && $snapshots === [] && $this->predictionBuildId !== null) {
-                throw new RuntimeException('No profile entities or season snapshots are available.');
-            }
-
-            // The loader itself remains pending until both lists have been submitted.
-            // Earlier children may finish, but cannot complete the batch prematurely.
-            $jobs = [];
-            foreach ([$entities, $snapshots] as $group) {
-                foreach ($group as $entity) {
+            DB::transaction(function () use ($builder, $batch): void {
+                $run = NhlModelRun::query()->whereKey($this->modelRunId)->lockForUpdate()->firstOrFail();
+                if ($this->predictionBuildId === null || ! $run->acceptsPredictionStage($this->predictionBuildId, 'profiles')) {
+                    return;
+                }
+                $metrics = $run->metrics ?? [];
+                $build = $metrics['profile_build'] ?? ['id' => $this->predictionBuildId, 'status' => 'running'];
+                $pageKey = sha1($this->partition . ':' . ($this->after ?? ''));
+                if (isset($build['loaded_pages'][$pageKey])) {
+                    return;
+                }
+                if (empty($build['initialized'])) {
+                    if ($this->partition !== 0 || $this->after !== null) {
+                        throw new RuntimeException('Profile continuation has no initialized build.');
+                    }
+                    $builder->clearProfileOutputs($run);
+                    $build['initialized'] = true;
+                    $build['partitions'] = $builder->profilePartitions($run);
+                    $metrics['profile_entities_queued'] = 0;
+                    $metrics['profile_entities_completed'] = 0;
+                    $metrics['season_snapshot_entities_queued'] = 0;
+                    $metrics['season_snapshot_entities_completed'] = 0;
+                    $metrics['profiles_completed_at'] = null;
+                }
+                $partitions = $build['partitions'];
+                $descriptor = $partitions[$this->partition] ?? null;
+                if ($descriptor === null) {
+                    throw new RuntimeException('No profile partition is available.');
+                }
+                $entities = $builder->profileEntityPage($run, $descriptor['profile_type'], $descriptor['season_id'], $this->after);
+                $jobs = [];
+                foreach ($entities as $index => $entityKey) {
                     $jobs[] = new BuildNhlSatModelEntityProfileForEntityJob(
-                        modelRunId: $this->modelRunId,
-                        satModelId: $this->satModelId,
-                        sogModelId: $this->sogModelId,
-                        profileType: $entity['profile_type'],
-                        entityKey: $entity['entity_key'],
-                        snapshotSeasonId: $entity['season_id'] ?? null
+                        $this->modelRunId, $this->satModelId, $this->sogModelId,
+                        $descriptor['profile_type'], $entityKey, $descriptor['season_id'], $this->predictionBuildId,
+                        $pageKey, $index
                     );
-                    if (count($jobs) === self::JOBS_PER_INSERT) {
-                        if ($this->batch()?->cancelled()) {
-                            return;
-                        }
-                        $batch->add($jobs);
-                        $submitted += count($jobs);
-                        $jobs = [];
+                }
+                $metric = $descriptor['season_id'] === null ? 'profile_entities_queued' : 'season_snapshot_entities_queued';
+                $metrics[$metric] = (int) ($metrics[$metric] ?? 0) + count($entities);
+                $nextPartition = count($entities) === 100 ? $this->partition : $this->partition + 1;
+                $nextAfter = count($entities) === 100 ? end($entities) : null;
+                if ($nextPartition < count($partitions)) {
+                    $jobs[] = new self($this->modelRunId, $this->satModelId, $this->sogModelId,
+                        $this->predictionBuildId, $nextPartition, $nextAfter);
+                } else {
+                    $build['loading_complete'] = true;
+                    if ((int) $metrics['profile_entities_queued'] === 0) {
+                        throw new RuntimeException('No training profile entities are available.');
                     }
                 }
-            }
-            if ($jobs !== [] && ! $this->batch()?->cancelled()) {
-                $batch->add($jobs);
-            }
+                if ($this->batch()?->cancelled()) {
+                    throw new RuntimeException('Profile batch was cancelled while loading.');
+                }
+                // Entity receipts protect against duplicate delivery. An uncertain
+                // cross-store publish must fail the build instead of reporting success.
+                $build['loaded_pages'][$pageKey] = true;
+                $metrics['profile_build'] = $build;
+                $run->forceFill(['metrics' => $metrics])->save();
+                foreach (array_chunk($jobs, 100) as $chunk) {
+                    $batch->add($chunk);
+                }
+            });
         } catch (Throwable $exception) {
-            // No previous exception: reporters must not traverse SQL queue payloads.
-            $failure = new RuntimeException(sprintf(
-                'Profile loading failed (queued %d/%d): %s',
-                $submitted,
-                $total,
-                BuildNhlSatModelEntityProfilesJob::failureMessage($exception)
-            ));
-            // Persist the useful error before the batch's finally callback can mark
-            // the stage failed without details. The worker may call failed() again.
+            $failure = new RuntimeException('Profile loading failed: ' . BuildNhlSatModelEntityProfilesJob::failureMessage($exception));
             $this->failed($failure);
-
             throw $failure;
         }
     }
 
-    /**
-     * Cancel partially loaded work and stop the combined workflow after any failure.
-     */
+    /** Fail only this generation and cancel its partially submitted batch. */
     public function failed(Throwable $exception): void
     {
         $this->batch()?->cancel();
-        (new BuildNhlSatModelEntityProfilesJob(
-            $this->modelRunId,
-            $this->satModelId,
-            $this->sogModelId,
-            $this->predictionBuildId
-        ))->failed($exception);
+        (new BuildNhlSatModelEntityProfilesJob($this->modelRunId, $this->satModelId,
+            $this->sogModelId, $this->predictionBuildId))->failed($exception);
     }
 }

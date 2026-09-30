@@ -317,20 +317,32 @@ class NhlModelRunController extends Controller
             return back()->withErrors(['run' => $message]);
         }
 
+        $buildId = (string) Str::uuid();
         $this->claimModelWork($run, [
             'status' => NhlModelRun::STATUS_RUNNING,
             'metrics' => array_merge($run->metrics ?? [], [
+                'profile_build' => ['id' => $buildId, 'status' => 'running'],
+                'profiles_completed_at' => null,
                 'profiles_started_at' => now()->toIso8601String(),
+                'profile_entities_queued' => 0, 'profile_entities_completed' => 0,
+                'season_snapshot_entities_queued' => 0, 'season_snapshot_entities_completed' => 0,
             ]),
             'started_at' => $run->started_at ?? now(),
             'completed_at' => null,
         ]);
 
-        BuildNhlSatModelEntityProfilesJob::dispatch(
-            modelRunId: (int) $run->id,
-            satModelId: (int) $satModel->id,
-            sogModelId: $sogModel === null ? null : (int) $sogModel->id
-        );
+        try {
+            BuildNhlSatModelEntityProfilesJob::dispatch(
+                modelRunId: (int) $run->id,
+                satModelId: (int) $satModel->id,
+                sogModelId: $sogModel === null ? null : (int) $sogModel->id,
+                predictionBuildId: $buildId
+            );
+        } catch (\Throwable $exception) {
+            NhlModelRun::finishPredictionStage((int) $run->id, $buildId, 'profiles', true,
+                error: BuildNhlSatModelEntityProfilesJob::failureMessage($exception));
+            throw \Illuminate\Validation\ValidationException::withMessages(['run' => 'Could not queue profiles.']);
+        }
 
         try {
             broadcast(new NhlSatModelUpdated((int) $run->id, 'profiles-queued'));
@@ -371,8 +383,9 @@ class NhlModelRunController extends Controller
             return back()->withErrors(['run' => $message]);
         }
 
-        if (! DB::table('nhl_sat_model_entity_profile_buckets')->where('model_run_id', $run->id)->exists()) {
-            $message = 'Build profiles before building /60.';
+        if (! $run->profilesReadyForRates()
+            || ! DB::table('nhl_sat_model_entity_profile_buckets')->where('model_run_id', $run->id)->exists()) {
+            $message = 'Finish a successful Build Profiles, including season snapshots, before building /60.';
 
             if ($request->expectsJson()) {
                 return response()->json(['message' => $message], 422);
@@ -398,7 +411,7 @@ class NhlModelRunController extends Controller
             ]),
             'started_at' => $run->started_at ?? now(),
             'completed_at' => null,
-        ]);
+        ], requiresProfiles: true);
 
         BuildNhlSatModelEntityRateProjectionsJob::dispatch(modelRunId: (int) $run->id);
 
@@ -445,6 +458,8 @@ class NhlModelRunController extends Controller
             'metrics' => array_merge($run->metrics ?? [], [
                 'prediction_build' => ['id' => $buildId, 'stage' => 'profiles', 'status' => 'running',
                     'started_at' => now()->toIso8601String()],
+                'profile_build' => ['id' => $buildId, 'status' => 'running'],
+                'profiles_completed_at' => null,
                 'profiles_started_at' => now()->toIso8601String(),
                 'profile_entities_queued' => 0, 'profile_entities_completed' => 0,
                 'season_snapshot_entities_queued' => 0, 'season_snapshot_entities_completed' => 0,
@@ -476,12 +491,15 @@ class NhlModelRunController extends Controller
      *
      * @param array<string, mixed> $changes
      */
-    private function claimModelWork(NhlModelRun $run, array $changes): void
+    private function claimModelWork(NhlModelRun $run, array $changes, bool $requiresProfiles = false): void
     {
-        DB::transaction(function () use ($run, $changes): void {
+        DB::transaction(function () use ($run, $changes, $requiresProfiles): void {
             $locked = NhlModelRun::query()->whereKey($run->id)->lockForUpdate()->firstOrFail();
             if ($locked->status === NhlModelRun::STATUS_RUNNING) {
                 throw \Illuminate\Validation\ValidationException::withMessages(['run' => 'This model already has work running.']);
+            }
+            if ($requiresProfiles && ! $locked->profilesReadyForRates()) {
+                throw \Illuminate\Validation\ValidationException::withMessages(['run' => 'Finish a successful Build Profiles before building /60.']);
             }
             if (data_get($changes, 'metrics.prediction_build.id') === data_get($locked->metrics, 'prediction_build.id')) {
                 unset($changes['metrics']['prediction_build']);

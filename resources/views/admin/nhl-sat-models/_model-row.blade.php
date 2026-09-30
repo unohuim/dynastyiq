@@ -12,6 +12,7 @@
     $excludedSog = data_get($trainingSummary ?? [], 'excluded');
     $totalSog = data_get($trainingSummary ?? [], 'total');
     $predictionBuild = data_get($run->metrics, 'prediction_build', []);
+    $profileBuild = data_get($run->metrics, 'profile_build', []);
     $predictionStage = $predictionBuild['stage'] ?? null;
     $predictionStageLabel = ['profiles' => 'Profiles', 'rates' => '/60', 'toi' => 'TOI/GP'][$predictionStage] ?? '';
     $predictionPrefix = ['profiles' => 'profile', 'rates' => 'rate_projection', 'toi' => 'toi_projection'][$predictionStage] ?? 'profile';
@@ -54,12 +55,20 @@
         @if(($predictionBuild['status'] ?? null) === 'running' && $run->status === 'running')
             <div class="mt-1 text-xs text-gray-500" role="status" aria-live="polite">
                 Build Predictions · {{ $predictionStageLabel }} · {{ $predictionDone }}/{{ $predictionQueued }}
+                @if($predictionStage === 'profiles' && ! ($profileBuild['loading_complete'] ?? false)) · Discovering entities @endif
             </div>
         @elseif(($predictionBuild['status'] ?? null) === 'failed' && $run->status === 'failed')
             <div class="mt-1 text-xs text-red-700">Build Predictions failed · {{ $predictionStageLabel }}</div>
             <div class="mt-1 max-w-xs whitespace-normal text-xs text-red-700">{{ $predictionBuild['error'] ?? '' }}</div>
         @elseif(($predictionBuild['status'] ?? null) === 'complete' && $run->status === 'complete')
             <div class="mt-1 text-xs text-gray-500">Build Predictions complete</div>
+        @elseif(($profileBuild['status'] ?? null) === 'running' && $run->status === 'running')
+            <div class="mt-1 text-xs text-gray-500" role="status" aria-live="polite">
+                Profiles · {{ (int) data_get($run->metrics, 'profile_entities_completed', 0) + (int) data_get($run->metrics, 'season_snapshot_entities_completed', 0) }}/{{ (int) data_get($run->metrics, 'profile_entities_queued', 0) + (int) data_get($run->metrics, 'season_snapshot_entities_queued', 0) }}
+                @if(! ($profileBuild['loading_complete'] ?? false)) · Discovering entities @endif
+            </div>
+        @elseif(($profileBuild['status'] ?? null) === 'failed' && $run->status === 'failed')
+            <div class="mt-1 max-w-xs whitespace-normal text-xs text-red-700">Profiles failed · {{ $profileBuild['error'] ?? '' }}</div>
         @endif
     </td>
     <td class="whitespace-nowrap px-4 py-3 text-gray-500">{{ $run->updated_at?->format('Y-m-d H:i') }}</td>

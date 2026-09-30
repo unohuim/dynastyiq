@@ -62,11 +62,38 @@ class NhlModelRun extends Model
     /** Check that a queued stage still belongs to the active combined build. */
     public function acceptsPredictionStage(?string $buildId, string $stage): bool
     {
-        return $buildId === null
+        if ($stage === 'profiles' && data_get($this->metrics, 'profile_build.id') !== null) {
+            return $buildId !== null
+                && $this->status === self::STATUS_RUNNING
+                && data_get($this->metrics, 'profile_build.id') === $buildId
+                && data_get($this->metrics, 'profile_build.status') === 'running';
+        }
+
+        return ($buildId === null && data_get($this->metrics, 'prediction_build') === null
+                && data_get($this->metrics, 'profile_build.status') !== 'running')
             || ($this->status === self::STATUS_RUNNING
                 && data_get($this->metrics, 'prediction_build.id') === $buildId
                 && data_get($this->metrics, 'prediction_build.status') === 'running'
                 && data_get($this->metrics, 'prediction_build.stage') === $stage);
+    }
+
+    /** Require explicit successful profile completion, not merely surviving rows. */
+    public function profilesReadyForRates(): bool
+    {
+        $metrics = $this->metrics ?? [];
+
+        foreach (['eval_sat_completed_at', 'eval_sog_completed_at'] as $evaluation) {
+            if (! empty($metrics[$evaluation])
+                && (empty($metrics['profiles_started_at']) || strtotime($metrics[$evaluation]) > strtotime($metrics['profiles_started_at']))) {
+                return false;
+            }
+        }
+
+        return data_get($metrics, 'profile_build.status') === 'complete'
+            && ! empty($metrics['profiles_completed_at'])
+            && (int) ($metrics['profile_entities_queued'] ?? 0) > 0
+            && (int) ($metrics['profile_entities_completed'] ?? 0) === (int) ($metrics['profile_entities_queued'] ?? 0)
+            && (int) ($metrics['season_snapshot_entities_completed'] ?? 0) === (int) ($metrics['season_snapshot_entities_queued'] ?? 0);
     }
 
     /**
@@ -89,6 +116,20 @@ class NhlModelRun extends Model
             }
 
             $metrics = array_merge($run->metrics ?? [], $stageMetrics);
+            if ($stage === 'profiles') {
+                $metrics['profile_build']['status'] = $failed ? 'failed' : 'complete';
+                $metrics['profiles_completed_at'] = $failed ? null : now()->toIso8601String();
+                if (data_get($metrics, 'prediction_build.id') !== $buildId) {
+                    $metrics['profile_build']['error'] = $failed ? mb_substr($error ?? 'Profile batch failed or was cancelled.', 0, 1000) : null;
+                    $run->forceFill([
+                        'metrics' => $metrics,
+                        'status' => $failed ? self::STATUS_FAILED : self::STATUS_COMPLETE,
+                        'completed_at' => now(),
+                    ])->save();
+
+                    return;
+                }
+            }
             $build = $metrics['prediction_build'];
             $next = $failed ? null : match ($stage) {
                 'profiles' => 'rates',

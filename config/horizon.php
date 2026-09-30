@@ -191,7 +191,8 @@ return [
             'maxJobs' => 0,
             'memory' => 128,
             'tries' => 5,
-            'timeout' => 600,
+            // Longer than the longest job (3600), shorter than retry_after (3900).
+            'timeout' => 3660,
             'nice' => 0,
         ],
         'supervisor-fantrax' => [

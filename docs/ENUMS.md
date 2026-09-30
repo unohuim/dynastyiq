@@ -2744,3 +2744,17 @@ Storage: `nhl_model_runs.metrics.prediction_build`.
 - `error`: bounded failure explanation; the failed stage remains recorded.
 
 The model run itself remains `running` between successful stages. Existing per-stage entity counters and timestamps are reused. Broadcast reasons `predictions-updated`, `predictions-progress`, and `predictions-failed` refresh the existing admin row; they do not authorize another build.
+
+## SAT profile build state
+
+Storage: `nhl_model_runs.metrics.profile_build`, shared by standalone Profiles and the profiles stage of Build Predictions.
+
+- `id`: owning profile build identifier; matches `prediction_build.id` for a combined build.
+- `status`: `running`, `complete`, `failed`.
+- `dispatched`, `initialized`, `loading_complete`: boolean checkpoints for parent dispatch, output initialization, and completed entity discovery.
+- `partitions`: profile-type/season descriptors; a null `season_id` means the aggregate training profile.
+- `loaded_pages`: page receipt map keyed by deterministic partition/cursor hashes; values are `true`.
+- `completed_pages`: completion strings keyed by page receipt hash. Each string has 100 positions (`0` pending, `1` committed), one per entity slot. These suppress duplicate entity progress, including entities that produce zero output rows, without storing one hash per entity.
+- `error`: bounded standalone failure explanation. Combined failures also use the existing `prediction_build.error` field.
+
+Profile queued counters count discovered entities, not loaders, and grow during discovery. `profiles_completed_at` is cleared on a fresh build and remains null on failure. A historical timestamp without a successful identified build does not qualify profiles for a new /60 build.

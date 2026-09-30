@@ -40,6 +40,8 @@ class BuildNhlSatModelEntityProfilesJob implements ShouldQueue, ShouldBeUnique
      */
     public int $timeout = 1800;
 
+    public bool $failOnTimeout = true;
+
     /**
      * @var int
      */
@@ -87,13 +89,30 @@ class BuildNhlSatModelEntityProfilesJob implements ShouldQueue, ShouldBeUnique
     public function handle(NhlSatModelEntityProfileBuilder $builder): void
     {
         $run = NhlModelRun::query()->findOrFail($this->modelRunId);
-        if (! $run->acceptsPredictionStage($this->predictionBuildId, 'profiles')) {
+        if ($this->predictionBuildId === null || ! $run->acceptsPredictionStage($this->predictionBuildId, 'profiles')) {
             return;
         }
         $modelRunId = $this->modelRunId;
         $predictionBuildId = $this->predictionBuildId;
 
         try {
+            $claimed = DB::transaction(function (): bool {
+                $run = NhlModelRun::query()->whereKey($this->modelRunId)->lockForUpdate()->firstOrFail();
+                if (! $run->acceptsPredictionStage($this->predictionBuildId, 'profiles')
+                    || data_get($run->metrics, 'profile_build.dispatched', false)) {
+                    return false;
+                }
+                $metrics = $run->metrics ?? [];
+                $metrics['profile_build'] = array_merge($metrics['profile_build'] ?? [], [
+                    'id' => $this->predictionBuildId, 'status' => 'running', 'dispatched' => true,
+                ]);
+                $run->forceFill(['metrics' => $metrics])->save();
+
+                return true;
+            });
+            if (! $claimed) {
+                return;
+            }
             Bus::batch([new LoadNhlSatModelProfileBatchJob(
                 $this->modelRunId,
                 $this->satModelId,
@@ -116,6 +135,7 @@ class BuildNhlSatModelEntityProfilesJob implements ShouldQueue, ShouldBeUnique
                 ->dispatch();
         } catch (Throwable $exception) {
             // Do not hand SQL/bindings or a large previous exception to queue logging.
+            $this->failed($exception);
             throw new \RuntimeException(self::failureMessage($exception));
         }
     }
@@ -125,20 +145,13 @@ class BuildNhlSatModelEntityProfilesJob implements ShouldQueue, ShouldBeUnique
      */
     public function failed(Throwable $exception): void
     {
-        $message = self::failureMessage($exception);
-        if ($this->predictionBuildId !== null) {
-            NhlModelRun::finishPredictionStage($this->modelRunId, $this->predictionBuildId, 'profiles', true, error: $message);
-            self::broadcastForRun($this->modelRunId, 'predictions-failed');
-
+        // Pre-deployment payloads have no generation and cannot update current work.
+        if ($this->predictionBuildId === null) {
             return;
         }
-
-        $this->markFailed($message);
-
-        Log::error('NHL SAT model entity profiles job failed.', [
-            'model_run_id' => $this->modelRunId,
-            'error' => $message,
-        ]);
+        NhlModelRun::finishPredictionStage($this->modelRunId, $this->predictionBuildId, 'profiles', true,
+            error: self::failureMessage($exception));
+        self::broadcastForRun($this->modelRunId, 'profiles-failed');
     }
 
     /**
@@ -157,51 +170,25 @@ class BuildNhlSatModelEntityProfilesJob implements ShouldQueue, ShouldBeUnique
     {
         $run = NhlModelRun::query()->find($modelRunId);
 
-        if ($run === null || ! $run->acceptsPredictionStage($predictionBuildId, 'profiles')) {
+        if ($predictionBuildId === null || $run === null || ! $run->acceptsPredictionStage($predictionBuildId, 'profiles')) {
             return;
         }
+
+        $failed = $failed
+            || ! data_get($run->metrics, 'profile_build.loading_complete', false)
+            || (int) data_get($run->metrics, 'profile_entities_queued', 0) === 0
+            || (int) data_get($run->metrics, 'profile_entities_queued', 0) !== (int) data_get($run->metrics, 'profile_entities_completed', 0)
+            || (int) data_get($run->metrics, 'season_snapshot_entities_queued', 0) !== (int) data_get($run->metrics, 'season_snapshot_entities_completed', 0);
 
         $counts = self::profileCountsForRun($modelRunId);
         $genericBucketStabilityCounts = $failed ? ['total' => 0] : self::genericBucketStabilityCountsForRun($modelRunId);
-        if ($predictionBuildId !== null) {
-            NhlModelRun::finishPredictionStage($modelRunId, $predictionBuildId, 'profiles', $failed, [
-                'profiles_completed_at' => now()->toIso8601String(), 'profile_rows' => $counts,
-                'season_snapshot_rows' => self::seasonSnapshotCountsForRun($modelRunId),
-                'generic_bucket_stability_rows' => $genericBucketStabilityCounts,
-            ]);
-            self::broadcastForRun($modelRunId, 'predictions-updated');
-
-            return;
-        }
-
-        $run->forceFill([
-            'status' => $failed ? NhlModelRun::STATUS_FAILED : NhlModelRun::STATUS_COMPLETE,
-            'metrics' => array_merge($run->metrics ?? [], [
-                'profiles_completed_at' => now()->toIso8601String(),
-                'profile_rows' => $counts,
-                'season_snapshot_rows' => self::seasonSnapshotCountsForRun($modelRunId),
-                'generic_bucket_stability_rows' => $genericBucketStabilityCounts,
-            ]),
-            'completed_at' => now(),
-        ])->save();
-
+        NhlModelRun::finishPredictionStage($modelRunId, $predictionBuildId, 'profiles', $failed, [
+            'profiles_completed_at' => $failed ? null : now()->toIso8601String(),
+            'profile_rows' => $counts,
+            'season_snapshot_rows' => self::seasonSnapshotCountsForRun($modelRunId),
+            'generic_bucket_stability_rows' => $genericBucketStabilityCounts,
+        ]);
         self::broadcastForRun($modelRunId, $failed ? 'profiles-failed' : 'profiles-completed');
-    }
-
-    private function markFailed(string $message): void
-    {
-        $run = NhlModelRun::query()->find($this->modelRunId);
-
-        $run?->forceFill([
-            'status' => NhlModelRun::STATUS_FAILED,
-            'metrics' => array_merge($run->metrics ?? [], [
-                'failed_at' => now()->toIso8601String(),
-                'error' => mb_substr($message, 0, 1000),
-            ]),
-            'completed_at' => now(),
-        ])->save();
-
-        self::broadcastForRun($this->modelRunId, 'profiles-failed');
     }
 
     /**

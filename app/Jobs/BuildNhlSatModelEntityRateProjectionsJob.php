@@ -126,6 +126,9 @@ class BuildNhlSatModelEntityRateProjectionsJob implements ShouldQueue, ShouldBeU
 
     public function failed(Throwable $exception): void
     {
+        if (! NhlModelRun::query()->find($this->modelRunId)?->acceptsPredictionStage($this->predictionBuildId, 'rates')) {
+            return;
+        }
         if ($this->predictionBuildId !== null) {
             NhlModelRun::finishPredictionStage($this->modelRunId, $this->predictionBuildId, 'rates', true, error: $exception->getMessage());
             self::broadcastForRun($this->modelRunId, 'predictions-failed');

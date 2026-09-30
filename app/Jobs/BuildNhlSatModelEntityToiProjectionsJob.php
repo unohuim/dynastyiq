@@ -126,6 +126,9 @@ class BuildNhlSatModelEntityToiProjectionsJob implements ShouldQueue, ShouldBeUn
 
     public function failed(Throwable $exception): void
     {
+        if (! NhlModelRun::query()->find($this->modelRunId)?->acceptsPredictionStage($this->predictionBuildId, 'toi')) {
+            return;
+        }
         if ($this->predictionBuildId !== null) {
             NhlModelRun::finishPredictionStage($this->modelRunId, $this->predictionBuildId, 'toi', true, error: $exception->getMessage());
             self::broadcastForRun($this->modelRunId, 'predictions-failed');
