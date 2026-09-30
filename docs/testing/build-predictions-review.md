@@ -8,6 +8,8 @@ The repository retry defaults were 90 seconds while some supported jobs allow 3,
 
 ## Behavior and limits
 
+- New profile builds cover **offensive skaters only**, including aggregate training profiles and their required season snapshots. Existing broad batches must drain/cancel and be replaced with a fresh build; old non-offensive jobs fail explicitly rather than running expensive unwanted profile SQL or silently counting as completed.
+- Discovery queries run before the short progress transaction, with ownership rechecked afterward. Continuations are submitted first so they do not sit behind their entire page of entity jobs. PostgreSQL progress/lifecycle locks use FOR NO KEY UPDATE, compatible with the foreign-key KEY SHARE locks held by concurrent entity inserts. This removes a lock-upgrade deadlock hazard introduced by the earlier transaction change; the supplied production payload contained no exception, so its actual failure cause remains unconfirmed.
 - Both standalone Profiles and combined Build Predictions receive a profile build ID.
 - A parent dispatch checkpoint prevents duplicate batches. One initialization transaction clears the previous training and snapshot outputs.
 - Each loader discovers at most 100 entity keys from one type/season partition and queues those children plus a continuation. Inserts contain at most 100 jobs. Queued counters grow during discovery; they are not a final denominator until discovery finishes.
@@ -49,8 +51,14 @@ Canonical behavior: [NhlModelRuns.yaml](../architecture/stats/NhlModelRuns.yaml)
 | Standalone generation ownership | Authored | does not let an older standalone profile callback complete a replacement build |
 | Zero-row and snapshot counter idempotence | Authored | counts a zero-row snapshot only once and separately from its training entity |
 | Compact receipts retain distinct entities | Authored | tracks distinct entities in compact page slots without double counting redelivery |
+| Offensive-only discovery, snapshots, obsolete jobs | Authored | discovers only offensive skaters across training and required season snapshots; rejects obsolete non-offensive jobs before building their profiles |
+| Discovery does not hold progress transaction | Authored | runs entity discovery outside the model progress transaction |
+| Ownership changes during discovery | Authored | rechecks build ownership after unlocked discovery before clearing or submitting work |
+| PostgreSQL lock contract | Authored | uses a PostgreSQL progress lock compatible with concurrent profile foreign-key checks |
 
 The tests exercise page orchestration with a mocked discovery service. Production PostgreSQL pagination performance and multi-worker contention remain human operational validation, not asserted measurements.
+
+Lock compatibility reference: [PostgreSQL row-level locks](https://www.postgresql.org/docs/current/explicit-locking.html#LOCKING-ROWS). FOR NO KEY UPDATE retains exclusive progress-update protection while allowing foreign-key key-share locks; it does not eliminate every possible database deadlock.
 
 ## Requirements checklist
 
@@ -78,7 +86,7 @@ SAT model administration is global and super-admin-only; organization ownership 
 
 The existing Blade status cell now renders standalone profile progress, discovery state, and escaped failure text. Existing live-region semantics and menu motion are retained. No JavaScript changed. HTTP/broadcast assertions cover combined progress, standalone progress, and failure escaping.
 
-One modified test file: **61 it(...) declarations** in NhlBuildPredictionsTest.php. No new test files. Existing test declarations were retained or adapted to the new loader contract; additional regression cases cover the incident.
+One modified test file: **66 it(...) declarations** in NhlBuildPredictionsTest.php. No new test files. Existing test declarations were retained or adapted to the new loader contract; additional regression cases cover the incident. The PostgreSQL lock test checks emitted SQL and transactional progress, not a measured concurrent-worker run. Performance has not been benchmarked; no claim is made that the build will return to 40 minutes.
 
 Human-run validation command:
 

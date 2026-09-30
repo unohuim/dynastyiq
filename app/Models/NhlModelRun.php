@@ -110,7 +110,7 @@ class NhlModelRun extends Model
         ?string $error = null,
     ): void {
         \Illuminate\Support\Facades\DB::transaction(function () use ($modelRunId, $buildId, $stage, $failed, $stageMetrics, $error): void {
-            $run = self::query()->whereKey($modelRunId)->lockForUpdate()->first();
+            $run = self::query()->whereKey($modelRunId)->lock('for no key update')->first();
             if ($run === null || ! $run->acceptsPredictionStage($buildId, $stage)) {
                 return;
             }

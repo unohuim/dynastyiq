@@ -39,7 +39,7 @@ class NhlSatModelEntityProfileBuilder
             ->where('model_run_id', $run->id)
             ->delete();
 
-        foreach ($this->profileDefinitions() as $profileType => $definition) {
+        foreach (['skater_offense' => $this->profileDefinitions()['skater_offense']] as $profileType => $definition) {
             $this->insertProfileRows(
                 run: $run,
                 satModel: $satModel,
@@ -71,9 +71,7 @@ class NhlSatModelEntityProfileBuilder
     {
         $partitions = [];
         foreach ([null, ...$this->snapshotSeasonIds($run)] as $seasonId) {
-            foreach (array_keys($this->profileDefinitions()) as $profileType) {
-                $partitions[] = ['profile_type' => $profileType, 'season_id' => $seasonId];
-            }
+            $partitions[] = ['profile_type' => 'skater_offense', 'season_id' => $seasonId];
         }
 
         return $partitions;
@@ -93,6 +91,9 @@ class NhlSatModelEntityProfileBuilder
      */
     public function profileEntityPage(NhlModelRun $run, string $profileType, ?string $seasonId, ?string $after): array
     {
+        if ($profileType !== 'skater_offense') {
+            throw new RuntimeException('Profile builds support offensive skaters only. Start a fresh Build Profiles.');
+        }
         $definition = $this->profileDefinitions()[$profileType] ?? throw new RuntimeException('Unknown profile partition.');
 
         return $this->profileEntities($seasonId === null ? $this->seasonIds($run) : [$seasonId], $definition, $after, 100);
@@ -111,7 +112,7 @@ class NhlSatModelEntityProfileBuilder
 
         $entities = [];
 
-        foreach ($this->profileDefinitions() as $profileType => $definition) {
+        foreach (['skater_offense' => $this->profileDefinitions()['skater_offense']] as $profileType => $definition) {
             foreach ($this->profileEntities($this->seasonIds($run), $definition) as $entityKey) {
                 $entities[] = [
                     'profile_type' => $profileType,
@@ -144,7 +145,7 @@ class NhlSatModelEntityProfileBuilder
         $entities = [];
 
         foreach ($seasonIds as $seasonId) {
-            foreach ($this->profileDefinitions() as $profileType => $definition) {
+            foreach (['skater_offense' => $this->profileDefinitions()['skater_offense']] as $profileType => $definition) {
                 foreach ($this->profileEntities([$seasonId], $definition) as $entityKey) {
                     $entities[] = [
                         'profile_type' => $profileType,

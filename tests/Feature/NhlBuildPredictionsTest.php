@@ -348,15 +348,15 @@ it('continues with the same cursor and then moves to the next season partition',
     $builder->shouldReceive('clearProfileOutputs')->once();
     $builder->shouldReceive('profilePartitions')->once()->andReturn([
         ['profile_type' => 'skater_offense', 'season_id' => null],
-        ['profile_type' => 'goalie_faced', 'season_id' => '20242025'],
+        ['profile_type' => 'skater_offense', 'season_id' => '20242025'],
     ]);
     $keys = array_map(fn (int $id): string => 'skater_offense:' . $id, range(100, 199));
     $builder->shouldReceive('profileEntityPage')->with(Mockery::type(NhlModelRun::class), 'skater_offense', null, null)->once()->andReturn($keys);
     $builder->shouldReceive('profileEntityPage')->with(Mockery::type(NhlModelRun::class), 'skater_offense', null, 'skater_offense:199')->once()->andReturn([]);
-    $builder->shouldReceive('profileEntityPage')->with(Mockery::type(NhlModelRun::class), 'goalie_faced', '20242025', null)->once()->andReturn(['goalie_faced:1']);
+    $builder->shouldReceive('profileEntityPage')->with(Mockery::type(NhlModelRun::class), 'skater_offense', '20242025', null)->once()->andReturn(['skater_offense:100']);
     [$first, $batch] = (new LoadNhlSatModelProfileBatchJob($this->run->id, $this->sat->id, null, 'build-1'))->withFakeBatch();
     $first->handle($builder);
-    $next = collect($batch->added)->flatten(1)->last();
+    $next = collect($batch->added)->flatten(1)->first();
     expect($next)->toBeInstanceOf(LoadNhlSatModelProfileBatchJob::class)
         ->and($next->after)->toBe('skater_offense:199')->and($next->partition)->toBe(0);
     [$next, $nextBatch] = $next->withFakeBatch();
@@ -366,7 +366,7 @@ it('continues with the same cursor and then moves to the next season partition',
     [$snapshot, $snapshotBatch] = $snapshot->withFakeBatch();
     $snapshot->handle($builder);
     $child = collect($snapshotBatch->added)->flatten(1)->sole();
-    expect($child->snapshotSeasonId)->toBe('20242025')->and($child->profileType)->toBe('goalie_faced')
+    expect($child->snapshotSeasonId)->toBe('20242025')->and($child->profileType)->toBe('skater_offense')
         ->and($child->predictionBuildId)->toBe('build-1')
         ->and(data_get($this->run->fresh()->metrics, 'profile_build.loading_complete'))->toBeTrue()
         ->and(data_get($this->run->fresh()->metrics, 'season_snapshot_entities_queued'))->toBe(1);
@@ -669,4 +669,77 @@ it('tracks distinct entities in compact page slots without double counting redel
     expect(data_get($this->run->fresh()->metrics, 'profile_entities_completed'))->toBe(2)
         ->and(data_get($this->run->fresh()->metrics, 'profile_build.completed_pages.page-1'))
         ->toBe('11' . str_repeat('0', 98));
+});
+
+it('discovers only offensive skaters across training and required season snapshots', function (): void {
+    $partitions = app(NhlSatModelEntityProfileBuilder::class)->profilePartitions($this->run);
+    expect(array_column($partitions, 'profile_type'))->toBe(array_fill(0, 4, 'skater_offense'))
+        ->and(array_column($partitions, 'season_id'))->toBe([null, '20232024', '20242025', '20252026']);
+    $this->run->target_season_id = null;
+    expect(app(NhlSatModelEntityProfileBuilder::class)->profilePartitions($this->run))->toHaveCount(3);
+});
+
+it('rejects obsolete non-offensive jobs before building their profiles', function (): void {
+    ($this->activate)();
+    $builder = Mockery::mock(NhlSatModelEntityProfileBuilder::class);
+    $job = new BuildNhlSatModelEntityProfileForEntityJob($this->run->id, $this->sat->id, null,
+        'staff_defense', 'staff:defense:head_coach:38', '20252026', 'build-1');
+    expect(fn () => $job->handle($builder))->toThrow(RuntimeException::class, 'Obsolete non-offensive profile job');
+    expect(data_get($this->run->fresh()->metrics, 'season_snapshot_entities_completed', 0))->toBe(0);
+});
+
+it('runs entity discovery outside the model progress transaction', function (): void {
+    ($this->activate)();
+    $level = DB::transactionLevel();
+    $builder = Mockery::mock(NhlSatModelEntityProfileBuilder::class);
+    $builder->shouldReceive('profilePartitions')->once()->andReturn([
+        ['profile_type' => 'skater_offense', 'season_id' => null],
+    ]);
+    $builder->shouldReceive('clearProfileOutputs')->once();
+    $builder->shouldReceive('profileEntityPage')->once()->andReturnUsing(function () use ($level): array {
+        expect(DB::transactionLevel())->toBe($level);
+        return ['skater_offense:101'];
+    });
+    [$loader, $batch] = (new LoadNhlSatModelProfileBatchJob($this->run->id, $this->sat->id, null, 'build-1'))->withFakeBatch();
+    $loader->handle($builder);
+    expect(collect($batch->added)->flatten(1))->toHaveCount(1);
+});
+
+it('rechecks build ownership after unlocked discovery before clearing or submitting work', function (): void {
+    ($this->activate)();
+    $builder = Mockery::mock(NhlSatModelEntityProfileBuilder::class);
+    $builder->shouldReceive('profilePartitions')->once()->andReturn([
+        ['profile_type' => 'skater_offense', 'season_id' => null],
+    ]);
+    $builder->shouldNotReceive('clearProfileOutputs');
+    $builder->shouldReceive('profileEntityPage')->once()->andReturnUsing(function (): array {
+        $this->run->update(['metrics' => ['profile_build' => ['id' => 'replacement', 'status' => 'running']]]);
+        return ['skater_offense:101'];
+    });
+    [$loader, $batch] = (new LoadNhlSatModelProfileBatchJob($this->run->id, $this->sat->id, null, 'build-1'))->withFakeBatch();
+    $loader->handle($builder);
+    expect($batch->added)->toBeEmpty()
+        ->and(data_get($this->run->fresh()->metrics, 'profile_build.id'))->toBe('replacement');
+});
+
+it('uses a PostgreSQL progress lock compatible with concurrent profile foreign-key checks', function (): void {
+    if (DB::connection()->getDriverName() !== 'pgsql') {
+        $this->markTestSkipped('PostgreSQL row-lock contract.');
+    }
+    ($this->activate)();
+    $locks = [];
+    DB::listen(function (\Illuminate\Database\Events\QueryExecuted $query) use (&$locks): void {
+        if (str_contains($query->sql, 'nhl_model_runs') && str_contains(strtolower($query->sql), ' for ')) {
+            $locks[] = strtolower($query->sql);
+        }
+    });
+    $builder = Mockery::mock(NhlSatModelEntityProfileBuilder::class);
+    $builder->shouldReceive('buildEntity')->once()->andReturnUsing(function (): int {
+        DB::table('nhl_sat_model_entity_profile_buckets')->insert($this->profileRow);
+        return 1;
+    });
+    (new BuildNhlSatModelEntityProfileForEntityJob($this->run->id, $this->sat->id, null,
+        'skater_offense', 'skater_offense:101', null, 'build-1'))->handle($builder);
+    expect($locks)->toHaveCount(1)->and($locks[0])->toContain('for no key update')
+        ->and(data_get($this->run->fresh()->metrics, 'profile_entities_completed'))->toBe(1);
 });

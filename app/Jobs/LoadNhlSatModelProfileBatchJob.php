@@ -55,14 +55,30 @@ class LoadNhlSatModelProfileBatchJob implements ShouldQueue
                 return;
             }
 
-            DB::transaction(function () use ($builder, $batch): void {
-                $run = NhlModelRun::query()->whereKey($this->modelRunId)->lockForUpdate()->firstOrFail();
+            $run = NhlModelRun::query()->findOrFail($this->modelRunId);
+            if ($this->predictionBuildId === null || ! $run->acceptsPredictionStage($this->predictionBuildId, 'profiles')) {
+                return;
+            }
+            $pageKey = sha1($this->partition . ':' . ($this->after ?? ''));
+            if (isset($run->metrics['profile_build']['loaded_pages'][$pageKey])) {
+                return;
+            }
+            $partitions = $run->metrics['profile_build']['partitions'] ?? $builder->profilePartitions($run);
+            $descriptor = $partitions[$this->partition] ?? null;
+            if ($descriptor === null || $descriptor['profile_type'] !== 'skater_offense') {
+                throw new RuntimeException('Profile build scope changed. Start a fresh offensive-skater profile build.');
+            }
+            // Discovery can scan many facts. Do not block entity progress commits
+            // on the model row while that read-only query executes.
+            $entities = $builder->profileEntityPage($run, $descriptor['profile_type'], $descriptor['season_id'], $this->after);
+
+            DB::transaction(function () use ($builder, $batch, $partitions, $descriptor, $entities, $pageKey): void {
+                $run = NhlModelRun::query()->whereKey($this->modelRunId)->lock('for no key update')->firstOrFail();
                 if ($this->predictionBuildId === null || ! $run->acceptsPredictionStage($this->predictionBuildId, 'profiles')) {
                     return;
                 }
                 $metrics = $run->metrics ?? [];
                 $build = $metrics['profile_build'] ?? ['id' => $this->predictionBuildId, 'status' => 'running'];
-                $pageKey = sha1($this->partition . ':' . ($this->after ?? ''));
                 if (isset($build['loaded_pages'][$pageKey])) {
                     return;
                 }
@@ -72,19 +88,16 @@ class LoadNhlSatModelProfileBatchJob implements ShouldQueue
                     }
                     $builder->clearProfileOutputs($run);
                     $build['initialized'] = true;
-                    $build['partitions'] = $builder->profilePartitions($run);
+                    $build['partitions'] = $partitions;
                     $metrics['profile_entities_queued'] = 0;
                     $metrics['profile_entities_completed'] = 0;
                     $metrics['season_snapshot_entities_queued'] = 0;
                     $metrics['season_snapshot_entities_completed'] = 0;
                     $metrics['profiles_completed_at'] = null;
                 }
-                $partitions = $build['partitions'];
-                $descriptor = $partitions[$this->partition] ?? null;
-                if ($descriptor === null) {
-                    throw new RuntimeException('No profile partition is available.');
+                if (($build['partitions'][$this->partition] ?? null) !== $descriptor) {
+                    throw new RuntimeException('Profile partition changed during discovery.');
                 }
-                $entities = $builder->profileEntityPage($run, $descriptor['profile_type'], $descriptor['season_id'], $this->after);
                 $jobs = [];
                 foreach ($entities as $index => $entityKey) {
                     $jobs[] = new BuildNhlSatModelEntityProfileForEntityJob(
@@ -98,8 +111,8 @@ class LoadNhlSatModelProfileBatchJob implements ShouldQueue
                 $nextPartition = count($entities) === 100 ? $this->partition : $this->partition + 1;
                 $nextAfter = count($entities) === 100 ? end($entities) : null;
                 if ($nextPartition < count($partitions)) {
-                    $jobs[] = new self($this->modelRunId, $this->satModelId, $this->sogModelId,
-                        $this->predictionBuildId, $nextPartition, $nextAfter);
+                    array_unshift($jobs, new self($this->modelRunId, $this->satModelId, $this->sogModelId,
+                        $this->predictionBuildId, $nextPartition, $nextAfter));
                 } else {
                     $build['loading_complete'] = true;
                     if ((int) $metrics['profile_entities_queued'] === 0) {

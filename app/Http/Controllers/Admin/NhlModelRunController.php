@@ -494,7 +494,7 @@ class NhlModelRunController extends Controller
     private function claimModelWork(NhlModelRun $run, array $changes, bool $requiresProfiles = false): void
     {
         DB::transaction(function () use ($run, $changes, $requiresProfiles): void {
-            $locked = NhlModelRun::query()->whereKey($run->id)->lockForUpdate()->firstOrFail();
+            $locked = NhlModelRun::query()->whereKey($run->id)->lock('for no key update')->firstOrFail();
             if ($locked->status === NhlModelRun::STATUS_RUNNING) {
                 throw \Illuminate\Validation\ValidationException::withMessages(['run' => 'This model already has work running.']);
             }

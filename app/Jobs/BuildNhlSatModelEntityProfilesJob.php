@@ -97,7 +97,7 @@ class BuildNhlSatModelEntityProfilesJob implements ShouldQueue, ShouldBeUnique
 
         try {
             $claimed = DB::transaction(function (): bool {
-                $run = NhlModelRun::query()->whereKey($this->modelRunId)->lockForUpdate()->firstOrFail();
+                $run = NhlModelRun::query()->whereKey($this->modelRunId)->lock('for no key update')->firstOrFail();
                 if (! $run->acceptsPredictionStage($this->predictionBuildId, 'profiles')
                     || data_get($run->metrics, 'profile_build.dispatched', false)) {
                     return false;

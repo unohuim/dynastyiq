@@ -98,6 +98,9 @@ class BuildNhlSatModelEntityProfileForEntityJob implements ShouldQueue
         if ($this->predictionBuildId === null || $this->batch()?->cancelled()) {
             return;
         }
+        if ($this->profileType !== 'skater_offense') {
+            throw new \RuntimeException('Obsolete non-offensive profile job. Start a fresh offensive-skater profile build.');
+        }
         $receipt = $this->receiptPage ?? sha1(($this->snapshotSeasonId ?? 'training') . ':' . $this->profileType . ':' . $this->entityKey);
         if ($this->receiptIndex < 0 || $this->receiptIndex >= 100) {
             throw new \RuntimeException('Invalid profile completion receipt index.');
@@ -121,7 +124,9 @@ class BuildNhlSatModelEntityProfileForEntityJob implements ShouldQueue
 
             // Keep expensive independent entity writes parallel. Recheck ownership
             // under the run lock before committing either rows or progress.
-            $run = NhlModelRun::query()->whereKey($this->modelRunId)->lockForUpdate()->firstOrFail();
+            // Profile inserts hold FK KEY SHARE locks on this row. NO KEY UPDATE
+            // serializes progress without conflicting with other entity inserts.
+            $run = NhlModelRun::query()->whereKey($this->modelRunId)->lock('for no key update')->firstOrFail();
             if (! $run->acceptsPredictionStage($this->predictionBuildId, 'profiles')
                 || ($run->metrics['profile_build']['completed_pages'][$receipt][$this->receiptIndex] ?? '0') === '1'
                 || $this->batch()?->cancelled()) {
