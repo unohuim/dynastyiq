@@ -4,7 +4,7 @@
 
 Profile building could report completion despite unfinished season snapshots. Existing /60 rows were then mistaken for new results. The repair scopes profile jobs and callbacks to one build, discovers entities in queued pages, and blocks /60 until profiles have verifiably succeeded.
 
-The repository retry defaults were 90 seconds while some supported jobs allow 3,600 seconds. The new database, Redis, and Beanstalkd reservation floor is 3,900 seconds, including when environment overrides are smaller. The default Horizon supervisor timeout is 3,660 seconds. Worker counts remain 6 default, 2 Fantrax, and 2 lineups. Production's previously effective cached configuration was not inspected.
+The repository retry defaults were 90 seconds while some supported jobs allow 3,600 seconds. The new database, Redis, and Beanstalkd reservation floor is 3,900 seconds, including when environment overrides are smaller. The default Horizon supervisor timeout is 3,660 seconds. Worker counts are fixed at 10 default, 1 Fantrax, and 1 lineups. Production's previously effective cached configuration was not inspected.
 
 ## Behavior and limits
 

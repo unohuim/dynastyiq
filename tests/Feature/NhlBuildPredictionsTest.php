@@ -616,9 +616,10 @@ it('keeps queue retry reservations above the maximum supported job timeout', fun
     }
     expect($horizon['defaults']['supervisor-default']['timeout'])->toBeGreaterThan(3600)
         ->toBeLessThan($queue['connections']['redis']['retry_after']);
-    expect($horizon['defaults']['supervisor-default']['maxProcesses'])->toBe(6)
-        ->and($horizon['defaults']['supervisor-fantrax']['maxProcesses'])->toBe(2)
-        ->and($horizon['defaults']['supervisor-lineups']['maxProcesses'])->toBe(2);
+    foreach (['supervisor-default' => 10, 'supervisor-fantrax' => 1, 'supervisor-lineups' => 1] as $supervisor => $workers) {
+        expect($horizon['defaults'][$supervisor]['minProcesses'])->toBe($workers)
+            ->and($horizon['defaults'][$supervisor]['maxProcesses'])->toBe($workers);
+    }
 });
 
 it('ignores old rate and TOI failures while a standalone profile build owns the model', function (): void {
