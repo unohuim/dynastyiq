@@ -23,8 +23,9 @@ class NhlGamePredictionPayload
     private const INPUT_CONFIDENCE_SKATER_WEIGHT = 0.70;
     private const INPUT_CONFIDENCE_GOALIE_WEIGHT = 0.30;
     private const SKATER_CONFIDENCE_COVERAGE_TARGET = 0.99;
-    private const PICK_CONFIDENCE_MIN = 72;
-    private const PICK_CONFIDENCE_MAX = 74;
+    // Temporary qualification window pending the next engine revision.
+    private const PICK_CONFIDENCE_MIN = 67;
+    private const PICK_CONFIDENCE_MAX = 70;
 
     public function __construct(
         private readonly NhlProjectedTeamMatchupSimulator $simulator,

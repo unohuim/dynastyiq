@@ -1019,12 +1019,14 @@ explicit line:
 
 Every successful response includes a top-level `pick_qualified` boolean.
 It is `true` only when a prediction is available, the returned
-`prediction.confidence_score` is between **72 and 74 inclusive**, and the
+`prediction.confidence_score` is between **67 and 70 inclusive**, and the
 absolute difference between the underlying projected goals is **greater than
 zero**, before rounding `prediction.predicted_score` to two decimal places.
 Either an away or home lead qualifies. Exact ties and confidence outside that
 range return `false`; evidence-only responses with `prediction_available: false`
 also return `pick_qualified: false`. Existing error responses are unchanged.
+
+The 67–70 range is temporary pending a future engine revision.
 
 This flag does not suppress predictions, scores or market probabilities, change
 the confidence calculation, or override the winner. A pair of displayed scores

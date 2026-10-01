@@ -42,6 +42,10 @@ Awaiting human review.
 
 ## Current API addition: pick_qualified
 
+The qualification window is temporarily 67–70 inclusive pending a future engine
+revision. This replaces 72–74; the confidence calculation and nonzero unrounded
+score-gap requirement are unchanged.
+
 Files changed for this addition:
 
 - `app/Services/NhlGamePredictionPayload.php`
@@ -57,8 +61,8 @@ COVERED means assertions authored, not executed.
 
 | Requirement | Status | Test |
 |---|---|---|
-| Top-level boolean; confidence 72/73/74 included, 71/75 excluded | COVERED | `qualifies picks by inclusive confidence and score gap before display rounding` |
-| Home/away lead, exact tie, both directions of sub-display-precision lead | COVERED | Same dataset test: five confidence values by five score pairs, 25 cases |
+| Top-level boolean; confidence 67/68/69/70 included, 66/71/72/73/74 excluded | COVERED | `qualifies picks by inclusive confidence and score gap before display rounding` |
+| Home/away lead, exact tie, both directions of sub-display-precision lead | COVERED | Same dataset test: nine confidence values by five score pairs, 45 cases |
 | Nonqualifying predictions still expose scores and market probabilities | COVERED | Same dataset test |
 | One or both preseason lineups unresolved yields false | COVERED | `returns evidence without a prediction when one preseason lineup is unresolved`; `returns both missing teams when neither preseason lineup is resolved` |
 
@@ -81,7 +85,7 @@ COVERED means assertions authored, not executed.
 
 Frontend checklist: not applicable; no frontend changes.
 Per-file count: `tests/Feature/NhlGamePredictionsMarketProbabilityApiTest.php`
-contains **46** `it(...)` declarations. The new declaration expands to 25 cases;
+contains **46** `it(...)` declarations. The qualification declaration expands to 45 cases;
 two existing unavailable-response tests have additional assertions.
 
 Human-run command (not executed by Codex):
