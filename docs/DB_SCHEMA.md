@@ -1,5 +1,39 @@
 # Database Schema Inventory (DB_SCHEMA)
 
+## SAT engine management
+
+Migrations: `2026_10_01_000001_create_nhl_sat_engines.php` and
+`2026_10_01_000002_add_default_to_nhl_sat_engines.php`. These are global NHL
+administrative records; they have no tenant or organization ownership.
+
+- `nhl_sat_engines`: `id`, `name`, `test_model_run_id`, `model_run_id` (Production Model), JSON `settings`, nullable `notes`, boolean
+  `is_default`, timestamps. A partial unique index permits at most one true default.
+  The first created engine is default; deleting a default promotes the newest remaining engine.
+  Model deletion is restricted while referenced.
+- `nhl_sat_engine_runs`: `id`, nullable `engine_id`, `model_run_id`, `kind`, indexed
+  `status`, JSON `definition`, `game_count`, `prediction_count`,
+  `predictions_completed`, `candidate_count`, `candidates_completed`, nullable
+  bounded `error`, nullable `completed_at`, timestamps. Definition snapshots the
+  model timestamp, test season, selection IDs, scope, weight pairs, targets and
+  confidence-search mode. Scope includes first/last/random selection and, for
+  random runs, a server-generated selection seed; the resolved game IDs remain
+  the worker's authoritative sample. `automatic_search` records strategy, current stage,
+  stage split bounds and queue lanes. New automatic-discovery counters track evaluated
+  weight pairs; each can persist multiple retained gap/confidence candidates. Totals grow
+  atomically when refinement appends work. Legacy runs count weight/gap searches.
+  Engine deletion nulls the reference; model deletion is restricted.
+- `nhl_sat_engine_candidates`: `id`, `run_id`, `split_index`, JSON `settings`,
+  nullable JSON `metrics`, nullable decimal `win_pct` and `coverage_pct`, boolean
+  `meets_targets`, timestamps. Indexed by run and weight-pair index.
+- `nhl_sat_engine_results`: `id`, `run_id`, `split_index`, `nhl_game_id`, `status`,
+  nullable bounded `reason`, JSON `game`, nullable `confidence`, decimal `gap`,
+  nullable boolean `correct`, nullable decimal `pred_sat`, `pred_sog`, `pred_goals`,
+  nullable integer `actual_sat`, `actual_sog`, `actual_goals`, nullable JSON
+  `prediction`, timestamps. A run/weight-pair/game tuple is unique. The stored NHL
+  game ID is historical provenance, not a cascading game FK. Run deletion cascades
+  its candidates and results; no public run-deletion action is introduced.
+
+
 Starter locks (`2026_09_26_000001_add_locked_starters_to_nhl_games`):
 - `nhl_games.away_starter_lock` and `home_starter_lock`: nullable JSON snapshots containing `nhl_player_id`, provider `name`, and `locked_at`. The selector writes each once, only after an explicit unique NHL starter is observed after puck drop. No migration backfill.
 

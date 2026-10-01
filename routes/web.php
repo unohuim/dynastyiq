@@ -394,6 +394,19 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                 Route::get('/nhl-shot-attempts/factor-values', [\App\Http\Controllers\Admin\NhlShotAttemptController::class, 'factorValues'])
                     ->name('admin.nhl-shot-attempts.factor-values');
                 Route::redirect('/nhl-model-runs', '/admin/nhl-sat-models');
+                Route::prefix('nhl-sat-engines')->name('admin.nhl-sat-engines.')->controller(\App\Http\Controllers\Admin\NhlSatEngineController::class)->group(function () {
+                    Route::get('/', 'index')->name('index');
+                    Route::post('/', 'store')->name('store');
+                    Route::get('/discover', 'discover')->name('discover');
+                    Route::post('/runs', 'start')->name('runs.store');
+                    Route::get('/runs/{run}', 'run')->whereNumber('run')->name('runs.show');
+                    Route::post('/runs/{run}/cancel', 'cancel')->whereNumber('run')->name('runs.cancel');
+                    Route::post('/runs/{run}/candidates/{candidate}/apply', 'apply')->whereNumber('run')->whereNumber('candidate')->name('runs.apply');
+                    Route::get('/{engine}', 'show')->whereNumber('engine')->name('show');
+                    Route::post('/{engine}/default', 'makeDefault')->whereNumber('engine')->name('default');
+                    Route::put('/{engine}', 'update')->whereNumber('engine')->name('update');
+                    Route::delete('/{engine}', 'destroy')->whereNumber('engine')->name('destroy');
+                });
                 Route::get('/nhl-sat-models', [\App\Http\Controllers\Admin\NhlModelRunController::class, 'index'])
                     ->name('admin.nhl-sat-models.index');
                 Route::post('/nhl-sat-models', [\App\Http\Controllers\Admin\NhlModelRunController::class, 'store'])

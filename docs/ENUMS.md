@@ -1,5 +1,29 @@
 # ENUMS - Canonical Enum Authority
 
+## NHL SAT engine evaluation
+
+- Engine `is_default`: the sole active default for ordinary game predictions. `true` is unique;
+  the first engine receives it automatically and deleting it promotes the newest remaining engine.
+
+- Run `kind`: `build` evaluates saved engine settings (displayed as **Test** in the engine UI); `discovery` automatically searches settings.
+- Run `definition.automatic_search.strategy`: `coarse_to_fine_v1` uses a broad independent
+  weight search and two bounded refinements. `stage` is 0 (broad), 1 (five-point refinement),
+  or 2 (one-point refinement). Absent/null preserves legacy manual weight/gap behavior.
+- Run `definition.confidence_search`: `automatic` searches all confidence intervals for discovery;
+  `configured` uses the saved engine interval. An absent marker denotes legacy explicit-range search.
+- Run `status`: `queued`, `running`, `ranking`, `complete`, `failed`, `cancelled`.
+  Only the first three are active. Terminal runs reject further worker writes.
+- Game-result `status`: `complete` for an eligible prediction with actuals; `excluded` for missing required evidence.
+- Scope `mode`: `season` (all matching completed regular-season games), `games` (N matching games),
+  `days` (N distinct matching game dates), `selected` (explicit NHL game IDs).
+- Scope `selection`: `first` (default, earliest matching games/dates), `last` (latest),
+  `random` (sample without replacement). Applies to `games` and `days`; other modes
+  normalize to `first`. Random runs store a server-generated `selection_seed` and selected IDs.
+- Settings keys: `offense`, `defense` (independent percentages), `confidence_min`,
+  `confidence_max` (inclusive game-confidence bounds), `gap` (strictly exceeded absolute goal difference).
+- `scope.teams`: an empty array means the entire league; otherwise match either team's abbreviation.
+
+
 ## Game prediction goalie projection provenance
 
 Request-time `goalies.*.projection_source`: `goalie_model` for a personal season

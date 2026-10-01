@@ -13,6 +13,22 @@ use Illuminate\Support\Facades\Schema;
  */
 class NhlProjectedTeamMatchupSimulator
 {
+    /** @var array{offense: float, defense: float}|null */
+    private ?array $engineWeights = null;
+
+    /** Return an isolated simulator for an internal engine evaluation. */
+    public function forEngine(float $offensePercent, float $defensePercent): self
+    {
+        if (! is_finite($offensePercent) || ! is_finite($defensePercent)
+            || $offensePercent < 0 || $offensePercent > 200 || $defensePercent < 0 || $defensePercent > 200) {
+            throw new \InvalidArgumentException('Engine percentages must be between 0 and 200.');
+        }
+        $simulator = clone $this;
+        $simulator->engineWeights = ['offense' => $offensePercent / 100, 'defense' => $defensePercent / 100];
+
+        return $simulator;
+    }
+
     private const REGULAR_SEASON_GAME_TYPE = 2;
     private const TARGET_SEASON_GAMES = 84.0;
     private const STRENGTH_EV = 'ev';
@@ -223,7 +239,8 @@ class NhlProjectedTeamMatchupSimulator
             ->values();
         $goalieEnvironmentRows = $satModelId === null
             ? $this->adjustedGoalieEnvironmentRows($offenseRows, $opponentDefenseBuckets, $baseline)
-            : $model->environment($satModelId, $offenseBuckets, $opponentDefenseBuckets);
+            : $model->environment($satModelId, $offenseBuckets, $opponentDefenseBuckets,
+                $this->engineWeights['offense'] ?? 0.88, $this->engineWeights['defense'] ?? 0.02);
         $goalie = $this->goalie($targetSeasonId, $goalieProjectionVersion, $defenseTeam, $goalieId);
         if ($satModelId !== null && $goalie === null && $goalieId !== null) {
             // A selected annual run needs an identity, not an unrelated season projection.

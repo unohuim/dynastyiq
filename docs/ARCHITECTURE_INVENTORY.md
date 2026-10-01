@@ -894,6 +894,25 @@ $token = PlatformTeamRosterShareLink::newPlainToken();
 
 ## Stats & Player Data
 
+### NHL SAT Engines
+
+**Purpose:** Save prediction settings and run model-dependent historical build/discovery evaluations.
+
+**Location:** `app/Services/NhlSatEngineEvaluator.php`, `app/Services/NhlSatEngineSettings.php`,
+`app/Models/NhlSatEngine.php`, `app/Models/NhlSatEngineRun.php`,
+`app/Http/Controllers/Admin/NhlSatEngineController.php`,
+`app/Jobs/EvaluateNhlSatEngineGameJob.php`, `app/Jobs/RankNhlSatEngineCandidatesJob.php`,
+and `resources/js/pages/Admin/SatEngines/`.
+
+**Interface:** `/admin/nhl-sat-engines` for CRUD and engine builds; `/discover` for
+model-dependent game/team scope and automatic discovery; `/runs/{run}` for
+progress, ranked candidates, actual totals and candidate adoption.
+
+**Example:** Discover settings for the first five game days of Sep2026's test
+season, automatically refining offense/defense weights and searching score gaps and confidence intervals, exposing strong
+below-coverage alternatives with their shortfalls, then create an engine directly from an evaluated result row, including while discovery continues. The default engine supplies ordinary prediction API behavior
+is unaffected. Canonical invariants: `docs/architecture/stats/NhlSatEngines.yaml`.
+
 ### NHL SAT Models
 
 **Name:** NHL SAT Models
@@ -3673,7 +3692,7 @@ on full-game prediction eligibility; injuries are listed below each lineup.
 Lineup SAT inputs are scoped to resolved NHL player identities. Model-wide historical fallback pools aggregate counts and once-per-entity exposure in SQL, returning only bucket totals to PHP while retaining latest-training-snapshot precedence. See `NhlPredictionInputServices.yaml` for the input and fallback rules.
 
 **When to Use:**
- Comparing projected NHL teams using static annual predicted offensive SAT bucket rates paired with unchanged same-run TOI, personal historical SOG/SAT and goals/SOG conversion then bucket-average fallback, 88% of all offensive attempts plus 2% of exact-matching defensive attempts without normalization, and a single goalie adjustment. Defense-only buckets are excluded. Current-season observations are excluded. Without a usable SAT run the legacy normalized environment and goalie calibration remain available. Responses are not filtered; top-level `pick_qualified` annotates available predictions with confidence 67–70 inclusive (temporary pending a future engine revision) and a nonzero score gap before display rounding, and is false otherwise. The simulator exposes roster provenance, projected totals, goalie reasons, and partner outcome probabilities; canonical rules live in NhlProjectedTeamMatchups.yaml and NhlPredictionInputServices.yaml.
+ Comparing projected NHL teams using the default engine's static annual model, independent offensive/defensive weights, same-run TOI, personal historical SOG/SAT and goals/SOG conversion then bucket-average fallback, and a single goalie adjustment. Defense-only buckets are excluded. Current-season observations are excluded. Historical evaluations use explicit pinned inputs. Responses are not filtered; top-level `pick_qualified` annotates available predictions using the default engine's confidence range and strictly exceeded score gap before display rounding, and is false otherwise. The simulator exposes roster provenance, projected totals, goalie reasons, and partner outcome probabilities; canonical rules live in NhlProjectedTeamMatchups.yaml and NhlPredictionInputServices.yaml.
 
 **When Not to Use:**
 Persisting team projection snapshots, claiming the temporary defensive blend measures causal defensive talent, or incorporating current-season updates before separately approved models exist.
