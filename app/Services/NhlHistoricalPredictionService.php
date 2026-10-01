@@ -101,18 +101,53 @@ class NhlHistoricalPredictionService
         if (isset($this->averages[$key])) {
             return $this->averages[$key];
         }
+        if (! Schema::hasTable('nhl_sat_model_entity_profile_buckets')) {
+            return $this->averages[$key] = collect();
+        }
+        // Keep eligibility identical to profiles(): the pool starts with entities
+        // present in aggregate training, not snapshot-only or held-out entities.
         $ids = DB::table('nhl_sat_model_entity_profile_buckets')
             ->where('model_run_id', $modelId)->where('profile_type', $type)->where('game_type', 2)
-            ->whereNotNull('entity_id')->distinct()->pluck('entity_id')->all();
-        $profiles = $this->profiles($modelId, $type, $ids);
-        $exposure = (float) $profiles->sum(fn (Collection $rows): float => (float) $rows->max('source_toi_seconds'));
+            ->whereNotNull('entity_id')->distinct()->select('entity_id');
+        $columns = ['entity_id', 'matched_bucket_key', 'bucket_dimensions', 'source_toi_seconds',
+            'source_sat', 'source_sog', 'source_goals', 'expected_sog', 'expected_goals'];
+        $training = DB::table('nhl_sat_model_entity_profile_buckets as profiles')
+            ->where('model_run_id', $modelId)->where('profile_type', $type)->where('game_type', 2)
+            ->whereNotNull('entity_id')->select($columns);
+        $season = collect(NhlModelRun::query()->find($modelId)?->train_season_ids ?? [])->sort()->last();
+        $resolved = $training;
+        if ($season !== null && Schema::hasTable('nhl_sat_model_entity_test_profile_buckets')) {
+            $snapshots = DB::table('nhl_sat_model_entity_test_profile_buckets')
+                ->where('model_run_id', $modelId)->where('test_season_id', $season)
+                ->where('profile_type', $type)->where('game_type', 2)
+                ->whereIn('entity_id', $ids)->select($columns);
+            // Replacement is per entity, not per bucket: do not fill missing
+            // latest-season buckets from that entity's aggregate training rows.
+            $training->whereNotExists(function ($query) use ($modelId, $type, $season): void {
+                $query->selectRaw('1')->from('nhl_sat_model_entity_test_profile_buckets as snapshot')
+                    ->where('snapshot.model_run_id', $modelId)->where('snapshot.test_season_id', $season)
+                    ->where('snapshot.profile_type', $type)->where('snapshot.game_type', 2)
+                    ->whereColumn('snapshot.entity_id', 'profiles.entity_id');
+            });
+            $resolved = $snapshots->unionAll($training);
+        }
+        $entityExposure = DB::query()->fromSub(clone $resolved, 'selected_profiles')
+            ->selectRaw('entity_id, MAX(source_toi_seconds) AS seconds')->groupBy('entity_id');
+        $exposure = (float) DB::query()->fromSub($entityExposure, 'entity_exposure')->sum('seconds');
 
-        return $this->averages[$key] = $profiles->flatten(1)->groupBy('matched_bucket_key')
-            ->map(function (Collection $rows) use ($exposure): object {
-                $row = clone $rows->first();
+        // Only one result per bucket reaches PHP. Dimensions are canonical for
+        // a matched key; text aggregation avoids grouping PostgreSQL JSON values.
+        return $this->averages[$key] = DB::query()->fromSub($resolved, 'selected_profiles')
+            ->select('matched_bucket_key')
+            ->selectRaw('MIN(CAST(bucket_dimensions AS TEXT)) AS bucket_dimensions')
+            ->selectRaw('SUM(source_sat) AS source_sat, SUM(source_sog) AS source_sog, SUM(source_goals) AS source_goals')
+            ->selectRaw('SUM(expected_sog) AS expected_sog, SUM(expected_goals) AS expected_goals')
+            ->groupBy('matched_bucket_key')->orderBy('matched_bucket_key')->get()
+            ->map(function (object $row) use ($exposure, $type): object {
                 foreach (['source_sat', 'source_sog', 'source_goals', 'expected_sog', 'expected_goals'] as $field) {
-                    $row->{$field} = (float) $rows->sum($field);
+                    $row->{$field} = (float) $row->{$field};
                 }
+                $row->profile_type = $type;
                 $row->source_toi_seconds = $exposure;
                 $row->projection_source = 'bucket_average';
 

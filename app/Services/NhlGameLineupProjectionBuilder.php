@@ -151,7 +151,10 @@ final class NhlGameLineupProjectionBuilder
      */
     public function applySatModel(array $players, ?int $modelId, string $targetSeasonId, int $gameType): array
     {
-        $inputs = $modelId === null ? collect() : app(NhlSatModelPredictionService::class)->inputs($modelId);
+        $nhlIdFor = fn (array $player): ?int => isset($player['nhl_player_id']) ? (int) $player['nhl_player_id']
+            : (array_key_exists('nhl_player_id', $player) ? null : ($player['player_id'] ?? null));
+        $ids = collect($players)->map($nhlIdFor)->filter()->unique()->values()->all();
+        $inputs = $modelId === null || $ids === [] ? collect() : app(NhlSatModelPredictionService::class)->inputs($modelId, $ids);
         $modelToi = $inputs->map(fn (array $input): float => $input['toi_seconds']);
         $previousYear = (int) substr($targetSeasonId, 0, 4) - 1;
         $previousSeason = (string) $previousYear . ($previousYear + 1);
@@ -159,10 +162,8 @@ final class NhlGameLineupProjectionBuilder
             $training = \App\Models\NhlModelRun::query()->find($modelId)?->train_season_ids ?? [];
             $previousSeason = (string) (collect($training)->sort()->last() ?? $previousSeason);
         }
-        $nhlIdFor = fn (array $player): ?int => isset($player['nhl_player_id']) ? (int) $player['nhl_player_id']
-            : (array_key_exists('nhl_player_id', $player) ? null : ($player['player_id'] ?? null));
         $history = DB::table('nhl_season_stats')->where('season_id', $previousSeason)->where('game_type', 2)
-            ->whereIn('nhl_player_id', collect($players)->map($nhlIdFor)->filter()->all())
+            ->whereIn('nhl_player_id', $ids)
             ->where('gp', '>', 0)->where('toi', '>', 0)
             ->selectRaw('nhl_player_id, SUM(toi) * 1.0 / SUM(gp) AS seconds')->groupBy('nhl_player_id')
             ->pluck('seconds', 'nhl_player_id');

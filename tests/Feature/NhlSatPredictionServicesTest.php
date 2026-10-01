@@ -646,3 +646,166 @@ it('removes obsolete Other on entity rebuild without touching another player', f
         'model_run_id' => $this->run->id, 'entity_id' => 101, 'matched_bucket_key' => 'A', 'source_sat' => 1,
     ]);
 });
+
+it('passes only resolved lineup NHL identities to model inputs', function (): void {
+    $this->mock(NhlSatModelPredictionService::class)->shouldReceive('inputs')->once()
+        ->with($this->run->id, [101, 102])->andReturn(collect());
+    $players = [
+        ['nhl_player_id' => 101, 'player_id' => 7001, 'line_key' => 'F1'],
+        ['nhl_player_id' => null, 'player_id' => 7002, 'line_key' => 'F1'],
+        ['player_id' => 102, 'line_key' => 'F2'],
+        ['nhl_player_id' => 101, 'player_id' => 7001, 'line_key' => 'F3'],
+    ];
+    $players = array_map(fn (array $player): array => ['projection_source' => 'historical_fallback', ...$player], $players);
+    $result = app(\App\Services\NhlGameLineupProjectionBuilder::class)
+        ->applySatModel($players, $this->run->id, '20252026', 2);
+    expect($result)->toHaveCount(4)->and($result[1]['nhl_player_id'])->toBeNull();
+});
+
+it('does not load model inputs for a lineup without resolved NHL players', function (): void {
+    $this->mock(NhlSatModelPredictionService::class)->shouldNotReceive('inputs');
+    $builder = app(\App\Services\NhlGameLineupProjectionBuilder::class);
+    expect($builder->applySatModel([], $this->run->id, '20252026', 2))->toBe([]);
+    $result = $builder->applySatModel([['nhl_player_id' => null, 'player_id' => 101, 'line_key' => 'F4',
+        'projection_source' => 'historical_fallback']],
+        $this->run->id, '20252026', 2);
+    expect($result)->toHaveCount(1)->and($result[0]['nhl_player_id'])->toBeNull()
+        ->and($result[0]['game_projected_toi_seconds'])->toBe(510);
+});
+
+it('preserves lineup predictions while restricting rate and TOI reads to that lineup', function (): void {
+    ($this->rate)();
+    ($this->toi)();
+    ($this->profile)();
+    ($this->rate)(['entity_id' => 202, 'entity_key' => 'skater_offense:202', 'projected_xsat_per_60' => 1000]);
+    ($this->toi)(['entity_id' => 202, 'entity_key' => 'skater_offense:202']);
+    $queries = [];
+    DB::listen(function (\Illuminate\Database\Events\QueryExecuted $query) use (&$queries): void {
+        if (str_contains($query->sql, 'nhl_sat_model_entity_rate_projection_buckets')
+            || str_contains($query->sql, 'nhl_sat_model_entity_toi_projections')) {
+            $queries[] = $query;
+        }
+    });
+    $result = app(\App\Services\NhlGameLineupProjectionBuilder::class)
+        ->applySatModel([$this->player], $this->run->id, '20252026', 2);
+    expect($result)->toHaveCount(1)->and($result[0]['projected_sat'])->toBe(3.0)
+        ->and($result[0]['projected_sog'])->toBe(1.5)->and($result[0]['projected_goals'])->toBe(0.06)
+        ->and($result[0]['game_projected_toi_seconds'])->toBe(900)
+        ->and($queries)->toHaveCount(2);
+    foreach ($queries as $query) {
+        expect(strtolower($query->sql))->toContain('in (?)')
+            ->and($query->bindings)->toContain(101)->not->toContain(202);
+    }
+});
+
+it('short circuits explicit empty model input selections without historical loading', function (): void {
+    $history = Mockery::mock(NhlHistoricalPredictionService::class);
+    $history->shouldNotReceive('profiles');
+    $history->shouldNotReceive('averages');
+    expect((new NhlSatModelPredictionService($history))->inputs($this->run->id, []))->toBeEmpty();
+});
+
+it('does not compute pooled history when selected players have no projected buckets', function (): void {
+    $history = Mockery::mock(NhlHistoricalPredictionService::class);
+    $history->shouldNotReceive('profiles');
+    $history->shouldNotReceive('averages');
+    expect((new NhlSatModelPredictionService($history))->inputs($this->run->id, [101]))->toBeEmpty();
+});
+
+it('matches historical pooling with entity-level snapshot replacement and full exposure', function (string $type): void {
+    $add = function (int $id, string $bucket, int $sat, int $sog, int $goals, int $seconds) use ($type): void {
+        ($this->profile)(['profile_type' => $type, 'entity_id' => $id, 'entity_key' => $type . ':' . $id,
+            'matched_bucket_key' => $bucket, 'source_sat' => $sat, 'source_sog' => $sog,
+            'source_goals' => $goals, 'source_toi_seconds' => $seconds,
+            'expected_sog' => $sog / 2, 'expected_goals' => $goals / 2]);
+    };
+    $add(101, 'A', 100, 50, 2, 3600);
+    $add(101, 'obsolete', 40, 20, 1, 3600);
+    $add(102, 'A', 60, 30, 2, 1800);
+    $add(103, 'C', 20, 10, 1, 900);
+    $snapshot = function (int $id, string $bucket, string $season, int $sat, int $sog, int $goals): void {
+        $row = (array) DB::table('nhl_sat_model_entity_profile_buckets')->where('entity_id', 101)
+            ->where('matched_bucket_key', 'A')->first();
+        unset($row['id']);
+        DB::table('nhl_sat_model_entity_test_profile_buckets')->insert([
+            ...$row, 'entity_id' => $id, 'entity_key' => $row['profile_type'] . ':' . $id,
+            'test_season_id' => $season, 'matched_bucket_key' => $bucket,
+            'source_sat' => $sat, 'source_sog' => $sog, 'source_goals' => $goals,
+            'source_toi_seconds' => 600, 'expected_sog' => $sog / 2, 'expected_goals' => $goals / 2,
+        ]);
+    };
+    $snapshot(101, 'A', '20242025', 10, 4, 1);
+    $snapshot(101, 'Z', '20242025', 5, 0, 0);
+    $snapshot(104, 'excluded_snapshot_only', '20242025', 999, 999, 999);
+    $snapshot(102, 'excluded_held_out', '20252026', 999, 999, 999);
+    $snapshot(102, 'excluded_older', '20232024', 999, 999, 999);
+    $history = app(NhlHistoricalPredictionService::class);
+    $profiles = $history->profiles($this->run->id, $type, [101, 102, 103]);
+    $oldExposure = (float) $profiles->sum(fn ($rows): float => (float) $rows->max('source_toi_seconds'));
+    $expected = $profiles->flatten(1)->groupBy('matched_bucket_key');
+    $actual = $history->averages($this->run->id, $type)->keyBy('matched_bucket_key');
+    expect($actual->keys()->all())->toBe(['A', 'C', 'Z'])->and($oldExposure)->toBe(3300.0);
+    foreach ($actual as $key => $row) {
+        foreach (['source_sat', 'source_sog', 'source_goals', 'expected_sog', 'expected_goals'] as $field) {
+            expect($row->{$field})->toEqualWithDelta((float) $expected[$key]->sum($field), 0.000001);
+        }
+        expect($row->source_toi_seconds)->toBe($oldExposure)->and($row->profile_type)->toBe($type)
+            ->and($row->projection_source)->toBe('bucket_average');
+    }
+    $projected = $history->project($actual->values(), 600, $this->run->id);
+    expect($projected->sum('baseline_xsat'))->toEqualWithDelta(95 * 600 / 3300, 0.000001)
+        ->and($projected->sum('baseline_xsog'))->toEqualWithDelta(($type === 'skater_defense' ? 22 : 44) * 600 / 3300, 0.000001)
+        ->and($projected->sum('baseline_xgf'))->toEqualWithDelta(($type === 'skater_defense' ? 2 : 4) * 600 / 3300, 0.000001);
+})->with(['skater_offense', 'skater_defense']);
+
+it('pools exposure once per entity using its maximum without averaging player percentages', function (): void {
+    ($this->profile)(['source_sat' => 100, 'source_sog' => 80, 'source_toi_seconds' => 3600]);
+    ($this->profile)(['matched_bucket_key' => 'B', 'source_sat' => 50, 'source_sog' => 0, 'source_toi_seconds' => 7200]);
+    ($this->profile)(['entity_id' => 102, 'entity_key' => 'skater_offense:102',
+        'source_sat' => 300, 'source_sog' => 60, 'source_toi_seconds' => 3600]);
+    $history = app(NhlHistoricalPredictionService::class);
+    $rows = $history->averages($this->run->id, 'skater_offense')->keyBy('matched_bucket_key');
+    expect($rows['A']->source_sat)->toBe(400.0)->and($rows['A']->source_sog)->toBe(140.0)
+        ->and($rows['A']->source_toi_seconds)->toBe(10800.0)
+        ->and($rows['B']->source_toi_seconds)->toBe(10800.0)
+        ->and($history->conversion(null, $rows['A'])['on_target'])->toBe(0.35)
+        ->and($history->conversion(null, $rows['B'])['on_target'])->toBe(0.0);
+});
+
+it('does not call the raw profile loader when computing pooled historical averages', function (): void {
+    ($this->profile)();
+    $history = Mockery::mock(NhlHistoricalPredictionService::class)->makePartial();
+    $history->shouldNotReceive('profiles');
+    $queries = [];
+    DB::listen(function (\Illuminate\Database\Events\QueryExecuted $query) use (&$queries): void {
+        if (str_contains($query->sql, 'nhl_sat_model_entity_profile_buckets')) {
+            $queries[] = strtolower($query->sql);
+        }
+    });
+    expect($history->averages($this->run->id, 'skater_offense'))->toHaveCount(1)
+        ->and($queries)->toHaveCount(2);
+    foreach ($queries as $sql) {
+        expect($sql)->toContain('sum(')->not->toContain('select *');
+    }
+    $history->averages($this->run->id, 'skater_offense');
+    expect($queries)->toHaveCount(2);
+});
+
+it('keeps empty historical pools empty', function (): void {
+    expect(app(NhlHistoricalPredictionService::class)->averages($this->run->id, 'skater_offense'))->toBeEmpty();
+});
+
+it('isolates SQL historical pools by model profile type game type and non-null identity', function (): void {
+    ($this->profile)();
+    ($this->profile)(['entity_id' => 102, 'entity_key' => 'skater_offense:102', 'game_type' => 1]);
+    ($this->profile)(['entity_id' => 103, 'entity_key' => 'skater_defense:103', 'profile_type' => 'skater_defense']);
+    ($this->profile)(['entity_id' => null, 'entity_key' => 'skater_offense:unresolved']);
+    $other = $this->run->replicate();
+    $other->run_key = 'other-average-model';
+    $other->save();
+    ($this->profile)(['model_run_id' => $other->id, 'source_sat' => 900]);
+    $history = app(NhlHistoricalPredictionService::class);
+    expect($history->averages($this->run->id, 'skater_offense')->sole()->source_sat)->toBe(100.0)
+        ->and($history->averages($this->run->id, 'skater_defense')->sole()->source_sat)->toBe(100.0)
+        ->and($history->averages($other->id, 'skater_offense')->sole()->source_sat)->toBe(900.0);
+});

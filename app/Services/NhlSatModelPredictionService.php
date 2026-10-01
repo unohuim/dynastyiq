@@ -58,6 +58,9 @@ class NhlSatModelPredictionService
      */
     public function inputs(int $modelId, ?array $ids = null): Collection
     {
+        if ($ids === []) {
+            return collect();
+        }
         $metrics = NhlModelRun::query()->find($modelId)?->metrics ?? [];
         $started = $metrics['toi_projections_started_at'] ?? null;
         $done = $metrics['toi_projections_completed_at'] ?? null;
@@ -77,6 +80,9 @@ class NhlSatModelPredictionService
             ->when($ids !== null, fn ($query) => $query->whereIn('entity_id', $ids))
             ->whereNotNull('entity_id')->get()->groupBy('entity_id');
 
+        if ($rows->isEmpty()) {
+            return collect();
+        }
         $profiles = $this->historical->profiles($modelId, 'skater_offense', $rows->keys()->all());
         $averages = $this->historical->averages($modelId, 'skater_offense')->keyBy('matched_bucket_key');
 
