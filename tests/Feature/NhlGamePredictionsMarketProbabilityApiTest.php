@@ -693,6 +693,7 @@ it('includes fair odds and model metadata for line-dependent rows', function ():
 
 it('qualifies picks by inclusive confidence and score gap before display rounding', function (
     int $confidence,
+    bool $confidenceQualified,
     float $awayGoals,
     float $homeGoals
 ): void {
@@ -703,7 +704,7 @@ it('qualifies picks by inclusive confidence and score gap before display roundin
     DB::table('nhl_goalie_season_projections')->where('projection_version', 'goalie-market')
         ->update(['confidence_score' => $confidence / 100]);
 
-    $qualified = $confidence >= 72 && $confidence <= 74 && $awayGoals !== $homeGoals;
+    $qualified = $confidenceQualified && $awayGoals !== $homeGoals;
     $response = $this->withToken($token)->getJson('/api/nhl-game-predictions?' . http_build_query([
         'nhl_game_id' => 2026020001,
         'source_season_id' => '20252026', 'target_season_id' => '20262027',
@@ -724,7 +725,17 @@ it('qualifies picks by inclusive confidence and score gap before display roundin
     ]);
     Http::assertNothingSent();
     $this->travelBack();
-})->with([71, 72, 73, 74, 75])->with([
+})->with([
+    'below temporary range' => [66, false],
+    'temporary lower boundary' => [67, true],
+    'temporary interior 68' => [68, true],
+    'temporary interior 69' => [69, true],
+    'temporary upper boundary' => [70, true],
+    'above temporary range' => [71, false],
+    'previous lower boundary' => [72, false],
+    'previous interior' => [73, false],
+    'previous upper boundary' => [74, false],
+])->with([
     'home leads' => [2.4, 3.2],
     'away leads' => [3.2, 2.4],
     'exact tie' => [3.0, 3.0],
