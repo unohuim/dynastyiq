@@ -43,7 +43,7 @@ class LoadNhlSatModelProfileBatchJob implements ShouldQueue
         $this->afterCommit = true;
     }
 
-    /** Initialize once and submit at most 100 entities plus one continuation. */
+    /** Discover at most 100 entities, queue them in 25-player jobs, then continue. */
     public function handle(NhlSatModelEntityProfileBuilder $builder): void
     {
         try {
@@ -99,10 +99,10 @@ class LoadNhlSatModelProfileBatchJob implements ShouldQueue
                     throw new RuntimeException('Profile partition changed during discovery.');
                 }
                 $jobs = [];
-                foreach ($entities as $index => $entityKey) {
+                foreach (array_chunk($entities, 25) as $index => $entityKeys) {
                     $jobs[] = new BuildNhlSatModelEntityProfileForEntityJob(
                         $this->modelRunId, $this->satModelId, $this->sogModelId,
-                        $descriptor['profile_type'], $entityKey, $descriptor['season_id'], $this->predictionBuildId,
+                        $descriptor['profile_type'], $entityKeys, $descriptor['season_id'], $this->predictionBuildId,
                         $pageKey, $index
                     );
                 }

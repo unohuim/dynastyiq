@@ -18,7 +18,7 @@ use Illuminate\Support\Facades\Log;
 use Throwable;
 
 /**
- * Builds SAT profile rows for one model-run entity.
+ * Builds SAT profile rows for a bounded page of model-run entities.
  */
 class BuildNhlSatModelEntityProfileForEntityJob implements ShouldQueue
 {
@@ -49,17 +49,24 @@ class BuildNhlSatModelEntityProfileForEntityJob implements ShouldQueue
 
     public int $receiptIndex = 0;
 
+    /** @var array<int, string> */
+    public array $entityKeys;
+
     public function __construct(
         public int $modelRunId,
         public int $satModelId,
         public ?int $sogModelId,
         public string $profileType,
-        public string $entityKey,
+        array|string $entityKeys,
         public ?string $snapshotSeasonId = null,
         ?string $predictionBuildId = null,
         ?string $receiptPage = null,
         int $receiptIndex = 0
     ) {
+        $this->entityKeys = array_values(array_filter(
+            is_array($entityKeys) ? $entityKeys : [$entityKeys],
+            static fn (mixed $entityKey): bool => is_string($entityKey) && $entityKey !== ''
+        ));
         $this->predictionBuildId = $predictionBuildId;
         $this->receiptPage = $receiptPage;
         $this->receiptIndex = $receiptIndex;
@@ -67,7 +74,7 @@ class BuildNhlSatModelEntityProfileForEntityJob implements ShouldQueue
     }
 
     /**
-     * Prevent duplicate profile builds for the same model-run entity.
+     * Prevent duplicate profile builds for the same model-run entity page.
      */
     public function middleware(): array
     {
@@ -88,11 +95,11 @@ class BuildNhlSatModelEntityProfileForEntityJob implements ShouldQueue
             $this->snapshotSeasonId === null ? 'sample:training' : 'sample:season-snapshot',
             ...($this->snapshotSeasonId === null ? [] : ['season:' . $this->snapshotSeasonId]),
             'profile-type:' . $this->profileType,
-            'entity:' . $this->entityKey,
+            'entity-count:' . count($this->entityKeys),
         ];
     }
 
-    /** Commit an entity and its progress receipt together, once per build. */
+    /** Commit one bounded entity page and its progress receipt together, once per build. */
     public function handle(NhlSatModelEntityProfileBuilder $builder): void
     {
         if ($this->predictionBuildId === null || $this->batch()?->cancelled()) {
@@ -101,7 +108,10 @@ class BuildNhlSatModelEntityProfileForEntityJob implements ShouldQueue
         if ($this->profileType !== 'skater_offense') {
             throw new \RuntimeException('Obsolete non-offensive profile job. Start a fresh offensive-skater profile build.');
         }
-        $receipt = $this->receiptPage ?? sha1(($this->snapshotSeasonId ?? 'training') . ':' . $this->profileType . ':' . $this->entityKey);
+        if ($this->entityKeys === [] || count($this->entityKeys) > 25) {
+            throw new \RuntimeException('Profile job requires between one and twenty-five offensive skaters.');
+        }
+        $receipt = $this->receiptPage ?? sha1(($this->snapshotSeasonId ?? 'training') . ':' . $this->profileType . ':' . implode(':', $this->entityKeys));
         if ($this->receiptIndex < 0 || $this->receiptIndex >= 100) {
             throw new \RuntimeException('Invalid profile completion receipt index.');
         }
@@ -116,10 +126,12 @@ class BuildNhlSatModelEntityProfileForEntityJob implements ShouldQueue
             }
             $satModel = NhlExpectedGoalsModel::query()->findOrFail($this->satModelId);
             $sogModel = $this->sogModelId === null ? null : NhlExpectedGoalsModel::query()->findOrFail($this->sogModelId);
-            if ($this->snapshotSeasonId !== null) {
-                $builder->buildSeasonSnapshotEntity($run, $satModel, $sogModel, $this->profileType, $this->entityKey, $this->snapshotSeasonId);
-            } else {
-                $builder->buildEntity($run, $satModel, $sogModel, $this->profileType, $this->entityKey);
+            foreach ($this->entityKeys as $entityKey) {
+                if ($this->snapshotSeasonId !== null) {
+                    $builder->buildSeasonSnapshotEntity($run, $satModel, $sogModel, $this->profileType, $entityKey, $this->snapshotSeasonId);
+                } else {
+                    $builder->buildEntity($run, $satModel, $sogModel, $this->profileType, $entityKey);
+                }
             }
 
             // Keep expensive independent entity writes parallel. Recheck ownership
@@ -141,7 +153,7 @@ class BuildNhlSatModelEntityProfileForEntityJob implements ShouldQueue
             $page[$this->receiptIndex] = '1';
             $metrics['profile_build']['completed_pages'][$receipt] = $page;
             $metricKey = $this->snapshotSeasonId === null ? 'profile_entities_completed' : 'season_snapshot_entities_completed';
-            $metrics[$metricKey] = (int) ($metrics[$metricKey] ?? 0) + 1;
+            $metrics[$metricKey] = (int) ($metrics[$metricKey] ?? 0) + count($this->entityKeys);
             $run->forceFill(['metrics' => $metrics])->save();
             if (((int) ($metrics['profile_entities_completed'] ?? 0) + (int) ($metrics['season_snapshot_entities_completed'] ?? 0)) % 25 === 0) {
                 DB::afterCommit(function (): void {
@@ -165,7 +177,7 @@ class BuildNhlSatModelEntityProfileForEntityJob implements ShouldQueue
             'model_run_id' => $this->modelRunId,
             'snapshot_season_id' => $this->snapshotSeasonId,
             'profile_type' => $this->profileType,
-            'entity_key' => $this->entityKey,
+            'entity_count' => count($this->entityKeys),
             'error' => $exception->getMessage(),
         ]);
     }
@@ -176,6 +188,6 @@ class BuildNhlSatModelEntityProfileForEntityJob implements ShouldQueue
             . $this->modelRunId . ':'
             . ($this->snapshotSeasonId ?? 'training') . ':'
             . $this->profileType . ':'
-            . sha1($this->entityKey);
+            . sha1(implode(':', $this->entityKeys));
     }
 }

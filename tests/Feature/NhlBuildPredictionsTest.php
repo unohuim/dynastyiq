@@ -494,6 +494,24 @@ it('commits profile rows and counts once when an entity is redelivered', functio
         ->and(data_get($this->run->fresh()->metrics, 'profile_entities_completed'))->toBe(1);
 });
 
+it('commits a bounded offensive-skater profile page with one progress update', function (): void {
+    ($this->activate)();
+    $builder = Mockery::mock(NhlSatModelEntityProfileBuilder::class);
+    $builder->shouldReceive('buildEntity')->twice()->andReturn(1);
+
+    (new BuildNhlSatModelEntityProfileForEntityJob(
+        $this->run->id,
+        $this->sat->id,
+        null,
+        'skater_offense',
+        ['skater_offense:101', 'skater_offense:102'],
+        null,
+        'build-1'
+    ))->handle($builder);
+
+    expect(data_get($this->run->fresh()->metrics, 'profile_entities_completed'))->toBe(2);
+});
+
 it('rolls back an entity write when its builder fails before progress is committed', function (): void {
     ($this->activate)();
     $builder = Mockery::mock(NhlSatModelEntityProfileBuilder::class);
