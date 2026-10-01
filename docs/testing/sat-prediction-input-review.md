@@ -1,5 +1,45 @@
 # SAT prediction input review
 
+## Prediction request memory repair
+
+The approved revision scopes `NhlGameLineupProjectionBuilder::applySatModel` to the selected lineup's NHL identities and replaces the all-profile PHP pooling in `NhlHistoricalPredictionService::averages` with SQL aggregates. Empty ID selections and selections with no rate buckets return without loading historical averages. No prediction, conversion, TOI, confidence, or environment-weight formulas were intentionally changed.
+
+The SQL pool preserves regular-season and model/profile-type filters. It starts with entities in aggregate training, replaces each entity with its latest-training-season snapshots when present, and counts each entity's maximum source TOI once across the whole pool. Missing buckets do not remove that entity's exposure. Bucket conversion is calculated from summed counts, not an average of player percentages. Only per-bucket totals and scalar pooled exposure enter PHP. Canonical dimensions are retained per bucket; incidental metadata copied from an arbitrary player by the old pooling routine is no longer loaded.
+
+### Authored coverage
+
+| Requirement | Test |
+| --- | --- |
+| Explicit lineup ID scope, deduplication, legacy IDs, unresolved identities | passes only resolved lineup NHL identities to model inputs |
+| Empty/unresolved lineup does not request model-wide inputs | does not load model inputs for a lineup without resolved NHL players |
+| Scoped real model reads with unchanged SAT/SOG/goals and TOI | preserves lineup predictions while restricting rate and TOI reads to that lineup |
+| Empty selections and missing rates skip history | short circuits explicit empty model input selections without historical loading; does not compute pooled history when selected players have no projected buckets |
+| SQL/PHP pooling parity, entity-level snapshot replacement, held-out and older snapshots excluded | matches historical pooling with entity-level snapshot replacement and full exposure (offense and defense dataset) |
+| Once-per-entity maximum exposure, absent buckets, pooled percentages and zeros | pools exposure once per entity using its maximum without averaging player percentages |
+| Aggregate query contract and request-local reuse | does not call the raw profile loader when computing pooled historical averages |
+| Empty pool | keeps empty historical pools empty |
+| Model, type, game-type, and null-ID isolation | isolates SQL historical pools by model profile type game type and non-null identity |
+
+### Requirements and scope
+
+- Changes are limited to the lineup input caller, model-input empty-result guards, historical pooling, related docs, and the existing regression suite.
+- Fixtures use Pest, strict types, a frozen clock, blocked external HTTP, and deterministic database rows. No workers or external providers are involved.
+- No route, authorization, partner payload, schema, or dependency changes. Endpoint/verb authorization coverage remains the existing API matrix below; organization scope is not applicable to these global NHL model inputs.
+- Frontend checklist: not applicable; no UI changes.
+- Full updated test source: `tests/Feature/NhlSatPredictionServicesTest.php`, **57 `it(...)` declarations**, including 10 new declarations. Dataset cases are not counted as extra declarations.
+- Tests, predictions, model rebuilds, and production requests were **not run**. Static diff review is not runtime verification. Memory usage and the production 512 MB failure cause remain unmeasured/unconfirmed.
+- The separate third-line defensive cohort calculation is unchanged; this revision addresses the two reported paths.
+
+Human-run regression command:
+
+```sh
+php artisan test tests/Feature/NhlSatPredictionServicesTest.php tests/Feature/NhlGamePredictionsMarketProbabilityApiTest.php
+```
+
+No model rebuild is required by these read-path changes. After normal deployment, repeat the failing partner request and compare output and peak memory before claiming the production crash resolved.
+
+Awaiting human review.
+
 ## Current API addition: pick_qualified
 
 Files changed for this addition:

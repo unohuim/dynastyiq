@@ -3670,6 +3670,8 @@ Prediction tabs. Missing reports use the shared injury-filtered projected roster
 preview without creating evidence. Per-player /60 and /GP previews do not depend
 on full-game prediction eligibility; injuries are listed below each lineup.
 
+Lineup SAT inputs are scoped to resolved NHL player identities. Model-wide historical fallback pools aggregate counts and once-per-entity exposure in SQL, returning only bucket totals to PHP while retaining latest-training-snapshot precedence. See `NhlPredictionInputServices.yaml` for the input and fallback rules.
+
 **When to Use:**
  Comparing projected NHL teams using static annual predicted offensive SAT bucket rates paired with unchanged same-run TOI, personal historical SOG/SAT and goals/SOG conversion then bucket-average fallback, 88% of all offensive attempts plus 2% of exact-matching defensive attempts without normalization, and a single goalie adjustment. Defense-only buckets are excluded. Current-season observations are excluded. Without a usable SAT run the legacy normalized environment and goalie calibration remain available. Responses are not filtered; top-level `pick_qualified` annotates available predictions with confidence 72–74 inclusive and a nonzero score gap before display rounding, and is false otherwise. The simulator exposes roster provenance, projected totals, goalie reasons, and partner outcome probabilities; canonical rules live in NhlProjectedTeamMatchups.yaml and NhlPredictionInputServices.yaml.
 
