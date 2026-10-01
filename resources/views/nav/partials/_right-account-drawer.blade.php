@@ -225,6 +225,10 @@
                                 </svg>
                                 <span class="text-sm">SAT Models</span>
                             </a>
+                            <a href="{{ route('admin.nhl-sat-engines.index') }}"
+                                class="group flex items-center gap-3 rounded-xl px-3 py-2 hover:bg-white/5">
+                                <span class="text-sm">SAT Engines</span>
+                            </a>
                             <a href="{{ route('admin.nhl-faceoffs.index') }}"
                                 class="group flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-white/5">
                                 <svg class="h-5 w-5 text-gray-300" viewBox="0 0 24 24" fill="none" stroke="currentColor"

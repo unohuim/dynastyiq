@@ -21,6 +21,7 @@ class NhlModelRun extends Model
     public const STATUS_FAILED = 'failed';
     public const STATUS_ARCHIVED = 'archived';
 
+
     /**
      * @var array<int, string>
      */
@@ -210,4 +211,5 @@ class NhlModelRun extends Model
             self::STATUS_ARCHIVED,
         ];
     }
+
 }

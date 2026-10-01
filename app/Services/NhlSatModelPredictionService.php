@@ -257,18 +257,18 @@ class NhlSatModelPredictionService
      * @param Collection<int,object> $defense
      * @return Collection<int,array<string,mixed>>
      */
-    public function environment(int $modelId, Collection $offense, Collection $defense, float $offenseWeight = 0.88): Collection
+    public function environment(int $modelId, Collection $offense, Collection $defense, float $offenseWeight = 0.88, float $defenseWeight = 0.02): Collection
     {
         $offense = $offense->keyBy('matched_bucket_key');
         $defense = $defense->keyBy('matched_bucket_key');
-        $rows = $offense->keys()->map(function (string $key) use ($offense, $defense, $offenseWeight): array {
+        $rows = $offense->keys()->map(function (string $key) use ($offense, $defense, $offenseWeight, $defenseWeight): array {
             $attack = $offense->get($key);
             $allowed = $defense->get($key);
             $dimensions = $attack;
             $sat = (float) ($attack->baseline_xsat ?? 0);
             $sog = (float) ($attack->baseline_xsog ?? 0);
             $goals = (float) ($attack->baseline_xgf ?? 0);
-            $defenseWeight = $allowed === null ? 0.0 : 0.02;
+            $defenseWeight = $allowed === null ? 0.0 : $defenseWeight;
             $adjustedSat = $offenseWeight * $sat + $defenseWeight * (float) ($allowed->baseline_xsat ?? 0);
             $onTarget = $sat > 0 ? min(1.0, $sog / $sat) : 0.0;
             $finishing = $sog > 0 ? min(1.0, $goals / $sog) : 0.0;

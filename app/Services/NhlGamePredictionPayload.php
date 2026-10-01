@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Models\NhlModelRun;
+use App\Models\NhlSatEngine;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
@@ -52,6 +53,18 @@ class NhlGamePredictionPayload
             ]);
         }
 
+        $defaultEngine = null;
+        // Explicit historical evaluations own their model and weights independently of the default.
+        if (! array_key_exists('sat_model_run_id', $overrides) && Schema::hasTable('nhl_sat_engines')) {
+            $defaultEngine = NhlSatEngine::query()->where('is_default', true)->first();
+            if ($defaultEngine === null && NhlSatEngine::query()->exists()) {
+                throw ValidationException::withMessages(['engine' => 'Select a default SAT engine before requesting game predictions.']);
+            }
+            if ($defaultEngine !== null) {
+                $overrides['sat_model_run_id'] = $defaultEngine->model_run_id;
+                $overrides['engine_weights'] = $defaultEngine->settings;
+            }
+        }
         $pinnedRun = null;
         if (array_key_exists('sat_model_run_id', $overrides)) {
             $pinnedRun = NhlModelRun::query()->find((int) $overrides['sat_model_run_id']);
@@ -73,6 +86,9 @@ class NhlGamePredictionPayload
         $storedBoxscore = (bool) ($overrides['use_stored_boxscore'] ?? false);
         if ($storedBoxscore && $pinnedRun === null) {
             throw ValidationException::withMessages(['sat_model_run_id' => 'Stored-boxscore evaluation requires an explicit SAT run.']);
+        }
+        if (isset($overrides['engine_weights']) && $defaultEngine === null && ($pinnedRun === null || ! $storedBoxscore)) {
+            throw ValidationException::withMessages(['engine_weights' => 'Engine evaluation requires a pinned model and stored boxscores.']);
         }
         if ($pinnedRun !== null) {
             // A selected annual run owns the input horizon. Never borrow unrelated versions.
@@ -201,9 +217,16 @@ class NhlGamePredictionPayload
         if ($homeGamePlayers !== null) {
             $homeGamePlayers = $this->lineupProjections->applySatModel($homeGamePlayers, $satModelId, $targetSeasonId, (int) $game->game_type);
         }
+        $simulator = $this->simulator;
+        if (isset($overrides['engine_weights'])) {
+            $simulator = $simulator->forEngine(
+                (float) $overrides['engine_weights']['offense'],
+                (float) $overrides['engine_weights']['defense']
+            );
+        }
         $result = $satModelId === null && $awayRosterIds === null && $homeRosterIds === null
-            ? $this->simulator->simulate(...$simulationArguments)
-            : $this->simulator->simulateWithRosters(...[
+            ? $simulator->simulate(...$simulationArguments)
+            : $simulator->simulateWithRosters(...[
                 ...$simulationArguments,
                 $awayRosterIds,
                 $homeRosterIds,
@@ -281,11 +304,12 @@ class NhlGamePredictionPayload
 
         return [
             'prediction_available' => true,
-            'pick_qualified' => $prediction['confidence_score'] >= self::PICK_CONFIDENCE_MIN
-                && $prediction['confidence_score'] <= self::PICK_CONFIDENCE_MAX
-                && abs($homeGoals - $awayGoals) > 0.0,
+            'pick_qualified' => $prediction['confidence_score'] >= ($defaultEngine?->settings['confidence_min'] ?? self::PICK_CONFIDENCE_MIN)
+                && $prediction['confidence_score'] <= ($defaultEngine?->settings['confidence_max'] ?? self::PICK_CONFIDENCE_MAX)
+                && abs($homeGoals - $awayGoals) > (float) ($defaultEngine?->settings['gap'] ?? 0),
             'game' => $this->gamePayload($game),
             'inputs' => [
+                'engine_id' => $defaultEngine?->id,
                 'sat_model_run_id' => $satModelId,
                 'training_season_ids' => $satModelId === null ? [] : (NhlModelRun::query()->find($satModelId)?->train_season_ids ?? []),
                 'source_season_id' => $sourceSeasonId,

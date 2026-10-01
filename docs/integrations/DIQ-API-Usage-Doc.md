@@ -1,5 +1,15 @@
 # DynastyIQ API Usage Guide
 
+## Admin engine evaluations
+
+Saved SAT engines and discovery at `/admin/nhl-sat-engines` are administrative
+tools. The one engine marked Default supplies ordinary prediction API calls with
+its Production Model, offense/defense settings, confidence window and score-gap rule.
+The first engine becomes Default automatically; admins can switch it from the
+engine list. Engine selection is not a partner request parameter. Historical
+Engine discovery and testing use the engine's Test Model; they do not change API predictions.
+
+
 ## Prediction roster player identifiers
 
 Every row in `teams.away.roster`, `teams.home.roster`, and both `dressed_roster`
@@ -1019,14 +1029,13 @@ explicit line:
 
 Every successful response includes a top-level `pick_qualified` boolean.
 It is `true` only when a prediction is available, the returned
-`prediction.confidence_score` is between **67 and 70 inclusive**, and the
-absolute difference between the underlying projected goals is **greater than
-zero**, before rounding `prediction.predicted_score` to two decimal places.
+`prediction.confidence_score` is within the Default engine's inclusive confidence
+range, and the absolute difference between the underlying projected goals is
+strictly greater than that engine's score gap, before rounding
+`prediction.predicted_score` to two decimal places.
 Either an away or home lead qualifies. Exact ties and confidence outside that
 range return `false`; evidence-only responses with `prediction_available: false`
 also return `pick_qualified: false`. Existing error responses are unchanged.
-
-The 67–70 range is temporary pending a future engine revision.
 
 This flag does not suppress predictions, scores or market probabilities, change
 the confidence calculation, or override the winner. A pair of displayed scores
