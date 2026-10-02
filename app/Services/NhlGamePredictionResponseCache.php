@@ -79,7 +79,7 @@ final class NhlGamePredictionResponseCache
         $lineups = DB::table('nhl_current_lineups')->where('nhl_game_id', $gameId)
             ->orderBy('team_id')->get(['team_id', 'nhl_lineup_observation_id', 'structure_hash', 'last_observed_at', 'updated_at']);
         $goalies = DB::table('nhl_starting_goalie_observations')->where('nhl_game_id', $gameId)
-            ->orderBy('id')->get(['id', 'team_abbrev', 'goalie_player_id', 'updated_at']);
+            ->orderBy('id')->get(['id', 'team_abbrev', 'nhl_player_id', 'updated_at']);
 
         return hash('sha256', json_encode([$input, $game, $engine, $model, $lineups, $goalies], JSON_THROW_ON_ERROR));
     }

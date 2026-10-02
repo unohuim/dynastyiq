@@ -19,6 +19,34 @@ it('exposes NHL ids on legacy prediction and dressed rosters for both teams', fu
         ->assertJsonPath('teams.home.dressed_roster.0.nhl_player_id', 8482156);
 });
 
+it('builds a prediction cache fingerprint from canonical goalie identity', function (): void {
+    $token = ($this->seedPredictionInputs)();
+    \App\Models\NhlStartingGoalieObservation::query()->create([
+        'nhl_game_id' => 2026020001,
+        'game_date' => '2026-10-10',
+        'team_abbrev' => 'AWY',
+        'opponent_abbrev' => 'HOM',
+        'is_home' => false,
+        'nhl_player_id' => 9001,
+        'player_name' => 'Away Starter',
+        'provider' => 'manual',
+        'status' => 'expected',
+        'fetched_at' => now(),
+        'raw_evidence' => [],
+    ]);
+
+    $this->withToken($token)->getJson('/api/nhl-game-predictions?' . http_build_query([
+        'nhl_game_id' => 2026020001,
+        'source_season_id' => '20252026',
+        'target_season_id' => '20262027',
+        'projection_version' => 'skater-market',
+        'toi_projection_version' => 'toi-market',
+        'goalie_projection_version' => 'goalie-market',
+        'away_goalie_id' => 9001,
+        'home_goalie_id' => 9002,
+    ]))->assertOk()->assertJsonPath('meta.cache', 'fresh');
+});
+
 it('preserves explicit NHL identity and unresolved null without leaking internal ids', function (bool $collection): void {
     $rows = [
         ['player_id' => 8482155, 'player_name' => 'Legacy skater'],
