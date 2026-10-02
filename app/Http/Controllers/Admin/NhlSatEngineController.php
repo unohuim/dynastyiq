@@ -114,7 +114,7 @@ class NhlSatEngineController extends Controller
     {
         $input = $request->validate([
             'candidate' => 'nullable|integer',
-            'sort' => ['nullable', Rule::in(['targets', 'offense', 'defense', 'confidence_min', 'confidence_max', 'gap', 'win_pct', 'coverage_pct', 'eligible', 'excluded', 'all_wins', 'all_losses', 'wins', 'losses'])],
+            'sort' => ['nullable', Rule::in(['targets', 'offense', 'defense', 'confidence_min', 'confidence_max', 'gap', 'all_win_pct', 'pick_record', 'win_pct', 'coverage_pct', 'eligible', 'excluded', 'all_wins', 'all_losses', 'wins', 'losses'])],
             'direction' => ['nullable', Rule::in(['asc', 'desc'])],
             'min_coverage' => 'nullable|numeric|between:0,100',
             'max_coverage' => 'nullable|numeric|between:0,100|gte:min_coverage',
@@ -150,6 +150,8 @@ class NhlSatEngineController extends Controller
             'excluded' => "CAST(metrics->>'excluded' AS INTEGER)",
             'all_wins' => "CAST(metrics->>'all_wins' AS INTEGER)",
             'all_losses' => "CAST(metrics->>'all_losses' AS INTEGER)",
+            'all_win_pct' => "CAST(metrics->>'all_wins' AS NUMERIC) / NULLIF(CAST(metrics->>'all_wins' AS NUMERIC) + CAST(metrics->>'all_losses' AS NUMERIC), 0)",
+            'pick_record' => 'win_pct',
             'wins' => "CAST(metrics->>'wins' AS INTEGER)",
             'losses' => "CAST(metrics->>'losses' AS INTEGER)",
         ];
@@ -182,6 +184,10 @@ class NhlSatEngineController extends Controller
                 ->orderByDesc('win_pct')->orderByDesc('coverage_pct');
         } else {
             $candidates->orderByRaw($columns[$sort] . ' ' . $direction . ' NULLS LAST');
+            if (in_array($sort, ['all_win_pct', 'pick_record'], true)) {
+                $wins = $sort === 'all_win_pct' ? "CAST(metrics->>'all_wins' AS INTEGER)" : "CAST(metrics->>'wins' AS INTEGER)";
+                $candidates->orderByRaw($wins . ' ' . $direction . ' NULLS LAST');
+            }
         }
         $stackRows = ($input['stack'] ?? false) ? (clone $candidates)->whereNotNull('metrics')
             ->get(['id', 'split_index', 'settings', 'metrics', 'win_pct', 'coverage_pct']) : collect();
