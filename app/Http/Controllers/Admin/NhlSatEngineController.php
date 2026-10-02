@@ -134,6 +134,8 @@ class NhlSatEngineController extends Controller
             'min_excluded' => 'nullable|integer|min:0',
             'max_excluded' => 'nullable|integer|min:0|gte:min_excluded',
             'stack' => 'nullable|boolean',
+            'stack_ids' => 'nullable|array|max:5',
+            'stack_ids.*' => 'integer|distinct',
         ]);
         $sort = $input['sort'] ?? 'targets';
         $direction = $input['direction'] ?? 'desc';
@@ -183,6 +185,14 @@ class NhlSatEngineController extends Controller
         }
         $stackRows = ($input['stack'] ?? false) ? (clone $candidates)->whereNotNull('metrics')
             ->get(['id', 'split_index', 'settings', 'metrics', 'win_pct', 'coverage_pct']) : collect();
+        $stackIds = array_map('intval', $input['stack_ids'] ?? []);
+        $manualStackRows = collect();
+        if ($stackIds !== []) {
+            $indexed = DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->whereIn('id', $stackIds)
+                ->whereNotNull('metrics')->get(['id', 'split_index', 'settings', 'metrics', 'win_pct', 'coverage_pct'])->keyBy('id');
+            abort_if($indexed->count() !== count($stackIds), 404);
+            $manualStackRows = collect($stackIds)->map(fn (int $id) => $indexed->get($id));
+        }
         $candidates = $candidates->orderBy('id')->paginate(25)->withQueryString();
         $candidate = DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)
             ->where('id', $input['candidate'] ?? $candidates->items()[0]->id ?? 0)->first();
@@ -204,10 +214,12 @@ class NhlSatEngineController extends Controller
             'run' => $run, 'candidates' => $candidates, 'games' => $games,
             'candidate' => $candidate ? $decode($candidate, ['settings', 'metrics']) : null,
             'engines' => NhlSatEngine::query()->orderBy('name')->get(['id', 'name', 'model_run_id', 'test_model_run_id']),
-            'models' => $this->models(), 'candidateFilters' => collect($input)->except(['candidate', 'sort', 'direction', 'stack'])->all(),
+            'models' => $this->models(), 'candidateFilters' => collect($input)->except(['candidate', 'sort', 'direction', 'stack', 'stack_ids'])->all(),
             'candidateSort' => ['key' => $sort, 'direction' => $direction],
             'stackRequested' => (bool) ($input['stack'] ?? false),
             'stacks' => ($input['stack'] ?? false) ? $stackAnalyzer->analyze($run, $stackRows) : [],
+            'stackFoundation' => ($input['stack'] ?? false) ? $stackAnalyzer->foundation($run, $stackRows) : null,
+            'manualStack' => $stackAnalyzer->manual($run, $manualStackRows),
         ]);
     }
 
@@ -261,7 +273,10 @@ class NhlSatEngineController extends Controller
             'model_run_id' => 'nullable|integer|exists:nhl_model_runs,id',
         ]);
         $engine = isset($input['engine_id']) ? NhlSatEngine::query()->findOrFail($input['engine_id']) : new NhlSatEngine();
-        $attributes = ['settings' => json_decode($row->settings, true, 512, JSON_THROW_ON_ERROR)];
+        $attributes = [
+            'settings' => json_decode($row->settings, true, 512, JSON_THROW_ON_ERROR),
+            'discovery_run_id' => $run->kind === 'discovery' ? $run->id : null,
+        ];
         if (! $engine->exists) {
             $attributes['name'] = $input['name'];
             $attributes['test_model_run_id'] = $input['test_model_run_id'] ?? $run->model_run_id;

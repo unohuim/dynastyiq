@@ -102,7 +102,7 @@ it('blocks ordinary users on every engine endpoint', function (string $verb, str
 it('creates an engine without dispatching work and reads it through Inertia', function (): void {
     $this->actingAs($this->admin)->post('/admin/nhl-sat-engines', [...$this->definition, 'name' => 'Created'])->assertRedirect();
     $engine = NhlSatEngine::query()->where('name', 'Created')->firstOrFail();
-    $this->assertDatabaseHas('nhl_sat_engines', ['id' => $engine->id, 'model_run_id' => $this->model->id]);
+    $this->assertDatabaseHas('nhl_sat_engines', ['id' => $engine->id, 'model_run_id' => $this->model->id, 'discovery_run_id' => null]);
     $this->get('/admin/nhl-sat-engines/' . $engine->id)->assertInertia(fn (Assert $page) => $page
         ->component('Admin/SatEngines/Workspace')->where('engine.name', 'Created')->where('engine.settings.offense', 88));
     Bus::assertNothingDispatched();
@@ -446,6 +446,25 @@ it('applies a candidate to an existing engine without starting a build', functio
     Bus::assertNothingDispatched();
 });
 
+it('records a discovery source and exposes its candidates through the engine relationship', function (): void {
+    $run = app(NhlSatEngineEvaluator::class)->start([
+        ...$this->input, 'kind' => 'discovery', 'engine_id' => null,
+    ]);
+    $candidate = DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->first();
+    DB::table('nhl_sat_engine_candidates')->where('id', $candidate->id)->update(['metrics' => '{}']);
+
+    $this->actingAs($this->admin)->post('/admin/nhl-sat-engines/runs/' . $run->id . '/candidates/' . $candidate->id . '/apply', [
+        'engine_id' => $this->engine->id,
+    ])->assertRedirect();
+
+    $engine = $this->engine->fresh();
+    expect($engine->discovery_run_id)->toBe($run->id)->and($engine->discovery->id)->toBe($run->id)
+        ->and($engine->discovery->candidates()->whereKey($candidate->id)->exists())->toBeTrue();
+    $this->get('/admin/nhl-sat-engines/' . $engine->id)->assertInertia(fn (Assert $page) => $page
+        ->where('engine.discovery_run_id', $run->id));
+    Bus::assertNothingDispatched();
+});
+
 it('discovers confidence without accepting manual confidence search bounds', function (): void {
     $search = ['offense' => ['min' => 88, 'max' => 88, 'step' => 1],
         'defense' => ['min' => 2, 'max' => 2, 'step' => 1], 'gap' => ['min' => 0, 'max' => 0, 'step' => 0.1],
@@ -478,20 +497,31 @@ it('removes only confidence alternatives dominated in win rate and coverage', fu
         ['confidence' => 0, 'picks' => 2, 'wins' => 2],
         ['confidence' => 100, 'picks' => 3, 'wins' => 3],
     ]);
-    expect($ranges)->toBe([['confidence_min' => 0, 'confidence_max' => 100, 'picks' => 5, 'wins' => 5]]);
+    expect($ranges)->toBe([['confidence_min' => 100, 'confidence_max' => 100, 'picks' => 3, 'wins' => 3]]);
 });
 
-it('matches an exhaustive confidence search for every minimum pick count', function (): void {
+it('limits automatic confidence discovery to three inclusive score values', function (): void {
+    $ranges = app(NhlSatEngineSettings::class)->confidenceFrontier([
+        ['confidence' => 70, 'picks' => 2, 'wins' => 2],
+        ['confidence' => 72, 'picks' => 2, 'wins' => 2],
+        ['confidence' => 77, 'picks' => 2, 'wins' => 2],
+    ]);
+
+    expect(collect($ranges)->contains(fn ($range): bool => $range['confidence_min'] === 70 && $range['confidence_max'] === 72))->toBeTrue()
+        ->and(collect($ranges)->contains(fn ($range): bool => $range['confidence_min'] === 70 && $range['confidence_max'] === 77))->toBeFalse();
+});
+
+it('matches an exhaustive three-score confidence search for every minimum pick count', function (): void {
     $groups = [
-        ['confidence' => 12, 'picks' => 2, 'wins' => 2],
-        ['confidence' => 35, 'picks' => 3, 'wins' => 0],
-        ['confidence' => 68, 'picks' => 4, 'wins' => 3],
-        ['confidence' => 100, 'picks' => 1, 'wins' => 1],
+        ['confidence' => 68, 'picks' => 2, 'wins' => 2],
+        ['confidence' => 69, 'picks' => 3, 'wins' => 0],
+        ['confidence' => 70, 'picks' => 4, 'wins' => 3],
+        ['confidence' => 72, 'picks' => 1, 'wins' => 1],
     ];
     $frontier = app(NhlSatEngineSettings::class)->confidenceFrontier($groups);
     $exhaustive = [];
     for ($min = 0; $min <= 100; $min++) {
-        for ($max = $min; $max <= 100; $max++) {
+        for ($max = $min; $max <= min(100, $min + 2); $max++) {
             $selected = array_filter($groups, fn ($row) => $row['confidence'] >= $min && $row['confidence'] <= $max);
             $count = array_sum(array_column($selected, 'picks'));
             if ($count > 0) {
@@ -499,7 +529,7 @@ it('matches an exhaustive confidence search for every minimum pick count', funct
             }
         }
     }
-    for ($minimumPicks = 1; $minimumPicks <= 10; $minimumPicks++) {
+    for ($minimumPicks = 1; $minimumPicks <= 9; $minimumPicks++) {
         $score = fn (array $rows): float => max(array_map(fn ($row): float => $row['wins'] / $row['picks'],
             array_filter($rows, fn ($row): bool => $row['picks'] >= $minimumPicks)));
         expect($score($frontier))->toBe($score($exhaustive));
@@ -577,27 +607,211 @@ it('keeps a below-target candidate in the filterable main list', function (): vo
     $this->assertDatabaseHas('nhl_sat_engines', ['name' => 'Near miss engine']);
 });
 
-it('uses foundation precedence while expanding coverage with a stack', function (): void {
+it('expands coverage with a supplement that preserves foundation precedence', function (): void {
     expect(NhlSatEngineStackAnalyzer::MAX_DEPTH)->toBe(5);
     $run = ($this->createRun)();
+    $run->update(['definition' => [...$run->definition, 'min_coverage_pct' => 30]]);
     $foundation = DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->first();
     DB::table('nhl_sat_engine_candidates')->where('id', $foundation->id)->update([
-        'settings' => json_encode([...$this->settings, 'gap' => 0]), 'metrics' => '{}', 'win_pct' => 100, 'coverage_pct' => 33.3333,
+        'settings' => json_encode([...$this->settings, 'confidence_min' => 70, 'confidence_max' => 70, 'gap' => 0.5]), 'metrics' => '{}', 'win_pct' => 100, 'coverage_pct' => 33.3333,
     ]);
     $supplement = DB::table('nhl_sat_engine_candidates')->insertGetId([
-        'run_id' => $run->id, 'split_index' => 1, 'settings' => json_encode([...$this->settings, 'gap' => 0]), 'metrics' => '{}',
+        'run_id' => $run->id, 'split_index' => 1, 'settings' => json_encode([...$this->settings, 'confidence_min' => 67, 'confidence_max' => 69, 'gap' => 0]), 'metrics' => '{}',
         'win_pct' => 66.6667, 'coverage_pct' => 100, 'meets_targets' => false, 'created_at' => now(), 'updated_at' => now(),
     ]);
     DB::table('nhl_sat_engine_results')->insert([
-        ($this->result)($run, 2025020001, ['split_index' => 0, 'correct' => true]),
-        ($this->result)($run, 2025020001, ['split_index' => 1, 'correct' => false]),
+        ($this->result)($run, 2025020001, ['split_index' => 0, 'confidence' => 70, 'correct' => true]),
+        ($this->result)($run, 2025020001, ['split_index' => 1, 'confidence' => 70, 'correct' => false]),
         ($this->result)($run, 2025020002, ['split_index' => 1, 'correct' => true]),
         ($this->result)($run, 2025020003, ['split_index' => 1, 'correct' => true]),
     ]);
     $stacks = app(NhlSatEngineStackAnalyzer::class)->analyze($run, DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->get());
     $stack = collect($stacks)->first(fn (array $row): bool => $row['ids'] === [(int) $foundation->id, $supplement]);
     expect($stack)->not->toBeNull()->and($stack['wins'])->toBe(3)->and($stack['losses'])->toBe(0)
-        ->and($stack['coverage_pct'])->toBe(100.0)->and($stack['excluded'])->toBe(0);
+        ->and($stack['coverage_pct'])->toBe(100.0)->and($stack['foundation_wins'])->toBe(1)
+        ->and($stack['foundation_losses'])->toBe(0)->and($stack['foundation_win_pct'])->toBe(100.0)
+        ->and($stack['foundation_coverage_pct'])->toBe(100.0)->and($stack['unique_added_picks'])->toBe(2)
+        ->and($stack['unique_added_wins'])->toBe(2)->and($stack['unique_added_losses'])->toBe(0)
+        ->and($stack['candidates'][0]['stack_picks'])->toBe(1)->and($stack['candidates'][1]['stack_picks'])->toBe(2)
+        ->and($stack['excluded'])->toBe(0);
+});
+
+it('continues automatic stack analysis through three contributing engines', function (): void {
+    $run = ($this->createRun)();
+    $run->update(['definition' => [...$run->definition, 'min_coverage_pct' => 30]]);
+    $foundation = DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->first();
+    DB::table('nhl_sat_engine_candidates')->where('id', $foundation->id)->update([
+        'settings' => json_encode([...$this->settings, 'confidence_min' => 70, 'confidence_max' => 70, 'gap' => 0.5]),
+        'metrics' => '{}', 'win_pct' => 100, 'coverage_pct' => 33.3333,
+    ]);
+    DB::table('nhl_sat_engine_candidates')->insertGetId([
+        'run_id' => $run->id, 'split_index' => 1,
+        'settings' => json_encode([...$this->settings, 'confidence_min' => 67, 'confidence_max' => 69, 'gap' => 0]),
+        'metrics' => '{}', 'win_pct' => 100, 'coverage_pct' => 33.3333, 'meets_targets' => false, 'created_at' => now(), 'updated_at' => now(),
+    ]);
+    DB::table('nhl_sat_engine_candidates')->insertGetId([
+        'run_id' => $run->id, 'split_index' => 2,
+        'settings' => json_encode([...$this->settings, 'confidence_min' => 60, 'confidence_max' => 66, 'gap' => 0]),
+        'metrics' => '{}', 'win_pct' => 100, 'coverage_pct' => 33.3333, 'meets_targets' => false, 'created_at' => now(), 'updated_at' => now(),
+    ]);
+    DB::table('nhl_sat_engine_results')->insert([
+        ($this->result)($run, 2025020001, ['split_index' => 0, 'confidence' => 70, 'correct' => true]),
+        ($this->result)($run, 2025020002, ['split_index' => 1, 'confidence' => 68, 'correct' => true]),
+        ($this->result)($run, 2025020003, ['split_index' => 2, 'confidence' => 65, 'correct' => true]),
+    ]);
+
+    $stacks = app(NhlSatEngineStackAnalyzer::class)->analyze($run,
+        DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->get());
+    $stack = collect($stacks)->first(fn (array $row): bool => count($row['ids']) === 3);
+
+    expect($stacks[0]['ids'])->toHaveCount(3)->and($stack)->not->toBeNull()->and($stack['candidates'][0]['stack_picks'])->toBe(1)
+        ->and($stack['candidates'][1]['stack_picks'])->toBe(1)->and($stack['candidates'][2]['stack_picks'])->toBe(1);
+});
+
+it('rejects an automatic supplement that replaces every foundation pick', function (): void {
+    $run = ($this->createRun)();
+    $run->update(['definition' => [...$run->definition, 'min_coverage_pct' => 30]]);
+    $foundation = DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->first();
+    DB::table('nhl_sat_engine_candidates')->where('id', $foundation->id)->update([
+        'settings' => json_encode([...$this->settings, 'confidence_min' => 70, 'confidence_max' => 70, 'gap' => 0.5]),
+        'metrics' => '{}', 'win_pct' => 100, 'coverage_pct' => 33.3333,
+    ]);
+    DB::table('nhl_sat_engine_candidates')->insert([
+        'run_id' => $run->id, 'split_index' => 1,
+        'settings' => json_encode([...$this->settings, 'confidence_min' => 67, 'confidence_max' => 70, 'gap' => 0]),
+        'metrics' => '{}', 'win_pct' => 80, 'coverage_pct' => 66.6667, 'meets_targets' => true, 'created_at' => now(), 'updated_at' => now(),
+    ]);
+    DB::table('nhl_sat_engine_results')->insert([
+        ($this->result)($run, 2025020001, ['split_index' => 0, 'confidence' => 70, 'correct' => true]),
+        ($this->result)($run, 2025020001, ['split_index' => 1, 'confidence' => 70, 'correct' => true]),
+        ($this->result)($run, 2025020002, ['split_index' => 1, 'confidence' => 68, 'correct' => true]),
+    ]);
+
+    expect(app(NhlSatEngineStackAnalyzer::class)->analyze($run,
+        DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->get()))->toBe([]);
+});
+
+it('recommends coverage-expanding stacks even when they lower the foundation win rate', function (): void {
+    $run = ($this->createRun)();
+    $run->update(['definition' => [...$run->definition, 'min_coverage_pct' => 30]]);
+    $foundation = DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->first();
+    DB::table('nhl_sat_engine_candidates')->where('id', $foundation->id)->update([
+        'settings' => json_encode([...$this->settings, 'gap' => 0.5]), 'metrics' => '{}', 'win_pct' => 100, 'coverage_pct' => 33.3333,
+    ]);
+    $supplement = DB::table('nhl_sat_engine_candidates')->insertGetId([
+        'run_id' => $run->id, 'split_index' => 1, 'settings' => json_encode([...$this->settings, 'gap' => 0]), 'metrics' => '{}',
+        'win_pct' => 0, 'coverage_pct' => 100, 'meets_targets' => false, 'created_at' => now(), 'updated_at' => now(),
+    ]);
+    DB::table('nhl_sat_engine_results')->insert([
+        ($this->result)($run, 2025020001, ['split_index' => 0, 'correct' => true]),
+        ($this->result)($run, 2025020002, ['split_index' => 1, 'correct' => false]),
+        ($this->result)($run, 2025020003, ['split_index' => 1, 'correct' => false]),
+    ]);
+
+    $rows = DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->get();
+    $stack = collect(app(NhlSatEngineStackAnalyzer::class)->analyze($run, $rows))
+        ->first(fn (array $row): bool => $row['ids'] === [(int) $foundation->id, $supplement]);
+    expect($stack)->not->toBeNull()->and($stack['coverage_pct'])->toBe(100.0)->and($stack['win_pct'])->toBeLessThan(100.0);
+});
+
+it('prioritizes supplementary win rate on new picks over standalone coverage', function (): void {
+    $run = ($this->createRun)();
+    $run->update(['definition' => [...$run->definition, 'min_coverage_pct' => 30]]);
+    $foundation = DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->first();
+    DB::table('nhl_sat_engine_candidates')->where('id', $foundation->id)->update([
+        'settings' => json_encode([...$this->settings, 'gap' => 0.5]), 'metrics' => '{}', 'win_pct' => 100, 'coverage_pct' => 33.3333,
+    ]);
+    DB::table('nhl_sat_engine_candidates')->insertGetId([
+        'run_id' => $run->id, 'split_index' => 1,
+        'settings' => json_encode([...$this->settings, 'confidence_min' => 0, 'confidence_max' => 100, 'gap' => 0.1]),
+        'metrics' => '{}', 'win_pct' => 90, 'coverage_pct' => 100, 'meets_targets' => true, 'created_at' => now(), 'updated_at' => now(),
+    ]);
+    $highMarginalWin = DB::table('nhl_sat_engine_candidates')->insertGetId([
+        'run_id' => $run->id, 'split_index' => 2,
+        'settings' => json_encode([...$this->settings, 'confidence_min' => 60, 'confidence_max' => 70, 'gap' => 0]),
+        'metrics' => '{}', 'win_pct' => 80, 'coverage_pct' => 66.6667, 'meets_targets' => true, 'created_at' => now(), 'updated_at' => now(),
+    ]);
+    DB::table('nhl_sat_engine_results')->insert([
+        ($this->result)($run, 2025020001, ['split_index' => 0, 'correct' => true]),
+        ($this->result)($run, 2025020002, ['split_index' => 1, 'correct' => false]),
+        ($this->result)($run, 2025020003, ['split_index' => 1, 'correct' => false]),
+        ($this->result)($run, 2025020002, ['split_index' => 2, 'correct' => true]),
+    ]);
+
+    $stacks = app(NhlSatEngineStackAnalyzer::class)->analyze($run, DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->get());
+
+    expect($stacks[0]['ids'])->toBe([(int) $foundation->id, $highMarginalWin]);
+});
+
+it('screens redundant high-win supplements before applying the automatic candidate limit', function (): void {
+    $run = ($this->createRun)();
+    $run->update(['definition' => [...$run->definition, 'min_coverage_pct' => 30]]);
+    $foundation = DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->first();
+    DB::table('nhl_sat_engine_candidates')->where('id', $foundation->id)->update([
+        'settings' => json_encode([...$this->settings, 'gap' => 0.5]), 'metrics' => '{}', 'win_pct' => 90, 'coverage_pct' => 33.3333,
+    ]);
+    for ($index = 1; $index <= 49; $index++) {
+        DB::table('nhl_sat_engine_candidates')->insert([
+            'run_id' => $run->id, 'split_index' => 1,
+            'settings' => json_encode([...$this->settings, 'confidence_min' => 72, 'confidence_max' => 77, 'gap' => $index / 100]),
+            'metrics' => '{}', 'win_pct' => 100, 'coverage_pct' => 25, 'meets_targets' => false, 'created_at' => now(), 'updated_at' => now(),
+        ]);
+    }
+    $contributor = DB::table('nhl_sat_engine_candidates')->insertGetId([
+        'run_id' => $run->id, 'split_index' => 2,
+        'settings' => json_encode([...$this->settings, 'confidence_min' => 60, 'confidence_max' => 70, 'gap' => 0]),
+        'metrics' => '{}', 'win_pct' => 60, 'coverage_pct' => 50, 'meets_targets' => false, 'created_at' => now(), 'updated_at' => now(),
+    ]);
+    DB::table('nhl_sat_engine_results')->insert([
+        ($this->result)($run, 2025020001, ['split_index' => 0, 'confidence' => 73, 'correct' => true]),
+        ($this->result)($run, 2025020001, ['split_index' => 1, 'confidence' => 73, 'correct' => true]),
+        ($this->result)($run, 2025020002, ['split_index' => 2, 'confidence' => 68, 'correct' => true]),
+    ]);
+
+    $stacks = app(NhlSatEngineStackAnalyzer::class)->analyze($run, DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->get());
+
+    expect($stacks[0]['ids'])->toBe([(int) $foundation->id, $contributor]);
+});
+
+it('uses the highest-win and then highest-offense candidate meeting the coverage target as the automatic foundation', function (): void {
+    $run = ($this->createRun)();
+    $foundation = DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->first();
+    DB::table('nhl_sat_engine_candidates')->where('id', $foundation->id)->update([
+        'settings' => json_encode([...$this->settings, 'offense' => 25]),
+        'metrics' => '{}', 'win_pct' => 84.6154, 'coverage_pct' => 41.9355,
+    ]);
+    $higherWinBelowTarget = DB::table('nhl_sat_engine_candidates')->insertGetId([
+        'run_id' => $run->id, 'split_index' => 1, 'settings' => json_encode($this->settings), 'metrics' => '{}',
+        'win_pct' => 100, 'coverage_pct' => 29.0323, 'meets_targets' => false, 'created_at' => now(), 'updated_at' => now(),
+    ]);
+    $higherOffense = DB::table('nhl_sat_engine_candidates')->insertGetId([
+        'run_id' => $run->id, 'split_index' => 2, 'settings' => json_encode([...$this->settings, 'offense' => 50]), 'metrics' => '{}',
+        'win_pct' => 84.6154, 'coverage_pct' => 41.9355, 'meets_targets' => false, 'created_at' => now(), 'updated_at' => now(),
+    ]);
+    $rows = DB::table('nhl_sat_engine_candidates')->whereIn('id', [$foundation->id, $higherWinBelowTarget, $higherOffense])->get();
+
+    $selected = app(NhlSatEngineStackAnalyzer::class)->foundation($run, $rows);
+    expect($selected['id'])->toBe($higherOffense);
+});
+
+it('analyzes a manually ordered stack and preserves its precedence', function (): void {
+    $run = ($this->createRun)();
+    $foundation = DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->first();
+    DB::table('nhl_sat_engine_candidates')->where('id', $foundation->id)->update(['metrics' => '{}', 'win_pct' => 100, 'coverage_pct' => 33.3333]);
+    $supplement = DB::table('nhl_sat_engine_candidates')->insertGetId([
+        'run_id' => $run->id, 'split_index' => 1, 'settings' => json_encode($this->settings), 'metrics' => '{}',
+        'win_pct' => 50, 'coverage_pct' => 100, 'meets_targets' => false, 'created_at' => now(), 'updated_at' => now(),
+    ]);
+    DB::table('nhl_sat_engine_results')->insert([
+        ($this->result)($run, 2025020001, ['split_index' => 0, 'correct' => true]),
+        ($this->result)($run, 2025020001, ['split_index' => 1, 'correct' => false]),
+        ($this->result)($run, 2025020002, ['split_index' => 1, 'correct' => true]),
+    ]);
+    $rows = DB::table('nhl_sat_engine_candidates')->whereIn('id', [$foundation->id, $supplement])->get()
+        ->sortBy(fn ($row) => array_search($row->id, [$foundation->id, $supplement], true))->values();
+
+    $manual = app(NhlSatEngineStackAnalyzer::class)->manual($run, $rows);
+    expect($manual['ids'])->toBe([(int) $foundation->id, $supplement])->and($manual['wins'])->toBe(2)->and($manual['losses'])->toBe(0);
 });
 
 it('selects the last games chronologically after filtering teams and dates', function (): void {
@@ -724,7 +938,7 @@ it('discovers exact score-gap cutoffs with strict equality and all-game totals',
     expect($actual['picks'])->toBe(2)->and($actual['wins'])->toBe(2);
 });
 
-it('matches exhaustive gap and confidence selections for every minimum pick count', function (): void {
+it('matches exhaustive gap and three-score confidence selections', function (): void {
     $run = ($this->createRun)();
     $games = [
         ['confidence' => 10, 'gap' => 0.05, 'correct' => false],
@@ -740,7 +954,7 @@ it('matches exhaustive gap and confidence selections for every minimum pick coun
     $exhaustive = [];
     foreach ([0, 0.05, 0.2, 0.4, 10] as $gap) {
         for ($low = 0; $low <= 100; $low++) {
-            for ($high = $low; $high <= 100; $high++) {
+            for ($high = $low; $high <= min(100, $low + 2); $high++) {
                 $picked = array_filter($games, fn ($game) => $game['gap'] > $gap && $game['confidence'] >= $low && $game['confidence'] <= $high);
                 if ($picked !== []) {
                     $exhaustive[] = ['picks' => count($picked), 'wins' => array_sum(array_column($picked, 'correct'))];
@@ -748,7 +962,7 @@ it('matches exhaustive gap and confidence selections for every minimum pick coun
             }
         }
     }
-    for ($minimum = 1; $minimum <= 5; $minimum++) {
+    for ($minimum = 1; $minimum <= 2; $minimum++) {
         $score = fn ($rows) => max(array_map(fn ($row) => $row['wins'] / $row['picks'],
             array_filter($rows, fn ($row) => $row['picks'] >= $minimum)));
         expect($score(array_column($found, 'metrics')))->toBe($score($exhaustive));

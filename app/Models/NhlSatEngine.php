@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Facades\DB;
 
 /** A saved set of prediction settings, independent of model training. */
@@ -16,6 +17,12 @@ class NhlSatEngine extends Model
     protected function casts(): array
     {
         return ['settings' => 'array', 'is_default' => 'boolean'];
+    }
+
+    /** The discovery run whose candidate settings were applied to this engine. */
+    public function discovery(): BelongsTo
+    {
+        return $this->belongsTo(NhlSatEngineRun::class, 'discovery_run_id');
     }
 
     /** Serialize first creation and default selection across concurrent requests.

@@ -119,7 +119,7 @@ class NhlSatEngineSettings
         return array_map(fn (array $row): array => [...$row, 'confidence_min' => 0, 'confidence_max' => 100], $rows);
     }
 
-    /** Evaluate all distinct nonempty confidence intervals and keep the win/coverage frontier.
+    /** Evaluate nonempty confidence intervals of at most three score values and keep the win/coverage frontier.
      * Empty confidence levels cannot change a selection, so equivalent bounds are tightened
      * to observed scores. A discarded interval has no better win rate or coverage than a retained one.
      * @param list<array{confidence: int, picks: int, wins: int}> $groups
@@ -132,7 +132,7 @@ class NhlSatEngineSettings
         $length = count($groups);
         for ($low = 0; $low < $length; $low++) {
             $picks = $wins = 0;
-            for ($high = $low; $high < $length; $high++) {
+            for ($high = $low; $high < $length && $groups[$high]['confidence'] - $groups[$low]['confidence'] <= 2; $high++) {
                 $picks += (int) $groups[$high]['picks'];
                 $wins += (int) $groups[$high]['wins'];
                 if ($picks < 1) {

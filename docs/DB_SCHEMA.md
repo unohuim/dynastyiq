@@ -2,14 +2,16 @@
 
 ## SAT engine management
 
-Migrations: `2026_10_01_000001_create_nhl_sat_engines.php` and
-`2026_10_01_000002_add_default_to_nhl_sat_engines.php`. These are global NHL
+Migrations: `2026_10_01_000001_create_nhl_sat_engines.php` through
+`2026_10_01_000003_add_test_model_to_nhl_sat_engines.php`, plus
+`2026_10_02_000001_add_pause_state_to_nhl_sat_engine_runs.php` and
+`2026_10_02_000002_add_discovery_run_to_nhl_sat_engines.php`. These are global NHL
 administrative records; they have no tenant or organization ownership.
 
-- `nhl_sat_engines`: `id`, `name`, `test_model_run_id`, `model_run_id` (Production Model), JSON `settings`, nullable `notes`, boolean
+- `nhl_sat_engines`: `id`, `name`, `test_model_run_id`, nullable `discovery_run_id`, `model_run_id` (Production Model), JSON `settings`, nullable `notes`, boolean
   `is_default`, timestamps. A partial unique index permits at most one true default.
   The first created engine is default; deleting a default promotes the newest remaining engine.
-  Model deletion is restricted while referenced.
+  `discovery_run_id` preserves the discovery run that supplied applied settings and nulls when its run is deleted; manual engines leave it null. Model deletion is restricted while referenced.
 - `nhl_sat_engine_runs`: `id`, nullable `engine_id`, `model_run_id`, `kind`, indexed
   `status`, nullable `paused_status`, `work_generation`, JSON `definition`, `game_count`, `prediction_count`,
   `predictions_completed`, `candidate_count`, `candidates_completed`, nullable

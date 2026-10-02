@@ -899,7 +899,7 @@ $token = PlatformTeamRosterShareLink::newPlainToken();
 **Purpose:** Save prediction settings and run model-dependent historical build/discovery evaluations.
 
 **Location:** `app/Services/NhlSatEngineEvaluator.php`, `app/Services/NhlSatEngineSettings.php`,
-`app/Models/NhlSatEngine.php`, `app/Models/NhlSatEngineRun.php`,
+`app/Models/NhlSatEngine.php`, `app/Models/NhlSatEngineCandidate.php`, `app/Models/NhlSatEngineRun.php`,
 `app/Http/Controllers/Admin/NhlSatEngineController.php`,
 `app/Jobs/EvaluateNhlSatEngineGameJob.php`, `app/Jobs/RankNhlSatEngineCandidatesJob.php`,
 and `resources/js/pages/Admin/SatEngines/`.
