@@ -57,9 +57,6 @@ class NhlGamePredictionPayload
         // Explicit historical evaluations own their model and weights independently of the default.
         if (! array_key_exists('sat_model_run_id', $overrides) && Schema::hasTable('nhl_sat_engines')) {
             $defaultEngine = NhlSatEngine::query()->where('is_default', true)->first();
-            if ($defaultEngine === null && NhlSatEngine::query()->exists()) {
-                throw ValidationException::withMessages(['engine' => 'Select a default SAT engine before requesting game predictions.']);
-            }
             if ($defaultEngine !== null) {
                 $overrides['sat_model_run_id'] = $defaultEngine->model_run_id;
                 $overrides['engine_weights'] = $defaultEngine->settings;

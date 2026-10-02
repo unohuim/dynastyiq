@@ -11,9 +11,10 @@ administrative records; they have no tenant or organization ownership.
   The first created engine is default; deleting a default promotes the newest remaining engine.
   Model deletion is restricted while referenced.
 - `nhl_sat_engine_runs`: `id`, nullable `engine_id`, `model_run_id`, `kind`, indexed
-  `status`, JSON `definition`, `game_count`, `prediction_count`,
+  `status`, nullable `paused_status`, `work_generation`, JSON `definition`, `game_count`, `prediction_count`,
   `predictions_completed`, `candidate_count`, `candidates_completed`, nullable
-  bounded `error`, nullable `completed_at`, timestamps. Definition snapshots the
+  bounded `error`, nullable `completed_at`, timestamps. `paused_status` preserves the resumable phase and
+  `work_generation` rejects pre-pause queue work. Definition snapshots the
   model timestamp, test season, selection IDs, scope, weight pairs, targets and
   confidence-search mode. Scope includes first/last/random selection and, for
   random runs, a server-generated selection seed; the resolved game IDs remain

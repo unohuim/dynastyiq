@@ -224,6 +224,21 @@ it('keeps below-target candidates in the main candidate table', () => {
     expect(root.querySelector('#candidates-title').parentElement.parentElement.querySelector('a').href).toContain('candidate=12');
 });
 
+it('requests analysis-only stack recommendations and renders them below candidates', async () => {
+    const props = reactive(report()); props.run.status = 'complete';
+    props.stacks = [{ ids: [12, 13], wins: 16, losses: 4, eligible: 25, excluded: 0, win_pct: 80, coverage_pct: 80,
+        candidates: [{ id: 12, settings, win_pct: 82, coverage_pct: 40 }, { id: 13, settings: { ...settings, confidence_min: 40, gap: 1 }, win_pct: 75, coverage_pct: 60 }] }];
+    const root = mount(Run, props);
+    [...root.querySelectorAll('button')].find(button => button.textContent === 'Stack').click();
+    await nextTick();
+    expect(transport.get).toHaveBeenCalledWith('/admin/nhl-sat-engines/runs/7', expect.objectContaining({ stack: 1 }), expect.any(Object));
+    props.stackRequested = true; await nextTick();
+    expect(root.querySelector('#stacks-title').textContent).toContain('Stack recommendations');
+    expect(root.textContent).toContain('Foundation');
+    expect(root.textContent).toContain('Supplement 1');
+    expect(root.textContent).toContain('80.0% coverage');
+});
+
 it('sorts a newly selected candidate column descending first', async () => {
     const props = report(); props.run.status = 'complete';
     props.candidates = { data: [{ id: 8, settings, metrics: {}, win_pct: 60, coverage_pct: 40, meets_targets: true }], links: [] };

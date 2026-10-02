@@ -3,6 +3,8 @@
 declare(strict_types=1);
 
 use App\Models\ApiClient;
+use App\Models\NhlModelRun;
+use App\Models\NhlSatEngine;
 use App\Services\NhlProjectedTeamMatchupSimulator;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Testing\Fluent\AssertableJson;
@@ -742,6 +744,27 @@ it('qualifies picks by inclusive confidence and score gap before display roundin
     'home lead hidden by display rounding' => [3.0, 3.0001],
     'away lead hidden by display rounding' => [3.0001, 3.0],
 ]);
+
+it('uses the legacy fallback when saved engines have no default', function (): void {
+    $token = ($this->seedPredictionInputs)();
+    $model = NhlModelRun::query()->create([
+        'run_key' => 'no-default-engine', 'name' => 'No default engine model', 'model_family' => 'sat',
+        'workflow_stage' => 'training', 'model_version' => 'no-default-engine', 'usage' => 'production', 'status' => 'complete',
+        'train_season_ids' => ['20232024'], 'target_season_id' => '20252026', 'metrics' => [],
+    ]);
+    NhlSatEngine::query()->create([
+        'name' => 'Unselected engine', 'test_model_run_id' => $model->id, 'model_run_id' => $model->id,
+        'settings' => ['offense' => 100, 'defense' => 100, 'confidence_min' => 0, 'confidence_max' => 100, 'gap' => 0],
+        'is_default' => false,
+    ]);
+
+    $this->withHeader('Authorization', 'Bearer ' . $token)->getJson('/api/nhl-game-predictions?' . http_build_query([
+        'nhl_game_id' => 2026020001,
+        'source_season_id' => '20252026', 'target_season_id' => '20262027',
+        'projection_version' => 'skater-market', 'toi_projection_version' => 'toi-market',
+        'goalie_projection_version' => 'goalie-market', 'away_goalie_id' => 9001, 'home_goalie_id' => 9002,
+    ]))->assertOk()->assertJsonPath('inputs.engine_id', null);
+});
 
 it('returns evidence without a prediction when one preseason lineup is unresolved', function (): void {
     $token = ($this->seedPredictionInputs)();

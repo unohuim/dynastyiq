@@ -8,6 +8,10 @@ its Production Model, offense/defense settings, confidence window and score-gap 
 The first engine becomes Default automatically; admins can switch it from the
 engine list. Engine selection is not a partner request parameter. Historical
 Engine discovery and testing use the engine's Test Model; they do not change API predictions.
+If no default is available, including when saved engines exist but none is marked
+Default, ordinary predictions retain the legacy fallback: no engine model or
+weights are selected, `inputs.engine_id` is null, and pick qualification uses
+confidence 67–70 with a score gap strictly greater than zero.
 
 
 ## Prediction roster player identifiers

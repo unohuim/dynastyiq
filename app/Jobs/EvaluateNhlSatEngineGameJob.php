@@ -22,7 +22,12 @@ class EvaluateNhlSatEngineGameJob implements ShouldQueue
     public int $backoff = 30;
 
     /** Carry only the run and bounded work coordinates. */
-    public function __construct(public int $runId, public int $splitIndex, public int $gameIndex)
+    public function __construct(
+        public int $runId,
+        public int $splitIndex,
+        public int $gameIndex,
+        public ?int $workGeneration = null,
+    )
     {
         $this->afterCommit = true;
     }
@@ -37,7 +42,8 @@ class EvaluateNhlSatEngineGameJob implements ShouldQueue
     public function handle(NhlSatEngineEvaluator $evaluator): void
     {
         $run = NhlSatEngineRun::query()->find($this->runId);
-        if ($run === null || ! in_array($run->status, ['queued', 'running'], true)) {
+        if ($run === null || ! in_array($run->status, ['queued', 'running'], true)
+            || ! $this->matchesGeneration($run)) {
             return;
         }
         $gameId = $run->definition['game_ids'][$this->gameIndex];
@@ -50,7 +56,8 @@ class EvaluateNhlSatEngineGameJob implements ShouldQueue
         $evaluator->assertModelUnchanged($run);
         DB::transaction(function () use ($row): void {
             $run = NhlSatEngineRun::query()->whereKey($this->runId)->lock('for no key update')->first();
-            if ($run === null || ! in_array($run->status, ['queued', 'running'], true)) {
+            if ($run === null || ! in_array($run->status, ['queued', 'running'], true)
+                || ! $this->matchesGeneration($run)) {
                 return;
             }
             $exists = DB::table('nhl_sat_engine_results')->where('run_id', $run->id)
@@ -63,16 +70,16 @@ class EvaluateNhlSatEngineGameJob implements ShouldQueue
             $run->status = (int) $run->predictions_completed === (int) $run->prediction_count ? 'ranking' : 'running';
             $run->save();
             if ($this->gameIndex + 1 < $run->game_count) {
-                self::dispatch($run->id, $this->splitIndex, $this->gameIndex + 1)->afterCommit();
+                self::dispatch($run->id, $this->splitIndex, $this->gameIndex + 1, $run->work_generation)->afterCommit();
             } elseif (($run->definition['automatic_search']['strategy'] ?? null) === 'coarse_to_fine_v1') {
                 $search = $run->definition['automatic_search'];
                 $next = $this->splitIndex + $search['lanes'];
                 if ($next < $search['stage_first_split'] + $search['stage_split_count']) {
-                    self::dispatch($run->id, $next, 0)->afterCommit();
+                    self::dispatch($run->id, $next, 0, $run->work_generation)->afterCommit();
                 }
             }
             if ($run->status === 'ranking') {
-                RankNhlSatEngineCandidatesJob::dispatch($run->id, 0)->afterCommit();
+                RankNhlSatEngineCandidatesJob::dispatch($run->id, 0, $run->work_generation)->afterCommit();
             }
         });
     }
@@ -80,8 +87,18 @@ class EvaluateNhlSatEngineGameJob implements ShouldQueue
     /** Keep diagnostics bounded and never overwrite terminal runs. */
     public function failed(?Throwable $exception): void
     {
-        NhlSatEngineRun::query()->whereKey($this->runId)->whereIn('status', ['queued', 'running', 'ranking'])
-            ->update(['status' => 'failed', 'error' => 'Game evaluation failed (' . class_basename($exception ?? new \RuntimeException())
-                . '). Review the failed job before starting a new run.', 'completed_at' => now()]);
+        $run = NhlSatEngineRun::query()->find($this->runId);
+        if ($run === null || ! $run->active() || ! $this->matchesGeneration($run)) {
+            return;
+        }
+        $run->update(['status' => 'failed', 'error' => 'Game evaluation failed (' . class_basename($exception ?? new \RuntimeException())
+            . '). Review the failed job before starting a new run.', 'completed_at' => now()]);
+    }
+
+    /** Reject work queued before an administrator paused and resumed this run. */
+    private function matchesGeneration(NhlSatEngineRun $run): bool
+    {
+        return $this->workGeneration === (int) $run->work_generation
+            || ($this->workGeneration === null && (int) $run->work_generation === 1);
     }
 }

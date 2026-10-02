@@ -9,6 +9,7 @@ use App\Models\NhlModelRun;
 use App\Models\NhlSatEngine;
 use App\Models\NhlSatEngineRun;
 use App\Services\NhlSatEngineEvaluator;
+use App\Services\NhlSatEngineStackAnalyzer;
 use App\Services\NhlSatEngineSettings;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -62,7 +63,7 @@ class NhlSatEngineController extends Controller
     /** Retain completed evaluation evidence when deleting an engine. */
     public function destroy(NhlSatEngine $engine): RedirectResponse
     {
-        if (NhlSatEngineRun::query()->where('engine_id', $engine->id)->whereIn('status', ['queued', 'running', 'ranking'])->exists()) {
+        if (NhlSatEngineRun::query()->where('engine_id', $engine->id)->whereIn('status', ['queued', 'running', 'ranking', 'paused'])->exists()) {
             throw ValidationException::withMessages(['engine' => 'Cancel active runs before deleting this engine.']);
         }
         $engine->deleteDefinition();
@@ -109,7 +110,7 @@ class NhlSatEngineController extends Controller
     }
 
     /** Inspect ranked candidates and one candidate's paginated game results. */
-    public function run(Request $request, NhlSatEngineRun $run): Response
+    public function run(Request $request, NhlSatEngineRun $run, NhlSatEngineStackAnalyzer $stackAnalyzer): Response
     {
         $input = $request->validate([
             'candidate' => 'nullable|integer',
@@ -132,6 +133,7 @@ class NhlSatEngineController extends Controller
             'max_eligible' => 'nullable|integer|min:0|gte:min_eligible',
             'min_excluded' => 'nullable|integer|min:0',
             'max_excluded' => 'nullable|integer|min:0|gte:min_excluded',
+            'stack' => 'nullable|boolean',
         ]);
         $sort = $input['sort'] ?? 'targets';
         $direction = $input['direction'] ?? 'desc';
@@ -179,6 +181,8 @@ class NhlSatEngineController extends Controller
         } else {
             $candidates->orderByRaw($columns[$sort] . ' ' . $direction . ' NULLS LAST');
         }
+        $stackRows = ($input['stack'] ?? false) ? (clone $candidates)->whereNotNull('metrics')
+            ->get(['id', 'split_index', 'settings', 'metrics', 'win_pct', 'coverage_pct']) : collect();
         $candidates = $candidates->orderBy('id')->paginate(25)->withQueryString();
         $candidate = DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)
             ->where('id', $input['candidate'] ?? $candidates->items()[0]->id ?? 0)->first();
@@ -200,16 +204,44 @@ class NhlSatEngineController extends Controller
             'run' => $run, 'candidates' => $candidates, 'games' => $games,
             'candidate' => $candidate ? $decode($candidate, ['settings', 'metrics']) : null,
             'engines' => NhlSatEngine::query()->orderBy('name')->get(['id', 'name', 'model_run_id', 'test_model_run_id']),
-            'models' => $this->models(), 'candidateFilters' => collect($input)->except(['candidate', 'sort', 'direction'])->all(),
+            'models' => $this->models(), 'candidateFilters' => collect($input)->except(['candidate', 'sort', 'direction', 'stack'])->all(),
             'candidateSort' => ['key' => $sort, 'direction' => $direction],
+            'stackRequested' => (bool) ($input['stack'] ?? false),
+            'stacks' => ($input['stack'] ?? false) ? $stackAnalyzer->analyze($run, $stackRows) : [],
         ]);
     }
 
     /** Cancel cooperatively; in-flight results cannot update terminal runs. */
     public function cancel(NhlSatEngineRun $run): RedirectResponse
     {
-        NhlSatEngineRun::query()->whereKey($run->id)->whereIn('status', ['queued', 'running', 'ranking'])
+        NhlSatEngineRun::query()->whereKey($run->id)->whereIn('status', ['queued', 'running', 'ranking', 'paused'])
             ->update(['status' => 'cancelled', 'completed_at' => now()]);
+
+        return back();
+    }
+
+    /** Pause future work while preserving the run's completed evidence. */
+    public function pause(NhlSatEngineRun $run): RedirectResponse
+    {
+        DB::transaction(function () use ($run): void {
+            $locked = NhlSatEngineRun::query()->whereKey($run->id)->lock('for no key update')->firstOrFail();
+            if (! $locked->active()) {
+                return;
+            }
+            $locked->update([
+                'paused_status' => $locked->status,
+                'status' => 'paused',
+                'work_generation' => $locked->work_generation + 1,
+            ]);
+        });
+
+        return back();
+    }
+
+    /** Restore the saved phase and enqueue only the run's missing work. */
+    public function resume(NhlSatEngineRun $run, NhlSatEngineEvaluator $evaluator): RedirectResponse
+    {
+        $evaluator->resume($run);
 
         return back();
     }

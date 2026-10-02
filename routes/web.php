@@ -400,6 +400,8 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                     Route::get('/discover', 'discover')->name('discover');
                     Route::post('/runs', 'start')->name('runs.store');
                     Route::get('/runs/{run}', 'run')->whereNumber('run')->name('runs.show');
+                    Route::post('/runs/{run}/pause', 'pause')->whereNumber('run')->name('runs.pause');
+                    Route::post('/runs/{run}/resume', 'resume')->whereNumber('run')->name('runs.resume');
                     Route::post('/runs/{run}/cancel', 'cancel')->whereNumber('run')->name('runs.cancel');
                     Route::post('/runs/{run}/candidates/{candidate}/apply', 'apply')->whereNumber('run')->whereNumber('candidate')->name('runs.apply');
                     Route::get('/{engine}', 'show')->whereNumber('engine')->name('show');

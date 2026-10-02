@@ -11,8 +11,8 @@
   or 2 (one-point refinement). Absent/null preserves legacy manual weight/gap behavior.
 - Run `definition.confidence_search`: `automatic` searches all confidence intervals for discovery;
   `configured` uses the saved engine interval. An absent marker denotes legacy explicit-range search.
-- Run `status`: `queued`, `running`, `ranking`, `complete`, `failed`, `cancelled`.
-  Only the first three are active. Terminal runs reject further worker writes.
+- Run `status`: `queued`, `running`, `ranking`, `paused`, `complete`, `failed`, `cancelled`.
+  `paused` retains partial evidence and its prior active phase for explicit resumption; it is neither terminal nor worker-writable. Only the first three are active. Terminal runs reject further worker writes.
 - Game-result `status`: `complete` for an eligible prediction with actuals; `excluded` for missing required evidence.
 - Scope `mode`: `season` (all matching completed regular-season games), `games` (N matching games),
   `days` (N distinct matching game dates), `selected` (explicit NHL game IDs).

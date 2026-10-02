@@ -1,0 +1,23 @@
+name: NHL SAT Engine Stack Analysis
+type: Read-Only Discovery Candidate Combination Analysis
+location:
+  - app/Services/NhlSatEngineStackAnalyzer.php
+  - app/Http/Controllers/Admin/NhlSatEngineController.php
+  - resources/js/pages/Admin/SatEngines/Run.vue
+purpose: Recommend ordered combinations of persisted discovery candidates that expand observed coverage without reducing the foundation candidate's observed win percentage.
+when_to_use:
+  - Inspecting analysis-only stack recommendations from an engine discovery run.
+when_not_to_use:
+  - Selecting the default engine, creating an engine, or changing ordinary prediction/API behavior.
+  - Dispatching or modifying historical evaluation work.
+rules:
+  - Stack analysis reads only the current run's persisted completed candidates and per-game result rows, constrained by the run page's active candidate filters.
+  - A stack has one foundation followed by at most four lower-priority supplementary candidates. For each game, the first qualifying candidate in that order supplies the pick; later candidates may only supply a pick when every earlier candidate did not qualify.
+  - Eligible games are the union of completed evidence across stack candidates. Selected games outside that union are excluded. Combined win percentage uses selected stack picks; combined coverage divides those picks by combined eligible games.
+  - A recommendation must improve coverage over its foundation without lowering that foundation's observed win percentage. It is analysis-only: it never queues work, persists a stack, creates or selects an engine, or changes prediction/API behavior.
+  - Search at most fifty filtered candidates and retain a deterministic three-state beam for every foundation at each depth. Rank returned stacks by combined win percentage, combined coverage, fewer engines, then stable candidate IDs.
+public_interface:
+  - NhlSatEngineStackAnalyzer
+  - /admin/nhl-sat-engines/runs/{run}?stack=1
+example_usage: |
+  Open Stack on a discovery run. A 66% foundation that covers 40% of eligible games can be followed by lower-priority candidates that only pick its uncovered games, producing a higher-coverage recommendation without reducing the foundation's observed win rate.

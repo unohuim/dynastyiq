@@ -909,9 +909,14 @@ model-dependent game/team scope and automatic discovery; `/runs/{run}` for
 progress, ranked candidates, actual totals and candidate adoption.
 
 **Example:** Discover settings for the first five game days of Sep2026's test
-season, automatically refining offense/defense weights and searching score gaps and confidence intervals, exposing strong
-below-coverage alternatives with their shortfalls, then create an engine directly from an evaluated result row, including while discovery continues. The default engine supplies ordinary prediction API behavior
+season, automatically refining offense/defense weights and searching score gaps and confidence intervals, filtering the complete candidate set, then create an engine directly from an evaluated result row, including while discovery continues. The default engine supplies ordinary prediction API behavior
 is unaffected. Canonical invariants: `docs/architecture/stats/NhlSatEngines.yaml`.
+
+### NHL SAT Engine Stack Analysis
+
+**Purpose:** Recommend analysis-only, ordered discovery candidate stacks that can increase observed coverage without reducing a foundation candidate's observed win percentage.
+
+**Canonical invariants:** `docs/architecture/stats/NhlSatEngineStackAnalysis.yaml`.
 
 ### NHL SAT Models
 

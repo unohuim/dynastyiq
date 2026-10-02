@@ -10,6 +10,7 @@ use App\Models\NhlSatEngineRun;
 use App\Models\Role;
 use App\Models\User;
 use App\Services\NhlSatEngineEvaluator;
+use App\Services\NhlSatEngineStackAnalyzer;
 use App\Services\NhlSatEngineSettings;
 use App\Services\NhlSatModelPredictionService;
 use Illuminate\Support\Facades\Bus;
@@ -87,7 +88,7 @@ it('blocks guests on every engine endpoint', function (string $verb, string $pat
     Bus::assertNothingDispatched();
 })->with([
     ['GET', ''], ['POST', ''], ['GET', '/discover'], ['GET', '/1'], ['PUT', '/1'], ['DELETE', '/1'],
-    ['POST', '/runs'], ['GET', '/runs/1'], ['POST', '/runs/1/cancel'], ['POST', '/runs/1/candidates/1/apply'], ['POST', '/1/default'],
+    ['POST', '/runs'], ['GET', '/runs/1'], ['POST', '/runs/1/pause'], ['POST', '/runs/1/resume'], ['POST', '/runs/1/cancel'], ['POST', '/runs/1/candidates/1/apply'], ['POST', '/1/default'],
 ]);
 
 it('blocks ordinary users on every engine endpoint', function (string $verb, string $path): void {
@@ -95,7 +96,7 @@ it('blocks ordinary users on every engine endpoint', function (string $verb, str
     Bus::assertNothingDispatched();
 })->with([
     ['GET', ''], ['POST', ''], ['GET', '/discover'], ['GET', '/1'], ['PUT', '/1'], ['DELETE', '/1'],
-    ['POST', '/runs'], ['GET', '/runs/1'], ['POST', '/runs/1/cancel'], ['POST', '/runs/1/candidates/1/apply'], ['POST', '/1/default'],
+    ['POST', '/runs'], ['GET', '/runs/1'], ['POST', '/runs/1/pause'], ['POST', '/runs/1/resume'], ['POST', '/runs/1/cancel'], ['POST', '/runs/1/candidates/1/apply'], ['POST', '/1/default'],
 ]);
 
 it('creates an engine without dispatching work and reads it through Inertia', function (): void {
@@ -249,6 +250,54 @@ it('cancels a run through HTTP and makes queued jobs inert', function (): void {
     $evaluator->shouldNotReceive('predict');
     (new EvaluateNhlSatEngineGameJob($run->id, 0, 0))->handle($evaluator);
     expect($run->fresh()->status)->toBe('cancelled');
+});
+
+it('pauses a run, preserves its evidence, and resumes only missing evaluation work', function (): void {
+    $run = ($this->createRun)();
+    DB::table('nhl_sat_engine_results')->insert(($this->result)($run, 2025020001));
+    $run->update(['status' => 'running', 'predictions_completed' => 1]);
+
+    $this->actingAs($this->admin)->post('/admin/nhl-sat-engines/runs/' . $run->id . '/pause')->assertRedirect();
+    $paused = $run->fresh();
+    expect($paused->status)->toBe('paused')->and($paused->paused_status)->toBe('running')
+        ->and($paused->work_generation)->toBe(2);
+    $this->assertDatabaseCount('nhl_sat_engine_results', 1);
+
+    $evaluator = Mockery::mock(NhlSatEngineEvaluator::class);
+    $evaluator->shouldNotReceive('predict');
+    (new EvaluateNhlSatEngineGameJob($run->id, 0, 1, 1))->handle($evaluator);
+
+    Bus::fake();
+    $this->actingAs($this->admin)->post('/admin/nhl-sat-engines/runs/' . $run->id . '/resume')->assertRedirect();
+    expect($run->fresh()->status)->toBe('running')->and($run->fresh()->paused_status)->toBeNull();
+    Bus::assertDispatched(EvaluateNhlSatEngineGameJob::class, fn ($job) => $job->runId === $run->id
+        && $job->splitIndex === 0 && $job->gameIndex === 1 && $job->workGeneration === 2);
+});
+
+it('resumes paused ranking from pending candidates and permits pausing to be cancelled', function (): void {
+    $run = ($this->createRun)();
+    $run->update(['status' => 'ranking']);
+    $this->actingAs($this->admin)->post('/admin/nhl-sat-engines/runs/' . $run->id . '/pause')->assertRedirect();
+    Bus::fake();
+    $this->actingAs($this->admin)->post('/admin/nhl-sat-engines/runs/' . $run->id . '/resume')->assertRedirect();
+    Bus::assertDispatched(RankNhlSatEngineCandidatesJob::class, fn ($job) => $job->runId === $run->id
+        && $job->afterId === 0 && $job->workGeneration === 2);
+
+    $this->actingAs($this->admin)->post('/admin/nhl-sat-engines/runs/' . $run->id . '/pause')->assertRedirect();
+    $this->actingAs($this->admin)->post('/admin/nhl-sat-engines/runs/' . $run->id . '/cancel')->assertRedirect();
+    expect($run->fresh()->status)->toBe('cancelled');
+});
+
+it('recovers a paused legacy run with no recorded prior phase', function (): void {
+    $run = ($this->createRun)();
+    $run->update(['status' => 'paused', 'paused_status' => null]);
+    Bus::fake();
+
+    $this->actingAs($this->admin)->post('/admin/nhl-sat-engines/runs/' . $run->id . '/resume')->assertRedirect();
+
+    expect($run->fresh()->status)->toBe('running')->and($run->fresh()->work_generation)->toBe(2);
+    Bus::assertDispatched(EvaluateNhlSatEngineGameJob::class, fn ($job) => $job->runId === $run->id
+        && $job->splitIndex === 0 && $job->gameIndex === 0 && $job->workGeneration === 2);
 });
 
 it('does not count a duplicate completed game twice', function (): void {
@@ -505,7 +554,7 @@ it('persists automatic ranges once while counting the search once', function ():
     expect(DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->count())->toBe($count);
 });
 
-it('surfaces a 38 percent candidate separately without marking it as meeting 40 percent', function (): void {
+it('keeps a below-target candidate in the filterable main list', function (): void {
     $run = ($this->createRun)();
     $run->update(['status' => 'complete']);
     $seed = DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->first();
@@ -519,23 +568,36 @@ it('surfaces a 38 percent candidate separately without marking it as meeting 40 
             'metrics' => '{}', 'win_pct' => 70, 'coverage_pct' => 40, 'meets_targets' => true,
         ]);
     }
-    $this->actingAs($this->admin)->get('/admin/nhl-sat-engines/runs/' . $run->id)
-        ->assertInertia(fn (Assert $page) => $page->has('nearMisses.data', 1)
-            ->where('nearMisses.data.0.id', $seed->id)
-            ->where('nearMisses.data.0.coverage_pct', fn ($value) => (float) $value === 38.0)
-            ->where('nearMisses.data.0.meets_targets', fn ($value) => ! (bool) $value));
+    $this->actingAs($this->admin)->get('/admin/nhl-sat-engines/runs/' . $run->id . '?target_status=not_met')
+        ->assertInertia(fn (Assert $page) => $page->has('candidates.data', 1)
+            ->where('candidates.data.0.id', $seed->id)
+            ->where('candidates.data.0.coverage_pct', fn ($value) => (float) $value === 38.0)
+            ->where('candidates.data.0.meets_targets', fn ($value) => ! (bool) $value));
     $this->post('/admin/nhl-sat-engines/runs/' . $run->id . '/candidates/' . $seed->id . '/apply', ['name' => 'Near miss engine'])->assertRedirect();
     $this->assertDatabaseHas('nhl_sat_engines', ['name' => 'Near miss engine']);
 });
 
-it('does not label below-win-target or empty results as strong coverage alternatives', function (): void {
+it('uses foundation precedence while expanding coverage with a stack', function (): void {
+    expect(NhlSatEngineStackAnalyzer::MAX_DEPTH)->toBe(5);
     $run = ($this->createRun)();
-    $seed = DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->first();
-    DB::table('nhl_sat_engine_candidates')->where('id', $seed->id)->update([
-        'metrics' => '{}', 'win_pct' => 50, 'coverage_pct' => 38,
+    $foundation = DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->first();
+    DB::table('nhl_sat_engine_candidates')->where('id', $foundation->id)->update([
+        'settings' => json_encode([...$this->settings, 'gap' => 0]), 'metrics' => '{}', 'win_pct' => 100, 'coverage_pct' => 33.3333,
     ]);
-    $this->actingAs($this->admin)->get('/admin/nhl-sat-engines/runs/' . $run->id)
-        ->assertInertia(fn (Assert $page) => $page->has('nearMisses.data', 0));
+    $supplement = DB::table('nhl_sat_engine_candidates')->insertGetId([
+        'run_id' => $run->id, 'split_index' => 1, 'settings' => json_encode([...$this->settings, 'gap' => 0]), 'metrics' => '{}',
+        'win_pct' => 66.6667, 'coverage_pct' => 100, 'meets_targets' => false, 'created_at' => now(), 'updated_at' => now(),
+    ]);
+    DB::table('nhl_sat_engine_results')->insert([
+        ($this->result)($run, 2025020001, ['split_index' => 0, 'correct' => true]),
+        ($this->result)($run, 2025020001, ['split_index' => 1, 'correct' => false]),
+        ($this->result)($run, 2025020002, ['split_index' => 1, 'correct' => true]),
+        ($this->result)($run, 2025020003, ['split_index' => 1, 'correct' => true]),
+    ]);
+    $stacks = app(NhlSatEngineStackAnalyzer::class)->analyze($run, DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->get());
+    $stack = collect($stacks)->first(fn (array $row): bool => $row['ids'] === [(int) $foundation->id, $supplement]);
+    expect($stack)->not->toBeNull()->and($stack['wins'])->toBe(3)->and($stack['losses'])->toBe(0)
+        ->and($stack['coverage_pct'])->toBe(100.0)->and($stack['excluded'])->toBe(0);
 });
 
 it('selects the last games chronologically after filtering teams and dates', function (): void {
