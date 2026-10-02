@@ -26,6 +26,7 @@ class NhlSatEngineController extends Controller
     {
         return Inertia::render('Admin/SatEngines/Index', [
             'engines' => NhlSatEngine::query()->latest('id')->paginate(25),
+            'runs' => NhlSatEngineRun::query()->latest('id')->paginate(25, ['*'], 'runs_page'),
             'models' => $this->models(), 'defaults' => app(NhlSatEngineSettings::class)->defaults(),
         ]);
     }
@@ -110,10 +111,75 @@ class NhlSatEngineController extends Controller
     /** Inspect ranked candidates and one candidate's paginated game results. */
     public function run(Request $request, NhlSatEngineRun $run): Response
     {
-        $input = $request->validate(['candidate' => 'nullable|integer']);
+        $input = $request->validate([
+            'candidate' => 'nullable|integer',
+            'sort' => ['nullable', Rule::in(['targets', 'offense', 'defense', 'confidence_min', 'confidence_max', 'gap', 'win_pct', 'coverage_pct', 'eligible', 'excluded', 'all_wins', 'all_losses', 'wins', 'losses'])],
+            'direction' => ['nullable', Rule::in(['asc', 'desc'])],
+            'min_coverage' => 'nullable|numeric|between:0,100',
+            'max_coverage' => 'nullable|numeric|between:0,100|gte:min_coverage',
+            'min_win_pct' => 'nullable|numeric|between:0,100',
+            'max_win_pct' => 'nullable|numeric|between:0,100|gte:min_win_pct',
+            'min_offense' => 'nullable|numeric|between:0,200',
+            'max_offense' => 'nullable|numeric|between:0,200|gte:min_offense',
+            'min_defense' => 'nullable|numeric|between:0,200',
+            'max_defense' => 'nullable|numeric|between:0,200|gte:min_defense',
+            'min_confidence' => 'nullable|integer|between:0,100',
+            'max_confidence' => 'nullable|integer|between:0,100|gte:min_confidence',
+            'min_gap' => 'nullable|numeric|between:0,10',
+            'max_gap' => 'nullable|numeric|between:0,10|gte:min_gap',
+            'target_status' => ['nullable', Rule::in(['met', 'not_met', 'pending'])],
+            'min_eligible' => 'nullable|integer|min:0',
+            'max_eligible' => 'nullable|integer|min:0|gte:min_eligible',
+            'min_excluded' => 'nullable|integer|min:0',
+            'max_excluded' => 'nullable|integer|min:0|gte:min_excluded',
+        ]);
+        $sort = $input['sort'] ?? 'targets';
+        $direction = $input['direction'] ?? 'desc';
+        $columns = [
+            'offense' => "CAST(settings->>'offense' AS NUMERIC)",
+            'defense' => "CAST(settings->>'defense' AS NUMERIC)",
+            'confidence_min' => "CAST(settings->>'confidence_min' AS NUMERIC)",
+            'confidence_max' => "CAST(settings->>'confidence_max' AS NUMERIC)",
+            'gap' => "CAST(settings->>'gap' AS NUMERIC)",
+            'win_pct' => 'win_pct', 'coverage_pct' => 'coverage_pct',
+            'eligible' => "CAST(metrics->>'eligible' AS INTEGER)",
+            'excluded' => "CAST(metrics->>'excluded' AS INTEGER)",
+            'all_wins' => "CAST(metrics->>'all_wins' AS INTEGER)",
+            'all_losses' => "CAST(metrics->>'all_losses' AS INTEGER)",
+            'wins' => "CAST(metrics->>'wins' AS INTEGER)",
+            'losses' => "CAST(metrics->>'losses' AS INTEGER)",
+        ];
         $candidates = DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)
-            ->orderByDesc('meets_targets')->orderByRaw('CASE WHEN win_pct IS NULL THEN 1 ELSE 0 END')
-            ->orderByDesc('win_pct')->orderByDesc('coverage_pct')->orderBy('id')->paginate(25)->withQueryString();
+            ->when(isset($input['min_coverage']), fn ($query) => $query->where('coverage_pct', '>=', $input['min_coverage']))
+            ->when(isset($input['max_coverage']), fn ($query) => $query->where('coverage_pct', '<=', $input['max_coverage']))
+            ->when(isset($input['min_win_pct']), fn ($query) => $query->where('win_pct', '>=', $input['min_win_pct']))
+            ->when(isset($input['max_win_pct']), fn ($query) => $query->where('win_pct', '<=', $input['max_win_pct']))
+            ->when(isset($input['target_status']), function ($query) use ($input): void {
+                match ($input['target_status']) {
+                    'met' => $query->where('meets_targets', true),
+                    'not_met' => $query->whereNotNull('metrics')->where('meets_targets', false),
+                    'pending' => $query->whereNull('metrics'),
+                };
+            })
+            ->when(isset($input['min_offense']), fn ($query) => $query->whereRaw("CAST(settings->>'offense' AS NUMERIC) >= ?", [$input['min_offense']]))
+            ->when(isset($input['max_offense']), fn ($query) => $query->whereRaw("CAST(settings->>'offense' AS NUMERIC) <= ?", [$input['max_offense']]))
+            ->when(isset($input['min_defense']), fn ($query) => $query->whereRaw("CAST(settings->>'defense' AS NUMERIC) >= ?", [$input['min_defense']]))
+            ->when(isset($input['max_defense']), fn ($query) => $query->whereRaw("CAST(settings->>'defense' AS NUMERIC) <= ?", [$input['max_defense']]))
+            ->when(isset($input['min_confidence']), fn ($query) => $query->whereRaw("CAST(settings->>'confidence_min' AS INTEGER) >= ?", [$input['min_confidence']]))
+            ->when(isset($input['max_confidence']), fn ($query) => $query->whereRaw("CAST(settings->>'confidence_max' AS INTEGER) <= ?", [$input['max_confidence']]))
+            ->when(isset($input['min_gap']), fn ($query) => $query->whereRaw("CAST(settings->>'gap' AS NUMERIC) >= ?", [$input['min_gap']]))
+            ->when(isset($input['max_gap']), fn ($query) => $query->whereRaw("CAST(settings->>'gap' AS NUMERIC) <= ?", [$input['max_gap']]))
+            ->when(isset($input['min_eligible']), fn ($query) => $query->whereRaw("CAST(metrics->>'eligible' AS INTEGER) >= ?", [$input['min_eligible']]))
+            ->when(isset($input['max_eligible']), fn ($query) => $query->whereRaw("CAST(metrics->>'eligible' AS INTEGER) <= ?", [$input['max_eligible']]))
+            ->when(isset($input['min_excluded']), fn ($query) => $query->whereRaw("CAST(metrics->>'excluded' AS INTEGER) >= ?", [$input['min_excluded']]))
+            ->when(isset($input['max_excluded']), fn ($query) => $query->whereRaw("CAST(metrics->>'excluded' AS INTEGER) <= ?", [$input['max_excluded']]));
+        if ($sort === 'targets') {
+            $candidates->orderByDesc('meets_targets')->orderByRaw('CASE WHEN win_pct IS NULL THEN 1 ELSE 0 END')
+                ->orderByDesc('win_pct')->orderByDesc('coverage_pct');
+        } else {
+            $candidates->orderByRaw($columns[$sort] . ' ' . $direction . ' NULLS LAST');
+        }
+        $candidates = $candidates->orderBy('id')->paginate(25)->withQueryString();
         $candidate = DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)
             ->where('id', $input['candidate'] ?? $candidates->items()[0]->id ?? 0)->first();
         abort_if(isset($input['candidate']) && ! $candidate, 404);
@@ -125,23 +191,17 @@ class NhlSatEngineController extends Controller
             return $row;
         };
         $candidates->through(fn ($row) => $decode($row, ['settings', 'metrics']));
-        // Surface strong below-coverage alternatives independently of the main ranking.
-        $nearMisses = DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)
-            ->whereNotNull('metrics')->where('win_pct', '>=', $run->definition['desired_win_pct'])
-            ->where('coverage_pct', '<', $run->definition['min_coverage_pct'])
-            ->orderByDesc('coverage_pct')->orderByDesc('win_pct')->orderBy('id')
-            ->paginate(10, ['*'], 'near_page')->withQueryString()
-            ->through(fn ($row) => $decode($row, ['settings', 'metrics']));
         $games = DB::table('nhl_sat_engine_results')->where('run_id', $run->id)
             ->where('split_index', $candidate?->split_index ?? 0)->orderBy('nhl_game_id')
             ->paginate(25, ['*'], 'games_page')->withQueryString()
             ->through(fn ($row) => $decode($row, ['game', 'prediction']));
 
         return Inertia::render('Admin/SatEngines/Run', [
-            'run' => $run, 'candidates' => $candidates, 'nearMisses' => $nearMisses, 'games' => $games,
+            'run' => $run, 'candidates' => $candidates, 'games' => $games,
             'candidate' => $candidate ? $decode($candidate, ['settings', 'metrics']) : null,
             'engines' => NhlSatEngine::query()->orderBy('name')->get(['id', 'name', 'model_run_id', 'test_model_run_id']),
-            'models' => $this->models(),
+            'models' => $this->models(), 'candidateFilters' => collect($input)->except(['candidate', 'sort', 'direction'])->all(),
+            'candidateSort' => ['key' => $sort, 'direction' => $direction],
         ]);
     }
 

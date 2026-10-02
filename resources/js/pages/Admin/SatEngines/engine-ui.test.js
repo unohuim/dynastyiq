@@ -7,13 +7,13 @@ import Workspace from './Workspace.vue';
 import Run from './Run.vue';
 import SettingsFields from './SettingsFields.vue';
 
-const transport = vi.hoisted(() => ({ post: vi.fn(), put: vi.fn(), delete: vi.fn(), reload: vi.fn() }));
+const transport = vi.hoisted(() => ({ post: vi.fn(), put: vi.fn(), delete: vi.fn(), get: vi.fn(), reload: vi.fn() }));
 vi.mock('@inertiajs/vue3', async () => {
     const { h, reactive } = await import('vue');
     return {
         Head: { render: () => null },
         Link: { props: ['href'], setup: (props, { slots }) => () => h('a', { href: props.href }, slots.default?.()) },
-        router: { reload: (...args) => transport.reload(...args) },
+        router: { get: (...args) => transport.get(...args), reload: (...args) => transport.reload(...args) },
         useForm: initial => {
             let transform = value => value;
             const keys = Object.keys(initial);
@@ -214,20 +214,49 @@ it('shows percentage-point shortfalls rather than relative percentages', () => {
     expect(coverageShortfall(42, 40)).toBe(0);
 });
 
-it('highlights strong coverage misses independently of the main candidate table', () => {
+it('keeps below-target candidates in the main candidate table', () => {
     const props = report(); props.run.status = 'complete';
-    props.nearMisses = { total: 1, links: [], data: [{ id: 12, settings,
-        metrics: { wins: 18, losses: 1 }, win_pct: 94.7368, coverage_pct: 38, meets_targets: false }] };
+    props.candidates = { total: 1, links: [], data: [{ id: 12, settings,
+        metrics: { wins: 18, losses: 1, all_wins: 18, all_losses: 1, eligible: 19, excluded: 0 }, win_pct: 94.7368, coverage_pct: 38, meets_targets: false }] };
     const root = mount(Run, props);
-    const panel = root.querySelector('[aria-label="Strong candidates below coverage target"]');
-    expect(panel.textContent).toContain('2 percentage points below target');
-    expect(panel.textContent).toContain('do not count as meeting both targets');
-    expect(panel.querySelector('a').href).toContain('candidate=12');
+    expect(root.querySelector('[aria-label="Strong candidates below coverage target"]')).toBeNull();
+    expect(root.querySelector('#candidates-title').parentElement.parentElement.textContent).toContain('Not met');
+    expect(root.querySelector('#candidates-title').parentElement.parentElement.querySelector('a').href).toContain('candidate=12');
 });
 
-it('refreshes highlighted alternatives alongside ordinary ranking results', async () => {
+it('sorts a newly selected candidate column descending first', async () => {
+    const props = report(); props.run.status = 'complete';
+    props.candidates = { data: [{ id: 8, settings, metrics: {}, win_pct: 60, coverage_pct: 40, meets_targets: true }], links: [] };
+    props.candidateSort = { key: 'targets', direction: 'desc' };
+    const root = mount(Run, props);
+    [...root.querySelectorAll('button')].find(button => button.textContent.includes('Coverage %')).click();
+    await nextTick();
+    expect(transport.get).toHaveBeenCalledWith('/admin/nhl-sat-engines/runs/7', expect.objectContaining({ sort: 'coverage_pct', direction: 'desc' }), expect.any(Object));
+});
+
+it('toggles an active candidate column from descending to ascending', async () => {
+    const props = report(); props.run.status = 'complete';
+    props.candidates = { data: [{ id: 8, settings, metrics: {}, win_pct: 60, coverage_pct: 40, meets_targets: true }], links: [] };
+    props.candidateSort = { key: 'coverage_pct', direction: 'desc' };
+    const root = mount(Run, props);
+    [...root.querySelectorAll('button')].find(button => button.textContent.includes('Coverage %')).click();
+    await nextTick();
+    expect(transport.get).toHaveBeenCalledWith('/admin/nhl-sat-engines/runs/7', expect.objectContaining({ sort: 'coverage_pct', direction: 'asc' }), expect.any(Object));
+});
+
+it('shows the active candidate sort icon and accessible direction', () => {
+    const props = report(); props.run.status = 'complete';
+    props.candidates = { data: [{ id: 8, settings, metrics: {}, win_pct: 60, coverage_pct: 40, meets_targets: true }], links: [] };
+    props.candidateSort = { key: 'coverage_pct', direction: 'desc' };
+    const root = mount(Run, props);
+    const coverage = [...root.querySelectorAll('button')].find(button => button.textContent.includes('Coverage %'));
+    expect(coverage.textContent).toContain('↓');
+    expect(coverage.getAttribute('aria-label')).toContain('Sorted descending');
+});
+
+it('refreshes only the remaining run data', async () => {
     mount(Run, report()); await vi.advanceTimersByTimeAsync(5000);
-    expect(transport.reload.mock.calls[0][0].only).toContain('nearMisses');
+    expect(transport.reload.mock.calls[0][0].only).not.toContain('nearMisses');
 });
 
 it('labels automatic ranking progress as weight and gap searches', () => {
@@ -334,18 +363,6 @@ it('creates from the clicked row rather than the selected detail candidate while
     const input = dialog.querySelector('input'); input.value = 'My candidate'; input.dispatchEvent(new Event('input'));
     dialog.querySelector('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
     expect(transport.post).toHaveBeenCalledWith('/admin/nhl-sat-engines/runs/7/candidates/12/apply', { name: 'My candidate' });
-});
-
-it('offers creation directly on near-miss rows and cancellation sends no request', async () => {
-    const props = report(); props.nearMisses = { total: 1, links: [], data: [{ id: 12, settings, metrics: {}, coverage_pct: 38 }] };
-    const root = mount(Run, props);
-    const trigger = root.querySelector('[aria-label="Strong candidates below coverage target"] button');
-    trigger.click(); await nextTick(); await nextTick();
-    const dialog = root.querySelector('dialog');
-    [...dialog.querySelectorAll('button')].find(button => button.textContent === 'Cancel').click();
-    expect(dialog.hasAttribute('open')).toBe(false);
-    expect(document.activeElement).toBe(trigger);
-    expect(transport.post).not.toHaveBeenCalled();
 });
 
 it('does not offer creation for pending candidates or failed and cancelled runs', async () => {
