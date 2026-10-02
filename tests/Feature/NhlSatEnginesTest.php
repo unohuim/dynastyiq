@@ -693,7 +693,7 @@ it('rejects an automatic supplement that replaces every foundation pick', functi
 
 it('recommends coverage-expanding stacks even when they lower the foundation win rate', function (): void {
     $run = ($this->createRun)();
-    $run->update(['definition' => [...$run->definition, 'min_coverage_pct' => 30]]);
+    $run->update(['definition' => [...$run->definition, 'desired_win_pct' => 50, 'min_coverage_pct' => 30]]);
     $foundation = DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->first();
     DB::table('nhl_sat_engine_candidates')->where('id', $foundation->id)->update([
         'settings' => json_encode([...$this->settings, 'gap' => 0.5]), 'metrics' => '{}', 'win_pct' => 100, 'coverage_pct' => 33.3333,
@@ -704,7 +704,7 @@ it('recommends coverage-expanding stacks even when they lower the foundation win
     ]);
     DB::table('nhl_sat_engine_results')->insert([
         ($this->result)($run, 2025020001, ['split_index' => 0, 'correct' => true]),
-        ($this->result)($run, 2025020002, ['split_index' => 1, 'correct' => false]),
+        ($this->result)($run, 2025020002, ['split_index' => 1, 'correct' => true]),
         ($this->result)($run, 2025020003, ['split_index' => 1, 'correct' => false]),
     ]);
 
@@ -712,6 +712,29 @@ it('recommends coverage-expanding stacks even when they lower the foundation win
     $stack = collect(app(NhlSatEngineStackAnalyzer::class)->analyze($run, $rows))
         ->first(fn (array $row): bool => $row['ids'] === [(int) $foundation->id, $supplement]);
     expect($stack)->not->toBeNull()->and($stack['coverage_pct'])->toBe(100.0)->and($stack['win_pct'])->toBeLessThan(100.0);
+});
+
+it('rejects automatic supplementary picks below the discovery win target', function (): void {
+    $run = ($this->createRun)();
+    $run->update(['definition' => [...$run->definition, 'desired_win_pct' => 60, 'min_coverage_pct' => 30]]);
+    $foundation = DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->first();
+    DB::table('nhl_sat_engine_candidates')->where('id', $foundation->id)->update([
+        'settings' => json_encode([...$this->settings, 'confidence_min' => 70, 'confidence_max' => 70, 'gap' => 0.5]),
+        'metrics' => '{}', 'win_pct' => 100, 'coverage_pct' => 33.3333,
+    ]);
+    DB::table('nhl_sat_engine_candidates')->insert([
+        'run_id' => $run->id, 'split_index' => 1,
+        'settings' => json_encode([...$this->settings, 'confidence_min' => 67, 'confidence_max' => 69, 'gap' => 0]),
+        'metrics' => '{}', 'win_pct' => 50, 'coverage_pct' => 66.6667, 'meets_targets' => false, 'created_at' => now(), 'updated_at' => now(),
+    ]);
+    DB::table('nhl_sat_engine_results')->insert([
+        ($this->result)($run, 2025020001, ['split_index' => 0, 'confidence' => 70, 'correct' => true]),
+        ($this->result)($run, 2025020002, ['split_index' => 1, 'confidence' => 68, 'correct' => true]),
+        ($this->result)($run, 2025020003, ['split_index' => 1, 'confidence' => 68, 'correct' => false]),
+    ]);
+
+    expect(app(NhlSatEngineStackAnalyzer::class)->analyze($run,
+        DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->get()))->toBe([]);
 });
 
 it('prioritizes supplementary win rate on new picks over standalone coverage', function (): void {

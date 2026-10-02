@@ -30,6 +30,7 @@ final class NhlSatEngineStackAnalyzer
         }
         $candidateResults = $this->candidateResults($run, $allCandidates);
         $foundationState = $this->state([$foundation], $candidateResults, $run->game_count);
+        $minimumWinPct = (float) $run->definition['desired_win_pct'];
         $supplements = collect($allCandidates)
             ->filter(fn (array $candidate): bool => $candidate['id'] !== $foundation['id']
                 && $candidate['win_pct'] !== null && $this->qualificationKey($candidate) !== $this->qualificationKey($foundation))
@@ -38,7 +39,7 @@ final class NhlSatEngineStackAnalyzer
 
                 return [...$candidate, ...$marginal];
             })
-            ->filter(fn (array $candidate): bool => $candidate['marginal_picks'] > 0
+            ->filter(fn (array $candidate): bool => $candidate['marginal_picks'] > 0 && $candidate['marginal_win_pct'] >= $minimumWinPct
                 && $this->preservesPrecedence($foundationState, $candidate, $candidateResults))
             ->sortBy([['marginal_win_pct', 'desc'], ['marginal_picks', 'desc'], ['win_pct', 'desc'], ['coverage_pct', 'desc'], ['id', 'asc']])
             ->unique(fn (array $candidate): string => $this->qualificationKey($candidate))
@@ -60,7 +61,13 @@ final class NhlSatEngineStackAnalyzer
                         || in_array($this->qualificationKey($candidate), $state['qualification_keys'], true)) {
                         continue;
                     }
-                    $expanded = $this->expand($state, $candidate, $candidateResults, $run->game_count);
+                    $expanded = $this->expand(
+                        $state,
+                        $candidate,
+                        $candidateResults,
+                        $run->game_count,
+                        $minimumWinPct
+                    );
                     if ($expanded !== null) {
                         $next[] = $expanded;
                     }
@@ -206,13 +213,13 @@ final class NhlSatEngineStackAnalyzer
      * @param array<int, array{eligible: array<int,bool>, picks: array<int,bool>}> $candidateResults
      * @return array<string,mixed>|null
      */
-    private function expand(array $state, array $candidate, array $candidateResults, int $selected): ?array
+    private function expand(array $state, array $candidate, array $candidateResults, int $selected, float $minimumWinPct): ?array
     {
         if (! $this->preservesPrecedence($state, $candidate, $candidateResults)) {
             return null;
         }
         $marginal = $this->marginal($state, $candidate, $candidateResults);
-        if ($marginal['marginal_picks'] === 0) {
+        if ($marginal['marginal_picks'] === 0 || $marginal['marginal_win_pct'] < $minimumWinPct) {
             return null;
         }
 

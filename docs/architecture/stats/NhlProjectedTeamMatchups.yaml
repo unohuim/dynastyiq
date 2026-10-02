@@ -5,6 +5,7 @@ location:
   - app/Http/Controllers/Admin/NhlShotAttemptController.php
   - app/Http/Controllers/Api/NhlGamePredictionsController.php
   - app/Services/NhlGamePredictionPayload.php
+  - app/Services/NhlGamePredictionResponseCache.php
   - app/Services/NhlGameLineupProjectionBuilder.php
   - docs/architecture/stats/NhlProjectedTeamMatchups.yaml
   - resources/views/admin/nhl-shot-attempts/index.blade.php
@@ -60,6 +61,7 @@ rules:
   - Team matchup profiles are computed on demand and must not be persisted until a separate team-profile storage abstraction is approved.
   - Results must expose high-level per-game rates and rolled bucket-level data explaining offensive generation, defensive chances allowed, and goalie response.
   - Partner-facing game prediction payloads resolve nhl_game_id through nhl_games and derive missing starters from performance or workload projections. No selected starter remains an error; a selected starter without personal projection history uses the labelled league-average fallback.
+  - The partner API may serve a bounded stale prediction only when its refresh is queued; cache freshness and refresh invariants are governed by NhlGamePredictionResponseCache.yaml. Historical engine evaluations never use this response cache.
   - Partner-facing game prediction payloads must expose model-owned full-game moneyline probabilities under market_probabilities[] using moneyline, full_game, and away/home selection keys.
   - Partner-facing game prediction payloads may accept requested market keys, puckline spreads, and total lines, and must expose line-dependent puckline and total probabilities from the DynastyIQ projected score distribution instead of requiring consumers to invent distribution assumptions.
   - Partner-facing goalie edge must be expressed in goals saved per game edge, include selected starter objects for both teams, and include the edge scale metadata.

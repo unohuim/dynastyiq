@@ -934,6 +934,9 @@ nhl-stats:read
 Every successful prediction payload includes `prediction_available`. Consumers
 must check this field before reading prediction or market output.
 
+`meta.cache` is `fresh` for a current cached or synchronous response and `stale`
+only when DynastyIQ has queued a rebuild of a response no more than five minutes old.
+
 During preseason (`game_type: 1`), DynastyIQ publishes a prediction only when
 both teams have a complete official NHL roster or a complete reported lineup
 whose 18 skaters resolve canonically. A missing lineup does not turn the request

@@ -6,6 +6,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Services\NhlGamePredictionPayload;
+use App\Services\NhlGamePredictionResponseCache;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -14,7 +15,7 @@ use Illuminate\Http\Request;
  */
 class NhlGamePredictionsController extends Controller
 {
-    public function __invoke(Request $request, NhlGamePredictionPayload $payload): JsonResponse
+    public function __invoke(Request $request, NhlGamePredictionPayload $payload, NhlGamePredictionResponseCache $cache): JsonResponse
     {
         $input = $request->validate([
             'nhl_game_id' => ['required', 'integer'],
@@ -35,9 +36,7 @@ class NhlGamePredictionsController extends Controller
             'total_lines.*' => ['numeric', 'gt:0'],
         ]);
 
-        return response()->json($payload->build(
-            (int) $input['nhl_game_id'],
-            $input
-        ), 200, [], JSON_PRESERVE_ZERO_FRACTION);
+        return response()->json($cache->respond((int) $input['nhl_game_id'], $input,
+            fn (): array => $payload->build((int) $input['nhl_game_id'], $input)), 200, [], JSON_PRESERVE_ZERO_FRACTION);
     }
 }
