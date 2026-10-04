@@ -878,6 +878,26 @@ it('uses the highest-win candidate as the automatic foundation regardless of cov
     expect($selected['id'])->toBe($higherWinBelowTarget);
 });
 
+it('prefers the strongest non-zero offense and defense combination among tied highest-win foundations', function (): void {
+    $run = ($this->createRun)();
+    $zeroDefense = DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->first();
+    DB::table('nhl_sat_engine_candidates')->where('id', $zeroDefense->id)->update([
+        'settings' => json_encode([...$this->settings, 'offense' => 200, 'defense' => 0]), 'metrics' => '{}', 'win_pct' => 100, 'coverage_pct' => 3.8,
+    ]);
+    $balanced = DB::table('nhl_sat_engine_candidates')->insertGetId([
+        'run_id' => $run->id, 'split_index' => 1, 'settings' => json_encode([...$this->settings, 'offense' => 150, 'defense' => 100]), 'metrics' => '{}',
+        'win_pct' => 100, 'coverage_pct' => 3.8, 'meets_targets' => false, 'created_at' => now(), 'updated_at' => now(),
+    ]);
+    $lowerCombined = DB::table('nhl_sat_engine_candidates')->insertGetId([
+        'run_id' => $run->id, 'split_index' => 2, 'settings' => json_encode([...$this->settings, 'offense' => 125, 'defense' => 100]), 'metrics' => '{}',
+        'win_pct' => 100, 'coverage_pct' => 3.8, 'meets_targets' => false, 'created_at' => now(), 'updated_at' => now(),
+    ]);
+
+    $rows = DB::table('nhl_sat_engine_candidates')->whereIn('id', [$zeroDefense->id, $balanced, $lowerCombined])->get();
+
+    expect(app(NhlSatEngineStackAnalyzer::class)->foundation($run, $rows)['id'])->toBe($balanced);
+});
+
 it('analyzes a manually ordered stack and preserves its precedence', function (): void {
     $run = ($this->createRun)();
     $foundation = DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->first();

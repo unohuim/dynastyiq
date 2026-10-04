@@ -248,7 +248,7 @@ it('requests analysis-only stack recommendations and renders them below candidat
     await nextTick();
     expect(transport.get).toHaveBeenCalledWith('/admin/nhl-sat-engines/runs/7', expect.objectContaining({ stack: 1 }), expect.any(Object));
     props.stackRequested = true; await nextTick();
-    expect(root.querySelector('#stacks-title').textContent).toContain('Stack recommendations');
+    expect(root.querySelector('#stacks-title').textContent).toContain('Automatic stack');
     expect(root.textContent).toContain('Foundation');
     expect(root.textContent).toContain('Supplement 1');
     expect(root.textContent).toContain('80.0% coverage');
