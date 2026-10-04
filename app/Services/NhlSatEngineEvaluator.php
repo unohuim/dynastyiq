@@ -116,7 +116,7 @@ class NhlSatEngineEvaluator
                 'candidate_count' => count($candidates),
                 'definition' => [
                     'model_updated_at' => $model->updated_at->toISOString(),
-                    'model_name' => $model->name, 'test_season' => $model->target_season_id,
+                    'name' => $input['name'] ?? null, 'model_name' => $model->name, 'test_season' => $model->target_season_id,
                     'scope' => $input['scope'], 'game_ids' => $games, 'splits' => array_values($splits),
                     'desired_win_pct' => $input['desired_win_pct'], 'min_coverage_pct' => $input['min_coverage_pct'],
                     'search' => null,
@@ -262,9 +262,17 @@ class NhlSatEngineEvaluator
      */
     public function discoverQualifications(int $runId, int $splitIndex, array $settings, int $selected): array
     {
+        return collect($this->teamVenueSettings($runId, $settings))->flatMap(
+            fn (array $variant): array => $this->discoverQualificationsForSettings($runId, $splitIndex, $variant, $selected)
+        )->all();
+    }
+
+    /** Search qualification settings for one league-wide or team-venue candidate. */
+    private function discoverQualificationsForSettings(int $runId, int $splitIndex, array $settings, int $selected): array
+    {
         $settings = [...$settings, 'gap' => 0, 'confidence_min' => 0, 'confidence_max' => 100];
         $base = $this->metrics($runId, $splitIndex, $settings, $selected);
-        $games = DB::table('nhl_sat_engine_results')->where('run_id', $runId)->where('split_index', $splitIndex)
+        $games = $this->resultQuery($runId, $splitIndex, $settings)
             ->where('status', 'complete')->whereNotNull('correct')->where('gap', '>', 0)
             ->whereBetween('confidence', [0, 100])->limit(3001)->get(['confidence', 'gap', 'correct']);
         if ($games->count() > 3000) {
@@ -383,7 +391,11 @@ class NhlSatEngineEvaluator
      */
     public function metrics(int $runId, int $splitIndex, array $settings, int $selected): array
     {
-        $query = DB::table('nhl_sat_engine_results')->where('run_id', $runId)->where('split_index', $splitIndex)->where('status', 'complete');
+        $scoped = $this->resultQuery($runId, $splitIndex, $settings);
+        if (isset($settings['team_abbrev'], $settings['venue'])) {
+            $selected = (clone $scoped)->count();
+        }
+        $query = $scoped->where('status', 'complete');
         $totals = (clone $query)->selectRaw('COUNT(*) AS eligible, SUM(pred_sat) AS pred_sat, SUM(pred_sog) AS pred_sog, SUM(pred_goals) AS pred_goals,
             SUM(actual_sat) AS actual_sat, SUM(actual_sog) AS actual_sog, SUM(actual_goals) AS actual_goals')->first();
         $picks = (clone $query)->whereBetween('confidence', [$settings['confidence_min'], $settings['confidence_max']])
@@ -407,9 +419,17 @@ class NhlSatEngineEvaluator
      */
     public function discoverConfidence(int $runId, int $splitIndex, array $settings, int $selected): array
     {
+        return collect($this->teamVenueSettings($runId, $settings))->flatMap(
+            fn (array $variant): array => $this->discoverConfidenceForSettings($runId, $splitIndex, $variant, $selected)
+        )->all();
+    }
+
+    /** Search confidence settings for one league-wide or team-venue candidate. */
+    private function discoverConfidenceForSettings(int $runId, int $splitIndex, array $settings, int $selected): array
+    {
         $settings = [...$settings, 'confidence_min' => 0, 'confidence_max' => 100];
         $base = $this->metrics($runId, $splitIndex, $settings, $selected);
-        $groups = DB::table('nhl_sat_engine_results')->where('run_id', $runId)->where('split_index', $splitIndex)
+        $groups = $this->resultQuery($runId, $splitIndex, $settings)
             ->where('status', 'complete')->whereNotNull('correct')->where('gap', '>', $settings['gap'])
             ->whereBetween('confidence', [0, 100])->groupBy('confidence')->orderBy('confidence')
             ->selectRaw('confidence, COUNT(*) AS picks, SUM(CASE WHEN correct THEN 1 ELSE 0 END) AS wins')
@@ -426,5 +446,35 @@ class NhlSatEngineEvaluator
                 'win_pct' => 100 * $range['wins'] / $range['picks'],
                 'coverage_pct' => (int) $base['eligible'] > 0 ? 100 * $range['picks'] / (int) $base['eligible'] : 0],
         ], $frontier);
+    }
+
+    /** Return the candidate variants required by an optional single-team discovery scope. */
+    private function teamVenueSettings(int $runId, array $settings): array
+    {
+        $teams = NhlSatEngineRun::query()->findOrFail($runId)->definition['scope']['teams'] ?? [];
+        $team = $teams[0] ?? null;
+        if ($team === null || isset($settings['team_abbrev'], $settings['venue'])) {
+            return [$settings];
+        }
+
+        return [
+            [...$settings, 'team_abbrev' => $team, 'venue' => 'away'],
+            [...$settings, 'team_abbrev' => $team, 'venue' => 'home'],
+        ];
+    }
+
+    /** Scope persisted game results to a team venue when a candidate carries that constraint. */
+    private function resultQuery(int $runId, int $splitIndex, array $settings): \Illuminate\Database\Query\Builder
+    {
+        $query = DB::table('nhl_sat_engine_results')->where('run_id', $runId)->where('split_index', $splitIndex);
+        if (isset($settings['team_abbrev'], $settings['venue'])) {
+            $venue = $settings['venue'];
+            if (! in_array($venue, ['away', 'home'], true)) {
+                throw new \InvalidArgumentException('Candidate venue must be away or home.');
+            }
+            $query->whereRaw("game->>'{$venue}' = ?", [$settings['team_abbrev']]);
+        }
+
+        return $query;
     }
 }

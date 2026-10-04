@@ -6,6 +6,7 @@ namespace App\Services;
 
 use App\Models\NhlModelRun;
 use App\Models\NhlSatEngine;
+use App\Models\NhlSatEngineStack;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
@@ -53,15 +54,36 @@ class NhlGamePredictionPayload
             ]);
         }
 
-        $defaultEngine = null;
-        // Explicit historical evaluations own their model and weights independently of the default.
-        if (! array_key_exists('sat_model_run_id', $overrides) && Schema::hasTable('nhl_sat_engines')) {
-            $defaultEngine = NhlSatEngine::query()->where('is_default', true)->first();
-            if ($defaultEngine !== null) {
-                $overrides['sat_model_run_id'] = $defaultEngine->model_run_id;
-                $overrides['engine_weights'] = $defaultEngine->settings;
+        if (! isset($overrides['_stack_engine_id']) && ! array_key_exists('sat_model_run_id', $overrides) && Schema::hasTable('nhl_sat_engine_stacks')) {
+            $stack = NhlSatEngineStack::query()->where('is_default', true)->with('members.engine')->first();
+            if ($stack !== null) {
+                $fallback = null;
+                foreach ($stack->members as $member) {
+                    $engine = $member->engine;
+                    $candidate = $this->build($nhlGameId, [...$overrides, '_stack_engine_id' => $engine->id,
+                        'sat_model_run_id' => $engine->model_run_id, 'engine_weights' => $engine->settings]);
+                    $fallback ??= $candidate;
+                    if (! $candidate['pick_qualified']) {
+                        continue;
+                    }
+                    $candidate = $this->withPresentationConfidence($candidate, $engine);
+                    $candidate['inputs']['stack_id'] = $stack->id;
+
+                    return $candidate;
+                }
+                if ($fallback !== null) {
+                    $fallback['pick_qualified'] = false;
+                    $fallback['inputs']['engine_id'] = null;
+                    $fallback['inputs']['stack_id'] = $stack->id;
+                    $fallback = $this->withPresentationConfidence($fallback, $stack->members->first()->engine);
+
+                    return $fallback;
+                }
             }
         }
+
+        $defaultEngine = isset($overrides['_stack_engine_id']) ? NhlSatEngine::query()->find($overrides['_stack_engine_id']) : null;
+        // Explicit historical evaluations own their model and weights independently of the default.
         $pinnedRun = null;
         if (array_key_exists('sat_model_run_id', $overrides)) {
             $pinnedRun = NhlModelRun::query()->find((int) $overrides['sat_model_run_id']);
@@ -353,6 +375,34 @@ class NhlGamePredictionPayload
                 'source_fetched_at' => now()->toIso8601String(),
             ],
         ];
+    }
+
+    private function presentationConfidence(float $internalConfidence, NhlSatEngine $engine): float
+    {
+        if ($engine->discovery_win_pct === null || $engine->discovery_coverage_pct === null) {
+            return round($internalConfidence, 4);
+        }
+        $weight = pow(max(0.0, min(100.0, (float) $engine->discovery_coverage_pct)) / 100, 1 / 5);
+
+        return round($internalConfidence * (1 - $weight) + (float) $engine->discovery_win_pct * $weight, 4);
+    }
+
+    /**
+     * Replace only partner-facing prediction confidence values after internal qualification.
+     *
+     * @param array<string, mixed> $payload
+     * @return array<string, mixed>
+     */
+    private function withPresentationConfidence(array $payload, NhlSatEngine $engine): array
+    {
+        $confidence = $this->presentationConfidence((float) data_get($payload, 'prediction.confidence_score', 0), $engine);
+        data_set($payload, 'prediction.confidence_score', $confidence);
+
+        foreach ($payload['market_probabilities'] ?? [] as $key => $market) {
+            $payload['market_probabilities'][$key]['confidence_score'] = $confidence;
+        }
+
+        return $payload;
     }
 
     /**

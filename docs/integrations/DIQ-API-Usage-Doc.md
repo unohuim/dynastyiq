@@ -3,15 +3,20 @@
 ## Admin engine evaluations
 
 Saved SAT engines and discovery at `/admin/nhl-sat-engines` are administrative
-tools. The one engine marked Default supplies ordinary prediction API calls with
-its Production Model, offense/defense settings, confidence window and score-gap rule.
-The first engine becomes Default automatically; admins can switch it from the
-engine list. Engine selection is not a partner request parameter. Historical
-Engine discovery and testing use the engine's Test Model; they do not change API predictions.
-If no default is available, including when saved engines exist but none is marked
-Default, ordinary predictions retain the legacy fallback: no engine model or
-weights are selected, `inputs.engine_id` is null, and pick qualification uses
-confidence 67–70 with a score gap strictly greater than zero.
+tools. A named Default stack supplies ordinary prediction API calls. Its Engines
+may be evaluated in saved priority order, but only one Engine may be selected to
+make a stack prediction: the first whose internal confidence window and score-gap
+rule qualifies the game. If none qualifies, no Engine prediction is selected.
+Engine selection is not a partner request parameter. Historical Engine discovery
+and testing use an Engine's Test Model; they do not change API predictions.
+The returned `prediction.confidence_score` and each market row's `confidence_score`
+are presentation confidence, not the Engine's internal qualification confidence:
+`internal × (1 − coverage^(1/5)) + observed_win_pct × coverage^(1/5)`, using the
+Engine's frozen discovery percentages as decimals. An Engine without frozen
+discovery metrics retains its internal score. If no default stack is available,
+ordinary predictions retain the legacy fallback: no engine model or weights are
+selected, `inputs.engine_id` is null, and pick qualification uses confidence 67–70
+with a score gap strictly greater than zero.
 
 
 ## Prediction roster player identifiers
@@ -1036,16 +1041,18 @@ explicit line:
 
 Every successful response includes a top-level `pick_qualified` boolean.
 It is `true` only when a prediction is available, the returned
-`prediction.confidence_score` is within the Default engine's inclusive confidence
-range, and the absolute difference between the underlying projected goals is
-strictly greater than that engine's score gap, before rounding
+an Engine in the Default stack internally qualifies the game using its inclusive
+confidence range and score gap, before rounding
 `prediction.predicted_score` to two decimal places.
 Either an away or home lead qualifies. Exact ties and confidence outside that
-range return `false`; evidence-only responses with `prediction_available: false`
-also return `pick_qualified: false`. Existing error responses are unchanged.
+range return `false`; when no Engine in the Default stack qualifies, the response
+also has `pick_qualified: false` and `inputs.engine_id: null`. Its broader matchup
+payload may still be available. Evidence-only responses with
+`prediction_available: false` also return `pick_qualified: false`. Existing error
+responses are unchanged.
 
-This flag does not suppress predictions, scores or market probabilities, change
-the confidence calculation, or override the winner. A pair of displayed scores
+This flag does not suppress predictions, scores or market probabilities, or
+override the winner. A pair of displayed scores
 can look tied while `pick_qualified` is true because the underlying scores differ.
 It describes selection criteria, not a guaranteed win rate. Consumers use
 `prediction.winner` for the selected side.

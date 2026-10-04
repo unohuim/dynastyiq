@@ -8,8 +8,11 @@ use App\Http\Controllers\Controller;
 use App\Models\NhlModelRun;
 use App\Models\NhlSatEngine;
 use App\Models\NhlSatEngineRun;
+use App\Models\NhlSatEngineStack;
+use App\Models\NhlSatEngineStackMember;
 use App\Services\NhlSatEngineEvaluator;
 use App\Services\NhlSatEngineStackAnalyzer;
+use App\Services\NhlSatEngineStackCreator;
 use App\Services\NhlSatEngineSettings;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -23,12 +26,15 @@ use Inertia\Response;
 class NhlSatEngineController extends Controller
 {
     /** Paginated CRUD index, using the shared Inertia application shell. */
-    public function index(): Response
+    public function index(Request $request): Response
     {
+        $search = $request->validate(['engine_search' => 'nullable|string|max:160'])['engine_search'] ?? '';
         return Inertia::render('Admin/SatEngines/Index', [
-            'engines' => NhlSatEngine::query()->latest('id')->paginate(25),
+            'engines' => NhlSatEngine::query()->when($search !== '', fn ($query) => $query->where('name', 'ilike', '%' . $search . '%'))
+                ->with('stackMembers.stack:id,name,is_default')->latest('id')->paginate(25)->withQueryString(),
             'runs' => NhlSatEngineRun::query()->latest('id')->paginate(25, ['*'], 'runs_page'),
-            'models' => $this->models(), 'defaults' => app(NhlSatEngineSettings::class)->defaults(),
+            'stacks' => NhlSatEngineStack::query()->withCount('members')->latest('id')->paginate(25, ['*'], 'stacks_page'),
+            'models' => $this->models(), 'defaults' => app(NhlSatEngineSettings::class)->defaults(), 'engineSearch' => $search,
         ]);
     }
 
@@ -66,17 +72,12 @@ class NhlSatEngineController extends Controller
         if (NhlSatEngineRun::query()->where('engine_id', $engine->id)->whereIn('status', ['queued', 'running', 'ranking', 'paused'])->exists()) {
             throw ValidationException::withMessages(['engine' => 'Cancel active runs before deleting this engine.']);
         }
+        if ($engine->stackMembers()->exists()) {
+            throw ValidationException::withMessages(['engine' => 'Remove this engine from its saved stacks before deleting it.']);
+        }
         $engine->deleteDefinition();
 
         return to_route('admin.nhl-sat-engines.index');
-    }
-
-    /** Immediately select the engine used by ordinary game predictions. */
-    public function makeDefault(NhlSatEngine $engine): RedirectResponse
-    {
-        $engine->makeDefault();
-
-        return back();
     }
 
     /** Start only the build or discovery explicitly requested by the user. */
@@ -84,6 +85,7 @@ class NhlSatEngineController extends Controller
     {
         $input = $request->validate([
             'kind' => ['required', Rule::in(['build', 'discovery'])],
+            'name' => 'nullable|string|max:160',
             'engine_id' => 'nullable|required_if:kind,build|integer|exists:nhl_sat_engines,id',
             'model_run_id' => ['required', 'integer', Rule::exists('nhl_model_runs', 'id')->where('model_family', 'sat')],
             'desired_win_pct' => 'required|numeric|between:0,100',
@@ -95,7 +97,7 @@ class NhlSatEngineController extends Controller
             'scope.end_date' => array_filter(['nullable', 'date_format:Y-m-d',
                 $request->filled('scope.start_date') ? 'after_or_equal:scope.start_date' : null]),
             'scope.count' => 'required_if:scope.mode,games,days|nullable|integer|between:1,3000',
-            'scope.teams' => 'present|array|max:40',
+            'scope.teams' => 'present|array|max:1',
             'scope.teams.*' => 'required|string|regex:/^[A-Z]{2,3}$/|distinct',
             'scope.game_ids' => 'required_if:scope.mode,selected|array|max:3000',
             'scope.game_ids.*' => 'integer|distinct',
@@ -134,7 +136,7 @@ class NhlSatEngineController extends Controller
             'min_excluded' => 'nullable|integer|min:0',
             'max_excluded' => 'nullable|integer|min:0|gte:min_excluded',
             'stack' => 'nullable|boolean',
-            'stack_ids' => 'nullable|array|max:5',
+            'stack_ids' => 'nullable|array',
             'stack_ids.*' => 'integer|distinct',
         ]);
         $sort = $input['sort'] ?? 'targets';
@@ -282,6 +284,9 @@ class NhlSatEngineController extends Controller
         $attributes = [
             'settings' => json_decode($row->settings, true, 512, JSON_THROW_ON_ERROR),
             'discovery_run_id' => $run->kind === 'discovery' ? $run->id : null,
+            'discovery_candidate_id' => $run->kind === 'discovery' ? $row->id : null,
+            'discovery_win_pct' => $run->kind === 'discovery' ? $row->win_pct : null,
+            'discovery_coverage_pct' => $run->kind === 'discovery' ? $row->coverage_pct : null,
         ];
         if (! $engine->exists) {
             $attributes['name'] = $input['name'];
@@ -291,6 +296,116 @@ class NhlSatEngineController extends Controller
         $engine->saveDefinition($attributes);
 
         return to_route('admin.nhl-sat-engines.show', $engine);
+    }
+
+    /** Save a reviewed recommendation as independently usable engines in priority order. */
+    public function createStack(Request $request, NhlSatEngineRun $run, NhlSatEngineStackCreator $creator): RedirectResponse
+    {
+        $input = $request->validate([
+            'name' => 'required|string|max:160',
+            'candidate_ids' => 'required|array|min:1',
+            'candidate_ids.*' => 'required|integer|distinct',
+        ]);
+        $stack = $creator->create($run, $input['name'], array_map('intval', $input['candidate_ids']));
+
+        return to_route('admin.nhl-sat-engines.index', ['tab' => 'stacks', 'created_stack' => $stack->id]);
+    }
+
+    /** Show one saved stack and its explicitly ordered engine members. */
+    public function showStack(NhlSatEngineStack $stack, NhlSatEngineStackAnalyzer $stackAnalyzer): Response
+    {
+        $stack->load('members.engine');
+        $candidateIds = $stack->members->pluck('engine.discovery_candidate_id')->filter()->map(fn ($id) => (int) $id)->all();
+        $candidateMetrics = DB::table('nhl_sat_engine_candidates')->whereIn('id', $candidateIds)->pluck('metrics', 'id');
+        $stack->members->each(function (NhlSatEngineStackMember $member) use ($candidateMetrics): void {
+            $metrics = $candidateMetrics->get($member->engine->discovery_candidate_id);
+            $member->engine->setAttribute('discovery_metrics', $metrics === null ? null : json_decode($metrics, true, 512, JSON_THROW_ON_ERROR));
+        });
+        $runIds = $stack->members->pluck('engine.discovery_run_id')->filter()->unique()->values();
+        $analysis = null;
+        if ($runIds->count() === 1 && count($candidateIds) === $stack->members->count()) {
+            $run = NhlSatEngineRun::query()->find($runIds->first());
+            $rows = $run ? DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->whereIn('id', $candidateIds)
+                ->whereNotNull('metrics')->get()->keyBy('id') : collect();
+            if ($rows->count() === count($candidateIds)) {
+                $analysis = $stackAnalyzer->manual($run, $stack->members->map(fn (NhlSatEngineStackMember $member) => $rows->get($member->engine->discovery_candidate_id)));
+            }
+        }
+
+        return Inertia::render('Admin/SatEngines/Stack', [
+            'stack' => $stack, 'analysis' => $analysis,
+            'engines' => NhlSatEngine::query()->orderBy('name')->get(['id', 'name']),
+        ]);
+    }
+
+    /** Rename a saved stack without changing its engines or precedence. */
+    public function updateStack(Request $request, NhlSatEngineStack $stack): RedirectResponse
+    {
+        $input = $request->validate(['name' => 'required|string|max:160', 'notes' => 'nullable|string|max:2000']);
+        $stack->update($input);
+
+        return back();
+    }
+
+    /** Select a non-empty saved stack for ordinary prediction selection. */
+    public function makeDefaultStack(NhlSatEngineStack $stack): RedirectResponse
+    {
+        $stack->makeDefault();
+
+        return back();
+    }
+
+    /** Append an independently saved engine as the final stack member. */
+    public function addStackMember(Request $request, NhlSatEngineStack $stack): RedirectResponse
+    {
+        $input = $request->validate(['engine_id' => 'required|integer|exists:nhl_sat_engines,id']);
+        if ($stack->members()->where('engine_id', $input['engine_id'])->exists()) {
+            throw ValidationException::withMessages(['engine_id' => 'This engine is already in the stack.']);
+        }
+        $stack->members()->create(['engine_id' => $input['engine_id'], 'priority' => $stack->members()->count() + 1]);
+
+        return back();
+    }
+
+    /** Persist an exact, contiguous priority order for the current stack members. */
+    public function reorderStackMembers(Request $request, NhlSatEngineStack $stack): RedirectResponse
+    {
+        $input = $request->validate(['member_ids' => 'required|array|min:1', 'member_ids.*' => 'required|integer|distinct']);
+        $members = $stack->members()->whereIn('id', $input['member_ids'])->get()->keyBy('id');
+        if ($members->count() !== count($input['member_ids']) || $stack->members()->count() !== count($input['member_ids'])) {
+            throw ValidationException::withMessages(['member_ids' => 'The order must contain every current stack member exactly once.']);
+        }
+        DB::transaction(function () use ($stack, $input): void {
+            foreach ($input['member_ids'] as $index => $memberId) {
+                NhlSatEngineStackMember::query()->where('stack_id', $stack->id)->whereKey($memberId)->update(['priority' => count($input['member_ids']) + $index + 1]);
+            }
+            foreach ($input['member_ids'] as $index => $memberId) {
+                NhlSatEngineStackMember::query()->where('stack_id', $stack->id)->whereKey($memberId)->update(['priority' => $index + 1]);
+            }
+        });
+
+        return back();
+    }
+
+    /** Remove a membership while retaining the independently saved engine. */
+    public function destroyStackMember(NhlSatEngineStack $stack, NhlSatEngineStackMember $member): RedirectResponse
+    {
+        abort_unless((int) $member->stack_id === (int) $stack->id, 404);
+        if ($stack->is_default && $stack->members()->count() === 1) {
+            throw ValidationException::withMessages(['stack' => 'A default stack must contain at least one engine. Select another default or delete this stack.']);
+        }
+        $member->delete();
+        $stack->members()->orderBy('priority')->get()->each(fn (NhlSatEngineStackMember $row, int $index) => $row->update(['priority' => $index + 1]));
+
+        return back();
+    }
+
+    /** Delete only the saved stack and its memberships; never its engines. */
+    public function destroyStack(NhlSatEngineStack $stack): RedirectResponse
+    {
+        $stack->delete();
+
+        return back();
     }
 
     /** @return array<string, mixed> */

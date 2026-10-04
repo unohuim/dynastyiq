@@ -909,14 +909,19 @@ model-dependent game/team scope and automatic discovery; `/runs/{run}` for
 progress, ranked candidates, actual totals and candidate adoption.
 
 **Example:** Discover settings for the first five game days of Sep2026's test
-season, automatically refining offense/defense weights and searching score gaps and confidence intervals, filtering the complete candidate set, then create an engine directly from an evaluated result row, including while discovery continues. The default engine supplies ordinary prediction API behavior
-is unaffected. Canonical invariants: `docs/architecture/stats/NhlSatEngines.yaml`.
+season, automatically refining offense/defense weights and searching score gaps and confidence intervals, filtering the complete candidate set, then create an engine directly from an evaluated result row, including while discovery continues. Engines are selected for ordinary prediction only through the default saved stack. Canonical invariants: `docs/architecture/stats/NhlSatEngines.yaml`.
 
 ### NHL SAT Engine Stack Analysis
 
-**Purpose:** Recommend analysis-only, ordered discovery candidate stacks that can increase observed coverage without reducing a foundation candidate's observed win percentage.
+**Purpose:** Recommend analysis-only, ordered discovery candidate stacks by repeatedly adding the highest-win positive contributor on previously uncovered games.
 
 **Canonical invariants:** `docs/architecture/stats/NhlSatEngineStackAnalysis.yaml`.
+
+### NHL SAT Engine Stacks
+
+**Purpose:** Persist reviewed candidate recommendations as named, ordered saved engines and select the default stack for live prediction delegation.
+
+**Canonical invariants:** `docs/architecture/stats/NhlSatEngineStacks.yaml`.
 
 ### NHL SAT Models
 
@@ -3697,7 +3702,7 @@ on full-game prediction eligibility; injuries are listed below each lineup.
 Lineup SAT inputs are scoped to resolved NHL player identities. Model-wide historical fallback pools aggregate counts and once-per-entity exposure in SQL, returning only bucket totals to PHP while retaining latest-training-snapshot precedence. See `NhlPredictionInputServices.yaml` for the input and fallback rules.
 
 **When to Use:**
- Comparing projected NHL teams using the default engine's static annual model, independent offensive/defensive weights, same-run TOI, personal historical SOG/SAT and goals/SOG conversion then bucket-average fallback, and a single goalie adjustment. Defense-only buckets are excluded. Current-season observations are excluded. Historical evaluations use explicit pinned inputs. Responses are not filtered; top-level `pick_qualified` annotates available predictions using the default engine's confidence range and strictly exceeded score gap before display rounding, and is false otherwise. The simulator exposes roster provenance, projected totals, goalie reasons, and partner outcome probabilities; canonical rules live in NhlProjectedTeamMatchups.yaml and NhlPredictionInputServices.yaml.
+ Comparing projected NHL teams by evaluating default-stack Engines in priority order and selecting at most the first internal qualifier, with independent offensive/defensive weights, same-run TOI, personal historical SOG/SAT and goals/SOG conversion then bucket-average fallback, and a single goalie adjustment. Defense-only buckets are excluded. Current-season observations are excluded. Historical evaluations use explicit pinned inputs. Responses are not filtered; top-level `pick_qualified` marks whether a stack Engine was selected using its internal confidence range and strictly exceeded score gap before display rounding. It is false, and `inputs.engine_id` is null, when no stack Engine qualifies even if a broader matchup payload is available. The partner-facing confidence score is the documented presentation blend of internal confidence and frozen discovery evidence. The simulator exposes roster provenance, projected totals, goalie reasons, and partner outcome probabilities; canonical rules live in NhlProjectedTeamMatchups.yaml and NhlPredictionInputServices.yaml.
 
 **When Not to Use:**
 Persisting team projection snapshots, claiming the temporary defensive blend measures causal defensive talent, or incorporating current-season updates before separately approved models exist.

@@ -2,8 +2,8 @@
 
 ## NHL SAT engine evaluation
 
-- Engine `is_default`: the sole active default for ordinary game predictions. `true` is unique;
-  the first engine receives it automatically and deleting it promotes the newest remaining engine.
+- Stack `is_default`: the sole active stack for ordinary game predictions. `true` is unique;
+  a default stack must contain at least one Engine.
 
 - Run `kind`: `build` evaluates saved engine settings (displayed as **Test** in the engine UI); `discovery` automatically searches settings.
 - Run `definition.automatic_search.strategy`: `coarse_to_fine_v1` uses a broad independent

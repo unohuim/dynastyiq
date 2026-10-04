@@ -9,7 +9,7 @@ rules:
   - Cache only the partner API path. Historical engine evaluations call the uncached payload builder and retain deterministic pinned inputs.
   - A matching response is fresh for one minute. The last response may be served stale for at most five minutes only after an identical refresh is queued or already queued.
   - A cache miss, expired stale response, or refresh-dispatch failure calculates synchronously and replaces the cached response on success.
-  - Cache identity includes normalized request inputs, default-engine state, game/starter state, selected current-lineup evidence, and stored starting-goalie evidence. A refresh verifies its fingerprint before writing so changed inputs cannot replace a newer response.
+  - Cache identity includes normalized request inputs, default-stack membership/order/Engine metrics and model state, game/starter state, selected current-lineup evidence, and stored starting-goalie evidence. A refresh verifies its fingerprint before writing so changed inputs cannot replace a newer response.
   - Concurrent stale reads deduplicate refresh jobs. Refreshes use the existing lineups queue so discovery work on default cannot delay them.
   - Responses expose meta.cache as fresh or stale. Cached payloads retain all ordinary prediction fields and errors remain uncached.
 public_interface:

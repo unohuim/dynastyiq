@@ -11,11 +11,7 @@ use Illuminate\Support\Facades\DB;
 /** Builds bounded, analysis-only ordered candidate stacks from persisted run evidence. */
 final class NhlSatEngineStackAnalyzer
 {
-    public const MAX_DEPTH = 5;
-
-    private const MAX_CANDIDATES = 50;
-
-    private const BEAM_WIDTH = 10;
+    private const MAX_FRONTIER_STATES = 100;
 
     /**
      * @param Collection<int, object> $rows Already-filtered, completed candidate rows.
@@ -24,97 +20,23 @@ final class NhlSatEngineStackAnalyzer
     public function analyze(NhlSatEngineRun $run, Collection $rows): array
     {
         $allCandidates = $this->candidates($rows, false);
-        $foundation = $this->foundationFrom($run, $allCandidates);
-        if ($foundation === null) {
+        $allCandidates = array_values(array_filter($allCandidates, fn (array $candidate): bool => $candidate['win_pct'] !== null));
+        $allCandidates = $this->candidatePool($allCandidates);
+        if ($allCandidates === []) {
             return [];
         }
         $candidateResults = $this->candidateResults($run, $allCandidates);
-        $foundationState = $this->state([$foundation], $candidateResults, $run->game_count);
-        $minimumWinPct = (float) $run->definition['desired_win_pct'];
-        $supplements = collect($allCandidates)
-            ->filter(fn (array $candidate): bool => $candidate['id'] !== $foundation['id']
-                && $candidate['win_pct'] !== null && $this->qualificationKey($candidate) !== $this->qualificationKey($foundation))
-            ->map(function (array $candidate) use ($foundationState, $candidateResults): array {
-                $marginal = $this->marginal($foundationState, $candidate, $candidateResults);
-
-                return [...$candidate, ...$marginal];
-            })
-            ->filter(fn (array $candidate): bool => $candidate['marginal_picks'] > 0 && $candidate['marginal_win_pct'] >= $minimumWinPct
-                && $this->preservesPrecedence($foundationState, $candidate, $candidateResults))
-            ->sortBy([['marginal_win_pct', 'desc'], ['marginal_picks', 'desc'], ['win_pct', 'desc'], ['coverage_pct', 'desc'], ['id', 'asc']])
-            ->unique(fn (array $candidate): string => $this->qualificationKey($candidate))
-            ->take(self::MAX_CANDIDATES - 1)
-            ->map(fn (array $candidate): array => array_diff_key($candidate, ['marginal_win_pct' => true, 'marginal_picks' => true]))
-            ->values()
-            ->all();
-        if ($supplements === []) {
-            return [];
-        }
-
+        $this->assertEquivalentSettings($allCandidates, $candidateResults);
         $stacks = [];
-        $states = [$foundationState];
-        for ($depth = 2; $depth <= self::MAX_DEPTH; $depth++) {
-            $next = [];
-            foreach ($states as $state) {
-                foreach ($supplements as $candidate) {
-                    if (in_array($candidate['id'], $state['ids'], true)
-                        || in_array($this->qualificationKey($candidate), $state['qualification_keys'], true)) {
-                        continue;
-                    }
-                    $expanded = $this->expand(
-                        $state,
-                        $candidate,
-                        $candidateResults,
-                        $run->game_count,
-                        $minimumWinPct
-                    );
-                    if ($expanded !== null) {
-                        $next[] = $expanded;
-                    }
-                }
+        foreach ($allCandidates as $foundation) {
+            $stack = $this->state([$foundation], $candidateResults, $run->game_count);
+            while (($supplement = $this->bestSupplement($stack, $allCandidates, $candidateResults)) !== null) {
+                $stack = $this->state([...$stack['candidates'], $supplement], $candidateResults, $run->game_count);
             }
-            if ($next === []) {
-                break;
-            }
-            usort($next, fn (array $left, array $right): int => $this->compareExpansion($left, $right));
-            $states = array_slice($next, 0, self::BEAM_WIDTH);
-            foreach ($states as $state) {
-                if ($state['coverage_pct'] > $foundation['coverage_pct']) {
-                    $stacks[] = $state;
-                }
-            }
+            $stacks[] = $stack;
         }
 
-        usort($stacks, fn (array $left, array $right): int => $this->compareRecommendation($left, $right));
-        $seenOutcomes = [];
-        $stacks = array_values(array_filter($stacks, function (array $stack) use (&$seenOutcomes): bool {
-            if (isset($seenOutcomes[$stack['pick_signature']])) {
-                return false;
-            }
-            $seenOutcomes[$stack['pick_signature']] = true;
-
-            return true;
-        }));
-
-        $minimumPreferredDepth = collect($stacks)->contains(fn (array $stack): bool => count($stack['ids']) >= 3) ? 3 : 2;
-        $preferred = array_values(array_filter($stacks,
-            fn (array $stack): bool => count($stack['ids']) >= $minimumPreferredDepth));
-        $secondary = array_values(array_filter($stacks,
-            fn (array $stack): bool => count($stack['ids']) < $minimumPreferredDepth));
-        $featured = [];
-        $featuredIds = [];
-        foreach ($preferred as $stack) {
-            $depth = count($stack['ids']);
-            if (isset($featured[$depth])) {
-                continue;
-            }
-            $featured[$depth] = $stack;
-            $featuredIds[implode(',', $stack['ids'])] = true;
-        }
-        $remaining = array_values(array_filter([...$preferred, ...$secondary],
-            fn (array $stack): bool => ! isset($featuredIds[implode(',', $stack['ids'])])));
-
-        return array_values(array_slice([...array_values($featured), ...$remaining], 0, 25));
+        return array_slice($this->frontier($stacks), 0, 25);
     }
 
     /** Analyze one user-ordered foundation and supplementary candidate selection. */
@@ -125,7 +47,7 @@ final class NhlSatEngineStackAnalyzer
         return $candidates === [] ? null : $this->state($candidates, $this->candidateResults($run, $candidates), $run->game_count);
     }
 
-    /** Return the automatic foundation selected from target-qualified candidates. */
+    /** Return the highest-win completed candidate, independent of its coverage. */
     public function foundation(NhlSatEngineRun $run, Collection $rows): ?array
     {
         return $this->foundationFrom($run, $this->candidates($rows, false));
@@ -135,24 +57,22 @@ final class NhlSatEngineStackAnalyzer
     private function candidates(Collection $rows, bool $automatic): array
     {
         $rows = $rows->filter(fn (object $row): bool => $row->metrics !== null && (! $automatic || $row->win_pct !== null));
-        if ($automatic) {
-            $rows = $rows->sortBy([['coverage_pct', 'desc'], ['win_pct', 'desc'], ['id', 'asc']])->take(self::MAX_CANDIDATES);
-        }
 
         return $rows->map(function (object $row): array {
             $settings = json_decode($row->settings, true, 512, JSON_THROW_ON_ERROR);
+            $metrics = is_array($row->metrics) ? $row->metrics : json_decode($row->metrics, true, 512, JSON_THROW_ON_ERROR);
 
             return ['id' => (int) $row->id, 'split_index' => (int) $row->split_index, 'settings' => $settings,
                 'win_pct' => $row->win_pct === null ? null : (float) $row->win_pct,
-                'coverage_pct' => (float) $row->coverage_pct];
+                'coverage_pct' => (float) $row->coverage_pct,
+                'wins' => (int) ($metrics['wins'] ?? 0), 'losses' => (int) ($metrics['losses'] ?? 0)];
         })->values()->all();
     }
 
     /** @param list<array<string,mixed>> $candidates @return array<string,mixed>|null */
     private function foundationFrom(NhlSatEngineRun $run, array $candidates): ?array
     {
-        $foundations = collect($candidates)->filter(fn (array $candidate): bool => $candidate['win_pct'] !== null
-            && $candidate['coverage_pct'] >= (float) $run->definition['min_coverage_pct'])->values()->all();
+        $foundations = collect($candidates)->filter(fn (array $candidate): bool => $candidate['win_pct'] !== null)->values()->all();
         usort($foundations, function (array $left, array $right): int {
             $winComparison = $right['win_pct'] <=> $left['win_pct'];
             if ($winComparison !== 0) {
@@ -162,9 +82,7 @@ final class NhlSatEngineStackAnalyzer
             if ($offenseComparison !== 0) {
                 return $offenseComparison;
             }
-            $coverageComparison = $right['coverage_pct'] <=> $left['coverage_pct'];
-
-            return $coverageComparison !== 0 ? $coverageComparison : $left['id'] <=> $right['id'];
+            return $left['id'] <=> $right['id'];
         });
 
         return $foundations[0] ?? null;
@@ -175,13 +93,16 @@ final class NhlSatEngineStackAnalyzer
     {
         $results = DB::table('nhl_sat_engine_results')->where('run_id', $run->id)
             ->whereIn('split_index', array_values(array_unique(array_column($candidates, 'split_index'))))
-            ->where('status', 'complete')->get(['split_index', 'nhl_game_id', 'confidence', 'gap', 'correct'])
+            ->where('status', 'complete')->get(['split_index', 'nhl_game_id', 'game', 'confidence', 'gap', 'correct'])
             ->groupBy('split_index');
         $candidateResults = [];
         foreach ($candidates as $candidate) {
             $eligible = [];
             $picks = [];
             foreach ($results->get($candidate['split_index'], []) as $result) {
+                if (! $this->matchesTeamVenue($result->game, $candidate['settings'])) {
+                    continue;
+                }
                 $gameId = (int) $result->nhl_game_id;
                 $eligible[$gameId] = true;
                 if ($result->correct !== null && (int) $result->confidence >= $candidate['settings']['confidence_min']
@@ -196,9 +117,13 @@ final class NhlSatEngineStackAnalyzer
     }
 
     /** @param array<string,mixed> $candidate */
-    private function qualificationKey(array $candidate): string
+    private function settingsKey(array $candidate): string
     {
         return implode(':', [
+            (string) $candidate['settings']['offense'],
+            (string) $candidate['settings']['defense'],
+            (string) ($candidate['settings']['team_abbrev'] ?? ''),
+            (string) ($candidate['settings']['venue'] ?? ''),
             (string) $candidate['settings']['confidence_min'],
             (string) $candidate['settings']['confidence_max'],
             (string) $candidate['settings']['gap'],
@@ -206,26 +131,91 @@ final class NhlSatEngineStackAnalyzer
     }
 
     /**
-     * Append a supplement only when it provides picks not supplied by the existing stack.
+     * Equivalent qualification settings must qualify exactly the same historical games.
      *
-     * @param array<string,mixed> $state
-     * @param array<string,mixed> $candidate
+     * @param list<array<string,mixed>> $candidates
      * @param array<int, array{eligible: array<int,bool>, picks: array<int,bool>}> $candidateResults
-     * @return array<string,mixed>|null
      */
-    private function expand(array $state, array $candidate, array $candidateResults, int $selected, float $minimumWinPct): ?array
+    private function assertEquivalentSettings(array $candidates, array $candidateResults): void
     {
-        if (! $this->preservesPrecedence($state, $candidate, $candidateResults)) {
-            return null;
+        $seen = [];
+        foreach ($candidates as $candidate) {
+            $key = $this->settingsKey($candidate);
+            if (! isset($seen[$key])) {
+                $seen[$key] = $candidate['id'];
+
+                continue;
+            }
+            $firstId = $seen[$key];
+            if ($candidateResults[$firstId]['picks'] !== $candidateResults[$candidate['id']]['picks']) {
+                throw new \LogicException('Equivalent SAT engine settings produced different qualified games.');
+            }
         }
-        $marginal = $this->marginal($state, $candidate, $candidateResults);
-        if ($marginal['marginal_picks'] === 0 || $marginal['marginal_win_pct'] < $minimumWinPct) {
-            return null;
+    }
+
+    /** Retain only outcomes that no other outcome beats in both win percentage and coverage. */
+    private function frontier(array $states): array
+    {
+        $byOutcome = [];
+        foreach ($states as $state) {
+            $key = $state['pick_signature'];
+            if (! isset($byOutcome[$key]) || count($state['ids']) < count($byOutcome[$key]['ids'])) {
+                $byOutcome[$key] = $state;
+            }
+        }
+        $states = array_values($byOutcome);
+        $frontier = array_values(array_filter($states, function (array $state) use ($states): bool {
+            foreach ($states as $other) {
+                if ($other === $state) {
+                    continue;
+                }
+                if ($other['win_pct'] >= $state['win_pct'] && $other['coverage_pct'] >= $state['coverage_pct']
+                    && ($other['win_pct'] > $state['win_pct'] || $other['coverage_pct'] > $state['coverage_pct'])) {
+                    return false;
+                }
+            }
+            return true;
+        }));
+        usort($frontier, fn (array $left, array $right): int => [
+            $right['win_pct'], $right['coverage_pct'], -count($right['ids']), $left['ids'],
+        ] <=> [
+            $left['win_pct'], $left['coverage_pct'], -count($left['ids']), $right['ids'],
+        ]);
+
+        return array_slice($frontier, 0, self::MAX_FRONTIER_STATES);
+    }
+
+    /** Keep every individual candidate that no other candidate beats on win and coverage. */
+    private function candidatePool(array $candidates): array
+    {
+        usort($candidates, fn (array $left, array $right): int => [$right['win_pct'], $right['coverage_pct'], $left['id']]
+            <=> [$left['win_pct'], $left['coverage_pct'], $right['id']]);
+        $pool = [];
+        $bestCoverage = -1.0;
+        foreach ($candidates as $candidate) {
+            if ($candidate['coverage_pct'] <= $bestCoverage) {
+                continue;
+            }
+            $pool[] = $candidate;
+            $bestCoverage = $candidate['coverage_pct'];
         }
 
-        $expanded = $this->state([...$state['candidates'], $candidate], $candidateResults, $selected);
+        return $pool;
+    }
 
-        return [...$expanded, ...$marginal];
+    /** Return whether a persisted game belongs to the candidate's optional team-venue scope. */
+    private function matchesTeamVenue(string $game, array $settings): bool
+    {
+        if (! isset($settings['team_abbrev'], $settings['venue'])) {
+            return true;
+        }
+        $venue = $settings['venue'];
+        if (! in_array($venue, ['away', 'home'], true)) {
+            return false;
+        }
+        $snapshot = json_decode($game, true, 512, JSON_THROW_ON_ERROR);
+
+        return ($snapshot[$venue] ?? null) === $settings['team_abbrev'];
     }
 
     /**
@@ -245,22 +235,37 @@ final class NhlSatEngineStackAnalyzer
         return [
             'marginal_win_pct' => $pickCount === 0 ? 0.0 : round(count(array_filter($newPicks)) / $pickCount * 100, 4),
             'marginal_picks' => $pickCount,
+            'marginal_wins' => count(array_filter($newPicks)),
         ];
     }
 
-    /**
-     * Reject a replacement candidate that owns every already-selected pick by itself.
-     *
-     * @param array<string,mixed> $state
-     * @param array<string,mixed> $candidate
-     * @param array<int, array{eligible: array<int,bool>, picks: array<int,bool>}> $candidateResults
-     */
-    private function preservesPrecedence(array $state, array $candidate, array $candidateResults): bool
+    /** Return the highest-quality positive contributor to the stack's uncovered games. */
+    private function bestSupplement(array $state, array $candidates, array $candidateResults): ?array
     {
-        return array_diff_key(
-            $this->picks($state['candidates'], $candidateResults),
-            $candidateResults[$candidate['id']]['picks']
-        ) !== [];
+        $best = null;
+        $bestMarginal = null;
+        foreach ($candidates as $candidate) {
+            if (in_array($candidate['id'], $state['ids'], true)
+                || in_array($this->settingsKey($candidate), $state['settings_keys'], true)) {
+                continue;
+            }
+            $marginal = $this->marginal($state, $candidate, $candidateResults);
+            if ($marginal['marginal_wins'] <= $marginal['marginal_picks'] - $marginal['marginal_wins']) {
+                continue;
+            }
+            if ($best === null || [
+                $marginal['marginal_win_pct'], $candidate['win_pct'], $marginal['marginal_picks'],
+                (float) $candidate['settings']['offense'], (float) $candidate['settings']['defense'], -$candidate['id'],
+            ] > [
+                $bestMarginal['marginal_win_pct'], $best['win_pct'], $bestMarginal['marginal_picks'],
+                (float) $best['settings']['offense'], (float) $best['settings']['defense'], -$best['id'],
+            ]) {
+                $best = $candidate;
+                $bestMarginal = $marginal;
+            }
+        }
+
+        return $best;
     }
 
     /** @param list<array<string, mixed>> $candidates @param array<int, array{eligible: array<int, bool>, picks: array<int, bool>}> $candidateResults @return array<string, mixed> */
@@ -285,6 +290,10 @@ final class NhlSatEngineStackAnalyzer
             if ($foundationPicks === []) {
                 $foundationPicks = $newPicks;
             }
+            $cumulativePicks = count($picks);
+            $cumulativeWins = count(array_filter($picks));
+            $stackCandidates[array_key_last($stackCandidates)]['stack_win_pct'] = $cumulativePicks === 0 ? null : round($cumulativeWins / $cumulativePicks * 100, 4);
+            $stackCandidates[array_key_last($stackCandidates)]['stack_coverage_pct'] = count($eligible) === 0 ? 0.0 : round($cumulativePicks / count($eligible) * 100, 4);
         }
         $wins = count(array_filter($picks));
         $pickCount = count($picks);
@@ -300,7 +309,7 @@ final class NhlSatEngineStackAnalyzer
         ));
 
         return ['ids' => array_column($candidates, 'id'), 'candidates' => $stackCandidates,
-            'qualification_keys' => array_map(fn (array $candidate): string => $this->qualificationKey($candidate), $candidates), 'wins' => $wins,
+            'settings_keys' => array_map(fn (array $candidate): string => $this->settingsKey($candidate), $candidates), 'wins' => $wins,
             'losses' => $pickCount - $wins, 'picks' => $pickCount, 'eligible' => $eligibleCount,
             'foundation_wins' => $foundationWins,
             'foundation_losses' => $foundationPickCount - $foundationWins,
@@ -328,17 +337,4 @@ final class NhlSatEngineStackAnalyzer
         return $picks;
     }
 
-    /** @param array<string, mixed> $left @param array<string, mixed> $right */
-    private function compareExpansion(array $left, array $right): int
-    {
-        return [$right['marginal_win_pct'], $right['marginal_picks'], $right['win_pct'] ?? -1, $right['coverage_pct'], count($left['ids']), $left['ids']]
-            <=> [$left['marginal_win_pct'], $left['marginal_picks'], $left['win_pct'] ?? -1, $left['coverage_pct'], count($right['ids']), $right['ids']];
-    }
-
-    /** @param array<string, mixed> $left @param array<string, mixed> $right */
-    private function compareRecommendation(array $left, array $right): int
-    {
-        return [$right['win_pct'] ?? -1, $right['coverage_pct'], count($left['ids']), $left['ids']]
-            <=> [$left['win_pct'] ?? -1, $left['coverage_pct'], count($right['ids']), $right['ids']];
-    }
 }

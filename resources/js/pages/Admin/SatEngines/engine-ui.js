@@ -2,7 +2,7 @@ export const baseUrl = '/admin/nhl-sat-engines';
 
 export function discoveryDefaults() {
     return {
-        kind: 'discovery', engine_id: null, model_run_id: '',
+        kind: 'discovery', name: '', engine_id: null, model_run_id: '',
         desired_win_pct: 60, min_coverage_pct: 40,
         scope: { mode: 'season', selection: 'first', start_date: '', end_date: '', count: 5, teams: [], game_ids: [] },
     };
@@ -26,6 +26,7 @@ export function runPayload(data, gameIdsText = '') {
 
 export function qualified(result, settings) {
     return result.status === 'complete' && result.correct !== null
+        && (!settings.team_abbrev || result.game?.[settings.venue] === settings.team_abbrev)
         && Number(result.confidence) >= Number(settings.confidence_min)
         && Number(result.confidence) <= Number(settings.confidence_max)
         && Number(result.gap) > Number(settings.gap);

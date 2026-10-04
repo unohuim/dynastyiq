@@ -7,20 +7,22 @@ import Workspace from './Workspace.vue';
 import Run from './Run.vue';
 import SettingsFields from './SettingsFields.vue';
 
-const transport = vi.hoisted(() => ({ post: vi.fn(), put: vi.fn(), delete: vi.fn(), get: vi.fn(), reload: vi.fn() }));
+const transport = vi.hoisted(() => ({ post: vi.fn(), put: vi.fn(), patch: vi.fn(), delete: vi.fn(), get: vi.fn(), reload: vi.fn() }));
+const page = vi.hoisted(() => ({ url: '/admin/nhl-sat-engines' }));
 vi.mock('@inertiajs/vue3', async () => {
     const { h, reactive } = await import('vue');
     return {
         Head: { render: () => null },
         Link: { props: ['href'], setup: (props, { slots }) => () => h('a', { href: props.href }, slots.default?.()) },
         router: { get: (...args) => transport.get(...args), reload: (...args) => transport.reload(...args) },
+        usePage: () => page,
         useForm: initial => {
             let transform = value => value;
             const keys = Object.keys(initial);
             const form = reactive({ ...structuredClone(initial), errors: {}, processing: false, recentlySuccessful: false });
             form.transform = callback => { transform = callback; return form; };
             form.clearErrors = () => { form.errors = {}; };
-            for (const method of ['post', 'put', 'delete']) {
+            for (const method of ['post', 'put', 'patch', 'delete']) {
                 form[method] = url => transport[method](url, transform(Object.fromEntries(keys.map(key => [key, form[key]]))));
             }
             return form;
@@ -36,11 +38,10 @@ const mount = (component, props) => {
     document.body.append(root);
     app = createApp({ render: () => h(component, props) });
     app.mount(root);
-    const dialog = root.querySelector('dialog');
-    if (dialog) {
+    root.querySelectorAll('dialog').forEach(dialog => {
         dialog.showModal = vi.fn(() => dialog.setAttribute('open', ''));
         dialog.close = vi.fn(() => dialog.removeAttribute('open'));
-    }
+    });
     return root;
 };
 const workspace = () => ({ engine: null, models, defaults: settings, teams: ['TOR', 'MTL'], runs: { data: [], links: [] } });
@@ -51,6 +52,7 @@ const report = () => ({
 });
 beforeEach(() => {
     vi.clearAllMocks();
+    page.url = '/admin/nhl-sat-engines';
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-10-01T12:00:00Z'));
     vi.stubGlobal('fetch', vi.fn(() => { throw new Error('Unexpected network request'); }));
@@ -101,8 +103,14 @@ it('recognizes only active lifecycle states for polling', () => {
 });
 it('renders an empty index and discovery navigation', () => {
     const root = mount(Index, { engines: { data: [], links: [] }, models, defaults: settings });
-    expect(root.textContent).toContain('No engines yet.');
+    expect(root.textContent).toContain('No Engines match this search.');
     expect(root.querySelector('a').href).toContain('/admin/nhl-sat-engines/discover');
+});
+it('renders linked stack names in the engines index', () => {
+    const root = mount(Index, { engines: { data: [{ id: 8, name: 'Member', model_run_id: 1, test_model_run_id: 1, settings,
+        stack_members: [{ id: 3, stack: { id: 12, name: 'High confidence' } }] }], links: [] }, runs: { data: [], links: [] }, stacks: { data: [], links: [] }, models, defaults: settings });
+    const stackLink = [...root.querySelectorAll('a')].find(link => link.textContent === 'High confidence');
+    expect(stackLink.href).toContain('/admin/nhl-sat-engines/stacks/12');
 });
 it('submits creation without starting a build', async () => {
     const root = mount(Index, { engines: { data: [], links: [] }, models, defaults: settings });
@@ -111,16 +119,23 @@ it('submits creation without starting a build', async () => {
     expect(transport.post).toHaveBeenCalledWith('/admin/nhl-sat-engines', expect.objectContaining({ settings }));
     expect(transport.post).toHaveBeenCalledTimes(1);
 });
-it('marks the current default and posts only the clicked engine as the new default', async () => {
-    const root = mount(Index, { engines: { data: [
-        { id: 1, name: 'Current', model_run_id: 1, settings, is_default: true },
-        { id: 2, name: 'Other', model_run_id: 1, settings, is_default: false },
+it('marks a default stack in the engines index', () => {
+    const root = mount(Index, { engines: { data: [{ id: 1, name: 'Member', model_run_id: 1, settings,
+        stack_members: [{ id: 1, stack: { id: 2, name: 'Current stack', is_default: true } }] }], links: [] }, models, defaults: settings });
+    expect(root.textContent).toContain('Current stack');
+    expect(root.textContent).toContain('(default)');
+});
+it('marks and selects a default stack from the stacks index', async () => {
+    page.url = '/admin/nhl-sat-engines?tab=stacks';
+    const root = mount(Index, { engines: { data: [], links: [] }, runs: { data: [], links: [] }, stacks: { data: [
+        { id: 3, name: 'Current stack', is_default: true, members_count: 2 },
+        { id: 4, name: 'Coverage stack', is_default: false, members_count: 3 },
     ], links: [] }, models, defaults: settings });
-    expect(root.textContent).toContain('Current');
-    expect(root.textContent).toContain('Default');
+    expect(root.textContent).toContain('Current stack');
+    expect(root.textContent).toContain('(default)');
     [...root.querySelectorAll('button')].find(button => button.textContent === 'Make default').click();
     await nextTick();
-    expect(transport.post).toHaveBeenCalledWith('/admin/nhl-sat-engines/2/default', {});
+    expect(transport.post).toHaveBeenCalledWith('/admin/nhl-sat-engines/stacks/4/default', {});
 });
 it('emits setting edits without mutating incoming props', async () => {
     const update = vi.fn();
@@ -237,6 +252,18 @@ it('requests analysis-only stack recommendations and renders them below candidat
     expect(root.textContent).toContain('Foundation');
     expect(root.textContent).toContain('Supplement 1');
     expect(root.textContent).toContain('80.0% coverage');
+});
+
+it('opens a named stack modal and submits the recommendation candidates in order', async () => {
+    const props = reactive(report()); props.run.status = 'complete'; props.stackRequested = true;
+    props.stacks = [{ ids: [12, 13], candidates: [{ id: 12, settings }, { id: 13, settings: { ...settings, offense: 100 } }] }];
+    const root = mount(Run, props);
+    [...root.querySelectorAll('button')].find(button => button.textContent === 'Create stack').click();
+    await nextTick();
+    const dialog = [...root.querySelectorAll('dialog')].find(item => item.textContent.includes('Save engine stack'));
+    const input = dialog.querySelector('input'); input.value = 'Coverage'; input.dispatchEvent(new Event('input', { bubbles: true }));
+    dialog.querySelector('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    expect(transport.post).toHaveBeenCalledWith('/admin/nhl-sat-engines/runs/7/stacks', { name: 'Coverage', candidate_ids: [12, 13] });
 });
 
 it('sorts a newly selected candidate column descending first', async () => {

@@ -783,7 +783,6 @@ it('uses the legacy fallback when saved engines have no default', function (): v
     NhlSatEngine::query()->create([
         'name' => 'Unselected engine', 'test_model_run_id' => $model->id, 'model_run_id' => $model->id,
         'settings' => ['offense' => 100, 'defense' => 100, 'confidence_min' => 0, 'confidence_max' => 100, 'gap' => 0],
-        'is_default' => false,
     ]);
 
     $this->withHeader('Authorization', 'Bearer ' . $token)->getJson('/api/nhl-game-predictions?' . http_build_query([

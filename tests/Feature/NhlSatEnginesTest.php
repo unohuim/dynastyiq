@@ -7,6 +7,7 @@ use App\Jobs\RankNhlSatEngineCandidatesJob;
 use App\Models\NhlModelRun;
 use App\Models\NhlSatEngine;
 use App\Models\NhlSatEngineRun;
+use App\Models\NhlSatEngineStack;
 use App\Models\Role;
 use App\Models\User;
 use App\Services\NhlSatEngineEvaluator;
@@ -88,7 +89,7 @@ it('blocks guests on every engine endpoint', function (string $verb, string $pat
     Bus::assertNothingDispatched();
 })->with([
     ['GET', ''], ['POST', ''], ['GET', '/discover'], ['GET', '/1'], ['PUT', '/1'], ['DELETE', '/1'],
-    ['POST', '/runs'], ['GET', '/runs/1'], ['POST', '/runs/1/pause'], ['POST', '/runs/1/resume'], ['POST', '/runs/1/cancel'], ['POST', '/runs/1/candidates/1/apply'], ['POST', '/1/default'],
+    ['POST', '/runs'], ['GET', '/runs/1'], ['POST', '/runs/1/pause'], ['POST', '/runs/1/resume'], ['POST', '/runs/1/cancel'], ['POST', '/runs/1/candidates/1/apply'], ['POST', '/runs/1/stacks'], ['GET', '/stacks/1'], ['PATCH', '/stacks/1'], ['POST', '/stacks/1/members'], ['PUT', '/stacks/1/members/order'], ['DELETE', '/stacks/1/members/1'], ['DELETE', '/stacks/1'], ['POST', '/stacks/1/default'],
 ]);
 
 it('blocks ordinary users on every engine endpoint', function (string $verb, string $path): void {
@@ -96,7 +97,7 @@ it('blocks ordinary users on every engine endpoint', function (string $verb, str
     Bus::assertNothingDispatched();
 })->with([
     ['GET', ''], ['POST', ''], ['GET', '/discover'], ['GET', '/1'], ['PUT', '/1'], ['DELETE', '/1'],
-    ['POST', '/runs'], ['GET', '/runs/1'], ['POST', '/runs/1/pause'], ['POST', '/runs/1/resume'], ['POST', '/runs/1/cancel'], ['POST', '/runs/1/candidates/1/apply'], ['POST', '/1/default'],
+    ['POST', '/runs'], ['GET', '/runs/1'], ['POST', '/runs/1/pause'], ['POST', '/runs/1/resume'], ['POST', '/runs/1/cancel'], ['POST', '/runs/1/candidates/1/apply'], ['POST', '/runs/1/stacks'], ['GET', '/stacks/1'], ['PATCH', '/stacks/1'], ['POST', '/stacks/1/members'], ['PUT', '/stacks/1/members/order'], ['DELETE', '/stacks/1/members/1'], ['DELETE', '/stacks/1'], ['POST', '/stacks/1/default'],
 ]);
 
 it('creates an engine without dispatching work and reads it through Inertia', function (): void {
@@ -108,24 +109,29 @@ it('creates an engine without dispatching work and reads it through Inertia', fu
     Bus::assertNothingDispatched();
 });
 
-it('makes the only engine the default and exposes that state in the index', function (): void {
-    expect($this->engine->fresh()->is_default)->toBeTrue();
-    $this->actingAs($this->admin)->get('/admin/nhl-sat-engines')->assertInertia(fn (Assert $page) => $page
-        ->where('engines.data.0.id', $this->engine->id)->where('engines.data.0.is_default', true));
-});
+it('selects one non-empty stack as the default without starting an evaluation', function (): void {
+    $first = NhlSatEngineStack::query()->create(['name' => 'First']);
+    $first->members()->create(['engine_id' => $this->engine->id, 'priority' => 1]);
+    $second = NhlSatEngineStack::query()->create(['name' => 'Second']);
+    $second->members()->create(['engine_id' => $this->engine->id, 'priority' => 1]);
 
-it('switches the default engine without starting an evaluation', function (): void {
-    $other = (new NhlSatEngine())->saveDefinition([...$this->definition, 'name' => 'Other engine']);
-    Bus::fake();
-    $this->actingAs($this->admin)->post('/admin/nhl-sat-engines/' . $other->id . '/default')->assertRedirect();
-    expect($this->engine->fresh()->is_default)->toBeFalse()->and($other->fresh()->is_default)->toBeTrue();
+    $this->actingAs($this->admin)->post('/admin/nhl-sat-engines/stacks/' . $first->id . '/default')->assertRedirect();
+    $this->actingAs($this->admin)->post('/admin/nhl-sat-engines/stacks/' . $second->id . '/default')->assertRedirect();
+
+    expect($first->fresh()->is_default)->toBeFalse()->and($second->fresh()->is_default)->toBeTrue();
     Bus::assertNothingDispatched();
 });
 
-it('promotes the remaining engine when deleting the default', function (): void {
-    $other = (new NhlSatEngine())->saveDefinition([...$this->definition, 'name' => 'Other engine']);
-    $this->actingAs($this->admin)->delete('/admin/nhl-sat-engines/' . $this->engine->id)->assertRedirect();
-    expect($other->fresh()->is_default)->toBeTrue();
+it('rejects selecting an empty stack or removing the last default-stack engine', function (): void {
+    $empty = NhlSatEngineStack::query()->create(['name' => 'Empty']);
+    $this->actingAs($this->admin)->postJson('/admin/nhl-sat-engines/stacks/' . $empty->id . '/default')
+        ->assertUnprocessable()->assertJsonValidationErrors('stack');
+
+    $stack = NhlSatEngineStack::query()->create(['name' => 'Default']);
+    $member = $stack->members()->create(['engine_id' => $this->engine->id, 'priority' => 1]);
+    $this->actingAs($this->admin)->post('/admin/nhl-sat-engines/stacks/' . $stack->id . '/default')->assertRedirect();
+    $this->actingAs($this->admin)->deleteJson('/admin/nhl-sat-engines/stacks/' . $stack->id . '/members/' . $member->id)
+        ->assertUnprocessable()->assertJsonValidationErrors('stack');
 });
 
 it('renders the engine index as an Inertia page', function (): void {
@@ -333,10 +339,15 @@ it('only applies completed candidates and preserves their model', function (): v
     $url = '/admin/nhl-sat-engines/runs/' . $run->id . '/candidates/' . $candidate->id . '/apply';
     $this->actingAs($this->admin)->postJson($url, ['name' => 'Adopted'])->assertStatus(409);
     $run->update(['status' => 'complete']);
-    DB::table('nhl_sat_engine_candidates')->where('id', $candidate->id)->update(['metrics' => '{}']);
+    DB::table('nhl_sat_engine_candidates')->where('id', $candidate->id)->update([
+        'metrics' => '{}', 'win_pct' => 75.5, 'coverage_pct' => 42.25,
+    ]);
     $this->post($url, ['name' => 'Adopted'])->assertRedirect();
     $engine = NhlSatEngine::query()->where('name', 'Adopted')->firstOrFail();
-    expect($engine->model_run_id)->toBe($this->model->id)->and($engine->settings)->toEqual($this->settings);
+    expect($engine->model_run_id)->toBe($this->model->id)->and($engine->settings)->toEqual($this->settings)
+        ->and($engine->discovery_candidate_id)->toBe($candidate->id)
+        ->and((float) $engine->discovery_win_pct)->toBe(75.5)
+        ->and((float) $engine->discovery_coverage_pct)->toBe(42.25);
     $this->get('/admin/nhl-sat-engines/' . $engine->id)->assertInertia(fn (Assert $page) => $page->where('engine.name', 'Adopted'));
 });
 
@@ -608,7 +619,6 @@ it('keeps a below-target candidate in the filterable main list', function (): vo
 });
 
 it('expands coverage with a supplement that preserves foundation precedence', function (): void {
-    expect(NhlSatEngineStackAnalyzer::MAX_DEPTH)->toBe(5);
     $run = ($this->createRun)();
     $run->update(['definition' => [...$run->definition, 'min_coverage_pct' => 30]]);
     $foundation = DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->first();
@@ -668,7 +678,32 @@ it('continues automatic stack analysis through three contributing engines', func
         ->and($stack['candidates'][1]['stack_picks'])->toBe(1)->and($stack['candidates'][2]['stack_picks'])->toBe(1);
 });
 
-it('rejects an automatic supplement that replaces every foundation pick', function (): void {
+it('stacks a distinct weight pair using the foundation confidence and gap settings', function (): void {
+    $run = ($this->createRun)();
+    $run->update(['definition' => [...$run->definition, 'desired_win_pct' => 60, 'min_coverage_pct' => 30]]);
+    $foundation = DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->first();
+    DB::table('nhl_sat_engine_candidates')->where('id', $foundation->id)->update([
+        'settings' => json_encode([...$this->settings, 'offense' => 75, 'defense' => 0]),
+        'metrics' => '{}', 'win_pct' => 100, 'coverage_pct' => 33.3333,
+    ]);
+    $supplement = DB::table('nhl_sat_engine_candidates')->insertGetId([
+        'run_id' => $run->id, 'split_index' => 1,
+        'settings' => json_encode([...$this->settings, 'offense' => 50, 'defense' => 0]),
+        'metrics' => '{}', 'win_pct' => 100, 'coverage_pct' => 33.3333, 'meets_targets' => true, 'created_at' => now(), 'updated_at' => now(),
+    ]);
+    DB::table('nhl_sat_engine_results')->insert([
+        ($this->result)($run, 2025020001, ['split_index' => 0, 'correct' => true]),
+        ($this->result)($run, 2025020002, ['split_index' => 1, 'correct' => true]),
+    ]);
+
+    $stack = collect(app(NhlSatEngineStackAnalyzer::class)->analyze($run,
+        DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->get()))
+        ->first(fn (array $row): bool => $row['ids'] === [(int) $foundation->id, $supplement]);
+
+    expect($stack)->not->toBeNull()->and($stack['coverage_pct'])->toBe(100.0)->and($stack['win_pct'])->toBe(100.0);
+});
+
+it('accepts a coverage-expanding supplement even when it also qualifies foundation picks', function (): void {
     $run = ($this->createRun)();
     $run->update(['definition' => [...$run->definition, 'min_coverage_pct' => 30]]);
     $foundation = DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->first();
@@ -676,7 +711,7 @@ it('rejects an automatic supplement that replaces every foundation pick', functi
         'settings' => json_encode([...$this->settings, 'confidence_min' => 70, 'confidence_max' => 70, 'gap' => 0.5]),
         'metrics' => '{}', 'win_pct' => 100, 'coverage_pct' => 33.3333,
     ]);
-    DB::table('nhl_sat_engine_candidates')->insert([
+    $supplement = DB::table('nhl_sat_engine_candidates')->insertGetId([
         'run_id' => $run->id, 'split_index' => 1,
         'settings' => json_encode([...$this->settings, 'confidence_min' => 67, 'confidence_max' => 70, 'gap' => 0]),
         'metrics' => '{}', 'win_pct' => 80, 'coverage_pct' => 66.6667, 'meets_targets' => true, 'created_at' => now(), 'updated_at' => now(),
@@ -687,11 +722,12 @@ it('rejects an automatic supplement that replaces every foundation pick', functi
         ($this->result)($run, 2025020002, ['split_index' => 1, 'confidence' => 68, 'correct' => true]),
     ]);
 
-    expect(app(NhlSatEngineStackAnalyzer::class)->analyze($run,
-        DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->get()))->toBe([]);
+    $stacks = app(NhlSatEngineStackAnalyzer::class)->analyze($run,
+        DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->get());
+    expect($stacks[0]['ids'])->toBe([(int) $foundation->id, $supplement]);
 });
 
-it('recommends coverage-expanding stacks even when they lower the foundation win rate', function (): void {
+it('stops an automatic stack before a break-even coverage expansion', function (): void {
     $run = ($this->createRun)();
     $run->update(['definition' => [...$run->definition, 'desired_win_pct' => 50, 'min_coverage_pct' => 30]]);
     $foundation = DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->first();
@@ -710,11 +746,11 @@ it('recommends coverage-expanding stacks even when they lower the foundation win
 
     $rows = DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->get();
     $stack = collect(app(NhlSatEngineStackAnalyzer::class)->analyze($run, $rows))
-        ->first(fn (array $row): bool => $row['ids'] === [(int) $foundation->id, $supplement]);
-    expect($stack)->not->toBeNull()->and($stack['coverage_pct'])->toBe(100.0)->and($stack['win_pct'])->toBeLessThan(100.0);
+        ->first(fn (array $row): bool => $row['ids'] === [(int) $foundation->id]);
+    expect($stack)->not->toBeNull()->and($stack['coverage_pct'])->toBeLessThan(100.0);
 });
 
-it('rejects automatic supplementary picks below the discovery win target', function (): void {
+it('does not use discovery targets to admit a break-even supplement', function (): void {
     $run = ($this->createRun)();
     $run->update(['definition' => [...$run->definition, 'desired_win_pct' => 60, 'min_coverage_pct' => 30]]);
     $foundation = DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->first();
@@ -722,7 +758,7 @@ it('rejects automatic supplementary picks below the discovery win target', funct
         'settings' => json_encode([...$this->settings, 'confidence_min' => 70, 'confidence_max' => 70, 'gap' => 0.5]),
         'metrics' => '{}', 'win_pct' => 100, 'coverage_pct' => 33.3333,
     ]);
-    DB::table('nhl_sat_engine_candidates')->insert([
+    $supplement = DB::table('nhl_sat_engine_candidates')->insertGetId([
         'run_id' => $run->id, 'split_index' => 1,
         'settings' => json_encode([...$this->settings, 'confidence_min' => 67, 'confidence_max' => 69, 'gap' => 0]),
         'metrics' => '{}', 'win_pct' => 50, 'coverage_pct' => 66.6667, 'meets_targets' => false, 'created_at' => now(), 'updated_at' => now(),
@@ -733,8 +769,33 @@ it('rejects automatic supplementary picks below the discovery win target', funct
         ($this->result)($run, 2025020003, ['split_index' => 1, 'confidence' => 68, 'correct' => false]),
     ]);
 
+    $stacks = app(NhlSatEngineStackAnalyzer::class)->analyze($run,
+        DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->get());
+    expect(collect($stacks)->contains(fn (array $stack): bool => $stack['ids'] === [(int) $foundation->id, $supplement]))->toBeFalse();
+});
+
+it('keeps automatic foundations independent of discovery targets', function (): void {
+    $run = ($this->createRun)();
+    $run->update(['definition' => [...$run->definition, 'desired_win_pct' => 70, 'min_coverage_pct' => 30]]);
+    $foundation = DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->first();
+    DB::table('nhl_sat_engine_candidates')->where('id', $foundation->id)->update([
+        'settings' => json_encode([...$this->settings, 'confidence_min' => 70, 'confidence_max' => 70, 'gap' => 0.5]),
+        'metrics' => '{}', 'win_pct' => 66.6667, 'coverage_pct' => 33.3333,
+    ]);
+    DB::table('nhl_sat_engine_candidates')->insert([
+        'run_id' => $run->id, 'split_index' => 1,
+        'settings' => json_encode([...$this->settings, 'confidence_min' => 69, 'confidence_max' => 69, 'gap' => 0]),
+        'metrics' => '{}', 'win_pct' => 100, 'coverage_pct' => 20, 'meets_targets' => false, 'created_at' => now(), 'updated_at' => now(),
+    ]);
+    DB::table('nhl_sat_engine_results')->insert([
+        ($this->result)($run, 2025020001, ['split_index' => 0, 'confidence' => 70, 'correct' => true]),
+        ($this->result)($run, 2025020002, ['split_index' => 0, 'confidence' => 70, 'correct' => false]),
+        ($this->result)($run, 2025020003, ['split_index' => 0, 'confidence' => 69, 'correct' => true]),
+        ($this->result)($run, 2025020003, ['split_index' => 1, 'confidence' => 69, 'correct' => true]),
+    ]);
+
     expect(app(NhlSatEngineStackAnalyzer::class)->analyze($run,
-        DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->get()))->toBe([]);
+        DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->get()))->not->toBe([]);
 });
 
 it('prioritizes supplementary win rate on new picks over standalone coverage', function (): void {
@@ -796,7 +857,7 @@ it('screens redundant high-win supplements before applying the automatic candida
     expect($stacks[0]['ids'])->toBe([(int) $foundation->id, $contributor]);
 });
 
-it('uses the highest-win and then highest-offense candidate meeting the coverage target as the automatic foundation', function (): void {
+it('uses the highest-win candidate as the automatic foundation regardless of coverage', function (): void {
     $run = ($this->createRun)();
     $foundation = DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->first();
     DB::table('nhl_sat_engine_candidates')->where('id', $foundation->id)->update([
@@ -814,7 +875,7 @@ it('uses the highest-win and then highest-offense candidate meeting the coverage
     $rows = DB::table('nhl_sat_engine_candidates')->whereIn('id', [$foundation->id, $higherWinBelowTarget, $higherOffense])->get();
 
     $selected = app(NhlSatEngineStackAnalyzer::class)->foundation($run, $rows);
-    expect($selected['id'])->toBe($higherOffense);
+    expect($selected['id'])->toBe($higherWinBelowTarget);
 });
 
 it('analyzes a manually ordered stack and preserves its precedence', function (): void {
@@ -1012,6 +1073,21 @@ it('keeps automatic discovery with no qualifying evidence inspectable', function
         ->and($rows[0]['metrics']['picks'])->toBe(0);
 });
 
+it('discovers separate home and away candidates for one selected team', function (): void {
+    $run = app(NhlSatEngineEvaluator::class)->start([...$this->input, 'kind' => 'discovery',
+        'scope' => [...$this->scope, 'teams' => ['TOR']]], $this->engine);
+    DB::table('nhl_sat_engine_results')->insert([
+        ($this->result)($run, 2025020001, ['game' => json_encode(['away' => 'TOR', 'home' => 'MTL'])]),
+        ($this->result)($run, 2025020003, ['game' => json_encode(['away' => 'MTL', 'home' => 'TOR'])]),
+    ]);
+
+    $rows = app(NhlSatEngineEvaluator::class)->discoverQualifications($run->id, 0, $this->settings, 2);
+
+    expect(collect($rows)->pluck('settings.venue')->sort()->values()->all())->toBe(['away', 'home'])
+        ->and(collect($rows)->pluck('settings.team_abbrev')->unique()->all())->toBe(['TOR'])
+        ->and(collect($rows)->pluck('metrics.eligible')->all())->toBe([1, 1]);
+});
+
 it('advances a bounded lane to its next split only after the last game', function (): void {
     $run = app(NhlSatEngineEvaluator::class)->start([...$this->input, 'kind' => 'discovery',
         'scope' => [...$this->scope, 'mode' => 'games', 'count' => 1]], $this->engine);
@@ -1096,4 +1172,83 @@ it('requires an engine name without changing the evaluated candidate', function 
         ['name' => ''])->assertUnprocessable()->assertJsonValidationErrors('name');
     expect(NhlSatEngine::query()->count())->toBe(1)
         ->and(DB::table('nhl_sat_engine_candidates')->where('id', $candidate->id)->value('settings'))->toBe($candidate->settings);
+});
+
+it('persists a named recommendation as ordered engines without dispatching work', function (): void {
+    $run = ($this->createRun)();
+    $run->update(['kind' => 'discovery', 'status' => 'complete']);
+    $candidate = DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->first();
+    DB::table('nhl_sat_engine_candidates')->where('id', $candidate->id)->update([
+        'metrics' => '{}', 'win_pct' => 75.5, 'coverage_pct' => 42.25,
+    ]);
+
+    $this->actingAs($this->admin)->post('/admin/nhl-sat-engines/runs/' . $run->id . '/stacks', [
+        'name' => 'Coverage stack', 'candidate_ids' => [$candidate->id],
+    ])->assertRedirect('/admin/nhl-sat-engines?tab=stacks&created_stack=1');
+
+    $stack = NhlSatEngineStack::query()->with('members.engine')->firstOrFail();
+    expect($stack->name)->toBe('Coverage stack')->and($stack->members)->toHaveCount(1)
+        ->and($stack->members->first()->priority)->toBe(1)
+        ->and($stack->members->first()->engine->name)->toBe('Coverage stack — Foundation')
+        ->and($stack->members->first()->engine->discovery_run_id)->toBe($run->id)
+        ->and($stack->members->first()->engine->discovery_candidate_id)->toBe($candidate->id)
+        ->and((float) $stack->members->first()->engine->discovery_win_pct)->toBe(75.5)
+        ->and((float) $stack->members->first()->engine->discovery_coverage_pct)->toBe(42.25);
+    Bus::assertNothingDispatched();
+});
+
+it('rejects incomplete or foreign candidates when creating a stack', function (): void {
+    $run = ($this->createRun)();
+    $other = ($this->createRun)();
+    $run->update(['status' => 'complete']);
+    $candidate = DB::table('nhl_sat_engine_candidates')->where('run_id', $other->id)->first();
+
+    $this->actingAs($this->admin)->postJson('/admin/nhl-sat-engines/runs/' . $run->id . '/stacks', [
+        'name' => 'Invalid', 'candidate_ids' => [$candidate->id],
+    ])->assertUnprocessable()->assertJsonValidationErrors('candidate_ids');
+    expect(NhlSatEngineStack::query()->count())->toBe(0);
+});
+
+it('manages saved stack membership without deleting the underlying engine', function (): void {
+    $stack = NhlSatEngineStack::query()->create(['name' => 'Saved']);
+    $other = (new NhlSatEngine())->saveDefinition([...$this->definition, 'name' => 'Additional']);
+    $this->actingAs($this->admin)->post('/admin/nhl-sat-engines/stacks/' . $stack->id . '/members', ['engine_id' => $this->engine->id])->assertRedirect();
+    $this->actingAs($this->admin)->post('/admin/nhl-sat-engines/stacks/' . $stack->id . '/members', ['engine_id' => $other->id])->assertRedirect();
+    foreach (range(1, 4) as $index) {
+        $engine = (new NhlSatEngine())->saveDefinition([...$this->definition, 'name' => 'Additional ' . $index]);
+        $this->actingAs($this->admin)->post('/admin/nhl-sat-engines/stacks/' . $stack->id . '/members', ['engine_id' => $engine->id])->assertRedirect();
+    }
+    $members = $stack->fresh()->members;
+    expect($members)->toHaveCount(6);
+    $this->actingAs($this->admin)->put('/admin/nhl-sat-engines/stacks/' . $stack->id . '/members/order', ['member_ids' => $members->pluck('id')->reverse()->values()->all()])->assertRedirect();
+    $member = $stack->fresh()->members()->firstOrFail();
+    $this->actingAs($this->admin)->delete('/admin/nhl-sat-engines/stacks/' . $stack->id . '/members/' . $member->id)->assertRedirect();
+    expect(NhlSatEngine::query()->find($member->engine_id))->not->toBeNull();
+});
+
+it('renders a stack index separately from the dedicated stack detail page', function (): void {
+    $stack = NhlSatEngineStack::query()->create(['name' => 'Saved']);
+    $stack->members()->create(['engine_id' => $this->engine->id, 'priority' => 1]);
+
+    $this->actingAs($this->admin)->get('/admin/nhl-sat-engines?tab=stacks')->assertInertia(fn (Assert $page) => $page
+        ->component('Admin/SatEngines/Index')->where('stacks.data.0.name', 'Saved')->where('stacks.data.0.members_count', 1));
+    $this->get('/admin/nhl-sat-engines/stacks/' . $stack->id)->assertInertia(fn (Assert $page) => $page
+        ->component('Admin/SatEngines/Stack')->where('stack.name', 'Saved')->where('stack.members.0.engine.id', $this->engine->id));
+});
+
+it('includes each engine stack membership in the engines index payload', function (): void {
+    $stack = NhlSatEngineStack::query()->create(['name' => 'High confidence']);
+    $stack->members()->create(['engine_id' => $this->engine->id, 'priority' => 1]);
+
+    $this->actingAs($this->admin)->get('/admin/nhl-sat-engines')->assertInertia(fn (Assert $page) => $page
+        ->where('engines.data.0.id', $this->engine->id)
+        ->where('engines.data.0.stack_members.0.stack.name', 'High confidence'));
+});
+
+it('prevents deletion of an engine that remains in a saved stack', function (): void {
+    $stack = NhlSatEngineStack::query()->create(['name' => 'Saved']);
+    $stack->members()->create(['engine_id' => $this->engine->id, 'priority' => 1]);
+
+    $this->actingAs($this->admin)->deleteJson('/admin/nhl-sat-engines/' . $this->engine->id)
+        ->assertUnprocessable()->assertJsonValidationErrors('engine');
 });

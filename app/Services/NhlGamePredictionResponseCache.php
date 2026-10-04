@@ -6,7 +6,7 @@ namespace App\Services;
 
 use App\Jobs\RefreshNhlGamePredictionJob;
 use App\Models\NhlModelRun;
-use App\Models\NhlSatEngine;
+use App\Models\NhlSatEngineStack;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Throwable;
@@ -74,14 +74,15 @@ final class NhlGamePredictionResponseCache
     private function fingerprint(int $gameId, array $input): string
     {
         $game = DB::table('nhl_games')->where('nhl_game_id', $gameId)->first(['updated_at', 'away_starter_lock', 'home_starter_lock']);
-        $engine = NhlSatEngine::query()->where('is_default', true)->first(['id', 'model_run_id', 'settings', 'updated_at']);
-        $model = $engine === null ? null : NhlModelRun::query()->whereKey($engine->model_run_id)->first(['id', 'updated_at']);
+        $stack = NhlSatEngineStack::query()->where('is_default', true)->with('members.engine')->first();
+        $modelIds = $stack?->members->pluck('engine.model_run_id')->filter()->unique()->values()->all() ?? [];
+        $models = NhlModelRun::query()->whereIn('id', $modelIds)->get(['id', 'updated_at']);
         $lineups = DB::table('nhl_current_lineups')->where('nhl_game_id', $gameId)
             ->orderBy('team_id')->get(['team_id', 'nhl_lineup_observation_id', 'structure_hash', 'last_observed_at', 'updated_at']);
         $goalies = DB::table('nhl_starting_goalie_observations')->where('nhl_game_id', $gameId)
             ->orderBy('id')->get(['id', 'team_abbrev', 'nhl_player_id', 'updated_at']);
 
-        return hash('sha256', json_encode([$input, $game, $engine, $model, $lineups, $goalies], JSON_THROW_ON_ERROR));
+        return hash('sha256', json_encode([$input, $game, $stack, $models, $lineups, $goalies], JSON_THROW_ON_ERROR));
     }
 
     /** @param array<string,mixed> $input */

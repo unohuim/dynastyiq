@@ -1,0 +1,4 @@
+<?php
+declare(strict_types=1);
+use Illuminate\Database\Migrations\Migration; use Illuminate\Database\Schema\Blueprint; use Illuminate\Support\Facades\Schema;
+return new class extends Migration { public function up(): void { Schema::create('nhl_sat_engine_stacks', function (Blueprint $table): void { $table->id(); $table->string('name', 160); $table->text('notes')->nullable(); $table->timestamps(); }); Schema::create('nhl_sat_engine_stack_members', function (Blueprint $table): void { $table->id(); $table->foreignId('stack_id')->constrained('nhl_sat_engine_stacks')->cascadeOnDelete(); $table->foreignId('engine_id')->constrained('nhl_sat_engines')->restrictOnDelete(); $table->unsignedTinyInteger('priority'); $table->timestamps(); $table->unique(['stack_id','engine_id']); $table->unique(['stack_id','priority']); }); } public function down(): void { Schema::dropIfExists('nhl_sat_engine_stack_members'); Schema::dropIfExists('nhl_sat_engine_stacks'); } };

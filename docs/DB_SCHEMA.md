@@ -5,13 +5,15 @@
 Migrations: `2026_10_01_000001_create_nhl_sat_engines.php` through
 `2026_10_01_000003_add_test_model_to_nhl_sat_engines.php`, plus
 `2026_10_02_000001_add_pause_state_to_nhl_sat_engine_runs.php` and
-`2026_10_02_000002_add_discovery_run_to_nhl_sat_engines.php`. These are global NHL
+`2026_10_02_000002_add_discovery_run_to_nhl_sat_engines.php`, and
+`2026_10_03_000001_create_nhl_sat_engine_stacks.php`,
+`2026_10_04_000001_widen_nhl_sat_engine_stack_member_priorities.php`,
+`2026_10_04_000002_add_default_to_nhl_sat_engine_stacks.php`, and
+`2026_10_04_000003_retire_nhl_sat_engine_defaults.php`. These are global NHL
 administrative records; they have no tenant or organization ownership.
 
-- `nhl_sat_engines`: `id`, `name`, `test_model_run_id`, nullable `discovery_run_id`, `model_run_id` (Production Model), JSON `settings`, nullable `notes`, boolean
-  `is_default`, timestamps. A partial unique index permits at most one true default.
-  The first created engine is default; deleting a default promotes the newest remaining engine.
-  `discovery_run_id` preserves the discovery run that supplied applied settings and nulls when its run is deleted; manual engines leave it null. Model deletion is restricted while referenced.
+- `nhl_sat_engines`: `id`, `name`, `test_model_run_id`, nullable `discovery_run_id`, nullable `discovery_candidate_id`, nullable frozen decimal `discovery_win_pct` and `discovery_coverage_pct`, `model_run_id` (Production Model), JSON `settings`, nullable `notes`, timestamps. Engines are selected only through saved stack membership.
+  `discovery_run_id` and `discovery_candidate_id` preserve the candidate source when settings were applied; candidate deletion nulls only the candidate reference while frozen observed metrics remain. Manual engines leave all discovery fields null. Model deletion is restricted while referenced.
 - `nhl_sat_engine_runs`: `id`, nullable `engine_id`, `model_run_id`, `kind`, indexed
   `status`, nullable `paused_status`, `work_generation`, JSON `definition`, `game_count`, `prediction_count`,
   `predictions_completed`, `candidate_count`, `candidates_completed`, nullable
@@ -35,6 +37,8 @@ administrative records; they have no tenant or organization ownership.
   `prediction`, timestamps. A run/weight-pair/game tuple is unique. The stored NHL
   game ID is historical provenance, not a cascading game FK. Run deletion cascades
   its candidates and results; no public run-deletion action is introduced.
+- `nhl_sat_engine_stacks`: `id`, bounded `name`, nullable `notes`, boolean `is_default`, timestamps. A partial unique index permits at most one default stack. A stack owns only its memberships, never its engines.
+- `nhl_sat_engine_stack_members`: `id`, cascading `stack_id`, restricted `engine_id`, unsigned integer `priority`, timestamps. Engine and priority are each unique within a stack; membership has no fixed count cap.
 
 
 Starter locks (`2026_09_26_000001_add_locked_starters_to_nhl_games`):

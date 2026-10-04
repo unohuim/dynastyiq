@@ -1,0 +1,39 @@
+name: NHL SAT Engine Stacks
+type: Persistent Ordered Saved Engine Collection
+location:
+  - app/Models/NhlSatEngineStack.php
+  - app/Models/NhlSatEngineStackMember.php
+  - app/Services/NhlSatEngineStackCreator.php
+  - app/Http/Controllers/Admin/NhlSatEngineController.php
+  - resources/js/pages/Admin/SatEngines/Index.vue
+  - resources/js/pages/Admin/SatEngines/Run.vue
+purpose: Persist reviewed discovery recommendations as independently usable engines in an explicit precedence order and select the one stack used for ordinary predictions.
+when_to_use:
+  - Saving a reviewed manual or automatic discovery recommendation.
+  - Managing the name, membership, or priority of a saved engine stack.
+when_not_to_use:
+  - Calculating discovery recommendations; NhlSatEngineStackAnalysis owns that read-only work.
+  - Deleting or mutating an engine merely because its stack membership changes.
+rules:
+  - A newly saved stack contains one or more distinct saved engines with contiguous one-based priority; lower priority numbers take precedence. Later membership removal may leave a stack empty. Stack length has no fixed cap.
+  - Saving a recommendation validates every ordered candidate against its source run, creates one saved engine for each candidate, and records discovery provenance without starting evaluation or changing the default stack.
+  - Created engine names derive from the approved stack name and their Foundation or Supplement priority; saved stack names remain independently editable. Stack members display each Engine's frozen candidate test record, win and coverage metrics, never an Engine-default state. When all members retain completed candidate provenance from one run, detail also displays each member's unique contribution and cumulative stack impact in priority order; mixed or manually created memberships display unavailable impact rather than inferred values.
+  - Adding an existing engine appends it at the final priority. Reordering must include every current member exactly once.
+  - Removing a member and deleting a stack remove memberships only. Engines survive and may be reused elsewhere.
+  - An engine with stack memberships cannot be deleted until those memberships are removed.
+  - At most one non-empty stack is default. A default stack may not lose its final member. For an ordinary prediction, members may be evaluated in priority order, but only the first Engine whose internal confidence bounds and score-gap rule qualify the game is selected to make a stack prediction. No second Engine prediction may be returned for that game. If none qualifies, inputs.engine_id is null and pick_qualified is false even when the broader matchup payload is available. A missing default stack uses the documented legacy fallback.
+  - Partner-facing prediction and market confidence is presentation confidence, calculated after internal qualification as `internal × (1 − coverage^(1/5)) + observed_win_pct × coverage^(1/5)`, with frozen discovery percentages normalized to 0–1. Missing frozen metrics retain internal confidence. Internal confidence is never changed by this calculation or exposed as the partner confidence score.
+public_interface:
+  - GET /admin/nhl-sat-engines/stacks/{stack}
+  - POST /admin/nhl-sat-engines/runs/{run}/stacks
+  - PATCH /admin/nhl-sat-engines/stacks/{stack}
+  - POST /admin/nhl-sat-engines/stacks/{stack}/members
+  - PUT /admin/nhl-sat-engines/stacks/{stack}/members/order
+  - DELETE /admin/nhl-sat-engines/stacks/{stack}/members/{member}
+  - DELETE /admin/nhl-sat-engines/stacks/{stack}
+  - POST /admin/nhl-sat-engines/stacks/{stack}/default
+  - NhlSatEngineStackCreator
+example_usage: |
+  Save a three-engine recommendation named "High-confidence coverage". The service creates
+  "High-confidence coverage — Foundation" followed by two Supplement engines, then records
+  their one, two, and three priorities in the saved stack.
