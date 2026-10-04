@@ -77,7 +77,7 @@ class NhlGamePredictionPayload
                     $fallback['inputs']['stack_id'] = $stack->id;
                     $fallback = $this->withPresentationConfidence($fallback, $stack->members->first()->engine);
 
-                    return $fallback;
+                    return $this->withUnqualifiedPresentationPenalty($fallback);
                 }
             }
         }
@@ -321,7 +321,7 @@ class NhlGamePredictionPayload
             $homeSide
         );
 
-        return [
+        $response = [
             'prediction_available' => true,
             'pick_qualified' => $prediction['confidence_score'] >= ($defaultEngine?->settings['confidence_min'] ?? self::PICK_CONFIDENCE_MIN)
                 && $prediction['confidence_score'] <= ($defaultEngine?->settings['confidence_max'] ?? self::PICK_CONFIDENCE_MAX)
@@ -375,6 +375,13 @@ class NhlGamePredictionPayload
                 'source_fetched_at' => now()->toIso8601String(),
             ],
         ];
+
+        if (! isset($overrides['_stack_engine_id']) && ! array_key_exists('sat_model_run_id', $overrides)
+            && ! $response['pick_qualified']) {
+            return $this->withUnqualifiedPresentationPenalty($response);
+        }
+
+        return $response;
     }
 
     private function presentationConfidence(float $internalConfidence, NhlSatEngine $engine): float
@@ -400,6 +407,24 @@ class NhlGamePredictionPayload
 
         foreach ($payload['market_probabilities'] ?? [] as $key => $market) {
             $payload['market_probabilities'][$key]['confidence_score'] = $confidence;
+        }
+
+        return $payload;
+    }
+
+    /**
+     * Lower only the outward confidence of a normal prediction that is not a pick.
+     *
+     * @param array<string, mixed> $payload
+     * @return array<string, mixed>
+     */
+    private function withUnqualifiedPresentationPenalty(array $payload): array
+    {
+        $confidence = max(0.0, (float) data_get($payload, 'prediction.confidence_score', 0) - 20.0);
+        data_set($payload, 'prediction.confidence_score', round($confidence, 4));
+
+        foreach ($payload['market_probabilities'] ?? [] as $key => $market) {
+            $payload['market_probabilities'][$key]['confidence_score'] = round($confidence, 4);
         }
 
         return $payload;

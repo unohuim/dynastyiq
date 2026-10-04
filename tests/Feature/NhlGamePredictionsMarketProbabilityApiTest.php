@@ -735,6 +735,7 @@ it('qualifies picks by inclusive confidence and score gap before display roundin
         ->update(['confidence_score' => $confidence / 100]);
 
     $qualified = $confidenceQualified && $awayGoals !== $homeGoals;
+    $presentationConfidence = $qualified ? $confidence : max(0, $confidence - 20);
     $response = $this->withToken($token)->getJson('/api/nhl-game-predictions?' . http_build_query([
         'nhl_game_id' => 2026020001,
         'source_season_id' => '20252026', 'target_season_id' => '20262027',
@@ -743,10 +744,11 @@ it('qualifies picks by inclusive confidence and score gap before display roundin
     ]))->assertOk()
         ->assertJsonPath('prediction_available', true)
         ->assertJsonPath('pick_qualified', $qualified)
-        ->assertJsonPath('prediction.confidence_score', $confidence)
+        ->assertJsonPath('prediction.confidence_score', $presentationConfidence)
         ->assertJsonPath('prediction.predicted_score.away', (float) round($awayGoals, 2))
         ->assertJsonPath('prediction.predicted_score.home', (float) round($homeGoals, 2))
-        ->assertJsonCount(2, 'market_probabilities');
+        ->assertJsonCount(2, 'market_probabilities')
+        ->assertJsonPath('market_probabilities.0.confidence_score', $presentationConfidence);
 
     expect($response->json('pick_qualified'))->toBeBool();
     $this->assertDatabaseHas('nhl_goalie_season_projections', [

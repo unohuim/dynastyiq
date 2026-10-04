@@ -13,7 +13,9 @@ The returned `prediction.confidence_score` and each market row's `confidence_sco
 are presentation confidence, not the Engine's internal qualification confidence:
 `internal × (1 − coverage^(1/5)) + observed_win_pct × coverage^(1/5)`, using the
 Engine's frozen discovery percentages as decimals. An Engine without frozen
-discovery metrics retains its internal score. If no default stack is available,
+discovery metrics retains its internal score. A normal response with
+`pick_qualified: false` subtracts 20 percentage points from this outward-facing
+confidence (floored at zero); this does not alter internal qualification. If no default stack is available,
 ordinary predictions retain the legacy fallback: no engine model or weights are
 selected, `inputs.engine_id` is null, and pick qualification uses confidence 67–70
 with a score gap strictly greater than zero.

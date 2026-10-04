@@ -22,7 +22,7 @@ rules:
   - Removing a member and deleting a stack remove memberships only. Engines survive and may be reused elsewhere.
   - An engine with stack memberships cannot be deleted until those memberships are removed.
   - At most one non-empty stack is default. A default stack may not lose its final member. For an ordinary prediction, members may be evaluated in priority order, but only the first Engine whose internal confidence bounds and score-gap rule qualify the game is selected to make a stack prediction. No second Engine prediction may be returned for that game. If none qualifies, inputs.engine_id is null and pick_qualified is false even when the broader matchup payload is available. A missing default stack uses the documented legacy fallback.
-  - Partner-facing prediction and market confidence is presentation confidence, calculated after internal qualification as `internal × (1 − coverage^(1/5)) + observed_win_pct × coverage^(1/5)`, with frozen discovery percentages normalized to 0–1. Missing frozen metrics retain internal confidence. Internal confidence is never changed by this calculation or exposed as the partner confidence score.
+  - Partner-facing prediction and market confidence is presentation confidence, calculated after internal qualification as `internal × (1 − coverage^(1/5)) + observed_win_pct × coverage^(1/5)`, with frozen discovery percentages normalized to 0–1. Missing frozen metrics retain internal confidence. A normal unqualified response subtracts 20 percentage points from presentation confidence, floored at zero. Internal confidence is never changed or exposed as the partner confidence score.
 public_interface:
   - GET /admin/nhl-sat-engines/stacks/{stack}
   - POST /admin/nhl-sat-engines/runs/{run}/stacks
