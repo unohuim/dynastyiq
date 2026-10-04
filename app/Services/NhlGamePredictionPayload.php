@@ -1297,7 +1297,7 @@ class NhlGamePredictionPayload
             'push_probability' => 0.0,
             'loss_probability' => round(1 - $probability, 6),
             'fair_odds_american' => $this->americanOdds($probability),
-            'fair_odds_decimal' => round(1 / max(0.000001, $probability), 3),
+            'fair_odds_decimal' => $this->decimalOdds($probability),
             'confidence_score' => $confidenceScore,
             'model' => [
                 'method' => 'poisson_projected_score_moneyline',
@@ -1556,7 +1556,7 @@ class NhlGamePredictionPayload
             'push_probability' => $result['push'],
             'loss_probability' => $result['loss'],
             'fair_odds_american' => $this->americanOdds($probability),
-            'fair_odds_decimal' => round(1 / max(0.000001, $probability), 3),
+            'fair_odds_decimal' => $this->decimalOdds($probability),
             'confidence_score' => $confidenceScore,
             'model' => [
                 'method' => $method,
@@ -1573,15 +1573,22 @@ class NhlGamePredictionPayload
         return $payload;
     }
 
-    private function americanOdds(float $probability): int
+    private function americanOdds(float $probability): ?int
     {
-        $probability = max(0.000001, min(0.999999, $probability));
+        if ($probability <= 0 || $probability >= 1) {
+            return null;
+        }
 
         if ($probability >= 0.5) {
             return (int) round(-100 * $probability / (1 - $probability));
         }
 
         return (int) round(100 * (1 - $probability) / $probability);
+    }
+
+    private function decimalOdds(float $probability): ?float
+    {
+        return $probability <= 0 || $probability >= 1 ? null : round(1 / $probability, 3);
     }
 
     /**

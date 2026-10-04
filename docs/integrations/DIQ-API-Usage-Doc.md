@@ -1532,9 +1532,9 @@ Common row shape:
 | `win_probability` | Probability the selection wins. |
 | `push_probability` | Probability the selection pushes. Always `0` for moneyline. Usually `0` for half-goal lines. |
 | `loss_probability` | Probability the selection loses. |
-| `fair_odds_american` | American fair odds derived from probability. |
-| `fair_odds_decimal` | Decimal fair odds derived from probability. |
-| `confidence_score` | Prediction confidence from `1` to `100`. |
+| `fair_odds_american` | American fair odds derived from probability, or `null` when probability is exactly `0` or `1` because fair odds are infinite. |
+| `fair_odds_decimal` | Decimal fair odds derived from probability, or `null` when probability is exactly `0` or `1` because fair odds are infinite. |
+| `confidence_score` | Presentation confidence from `0` to `100`. |
 | `model.method` | Probability method. See method values below. |
 | `model.source` | Source input path, currently `prediction.predicted_score`. |
 | `model.includes_overtime` | Whether the probability includes overtime resolution in the score distribution. |

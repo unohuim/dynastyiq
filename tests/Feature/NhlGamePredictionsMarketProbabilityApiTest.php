@@ -650,6 +650,24 @@ it('does not create push probability for half-goal total lines', function (): vo
         ->and($rows->firstWhere('selection_key', 'under')['push_probability'])->toBe(0.0);
 });
 
+it('returns null fair odds for certain or impossible market outcomes', function (): void {
+    $service = app(\App\Services\NhlGamePredictionPayload::class);
+    $moneyline = new ReflectionMethod($service, 'moneylineMarketProbability');
+    $line = new ReflectionMethod($service, 'lineMarketProbability');
+
+    $impossibleMoneyline = $moneyline->invoke($service, 'away', 'AWY', 0.0, 60);
+    $certainMoneyline = $moneyline->invoke($service, 'home', 'HOM', 1.0, 60);
+    $impossibleTotal = $line->invoke($service, 'total', 'over', null, 6.5,
+        ['win' => 0.0, 'push' => 0.0, 'loss' => 1.0], 60, 'projected_total_distribution');
+
+    expect($impossibleMoneyline['fair_odds_american'])->toBeNull()
+        ->and($impossibleMoneyline['fair_odds_decimal'])->toBeNull()
+        ->and($certainMoneyline['fair_odds_american'])->toBeNull()
+        ->and($certainMoneyline['fair_odds_decimal'])->toBeNull()
+        ->and($impossibleTotal['fair_odds_american'])->toBeNull()
+        ->and($impossibleTotal['fair_odds_decimal'])->toBeNull();
+});
+
 it('includes push probability for whole-number puckline spreads', function (): void {
     $rows = collect(($this->predictionRequest)([
         'markets' => ['puckline'],
