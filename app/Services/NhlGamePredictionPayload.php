@@ -66,7 +66,7 @@ class NhlGamePredictionPayload
                     if (! $candidate['pick_qualified']) {
                         continue;
                     }
-                    $candidate = $this->withPresentationConfidence($candidate, $engine);
+                    $candidate = $this->withPresentationConfidence($candidate, $engine, true);
                     $candidate['inputs']['stack_id'] = $stack->id;
 
                     return $candidate;
@@ -75,7 +75,7 @@ class NhlGamePredictionPayload
                     $fallback['pick_qualified'] = false;
                     $fallback['inputs']['engine_id'] = null;
                     $fallback['inputs']['stack_id'] = $stack->id;
-                    $fallback = $this->withPresentationConfidence($fallback, $stack->members->first()->engine);
+                    $fallback = $this->withPresentationConfidence($fallback, $stack->members->first()->engine, false);
 
                     return $this->withUnqualifiedPresentationPenalty($fallback);
                 }
@@ -384,14 +384,27 @@ class NhlGamePredictionPayload
         return $response;
     }
 
-    private function presentationConfidence(float $internalConfidence, NhlSatEngine $engine): float
+    private function presentationConfidence(float $internalConfidence, NhlSatEngine $engine, bool $qualified): float
     {
+        if (! $qualified) {
+            if ($engine->discovery_win_pct === null || $engine->discovery_coverage_pct === null) {
+                return round($internalConfidence, 4);
+            }
+            $weight = pow(max(0.0, min(100.0, (float) $engine->discovery_coverage_pct)) / 100, 1 / 5);
+
+            return round($internalConfidence * (1 - $weight) + (float) $engine->discovery_win_pct * $weight, 4);
+        }
+
+        $adjustedInternalConfidence = min(100.0, $internalConfidence + 5.0);
+
         if ($engine->discovery_win_pct === null || $engine->discovery_coverage_pct === null) {
-            return round($internalConfidence, 4);
+            return round(min(95.0, max(70.0, $adjustedInternalConfidence + 12.0)), 4);
         }
         $weight = pow(max(0.0, min(100.0, (float) $engine->discovery_coverage_pct)) / 100, 1 / 5);
+        $blendedConfidence = $adjustedInternalConfidence * (1 - $weight)
+            + (float) $engine->discovery_win_pct * $weight;
 
-        return round($internalConfidence * (1 - $weight) + (float) $engine->discovery_win_pct * $weight, 4);
+        return round(min(95.0, max(70.0, $blendedConfidence + 12.0)), 4);
     }
 
     /**
@@ -400,9 +413,9 @@ class NhlGamePredictionPayload
      * @param array<string, mixed> $payload
      * @return array<string, mixed>
      */
-    private function withPresentationConfidence(array $payload, NhlSatEngine $engine): array
+    private function withPresentationConfidence(array $payload, NhlSatEngine $engine, bool $qualified): array
     {
-        $confidence = $this->presentationConfidence((float) data_get($payload, 'prediction.confidence_score', 0), $engine);
+        $confidence = $this->presentationConfidence((float) data_get($payload, 'prediction.confidence_score', 0), $engine, $qualified);
         data_set($payload, 'prediction.confidence_score', $confidence);
 
         foreach ($payload['market_probabilities'] ?? [] as $key => $market) {

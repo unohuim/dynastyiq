@@ -668,6 +668,24 @@ it('returns null fair odds for certain or impossible market outcomes', function 
         ->and($impossibleTotal['fair_odds_decimal'])->toBeNull();
 });
 
+it('floors and caps qualified engine presentation confidence after the approved adjustments', function (): void {
+    $service = app(\App\Services\NhlGamePredictionPayload::class);
+    $method = new ReflectionMethod($service, 'presentationConfidence');
+
+    $floorEngine = new NhlSatEngine([
+        'discovery_win_pct' => 57.4,
+        'discovery_coverage_pct' => 81.2,
+    ]);
+    $capEngine = new NhlSatEngine([
+        'discovery_win_pct' => 100.0,
+        'discovery_coverage_pct' => 100.0,
+    ]);
+
+    expect($method->invoke($service, 60.0, $floorEngine, true))->toBe(70.0)
+        ->and($method->invoke($service, 90.0, $capEngine, true))->toBe(95.0)
+        ->and($method->invoke($service, 60.0, $floorEngine, false))->toBeLessThan(60.0);
+});
+
 it('includes push probability for whole-number puckline spreads', function (): void {
     $rows = collect(($this->predictionRequest)([
         'markets' => ['puckline'],
