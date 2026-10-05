@@ -178,7 +178,6 @@ class NhlProjectedTeamMatchupSimulator
             $lineups = app(NhlGameLineupProjectionBuilder::class);
             $offenseRosterIds ??= array_column($lineups->projectedRosterPreview($targetSeasonId, $toiProjectionVersion, $offenseTeam), 'nhl_player_id');
             $defenseRosterIds ??= array_column($lineups->projectedRosterPreview($targetSeasonId, $toiProjectionVersion, $defenseTeam), 'nhl_player_id');
-            $gamePlayers ??= $lineups->buildFromRosterIds($offenseRosterIds, $sourceSeasonId, $targetSeasonId, $projectionVersion, $toiProjectionVersion);
             if ($gamePlayers === null) {
                 $positions = ['forward' => 0, 'defense' => 0];
                 $preview = collect($lineups->projectedRosterPreview($targetSeasonId, $toiProjectionVersion, $offenseTeam, $offenseRosterIds))
@@ -191,6 +190,9 @@ class NhlProjectedTeamMatchupSimulator
                             'line_key' => ($role === 'defense' ? 'D' : 'F') . (intdiv($index, $size) + 1),
                             'slot_index' => ($index % $size) + 1];
                     })->all();
+                // A projected roster has the same 18 resolved identities as a reported
+                // roster. Build it through the same projection ladder; do not route it
+                // through historical boxscore rows first.
                 $gamePlayers = $lineups->build(['players' => $preview], $sourceSeasonId, $targetSeasonId, $projectionVersion, $toiProjectionVersion)
                     ?? $preview;
                 $gamePlayers = $lineups->applySatModel($gamePlayers, $satModelId, $targetSeasonId, 2);
