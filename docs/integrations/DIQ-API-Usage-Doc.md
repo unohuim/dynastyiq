@@ -9,6 +9,9 @@ make a stack prediction: the first whose internal confidence window and score-ga
 rule qualifies the game. If none qualifies, no Engine prediction is selected.
 Engine selection is not a partner request parameter. Historical Engine discovery
 and testing use an Engine's Test Model; they do not change API predictions.
+When the Default stack has a completed Production SAT Model selected, that model
+is used for every Engine evaluation in that stack. This is a stack-scoped runtime
+override and does not change the saved Production Model on any Engine.
 The returned `prediction.confidence_score` and each market row's `confidence_score`
 are presentation confidence, not the Engine's internal qualification confidence:
 for a qualified Engine, `min(95, max(70, blend(internal + 5, observed_win_pct,

@@ -61,7 +61,8 @@ class NhlGamePredictionPayload
                 foreach ($stack->members as $member) {
                     $engine = $member->engine;
                     $candidate = $this->build($nhlGameId, [...$overrides, '_stack_engine_id' => $engine->id,
-                        'sat_model_run_id' => $engine->model_run_id, 'engine_weights' => $engine->settings]);
+                        'sat_model_run_id' => $stack->production_model_run_id ?? $engine->model_run_id,
+                        'engine_weights' => $engine->settings]);
                     $fallback ??= $candidate;
                     if (! $candidate['pick_qualified']) {
                         continue;
@@ -110,10 +111,14 @@ class NhlGamePredictionPayload
             throw ValidationException::withMessages(['engine_weights' => 'Engine evaluation requires a pinned model and stored boxscores.']);
         }
         if ($pinnedRun !== null) {
-            // A selected annual run owns the input horizon. Never borrow unrelated versions.
+            // The Engine run owns rates and qualification. Current target-season versions
+            // supply only roster identities, projected-starter identity, and evidence fields.
             $targetSeasonId = (string) $game->season_id;
             $sourceSeasonId = (string) collect($pinnedRun->train_season_ids)->sort()->last();
-            $projectionVersion = $toiProjectionVersion = $goalieProjectionVersion = '';
+            $projectionVersion = (string) $this->latestProjectionVersion($targetSeasonId);
+            $toiProjectionVersion = (string) $this->latestToiProjectionVersion($targetSeasonId);
+            $goalieProjectionVersion = (string) $this->latestGoalieProjectionVersion($targetSeasonId);
+            $this->assertSimulationInputs($sourceSeasonId, $targetSeasonId, $projectionVersion, $toiProjectionVersion, $goalieProjectionVersion);
         } else {
             $targetSeasonId = (string) ($overrides['target_season_id'] ?? $this->latestTargetSeasonId());
             $sourceSeasonId = (string) ($overrides['source_season_id'] ?? $this->latestSourceSeasonId($targetSeasonId));

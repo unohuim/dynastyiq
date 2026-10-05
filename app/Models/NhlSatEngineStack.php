@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Facades\DB;
 
@@ -22,6 +23,12 @@ final class NhlSatEngineStack extends Model
     public function members(): HasMany
     {
         return $this->hasMany(NhlSatEngineStackMember::class, 'stack_id')->orderBy('priority');
+    }
+
+    /** Optional runtime model override for every Engine in this stack. */
+    public function productionModel(): BelongsTo
+    {
+        return $this->belongsTo(NhlModelRun::class, 'production_model_run_id');
     }
 
     /** Atomically select this non-empty stack for ordinary predictions. */

@@ -33,7 +33,7 @@ class NhlSatEngineController extends Controller
             'engines' => NhlSatEngine::query()->when($search !== '', fn ($query) => $query->where('name', 'ilike', '%' . $search . '%'))
                 ->with('stackMembers.stack:id,name,is_default')->latest('id')->paginate(25)->withQueryString(),
             'runs' => NhlSatEngineRun::query()->latest('id')->paginate(25, ['*'], 'runs_page'),
-            'stacks' => NhlSatEngineStack::query()->withCount('members')->latest('id')->paginate(25, ['*'], 'stacks_page'),
+            'stacks' => NhlSatEngineStack::query()->with('productionModel:id,name')->withCount('members')->latest('id')->paginate(25, ['*'], 'stacks_page'),
             'models' => $this->models(), 'defaults' => app(NhlSatEngineSettings::class)->defaults(), 'engineSearch' => $search,
         ]);
     }
@@ -333,7 +333,7 @@ class NhlSatEngineController extends Controller
         }
 
         return Inertia::render('Admin/SatEngines/Stack', [
-            'stack' => $stack, 'analysis' => $analysis,
+            'stack' => $stack, 'analysis' => $analysis, 'models' => $this->models(),
             'engines' => NhlSatEngine::query()->orderBy('name')->get(['id', 'name']),
         ]);
     }
@@ -341,7 +341,11 @@ class NhlSatEngineController extends Controller
     /** Rename a saved stack without changing its engines or precedence. */
     public function updateStack(Request $request, NhlSatEngineStack $stack): RedirectResponse
     {
-        $input = $request->validate(['name' => 'required|string|max:160', 'notes' => 'nullable|string|max:2000']);
+        $input = $request->validate([
+            'name' => 'required|string|max:160', 'notes' => 'nullable|string|max:2000',
+            'production_model_run_id' => ['nullable', 'integer', Rule::exists('nhl_model_runs', 'id')
+                ->where('model_family', 'sat')->where('status', 'complete')],
+        ]);
         $stack->update($input);
 
         return back();

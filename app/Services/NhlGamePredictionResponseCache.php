@@ -75,7 +75,9 @@ final class NhlGamePredictionResponseCache
     {
         $game = DB::table('nhl_games')->where('nhl_game_id', $gameId)->first(['updated_at', 'away_starter_lock', 'home_starter_lock']);
         $stack = NhlSatEngineStack::query()->where('is_default', true)->with('members.engine')->first();
-        $modelIds = $stack?->members->pluck('engine.model_run_id')->filter()->unique()->values()->all() ?? [];
+        $modelIds = $stack?->production_model_run_id !== null
+            ? [$stack->production_model_run_id]
+            : ($stack?->members->pluck('engine.model_run_id')->filter()->unique()->values()->all() ?? []);
         $models = NhlModelRun::query()->whereIn('id', $modelIds)->get(['id', 'updated_at']);
         $lineups = DB::table('nhl_current_lineups')->where('nhl_game_id', $gameId)
             ->orderBy('team_id')->get(['team_id', 'nhl_lineup_observation_id', 'structure_hash', 'last_observed_at', 'updated_at']);

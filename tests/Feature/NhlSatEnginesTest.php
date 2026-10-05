@@ -122,6 +122,27 @@ it('selects one non-empty stack as the default without starting an evaluation', 
     Bus::assertNothingDispatched();
 });
 
+it('persists a stack production model without replacing member engine models', function (): void {
+    $override = NhlModelRun::query()->create([
+        'run_key' => 'stack-production-override', 'name' => 'Stack production model', 'model_family' => 'sat',
+        'workflow_stage' => 'training', 'model_version' => 'stack-production-override', 'usage' => 'production', 'status' => 'complete',
+        'train_season_ids' => ['20222023', '20232024', '20242025'], 'target_season_id' => '20252026', 'metrics' => [],
+    ]);
+    $stack = NhlSatEngineStack::query()->create(['name' => 'Production override']);
+    $stack->members()->create(['engine_id' => $this->engine->id, 'priority' => 1]);
+
+    $this->actingAs($this->admin)->patch('/admin/nhl-sat-engines/stacks/' . $stack->id, [
+        'name' => 'Production override', 'production_model_run_id' => $override->id,
+    ])->assertRedirect();
+
+    expect($stack->fresh()->production_model_run_id)->toBe($override->id)
+        ->and($this->engine->fresh()->model_run_id)->toBe($this->model->id);
+    $this->actingAs($this->admin)->get('/admin/nhl-sat-engines/stacks/' . $stack->id)->assertInertia(fn (Assert $page) => $page
+        ->where('stack.production_model_run_id', $override->id)
+        ->where('models.0.id', $override->id));
+    Bus::assertNothingDispatched();
+});
+
 it('rejects selecting an empty stack or removing the last default-stack engine', function (): void {
     $empty = NhlSatEngineStack::query()->create(['name' => 'Empty']);
     $this->actingAs($this->admin)->postJson('/admin/nhl-sat-engines/stacks/' . $empty->id . '/default')
