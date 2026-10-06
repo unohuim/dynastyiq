@@ -73,6 +73,8 @@ class NhlGamePredictionPayload
                     return $candidate;
                 }
                 if ($fallback !== null) {
+                    // A member declining the game only delegates to the next member.
+                    // This branch is reached only after the entire stack declined it.
                     $fallback['pick_qualified'] = false;
                     $fallback['inputs']['engine_id'] = null;
                     $fallback['inputs']['stack_id'] = $stack->id;
