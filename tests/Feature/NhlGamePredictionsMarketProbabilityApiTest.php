@@ -820,6 +820,7 @@ it('applies the October 6 third-engine stack override to a small foundation spre
 
     expect($method->invoke($service, $game, 2, ['prediction' => ['goal_differential' => 0.2999]]))->toBeTrue()
         ->and($method->invoke($service, $game, 2, ['prediction' => ['goal_differential' => 0.3]]))->toBeFalse()
+        ->and($method->invoke($service, $game, 2, ['prediction' => []]))->toBeFalse()
         ->and($method->invoke($service, $game, 1, ['prediction' => ['goal_differential' => 0.5]]))->toBeNull();
 
     $this->travelTo(\Illuminate\Support\Carbon::parse('2026-10-07 00:01:00 America/Toronto'));

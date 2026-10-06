@@ -428,8 +428,13 @@ class NhlGamePredictionPayload
             return null;
         }
 
-        return abs((float) data_get($candidate, 'prediction.goal_differential', 0.0))
-            < self::TONIGHT_THIRD_ENGINE_MINIMUM_GAP;
+        $goalDifferential = data_get($candidate, 'prediction.goal_differential');
+
+        if (! is_numeric($goalDifferential)) {
+            return false;
+        }
+
+        return abs((float) $goalDifferential) < self::TONIGHT_THIRD_ENGINE_MINIMUM_GAP;
     }
 
     private function presentationConfidence(float $internalConfidence, NhlSatEngine $engine, bool $qualified): float
