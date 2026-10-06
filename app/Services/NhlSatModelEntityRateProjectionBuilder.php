@@ -20,6 +20,7 @@ class NhlSatModelEntityRateProjectionBuilder
     private const GOALIE_FACED_PROFILE_TYPE = 'goalie_faced';
     private const PROFILE_INPUT_SHARE_COVERAGE = 0.95;
     private const MIN_SAT_PER_SEASON = 4;
+    private const MINIMUM_BUCKET_CONFIDENCE = 0.97;
     private const HIGH_DANGER_GOAL_PROBABILITY = 0.10;
 
     /**
@@ -253,6 +254,7 @@ class NhlSatModelEntityRateProjectionBuilder
         $priorTrainingSeasonId = min($seasonIds);
         $gameType = (int) ($run->game_type ?? 2);
         $latestTrainingMarchDate = mb_substr($latestTrainingSeasonId, 4, 4) . '-03-01';
+        $minimumBucketConfidence = self::MINIMUM_BUCKET_CONFIDENCE;
         $entityWhereSql = $entityKey === null ? '' : 'AND adjusted_rows.entity_key = ?';
 
         $sql = <<<SQL
@@ -437,25 +439,7 @@ latest_late_signals AS (
             WHEN latest_late_rate_features.late_sat_per_60 - latest_late_rate_features.pre_march_sat_per_60 < -2 THEN 'late_sat_drop'
             ELSE 'late_sat_stable'
         END as late_sat_signal,
-        CASE
-            WHEN latest_late_rate_features.late_games < 8
-                OR latest_late_rate_features.pre_march_games < 20
-                OR latest_late_rate_features.late_sat_per_60 IS NULL
-                OR latest_late_rate_features.pre_march_sat_per_60 IS NULL THEN 0::numeric
-            WHEN latest_late_rate_features.late_sat_per_60 - latest_late_rate_features.pre_march_sat_per_60 > 2
-                THEN -1 * LEAST(0.25, ABS(latest_late_rate_features.late_sat_per_60 - latest_late_rate_features.pre_march_sat_per_60) * 0.05)
-            WHEN latest_late_rate_features.late_sat_per_60 - latest_late_rate_features.pre_march_sat_per_60 < -2
-                THEN GREATEST(-0.50, (latest_late_rate_features.late_sat_per_60 - latest_late_rate_features.pre_march_sat_per_60) * 0.10)
-            ELSE 0::numeric
-        END as late_sat_adjustment_xsat_per_60,
-        CASE
-            WHEN latest_late_rate_features.late_games < 8
-                OR latest_late_rate_features.pre_march_games < 20
-                OR latest_late_rate_features.late_sat_per_60 IS NULL
-                OR latest_late_rate_features.pre_march_sat_per_60 IS NULL THEN -0.08
-            WHEN ABS(latest_late_rate_features.late_sat_per_60 - latest_late_rate_features.pre_march_sat_per_60) <= 2 THEN 0.03
-            ELSE -0.05
-        END as late_sat_confidence_adjustment
+        0::numeric as late_sat_diagnostic
     FROM latest_late_rate_features
 ),
 production_rows AS (
@@ -605,8 +589,6 @@ entity_targets AS (
         latest_late_signals.late_sat_per_game,
         latest_late_signals.late_sat_per_game_delta,
         latest_late_signals.late_sat_signal,
-        COALESCE(latest_late_signals.late_sat_adjustment_xsat_per_60, 0) as late_sat_adjustment_xsat_per_60,
-        COALESCE(latest_late_signals.late_sat_confidence_adjustment, 0) as late_sat_confidence_adjustment,
         COALESCE(goal_tier_baselines.goal_tier_baseline_xsat_per_60, entity_scored_features.entity_xsat_per_60) as cohort_xsat_per_60,
         CASE
             WHEN entity_scored_features.entity_latest_xsat_per_60 >= entity_scored_features.entity_season_one_xsat_per_60
@@ -705,6 +687,14 @@ entity_targets AS (
     LEFT JOIN latest_late_signals ON latest_late_signals.entity_key = entity_scored_features.entity_key
     WHERE COALESCE(entity_scored_features.player_position, '') <> 'G'
 ),
+reliable_bucket_totals AS (
+    SELECT
+        entity_key,
+        SUM(preliminary_xsat_per_60) as reliable_preliminary_xsat_per_60
+    FROM bucket_preliminary_rows
+    WHERE confidence_score > {$minimumBucketConfidence}
+    GROUP BY entity_key
+),
 adjusted_rows AS (
     SELECT
         bucket_preliminary_rows.*,
@@ -735,11 +725,9 @@ adjusted_rows AS (
         entity_targets.late_sat_per_game,
         entity_targets.late_sat_per_game_delta,
         entity_targets.late_sat_signal,
-        entity_targets.late_sat_adjustment_xsat_per_60,
-        entity_targets.late_sat_confidence_adjustment,
         COALESCE(
-            GREATEST(0, entity_targets.entity_target_xsat_per_60 + entity_targets.late_sat_adjustment_xsat_per_60)
-                / NULLIF(entity_targets.entity_preliminary_xsat_per_60, 0),
+            GREATEST(0, entity_targets.entity_target_xsat_per_60)
+                / NULLIF(reliable_bucket_totals.reliable_preliminary_xsat_per_60, 0),
             1
         ) as entity_projection_scale,
         1::numeric as overall_rate_multiplier,
@@ -750,8 +738,8 @@ adjusted_rows AS (
                 0,
                 bucket_preliminary_rows.preliminary_xsat_per_60
                     * COALESCE(
-                        GREATEST(0, entity_targets.entity_target_xsat_per_60 + entity_targets.late_sat_adjustment_xsat_per_60)
-                            / NULLIF(entity_targets.entity_preliminary_xsat_per_60, 0),
+                        GREATEST(0, entity_targets.entity_target_xsat_per_60)
+                            / NULLIF(reliable_bucket_totals.reliable_preliminary_xsat_per_60, 0),
                         1
                     )
             )::numeric,
@@ -762,8 +750,8 @@ adjusted_rows AS (
                 0,
                 bucket_preliminary_rows.preliminary_xsog_per_60
                     * COALESCE(
-                        GREATEST(0, entity_targets.entity_target_xsat_per_60 + entity_targets.late_sat_adjustment_xsat_per_60)
-                            / NULLIF(entity_targets.entity_preliminary_xsat_per_60, 0),
+                        GREATEST(0, entity_targets.entity_target_xsat_per_60)
+                            / NULLIF(reliable_bucket_totals.reliable_preliminary_xsat_per_60, 0),
                         1
                     )
             )::numeric,
@@ -774,8 +762,8 @@ adjusted_rows AS (
                 0,
                 bucket_preliminary_rows.preliminary_xg_per_60
                     * COALESCE(
-                        GREATEST(0, entity_targets.entity_target_xsat_per_60 + entity_targets.late_sat_adjustment_xsat_per_60)
-                            / NULLIF(entity_targets.entity_preliminary_xsat_per_60, 0),
+                        GREATEST(0, entity_targets.entity_target_xsat_per_60)
+                            / NULLIF(reliable_bucket_totals.reliable_preliminary_xsat_per_60, 0),
                         1
                     )
             )::numeric,
@@ -784,6 +772,8 @@ adjusted_rows AS (
     FROM bucket_preliminary_rows
     INNER JOIN entity_peer_totals ON entity_peer_totals.entity_key = bucket_preliminary_rows.entity_key
     INNER JOIN entity_targets ON entity_targets.entity_key = bucket_preliminary_rows.entity_key
+    INNER JOIN reliable_bucket_totals ON reliable_bucket_totals.entity_key = bucket_preliminary_rows.entity_key
+    WHERE bucket_preliminary_rows.confidence_score > {$minimumBucketConfidence}
 )
 SELECT
     adjusted_rows.model_run_id,
@@ -817,12 +807,13 @@ SELECT
     adjusted_rows.projected_xg_per_60,
     COALESCE(adjusted_rows.sat_probability, 0) as sat_probability,
     COALESCE(adjusted_rows.goal_probability, 0) as goal_probability,
-    LEAST(1, GREATEST(0, COALESCE(adjusted_rows.confidence_score, 0) + adjusted_rows.late_sat_confidence_adjustment)) as confidence_score,
+    LEAST(1, GREATEST(0, COALESCE(adjusted_rows.confidence_score, 0))) as confidence_score,
     COALESCE(adjusted_rows.shrinkage_weight, 0) as shrinkage_weight,
     adjusted_rows.confidence_bucket,
     json_build_object(
         'source', 'entity_profile_buckets',
         'minimum_source_sat', 0,
+        'minimum_bucket_confidence', {$minimumBucketConfidence},
         'minimum_sat_per_season', 0,
         'profile_input_share_coverage', 1.0,
         'prior_training_season_id', ?::text,
@@ -857,9 +848,7 @@ SELECT
         'late_sat_gp', adjusted_rows.late_sat_per_game,
         'late_sat_gp_delta', adjusted_rows.late_sat_per_game_delta,
         'late_sat_signal', adjusted_rows.late_sat_signal,
-        'late_sat_adjustment_xsat_per_60', adjusted_rows.late_sat_adjustment_xsat_per_60,
-        'late_sat_confidence_adjustment', adjusted_rows.late_sat_confidence_adjustment,
-        'formula', 'S2 bucket shape scaled to S2 bucket-count + position + G/GP tier + S2-vs-S1 entity SAT target, with conservative late-season SAT signal adjustment'
+        'formula', 'S2 bucket shape restricted to reliable confidence rows, then scaled to the S2 bucket-count + position + G/GP tier + S2-vs-S1 entity SAT target'
     ) as metadata,
     ?::timestamp as projected_at,
     ?::timestamp as created_at,

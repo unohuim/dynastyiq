@@ -162,19 +162,51 @@ class NhlHistoricalPredictionService
      */
     public function conversion(?object $personal, ?object $average, ?object $modelBaseline = null): array
     {
+        $projectedOnTarget = $this->projectedRatio(
+            $modelBaseline,
+            'projected_xsog_per_60',
+            'projected_xsat_per_60'
+        );
+        $projectedFinishing = $this->projectedRatio(
+            $modelBaseline,
+            'projected_xg_per_60',
+            'projected_xsog_per_60'
+        );
         $accuracy = (float) ($personal->source_sat ?? 0) > 0 ? $personal : $average;
         $finishing = (float) ($personal->source_sog ?? 0) > 0 ? $personal : $average;
 
         return [
-            'on_target' => max(0.0, min(1.0, (float) ($accuracy->source_sat ?? 0) > 0
+            'on_target' => $projectedOnTarget ?? max(0.0, min(1.0, (float) ($accuracy->source_sat ?? 0) > 0
                 ? (float) $accuracy->source_sog / (float) $accuracy->source_sat
                 : (float) ($modelBaseline->sat_probability ?? 0))),
-            'finishing' => max(0.0, min(1.0, (float) ($finishing->source_sog ?? 0) > 0
+            'finishing' => $projectedFinishing ?? max(0.0, min(1.0, (float) ($finishing->source_sog ?? 0) > 0
                 ? (float) $finishing->source_goals / (float) $finishing->source_sog
                 : (float) ($modelBaseline->goal_probability ?? 0))),
-            'on_target_source' => $accuracy !== null && $accuracy === $personal ? 'historical_fallback' : 'bucket_average',
-            'finishing_source' => $finishing !== null && $finishing === $personal ? 'historical_fallback' : 'bucket_average',
+            'on_target_source' => $projectedOnTarget !== null
+                ? 'projected_rate'
+                : ($accuracy !== null && $accuracy === $personal ? 'historical_fallback' : 'bucket_average'),
+            'finishing_source' => $projectedFinishing !== null
+                ? 'projected_rate'
+                : ($finishing !== null && $finishing === $personal ? 'historical_fallback' : 'bucket_average'),
         ];
+    }
+
+    /** Resolve a valid projected conversion ratio, retaining intentional zeroes. */
+    private function projectedRatio(?object $modelBaseline, string $numeratorField, string $denominatorField): ?float
+    {
+        $numerator = $modelBaseline->{$numeratorField} ?? null;
+        $denominator = $modelBaseline->{$denominatorField} ?? null;
+        if (! is_numeric($numerator) || ! is_numeric($denominator)
+            || ! is_finite((float) $numerator) || ! is_finite((float) $denominator)
+            || (float) $numerator < 0 || (float) $denominator < 0) {
+            return null;
+        }
+
+        if ((float) $denominator === 0.0) {
+            return (float) $numerator === 0.0 ? 0.0 : null;
+        }
+
+        return max(0.0, min(1.0, (float) $numerator / (float) $denominator));
     }
     /**
      * Read training-only profiles. Never borrow held-out evaluation snapshots.

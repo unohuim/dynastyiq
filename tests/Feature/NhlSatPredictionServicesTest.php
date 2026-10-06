@@ -65,7 +65,7 @@ it('multiplies model bucket rates by same-run TOI in seconds', function (): void
         ->and($input['buckets']->sum('baseline_xgf'))->toEqualWithDelta(0.15, 0.000001);
 });
 
-it('uses personal historical conversion instead of predicted outcome rates', function (): void {
+it('uses projected bucket conversion ahead of personal historical conversion', function (): void {
     ($this->rate)(['projected_xsog_per_60' => 8, 'projected_xg_per_60' => 1.2]);
     ($this->toi)();
     ($this->profile)(['source_sog' => 80, 'source_goals' => 8]);
@@ -73,10 +73,10 @@ it('uses personal historical conversion instead of predicted outcome rates', fun
     $bucket = $input['buckets']->first();
     expect($input['toi_seconds'])->toBe(900.0)
         ->and($bucket->baseline_xsat)->toBe(3.0)
-        ->and($bucket->baseline_xsog)->toEqualWithDelta(2.4, 0.000001)
-        ->and($bucket->baseline_xgf)->toEqualWithDelta(0.24, 0.000001)
-        ->and($bucket->on_target_source)->toBe('historical_fallback')
-        ->and($bucket->finishing_source)->toBe('historical_fallback');
+        ->and($bucket->baseline_xsog)->toEqualWithDelta(2.0, 0.000001)
+        ->and($bucket->baseline_xgf)->toEqualWithDelta(0.3, 0.000001)
+        ->and($bucket->on_target_source)->toBe('projected_rate')
+        ->and($bucket->finishing_source)->toBe('projected_rate');
 });
 
 it('falls back as a pair when model TOI is absent', function (): void {
@@ -386,7 +386,7 @@ it('persists compatible goalie buckets and reconciles season totals on rebuild',
         ->and(json_decode($season->metadata, true)['sat_model_run_id'])->toBe($this->run->id);
 });
 
-it('uses personal bucket accuracy and finishing without replacing model attempts', function (): void {
+it('uses personal bucket conversion when projected conversion is unavailable', function (): void {
     ($this->rate)();
     ($this->toi)();
     ($this->profile)(['source_sat' => 100, 'source_sog' => 80, 'source_goals' => 8]);
@@ -512,8 +512,8 @@ it('does not confuse model bucket confidence with a large personal goalie sample
 });
 
 
-it('preserves observed zero accuracy despite positive predicted outcomes and pooled history', function (): void {
-    ($this->rate)(['projected_xsog_per_60' => 8, 'projected_xg_per_60' => 1.2]);
+it('preserves projected zero conversion despite positive historical and pooled evidence', function (): void {
+    ($this->rate)(['projected_xsog_per_60' => 0, 'projected_xg_per_60' => 0]);
     ($this->toi)();
     ($this->profile)(['source_sog' => 0, 'source_goals' => 0]);
     ($this->profile)(['entity_id' => 102, 'entity_key' => 'skater_offense:102']);
@@ -521,18 +521,19 @@ it('preserves observed zero accuracy despite positive predicted outcomes and poo
     expect($bucket->baseline_xsat)->toBe(3.0)
         ->and($bucket->baseline_xsog)->toBe(0.0)
         ->and($bucket->baseline_xgf)->toBe(0.0)
-        ->and($bucket->on_target_source)->toBe('historical_fallback');
+        ->and($bucket->on_target_source)->toBe('projected_rate')
+        ->and($bucket->finishing_source)->toBe('projected_rate');
 });
 
-it('uses bucket averages ahead of predicted outcomes when personal history is absent', function (): void {
+it('uses projected bucket conversion ahead of pooled history', function (): void {
     ($this->rate)(['projected_xsog_per_60' => 8, 'projected_xg_per_60' => 1.2]);
     ($this->toi)();
     ($this->profile)(['entity_id' => 102, 'entity_key' => 'skater_offense:102', 'source_sog' => 60, 'source_goals' => 6]);
     $bucket = $this->service->inputs($this->run->id)->get(101)['buckets']->first();
-    expect($bucket->baseline_xsog)->toEqualWithDelta(1.8, 0.000001)
-        ->and($bucket->baseline_xgf)->toEqualWithDelta(0.18, 0.000001)
-        ->and($bucket->on_target_source)->toBe('bucket_average')
-        ->and($bucket->finishing_source)->toBe('bucket_average');
+    expect($bucket->baseline_xsog)->toEqualWithDelta(2.0, 0.000001)
+        ->and($bucket->baseline_xgf)->toEqualWithDelta(0.3, 0.000001)
+        ->and($bucket->on_target_source)->toBe('projected_rate')
+        ->and($bucket->finishing_source)->toBe('projected_rate');
 });
 
 it('uses the matching personal Other bucket without changing its projected attempts', function (): void {
@@ -569,14 +570,14 @@ it('rejects a negative attempt projection instead of silently converting it to z
 });
 
 
-it('builds separate projections for sparse buckets and buckets beyond the old share cutoff', function (): void {
-    foreach (['A' => 96, 'B' => 3, 'C' => 1] as $key => $sat) {
+it('retains only reliable buckets and rescales them to the entity target', function (): void {
+    foreach (['A' => [96, 0.99], 'B' => [3, 0.98], 'C' => [1, 0.50]] as $key => [$sat, $confidence]) {
         ($this->profile)([
             'matched_bucket_key' => $key, 'bucket_dimensions' => json_encode(['shot_type_group' => $key]),
             'source_sat' => $sat, 'source_sog' => $sat, 'source_goals' => 0,
             'source_profile_share' => $sat / 100, 'source_xsat_per_60' => $sat / 10,
             'source_xsog_per_60' => $sat / 10, 'source_xg_per_60' => 0,
-            'expected_sog' => $sat, 'expected_goals' => 0,
+            'expected_sog' => $sat, 'expected_goals' => 0, 'confidence_score' => $confidence,
         ]);
     }
     $builder = app(NhlSatModelEntityRateProjectionBuilder::class);
@@ -584,26 +585,27 @@ it('builds separate projections for sparse buckets and buckets beyond the old sh
     $rows = DB::table('nhl_sat_model_entity_rate_projection_buckets')
         ->where('model_run_id', $this->run->id)->where('entity_id', 101)
         ->orderBy('matched_bucket_key')->get();
-    expect($rows->pluck('matched_bucket_key')->all())->toBe(['A', 'B', 'C'])
-        ->and((int) $rows->sum('source_sat'))->toBe(100)
+    expect($rows->pluck('matched_bucket_key')->all())->toBe(['A', 'B'])
+        ->and((int) $rows->sum('source_sat'))->toBe(99)
         ->and($rows->where('is_other_bucket', true))->toBeEmpty();
     foreach ($rows as $row) {
         expect(json_decode($row->bucket_dimensions, true))->toBe(['shot_type_group' => $row->matched_bucket_key])
             ->and((float) $row->projected_xsat_per_60)->toBeGreaterThan(0);
         $metadata = json_decode($row->metadata, true);
         expect($metadata['minimum_source_sat'])->toBe(0)
+            ->and((float) $metadata['minimum_bucket_confidence'])->toBe(0.97)
             ->and((float) $metadata['profile_input_share_coverage'])->toBe(1.0);
     }
     ($this->toi)();
     $input = $this->service->inputs($this->run->id)->get(101);
-    expect($input['buckets']->pluck('matched_bucket_key')->sort()->values()->all())->toBe(['A', 'B', 'C'])
+    expect($input['buckets']->pluck('matched_bucket_key')->sort()->values()->all())->toBe(['A', 'B'])
         ->and($input['buckets']->sum('baseline_xsat'))
         ->toEqualWithDelta((float) $rows->sum('projected_xsat_per_60') / 4, 0.000001);
     Http::assertNothingSent();
 });
 
 it('matches sparse training snapshots by exact key without consuming held-out buckets', function (): void {
-    ($this->profile)(['source_sat' => 1, 'source_profile_share' => 1,
+    ($this->profile)(['source_sat' => 1, 'source_profile_share' => 1, 'confidence_score' => 0.99,
         'source_xsat_per_60' => 2, 'source_xsog_per_60' => 1, 'source_xg_per_60' => 0.1]);
     foreach (['20232024' => 1, '20242025' => 3, '20252026' => 999] as $season => $rate) {
         DB::table('nhl_sat_model_entity_test_profile_buckets')->insert([
@@ -627,7 +629,7 @@ it('matches sparse training snapshots by exact key without consuming held-out bu
 });
 
 it('removes obsolete Other on entity rebuild without touching another player', function (): void {
-    ($this->profile)(['source_sat' => 1, 'source_profile_share' => 1,
+    ($this->profile)(['source_sat' => 1, 'source_profile_share' => 1, 'confidence_score' => 0.99,
         'source_xsat_per_60' => 2, 'source_xsog_per_60' => 1, 'source_xg_per_60' => 0.1]);
     ($this->rate)(['matched_bucket_key' => 'L99|other=low_volume', 'is_other_bucket' => true]);
     ($this->rate)(['entity_key' => 'skater_offense:102', 'entity_id' => 102,

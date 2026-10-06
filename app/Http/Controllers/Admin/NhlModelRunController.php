@@ -3160,10 +3160,9 @@ SQL;
                 ->selectRaw("MAX((metadata->>'late_sat_gp')::numeric) as late_sat_gp")
                 ->selectRaw("MAX((metadata->>'late_sat_gp_delta')::numeric) as late_sat_gp_delta")
                 ->selectRaw("MAX(metadata->>'late_sat_signal') as late_sat_signal")
-                ->selectRaw("MAX((metadata->>'late_sat_adjustment_xsat_per_60')::numeric) as late_sat_adjustment_xsat_per_60")
                 ->groupBy('profile_type', 'entity_key')
             : DB::query()
-                ->fromRaw('(SELECT NULL::varchar as rate_signal_profile_type, NULL::varchar as rate_signal_entity_key, NULL::numeric as pre_march_sat60, NULL::numeric as late_sat60, NULL::numeric as late_sat60_delta, NULL::numeric as pre_march_sat_gp, NULL::numeric as late_sat_gp, NULL::numeric as late_sat_gp_delta, NULL::varchar as late_sat_signal, NULL::numeric as late_sat_adjustment_xsat_per_60) as rate_projection_signal_empty')
+                ->fromRaw('(SELECT NULL::varchar as rate_signal_profile_type, NULL::varchar as rate_signal_entity_key, NULL::numeric as pre_march_sat60, NULL::numeric as late_sat60, NULL::numeric as late_sat60_delta, NULL::numeric as pre_march_sat_gp, NULL::numeric as late_sat_gp, NULL::numeric as late_sat_gp_delta, NULL::varchar as late_sat_signal) as rate_projection_signal_empty')
                 ->whereRaw('1 = 0');
 
         return DB::table('nhl_sat_model_entity_rate_comparison_aggregates')
@@ -3246,7 +3245,6 @@ SQL;
                 'rate_projection_signals.late_sat_gp',
                 'rate_projection_signals.late_sat_gp_delta',
                 'rate_projection_signals.late_sat_signal',
-                'rate_projection_signals.late_sat_adjustment_xsat_per_60',
                 'training_goal_rates.train_g_gp',
                 'training_goal_rates.train_pts_gp',
             ])
@@ -3367,7 +3365,6 @@ SQL;
             ->selectRaw('AVG(rate_projection_signals.late_sat_gp) as late_sat_gp')
             ->selectRaw('AVG(rate_projection_signals.late_sat_gp_delta) as late_sat_gp_delta')
             ->selectRaw('NULL::varchar as late_sat_signal')
-            ->selectRaw('AVG(rate_projection_signals.late_sat_adjustment_xsat_per_60) as late_sat_adjustment_xsat_per_60')
             ->selectRaw('AVG(training_goal_rates.train_g_gp) as train_g_gp')
             ->selectRaw('AVG(training_goal_rates.train_pts_gp) as train_pts_gp')
             ->selectRaw('SUM(train_sat) as train_sat')
@@ -3496,7 +3493,6 @@ SQL;
             'late_sat_60',
             'late_sat_60_delta',
             'late_sat_signal',
-            'late_sat_adjustment_xsat_60',
             'train_hdsat_60',
             'test_hdsat_60',
             'hdsat_drift',
@@ -3798,7 +3794,6 @@ SQL;
             $row->late_sat60 ?? null,
             $row->late_sat60_delta ?? null,
             $row->late_sat_signal ?? null,
-            $row->late_sat_adjustment_xsat_per_60 ?? null,
             $row->train_hdsat_per_60 ?? null,
             $row->test_hdsat_per_60 ?? null,
             $row->hdsat_drift ?? null,
