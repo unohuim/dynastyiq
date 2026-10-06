@@ -12,7 +12,7 @@ use Illuminate\Support\Facades\Schema;
 /** Paired, same-run SAT/60 and TOI/GP predictions; historical fallback stays separate. */
 class NhlSatModelPredictionService
 {
-    private const GOALIE_CONFIDENCE_SAT = 300.0;
+    private const GOALIE_CONFIDENCE_SAT = 100.0;
 
     /** Create the static annual prediction assembler. */
     public function __construct(private readonly NhlHistoricalPredictionService $historical)
@@ -417,7 +417,8 @@ class NhlSatModelPredictionService
                 : $matchingProfiles->first();
             $exact = $profile !== null;
             $sat = $profile === null ? 0.0 : (float) $profile->source_sat;
-            // Model bucket confidence is not evidence of a large personal goalie sample.
+            // Stored goalie profile confidence remains the ceiling; 100 historical
+            // attempts provide full same-scale evidence as skater buckets.
             $confidence = $profile === null ? 0.0 : max(0.0, min(
                 1.0, (float) $profile->confidence_score, sqrt(max(0.0, $sat) / self::GOALIE_CONFIDENCE_SAT)
             ));

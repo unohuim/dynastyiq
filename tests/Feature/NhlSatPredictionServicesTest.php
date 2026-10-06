@@ -231,12 +231,17 @@ it('uses neutral goalie response when no historical evidence exists', function (
 });
 
 it('does not apply the goalie confidence shrink twice', function (): void {
-    ($this->profile)(['profile_type' => 'goalie_faced', 'entity_key' => 'goalie_faced:900', 'entity_id' => 900]);
+    ($this->profile)([
+        'profile_type' => 'goalie_faced',
+        'entity_key' => 'goalie_faced:900',
+        'entity_id' => 900,
+        'confidence_score' => 0.99,
+    ]);
     $environment = collect([app(NhlHistoricalPredictionService::class)->bucket((object) [
         'matched_bucket_key' => 'A', 'bucket_dimensions' => [],
     ], 10, 5, 0.4, 'sat_model', $this->run->id)]);
     $bucket = $this->service->goalieBuckets($this->run->id, 900, $environment)->get('A');
-    expect($bucket->source_confidence_score)->toBe(0.5)->and($bucket->confidence_score)->toBe(1.0);
+    expect($bucket->source_confidence_score)->toBe(0.99)->and($bucket->confidence_score)->toBe(1.0);
 });
 
 it('feeds model buckets into matchup goals and counts full-game volume once', function (): void {

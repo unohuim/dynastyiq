@@ -23,6 +23,8 @@ class NhlGamePredictionPayload
     private const DEFAULT_PUCKLINE_SPREAD = 1.5;
     private const DEFAULT_TOTAL_LINE = 6.0;
     private const SKATER_CONFIDENCE_COVERAGE_TARGET = 0.99;
+    private const INPUT_CONFIDENCE_SKATER_WEIGHT = 0.70;
+    private const INPUT_CONFIDENCE_GOALIE_WEIGHT = 0.30;
     // Temporary qualification window pending the next engine revision.
     private const PICK_CONFIDENCE_MIN = 67;
     private const PICK_CONFIDENCE_MAX = 70;
@@ -1036,17 +1038,18 @@ class NhlGamePredictionPayload
     }
 
     /**
-     * Return skater input confidence for Engine qualification and presentation.
-     * Goalie confidence remains evidence-only until goalie calibration is retested.
+     * Combine skater and goalie input confidence; this is not a win probability.
      *
      * @param array<string, mixed> $side
      * @param array<string, mixed> $goalie
      */
     public function teamInputConfidence(array $side, array $goalie): float
     {
-        unset($goalie);
+        $skaterConfidence = $this->weightedSkaterConfidence($side);
+        $goalieConfidence = max(0.0, min(1.0, ((float) ($goalie['confidence_score'] ?? 50)) / 100));
 
-        return $this->weightedSkaterConfidence($side);
+        return (self::INPUT_CONFIDENCE_SKATER_WEIGHT * $skaterConfidence)
+            + (self::INPUT_CONFIDENCE_GOALIE_WEIGHT * $goalieConfidence);
     }
 
     /**
