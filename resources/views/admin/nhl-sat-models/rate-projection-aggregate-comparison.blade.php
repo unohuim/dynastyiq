@@ -1,5 +1,6 @@
 @php
     $formatRate = fn ($value) => $value === null ? '-' : number_format((float) $value, 2);
+    $formatSavePct = fn ($value) => $value === null ? '-' : number_format((float) $value, 2) . '%';
     $formatPct = fn ($value) => $value === null ? '-' : number_format(((float) $value) * 100, 1) . '%';
     $formatDelta = fn ($value) => $value === null ? '-' : (((float) $value) >= 0 ? '+' : '') . number_format((float) $value, 2);
     $formatDeltaPct = fn ($value) => $value === null ? '-' : (((float) $value) >= 0 ? '+' : '') . number_format(((float) $value) * 100, 1) . '%';
@@ -257,6 +258,16 @@
                 <table class="w-full table-fixed divide-y divide-gray-200 text-[10px]">
                     <thead class="bg-gray-50 text-left font-semibold uppercase text-gray-500">
                         <tr>
+                            @if($profileType === 'goalie_faced')
+                                <th class="w-[20%] px-1.5 py-2">Goalie</th>
+                                <th class="w-[8%] px-1.5 py-2"><a href="{{ $sortUrl('strength') }}">Strength {{ $sortArrow('strength') }}</a></th>
+                                <th class="w-[9%] px-1.5 py-2 text-right">Buckets</th>
+                                <th class="w-[13%] px-1.5 py-2 text-right"><a href="{{ $sortUrl('train_gsax_per_100_xga') }}">Train / 100 xGA {{ $sortArrow('train_gsax_per_100_xga') }}</a></th>
+                                <th class="w-[13%] px-1.5 py-2 text-right"><a href="{{ $sortUrl('test_gsax_per_100_xga') }}">Test / 100 xGA {{ $sortArrow('test_gsax_per_100_xga') }}</a></th>
+                                <th class="w-[12%] px-1.5 py-2 text-right"><a href="{{ $sortUrl('gsax_per_100_xga_drift') }}">Drift {{ $sortArrow('gsax_per_100_xga_drift') }}</a></th>
+                                <th class="w-[13%] px-1.5 py-2 text-right"><a href="{{ $sortUrl('save_percentage_drift') }}">SV% Train / Test / Drift {{ $sortArrow('save_percentage_drift') }}</a></th>
+                                <th class="w-[12%] px-1.5 py-2 text-right">Train / Test xGA</th>
+                            @else
                             <th class="w-[13%] px-1.5 py-2"><a href="{{ $sortUrl('entity') }}">Entity {{ $sortArrow('entity') }}</a></th>
                             <th class="w-[11%] px-1.5 py-2 text-right">TOI/GP · Hrs</th>
                             <th class="w-[9%] px-1.5 py-2 text-right"><a href="{{ $sortUrl('test_eval_sat_per_60') }}">SAT {{ $sortArrow('test_eval_sat_per_60') }}</a></th>
@@ -266,11 +277,22 @@
                             <th class="w-[14%] px-1.5 py-2 text-right"><a href="{{ $sortUrl('test_xsat_per_60') }}">xSAT/60 {{ $sortArrow('test_xsat_per_60') }}</a></th>
                             <th class="w-[13%] px-1.5 py-2 text-right"><a href="{{ $sortUrl('test_xsog_per_60') }}">xSOG/60 {{ $sortArrow('test_xsog_per_60') }}</a></th>
                             <th class="w-[14%] px-1.5 py-2 text-right"><a href="{{ $sortUrl('test_xg_per_60') }}">xG/60 {{ $sortArrow('test_xg_per_60') }}</a></th>
+                            @endif
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-gray-100 bg-white text-gray-700">
                         @foreach($aggregates as $aggregate)
                             <tr class="hover:bg-gray-50">
+                                @if($profileType === 'goalie_faced')
+                                    <td class="px-1.5 py-2 align-top"><div class="font-semibold text-gray-950">{{ $aggregate->entity_name ?? $aggregate->entity_key }}</div><div class="text-gray-400">Goalie</div></td>
+                                    <td class="px-1.5 py-2 align-top font-semibold uppercase text-gray-700">{{ $aggregate->strength }}</td>
+                                    <td class="px-1.5 py-2 text-right align-top">{{ number_format((int) $aggregate->matched_bucket_rows) }} / {{ number_format((int) $aggregate->bucket_rows) }}</td>
+                                    <td class="px-1.5 py-2 text-right align-top font-semibold">{{ $formatRate($aggregate->train_gsax_per_100_xga) }}</td>
+                                    <td class="px-1.5 py-2 text-right align-top font-semibold">{{ $formatRate($aggregate->test_gsax_per_100_xga) }}</td>
+                                    <td class="px-1.5 py-2 text-right align-top {{ $deltaClass($aggregate->gsax_per_100_xga_drift) }}">{{ $formatDelta($aggregate->gsax_per_100_xga_drift) }}<div>{{ $formatDeltaPct($aggregate->gsax_per_100_xga_drift_rate) }}</div></td>
+                                    <td class="px-1.5 py-2 text-right align-top">{{ $formatSavePct($aggregate->train_save_percentage) }} / {{ $formatSavePct($aggregate->test_save_percentage) }}<div class="{{ $deltaClass($aggregate->save_percentage_drift) }}">{{ $formatDelta($aggregate->save_percentage_drift) }} pp</div></td>
+                                    <td class="px-1.5 py-2 text-right align-top">{{ number_format((float) ($aggregate->train_gsax_xga ?? 0), 1) }} / {{ number_format((float) ($aggregate->test_gsax_xga ?? 0), 1) }}</td>
+                                @else
                                 <td class="px-1.5 py-2 align-top">
                                     <div class="truncate font-semibold text-gray-950">{{ $aggregate->entity_name ?? $aggregate->entity_key }}</div>
                                     <div class="truncate text-gray-400">{{ $aggregate->entity_role ?? $aggregate->profile_type }} · {{ $aggregate->team_context ?? '-' }}</div>
@@ -289,6 +311,7 @@
                                 <td class="px-1.5 py-2 text-right align-top">{!! $rateCell($aggregate->train_xsat_per_60, $aggregate->last_xsat_per_60, $aggregate->projected_xsat_per_60, $aggregate->test_xsat_per_60, $aggregate->xsat_drift, $aggregate->xsat_drift_rate, $aggregate->xsat_error, $aggregate->xsat_error_rate) !!}</td>
                                 <td class="px-1.5 py-2 text-right align-top">{!! $rateCell($aggregate->train_xsog_per_60, $aggregate->last_xsog_per_60, $aggregate->projected_xsog_per_60, $aggregate->test_xsog_per_60, $aggregate->xsog_drift, $aggregate->xsog_drift_rate, $aggregate->xsog_error, $aggregate->xsog_error_rate) !!}</td>
                                 <td class="px-1.5 py-2 text-right align-top">{!! $rateCell($aggregate->train_xg_per_60, $aggregate->last_xg_per_60, $aggregate->projected_xg_per_60, $aggregate->test_xg_per_60, $aggregate->xg_drift, $aggregate->xg_drift_rate, $aggregate->xg_error, $aggregate->xg_error_rate) !!}</td>
+                                @endif
                             </tr>
                         @endforeach
                     </tbody>

@@ -318,8 +318,9 @@ class NhlSatModelPredictionService
     public function goalieBuckets(int $modelId, int $goalieId, Collection $environment): Collection
     {
         $profiles = $this->historical->profiles($modelId, 'goalie_faced', [$goalieId])->get($goalieId, collect());
+        $evSkill = app(NhlGoalieEvSkillProjectionService::class)->adjustment($modelId, $goalieId);
 
-        return $environment->map(function (object $bucket) use ($profiles): object {
+        return $environment->map(function (object $bucket) use ($profiles, $evSkill): object {
             $profile = $profiles->firstWhere('matched_bucket_key', $bucket->matched_bucket_key);
             $exact = $profile !== null;
             $sat = $profile === null ? 0.0 : (float) $profile->source_sat;
@@ -331,7 +332,11 @@ class NhlSatModelPredictionService
             $strength = mb_strtoupper((string) ($bucket->bucket_dimensions['strength_group'] ?? ''));
             $skillWeight = $confidence * ($strength === 'PP' ? 0.25 : 1.0);
             $xga = (float) $bucket->baseline_xgf;
-            $ga = min((float) $bucket->baseline_xsog, max(0.0, $xga - (float) $bucket->baseline_xsat * $gsaxPerSat * $skillWeight));
+            $isEv = $strength === '' || $strength === 'EV';
+            $usesEvSkill = $isEv && $evSkill !== null;
+            $ga = $usesEvSkill
+                ? min((float) $bucket->baseline_xsog, max(0.0, $xga * (1.0 - $evSkill['adjustment'])))
+                : min((float) $bucket->baseline_xsog, max(0.0, $xga - (float) $bucket->baseline_xsat * $gsaxPerSat * $skillWeight));
 
             return (object) [
                 ...get_object_vars($bucket),
@@ -348,7 +353,10 @@ class NhlSatModelPredictionService
                 'source_goals_against' => (int) ($profile->source_goals ?? 0),
                 'source_xga' => $profile->expected_goals ?? null,
                 'source_xsoga' => $profile->expected_sog ?? null,
-                'goalie_skill_source' => $profile === null ? 'neutral_missing_bucket' : ($exact ? 'model_history' : 'model_history_fallback'),
+                'goalie_skill_source' => $usesEvSkill ? 'ev_gsax_skill' : ($profile === null ? 'neutral_missing_bucket' : ($exact ? 'model_history' : 'model_history_fallback')),
+                'goalie_ev_skill_adjustment' => $usesEvSkill ? $evSkill['adjustment'] : null,
+                'goalie_ev_gsax_edge' => $usesEvSkill ? $evSkill['gsax_edge'] : null,
+                'goalie_ev_history_seasons' => $usesEvSkill ? $evSkill['history_seasons'] : null,
             ];
         })->keyBy('matched_bucket_key');
     }

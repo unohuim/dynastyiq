@@ -1,6 +1,7 @@
 @php
     $label = fn ($value) => str($value)->replace(['_', '-'], ' ')->title();
     $formatRate = fn ($value) => $value === null ? '-' : number_format((float) $value, 2);
+    $formatSavePct = fn ($value) => $value === null ? '-' : number_format((float) $value, 2) . '%';
     $formatPct = fn ($value) => $value === null ? '-' : number_format(((float) $value) * 100, 1) . '%';
     $formatDelta = fn ($value) => $value === null ? '-' : (((float) $value) >= 0 ? '+' : '') . number_format((float) $value, 2);
     $formatDeltaPct = fn ($value) => $value === null ? '-' : (((float) $value) >= 0 ? '+' : '') . number_format(((float) $value) * 100, 1) . '%';
@@ -39,6 +40,12 @@
             e($formatDelta($error)),
             e($formatDeltaPct($errorRate)),
         );
+    };
+    $gsaxCell = function ($train, $test, $drift, $driftRate) use ($formatRate, $formatDelta, $formatDeltaPct, $deltaClass): string {
+        return sprintf('<div class="space-y-0.5 tabular-nums"><div class="flex justify-between gap-2"><span class="text-gray-400">Train</span><span class="font-semibold text-gray-950">%s</span></div><div class="flex justify-between gap-2"><span class="text-gray-400">Test</span><span class="font-semibold text-gray-700">%s</span></div><div class="flex justify-between gap-2"><span class="text-gray-400">Drift</span><span class="font-semibold %s">%s / %s</span></div></div>', e($formatRate($train)), e($formatRate($test)), e($deltaClass($drift)), e($formatDelta($drift)), e($formatDeltaPct($driftRate)));
+    };
+    $savePercentageCell = function ($train, $test, $drift) use ($formatSavePct, $formatDelta, $deltaClass): string {
+        return sprintf('<div class="space-y-0.5 tabular-nums"><div class="flex justify-between gap-2"><span class="text-gray-400">Train</span><span class="font-semibold text-gray-950">%s</span></div><div class="flex justify-between gap-2"><span class="text-gray-400">Test</span><span class="font-semibold text-gray-700">%s</span></div><div class="flex justify-between gap-2"><span class="text-gray-400">Drift</span><span class="font-semibold %s">%s pp</span></div></div>', e($formatSavePct($train)), e($formatSavePct($test)), e($deltaClass($drift)), e($formatDelta($drift)));
     };
 @endphp
 
@@ -124,9 +131,15 @@
                             <th class="w-[13%] px-1.5 py-2"><a href="{{ $sortUrl('entity') }}">Entity {{ $sortArrow('entity') }}</a></th>
                             <th class="w-[21%] px-1.5 py-2"><a href="{{ $sortUrl('bucket') }}">Profile {{ $sortArrow('bucket') }}</a></th>
                             <th class="w-[13%] px-1.5 py-2 text-right"><a href="{{ $sortUrl('share_drift') }}">SAT Share {{ $sortArrow('share_drift') }}</a></th>
-                            <th class="w-[17%] px-1.5 py-2 text-right"><a href="{{ $sortUrl('projected_xsat_per_60') }}">xSAT/60 {{ $sortArrow('projected_xsat_per_60') }}</a></th>
-                            <th class="w-[17%] px-1.5 py-2 text-right"><a href="{{ $sortUrl('projected_xsog_per_60') }}">xSOG/60 {{ $sortArrow('projected_xsog_per_60') }}</a></th>
-                            <th class="w-[14%] px-1.5 py-2 text-right"><a href="{{ $sortUrl('projected_xg_per_60') }}">xG/60 {{ $sortArrow('projected_xg_per_60') }}</a></th>
+                            @if($profileType === 'goalie_faced')
+                                <th class="w-[8%] px-1.5 py-2"><a href="{{ $sortUrl('strength') }}">Strength {{ $sortArrow('strength') }}</a></th>
+                                <th class="w-[30%] px-1.5 py-2 text-right"><a href="{{ $sortUrl('gsax_per_100_xga_drift') }}">GSAx / 100 xGA {{ $sortArrow('gsax_per_100_xga_drift') }}</a></th>
+                                <th class="w-[18%] px-1.5 py-2 text-right"><a href="{{ $sortUrl('save_percentage_drift') }}">SV% {{ $sortArrow('save_percentage_drift') }}</a></th>
+                            @else
+                                <th class="w-[17%] px-1.5 py-2 text-right"><a href="{{ $sortUrl('projected_xsat_per_60') }}">xSAT/60 {{ $sortArrow('projected_xsat_per_60') }}</a></th>
+                                <th class="w-[17%] px-1.5 py-2 text-right"><a href="{{ $sortUrl('projected_xsog_per_60') }}">xSOG/60 {{ $sortArrow('projected_xsog_per_60') }}</a></th>
+                                <th class="w-[14%] px-1.5 py-2 text-right"><a href="{{ $sortUrl('projected_xg_per_60') }}">xG/60 {{ $sortArrow('projected_xg_per_60') }}</a></th>
+                            @endif
                             <th class="w-[5%] px-1.5 py-2 text-right"><a href="{{ $sortUrl('source_sat') }}">SAT {{ $sortArrow('source_sat') }}</a></th>
                         </tr>
                     </thead>
@@ -151,9 +164,15 @@
                                     <div class="truncate text-gray-400">{{ $comparison->matched_bucket_key }}</div>
                                 </td>
                                 <td class="px-1.5 py-2 text-right align-top">{!! $shareCell($comparison->train_profile_share, $comparison->test_profile_share, $comparison->share_drift, $comparison->share_drift_rate) !!}</td>
-                                <td class="px-1.5 py-2 text-right align-top">{!! $rateCell($comparison->train_xsat_per_60, $comparison->projected_xsat_per_60, $comparison->test_xsat_per_60, $comparison->xsat_drift, $comparison->xsat_drift_rate, $comparison->xsat_error, $comparison->xsat_error_rate) !!}</td>
-                                <td class="px-1.5 py-2 text-right align-top">{!! $rateCell($comparison->train_xsog_per_60, $comparison->projected_xsog_per_60, $comparison->test_xsog_per_60, $comparison->xsog_drift, $comparison->xsog_drift_rate, $comparison->xsog_error, $comparison->xsog_error_rate) !!}</td>
-                                <td class="px-1.5 py-2 text-right align-top">{!! $rateCell($comparison->train_xg_per_60, $comparison->projected_xg_per_60, $comparison->test_xg_per_60, $comparison->xg_drift, $comparison->xg_drift_rate, $comparison->xg_error, $comparison->xg_error_rate) !!}</td>
+                                @if($profileType === 'goalie_faced')
+                                    <td class="px-1.5 py-2 align-top font-semibold uppercase text-gray-700">{{ $comparison->strength }}</td>
+                                    <td class="px-1.5 py-2 text-right align-top">{!! $gsaxCell($comparison->train_gsax_per_100_xga, $comparison->test_gsax_per_100_xga, $comparison->gsax_per_100_xga_drift, $comparison->gsax_per_100_xga_drift_rate) !!}</td>
+                                    <td class="px-1.5 py-2 text-right align-top">{!! $savePercentageCell($comparison->train_save_percentage, $comparison->test_save_percentage, $comparison->save_percentage_drift) !!}</td>
+                                @else
+                                    <td class="px-1.5 py-2 text-right align-top">{!! $rateCell($comparison->train_xsat_per_60, $comparison->projected_xsat_per_60, $comparison->test_xsat_per_60, $comparison->xsat_drift, $comparison->xsat_drift_rate, $comparison->xsat_error, $comparison->xsat_error_rate) !!}</td>
+                                    <td class="px-1.5 py-2 text-right align-top">{!! $rateCell($comparison->train_xsog_per_60, $comparison->projected_xsog_per_60, $comparison->test_xsog_per_60, $comparison->xsog_drift, $comparison->xsog_drift_rate, $comparison->xsog_error, $comparison->xsog_error_rate) !!}</td>
+                                    <td class="px-1.5 py-2 text-right align-top">{!! $rateCell($comparison->train_xg_per_60, $comparison->projected_xg_per_60, $comparison->test_xg_per_60, $comparison->xg_drift, $comparison->xg_drift_rate, $comparison->xg_error, $comparison->xg_error_rate) !!}</td>
+                                @endif
                                 <td class="px-1.5 py-2 text-right align-top tabular-nums">
                                     <div class="font-semibold text-gray-950">{{ number_format((int) $comparison->train_sat) }}</div>
                                     <div class="text-gray-400">test {{ $comparison->test_sat === null ? '-' : number_format((int) $comparison->test_sat) }}</div>

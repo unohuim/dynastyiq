@@ -17,6 +17,7 @@ class NhlSatModelEntityRateProjectionBuilder
 {
     private const OTHER_BUCKET_KEY = 'L99|other=low_volume';
     private const SKATER_OFFENSE_PROFILE_TYPE = 'skater_offense';
+    private const GOALIE_FACED_PROFILE_TYPE = 'goalie_faced';
     private const PROFILE_INPUT_SHARE_COVERAGE = 0.95;
     private const MIN_SAT_PER_SEASON = 4;
     private const HIGH_DANGER_GOAL_PROBABILITY = 0.10;
@@ -24,13 +25,15 @@ class NhlSatModelEntityRateProjectionBuilder
     /**
      * Build /60 projection rows from already-built entity profiles.
      *
+     * @param  array<int, string>  $profileTypes
      * @return array<string, int>
      */
-    public function build(NhlModelRun $run): array
+    public function build(NhlModelRun $run, array $profileTypes = [self::SKATER_OFFENSE_PROFILE_TYPE]): array
     {
+        $profileTypes = $this->supportedProfileTypes($profileTypes);
         $profileTypes = DB::table('nhl_sat_model_entity_profile_buckets')
             ->where('model_run_id', $run->id)
-            ->where('profile_type', self::SKATER_OFFENSE_PROFILE_TYPE)
+            ->whereIn('profile_type', $profileTypes)
             ->distinct()
             ->orderBy('profile_type')
             ->pluck('profile_type')
@@ -43,9 +46,11 @@ class NhlSatModelEntityRateProjectionBuilder
 
         DB::table('nhl_sat_model_entity_rate_projection_buckets')
             ->where('model_run_id', $run->id)
+            ->whereIn('profile_type', $profileTypes)
             ->delete();
 
-        if (Schema::hasTable('nhl_sat_model_entity_rate_projection_splits')) {
+        if (in_array(self::SKATER_OFFENSE_PROFILE_TYPE, $profileTypes, true)
+            && Schema::hasTable('nhl_sat_model_entity_rate_projection_splits')) {
             DB::table('nhl_sat_model_entity_rate_projection_splits')
                 ->where('model_run_id', $run->id)
                 ->delete();
@@ -71,15 +76,19 @@ class NhlSatModelEntityRateProjectionBuilder
     /**
      * Clear projection rows and list entities with built profiles.
      *
+     * @param  array<int, string>  $profileTypes
      * @return array<int, array{profile_type:string,entity_key:string}>
      */
-    public function prepareBuild(NhlModelRun $run): array
+    public function prepareBuild(NhlModelRun $run, array $profileTypes = [self::SKATER_OFFENSE_PROFILE_TYPE]): array
     {
+        $profileTypes = $this->supportedProfileTypes($profileTypes);
         DB::table('nhl_sat_model_entity_rate_projection_buckets')
             ->where('model_run_id', $run->id)
+            ->whereIn('profile_type', $profileTypes)
             ->delete();
 
-        if (Schema::hasTable('nhl_sat_model_entity_rate_projection_splits')) {
+        if (in_array(self::SKATER_OFFENSE_PROFILE_TYPE, $profileTypes, true)
+            && Schema::hasTable('nhl_sat_model_entity_rate_projection_splits')) {
             DB::table('nhl_sat_model_entity_rate_projection_splits')
                 ->where('model_run_id', $run->id)
                 ->delete();
@@ -87,7 +96,7 @@ class NhlSatModelEntityRateProjectionBuilder
 
         return DB::table('nhl_sat_model_entity_profile_buckets')
             ->where('model_run_id', $run->id)
-            ->where('profile_type', self::SKATER_OFFENSE_PROFILE_TYPE)
+            ->whereIn('profile_type', $profileTypes)
             ->select(['profile_type', 'entity_key'])
             ->distinct()
             ->orderBy('profile_type')
@@ -105,9 +114,7 @@ class NhlSatModelEntityRateProjectionBuilder
      */
     public function buildEntity(NhlModelRun $run, string $profileType, string $entityKey): int
     {
-        if ($profileType !== self::SKATER_OFFENSE_PROFILE_TYPE) {
-            return 0;
-        }
+        $this->supportedProfileTypes([$profileType]);
 
         $this->insertProfileType(
             run: $run,
@@ -139,6 +146,100 @@ class NhlSatModelEntityRateProjectionBuilder
     private function minimumSourceSat(NhlModelRun $run): int
     {
         return self::MIN_SAT_PER_SEASON * max(1, count($this->seasonIds($run)));
+    }
+
+    /**
+     * @param  array<int, string>  $profileTypes
+     * @return array<int, string>
+     */
+    private function supportedProfileTypes(array $profileTypes): array
+    {
+        $profileTypes = array_values(array_unique($profileTypes));
+        $supported = [self::SKATER_OFFENSE_PROFILE_TYPE, self::GOALIE_FACED_PROFILE_TYPE];
+
+        if ($profileTypes === [] || array_diff($profileTypes, $supported) !== []) {
+            throw new RuntimeException('Unknown SAT model /60 profile type.');
+        }
+
+        return $profileTypes;
+    }
+
+    /**
+     * Preserve each training goalie bucket as a training-only /60 projection.
+     *
+     * Goalies intentionally use no held-out snapshot data here. Their target
+     * season snapshot is consumed only by Compare /60.
+     */
+    private function insertGoalieFacedProfileType(NhlModelRun $run, ?string $entityKey = null): void
+    {
+        $now = now();
+        $rows = DB::table('nhl_sat_model_entity_profile_buckets')
+            ->where('model_run_id', $run->id)
+            ->where('profile_type', self::GOALIE_FACED_PROFILE_TYPE)
+            ->when($entityKey !== null, fn ($query) => $query->where('entity_key', $entityKey))
+            ->where('source_sat', '>', 0)
+            ->get([
+                'source_season_ids', 'game_type', 'profile_type', 'entity_key', 'entity_id', 'entity_name',
+                'entity_role', 'team_context', 'matched_bucket_key', 'bucket_dimensions', 'source_sat',
+                'source_sog', 'source_goals', 'source_profile_share', 'source_xsat_per_60',
+                'source_xsog_per_60', 'source_xg_per_60', 'sat_probability', 'goal_probability',
+                'confidence_score', 'shrinkage_weight', 'confidence_bucket',
+            ])
+            ->map(function (object $row) use ($now, $run): array {
+                return [
+                    'model_run_id' => $run->id,
+                    'source_season_ids' => $row->source_season_ids,
+                    'game_type' => $row->game_type,
+                    'profile_type' => $row->profile_type,
+                    'entity_key' => $row->entity_key,
+                    'entity_id' => $row->entity_id,
+                    'entity_name' => $row->entity_name,
+                    'entity_role' => $row->entity_role,
+                    'team_context' => $row->team_context,
+                    'matched_bucket_key' => $row->matched_bucket_key,
+                    'bucket_dimensions' => $row->bucket_dimensions,
+                    'is_other_bucket' => false,
+                    'source_sat' => $row->source_sat,
+                    'source_sog' => $row->source_sog,
+                    'source_goals' => $row->source_goals,
+                    'source_profile_share' => $row->source_profile_share,
+                    'source_xsat_per_60' => $row->source_xsat_per_60,
+                    'source_xsog_per_60' => $row->source_xsog_per_60,
+                    'source_xg_per_60' => $row->source_xg_per_60,
+                    'peer_xsat_per_60' => null,
+                    'peer_profile_share' => null,
+                    'entity_xsat_per_60' => null,
+                    'peer_entity_xsat_per_60' => null,
+                    'overall_rate_multiplier' => 1,
+                    'raw_tendency_multiplier' => 1,
+                    'shrunk_tendency_multiplier' => 1,
+                    'projected_xsat_per_60' => $row->source_xsat_per_60,
+                    'projected_xsog_per_60' => $row->source_xsog_per_60,
+                    'projected_xg_per_60' => $row->source_xg_per_60,
+                    'sat_probability' => $row->sat_probability,
+                    'goal_probability' => $row->goal_probability,
+                    'confidence_score' => $row->confidence_score,
+                    'shrinkage_weight' => $row->shrinkage_weight,
+                    'confidence_bucket' => $row->confidence_bucket,
+                    'metadata' => json_encode([
+                        'source' => 'entity_profile_buckets',
+                        'formula_version' => 'goalie_faced_training_rate_v1',
+                        'uses_held_out_test_season' => false,
+                    ]),
+                    'projected_at' => $now,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ];
+            })
+            ->all();
+
+        foreach (array_chunk($rows, 100) as $chunk) {
+            DB::table('nhl_sat_model_entity_rate_projection_buckets')->upsert(
+                $chunk,
+                ['model_run_id', 'profile_type', 'entity_key', 'matched_bucket_key'],
+                array_values(array_diff(array_keys($chunk[0]), ['created_at']))
+            );
+        }
     }
 
     /** Preserve every historical bucket identity with a usable source rate. */
@@ -2469,6 +2570,12 @@ SQL;
     ): void {
         if ($profileType === self::SKATER_OFFENSE_PROFILE_TYPE) {
             $this->insertSkaterOffenseProfileType($run, $entityKey);
+
+            return;
+        }
+
+        if ($profileType === self::GOALIE_FACED_PROFILE_TYPE) {
+            $this->insertGoalieFacedProfileType($run, $entityKey);
 
             return;
         }

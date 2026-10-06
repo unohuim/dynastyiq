@@ -278,6 +278,9 @@ class NhlModelRunController extends Controller
      */
     public function buildProfiles(Request $request, NhlModelRun $run): RedirectResponse|JsonResponse
     {
+        $profileType = $request->validate([
+            'profile_type' => ['nullable', Rule::in(['skater_offense', 'goalie_faced'])],
+        ])['profile_type'] ?? 'skater_offense';
         abort_unless(
             $run->model_family === NhlModelRun::FAMILY_SAT
             && $run->workflow_stage === NhlModelRun::STAGE_TRAINING,
@@ -336,7 +339,8 @@ class NhlModelRunController extends Controller
                 modelRunId: (int) $run->id,
                 satModelId: (int) $satModel->id,
                 sogModelId: $sogModel === null ? null : (int) $sogModel->id,
-                predictionBuildId: $buildId
+                predictionBuildId: $buildId,
+                profileTypes: [$profileType]
             );
         } catch (\Throwable $exception) {
             NhlModelRun::finishPredictionStage((int) $run->id, $buildId, 'profiles', true,
@@ -352,14 +356,14 @@ class NhlModelRunController extends Controller
 
         if ($request->expectsJson()) {
             return response()->json([
-                'message' => 'Profiles queued.',
+                'message' => $profileType === 'goalie_faced' ? 'Goalie profiles queued.' : 'Offensive skater profiles queued.',
                 'row_html' => $this->renderRow($run),
             ]);
         }
 
         return redirect()
             ->route('admin.nhl-sat-models.index')
-            ->with('status', 'Profiles queued.');
+            ->with('status', $profileType === 'goalie_faced' ? 'Goalie profiles queued.' : 'Offensive skater profiles queued.');
     }
 
     /**
@@ -367,6 +371,9 @@ class NhlModelRunController extends Controller
      */
     public function buildRateProjections(Request $request, NhlModelRun $run): RedirectResponse|JsonResponse
     {
+        $profileType = $request->validate([
+            'profile_type' => ['nullable', Rule::in(['skater_offense', 'goalie_faced'])],
+        ])['profile_type'] ?? 'skater_offense';
         abort_unless(
             $run->model_family === NhlModelRun::FAMILY_SAT
             && $run->workflow_stage === NhlModelRun::STAGE_TRAINING,
@@ -384,8 +391,11 @@ class NhlModelRunController extends Controller
         }
 
         if (! $run->profilesReadyForRates()
-            || ! DB::table('nhl_sat_model_entity_profile_buckets')->where('model_run_id', $run->id)->exists()) {
-            $message = 'Finish a successful Build Profiles, including season snapshots, before building /60.';
+            || ! DB::table('nhl_sat_model_entity_profile_buckets')
+                ->where('model_run_id', $run->id)
+                ->where('profile_type', $profileType)
+                ->exists()) {
+            $message = 'Finish a successful Build Offensive Skaters, including season snapshots, before building /60.';
 
             if ($request->expectsJson()) {
                 return response()->json(['message' => $message], 422);
@@ -413,7 +423,10 @@ class NhlModelRunController extends Controller
             'completed_at' => null,
         ], requiresProfiles: true);
 
-        BuildNhlSatModelEntityRateProjectionsJob::dispatch(modelRunId: (int) $run->id);
+        BuildNhlSatModelEntityRateProjectionsJob::dispatch(
+            modelRunId: (int) $run->id,
+            profileTypes: [$profileType]
+        );
 
         try {
             broadcast(new NhlSatModelUpdated((int) $run->id, 'rate-projections-queued'));
@@ -423,14 +436,14 @@ class NhlModelRunController extends Controller
 
         if ($request->expectsJson()) {
             return response()->json([
-                'message' => 'Queued /60.',
+                'message' => 'Queued offensive /60.',
                 'row_html' => $this->renderRow($run),
             ]);
         }
 
         return redirect()
             ->route('admin.nhl-sat-models.index')
-            ->with('status', 'Queued /60.');
+            ->with('status', 'Queued offensive /60.');
     }
 
     /** Queue all prediction inputs on the existing model in dependency order. */
@@ -613,8 +626,18 @@ class NhlModelRunController extends Controller
             return back()->withErrors(['run' => $message]);
         }
 
-        if (! DB::table('nhl_sat_model_entity_rate_projection_buckets')->where('model_run_id', $run->id)->exists()) {
-            $message = 'Build /60 before comparing /60.';
+        $hasSkaterProjections = DB::table('nhl_sat_model_entity_rate_projection_buckets')
+            ->where('model_run_id', $run->id)
+            ->where('profile_type', 'skater_offense')
+            ->exists();
+        $hasGoalieProfiles = DB::table('nhl_sat_model_entity_profile_buckets')
+            ->where('model_run_id', $run->id)
+            ->where('profile_type', 'goalie_faced')
+            ->whereNotNull('source_gsax_per_100_xga')
+            ->exists();
+
+        if (! $hasSkaterProjections && ! $hasGoalieProfiles) {
+            $message = 'Build offensive /60 or goalie profiles before comparing.';
 
             if ($request->expectsJson()) {
                 return response()->json(['message' => $message], 422);
@@ -753,6 +776,7 @@ class NhlModelRunController extends Controller
                     $searchQuery
                         ->where('entity_name', 'ilike', $like)
                         ->orWhere('entity_key', 'ilike', $like)
+                        ->orWhere('strength', 'ilike', $like)
                         ->orWhere('matched_bucket_key', 'ilike', $like);
                 });
             })
@@ -1167,7 +1191,7 @@ class NhlModelRunController extends Controller
             'q' => ['nullable', 'string', 'max:120'],
         ]);
         $profileType = $input['profile_type'] ?? 'skater_offense';
-        $sort = $input['sort'] ?? 'projected_xsat_per_60';
+        $sort = $input['sort'] ?? ($profileType === 'goalie_faced' ? 'gsax_per_100_xga_drift' : 'projected_xsat_per_60');
         $direction = $input['direction'] ?? 'desc';
         $search = trim((string) ($input['q'] ?? ''));
         $summary = DB::table('nhl_sat_model_entity_rate_projection_buckets')
@@ -1412,7 +1436,7 @@ class NhlModelRunController extends Controller
             'q' => ['nullable', 'string', 'max:120'],
         ]);
         $profileType = $input['profile_type'] ?? 'skater_offense';
-        $sort = $input['sort'] ?? 'projected_xsat_per_60';
+        $sort = $input['sort'] ?? ($profileType === 'goalie_faced' ? 'gsax_per_100_xga_drift' : 'projected_xsat_per_60');
         $direction = $input['direction'] ?? 'desc';
         $search = trim((string) ($input['q'] ?? ''));
         $testSeasonId = (string) ($run->target_season_id ?? '');
@@ -1445,6 +1469,7 @@ class NhlModelRunController extends Controller
                     $searchQuery
                         ->where('entity_name', 'ilike', $like)
                         ->orWhere('entity_key', 'ilike', $like)
+                        ->orWhere('strength', 'ilike', $like)
                         ->orWhere('matched_bucket_key', 'ilike', $like);
                 });
             })
@@ -1537,7 +1562,7 @@ class NhlModelRunController extends Controller
             'q' => ['nullable', 'string', 'max:120'],
         ]);
         $profileType = $input['profile_type'] ?? 'skater_offense';
-        $sort = $input['sort'] ?? 'xsat_error';
+        $sort = $input['sort'] ?? ($profileType === 'goalie_faced' ? 'gsax_per_100_xga_drift' : 'xsat_error');
         $direction = $input['direction'] ?? 'desc';
         $search = trim((string) ($input['q'] ?? ''));
         $testSeasonId = (string) ($run->target_season_id ?? '');
@@ -1683,7 +1708,7 @@ class NhlModelRunController extends Controller
             'q' => ['nullable', 'string', 'max:120'],
         ]);
         $profileType = $input['profile_type'] ?? 'skater_offense';
-        $sort = $input['sort'] ?? 'xsat_error';
+        $sort = $input['sort'] ?? ($profileType === 'goalie_faced' ? 'gsax_per_100_xga_drift' : 'xsat_error');
         $direction = $input['direction'] ?? 'desc';
         $search = trim((string) ($input['q'] ?? ''));
         $testSeasonId = (string) ($run->target_season_id ?? '');
@@ -2022,6 +2047,7 @@ class NhlModelRunController extends Controller
     {
         return [
             'entity' => 'entity_key',
+            'strength' => 'strength',
             'bucket' => 'matched_bucket_key',
             'source_sat' => 'source_sat',
             'source_sog' => 'source_sog',
@@ -2031,6 +2057,8 @@ class NhlModelRunController extends Controller
             'source_xsat_per_60' => 'source_xsat_per_60',
             'source_xsog_per_60' => 'source_xsog_per_60',
             'source_xg_per_60' => 'source_xg_per_60',
+            'source_gsax_per_100_xga' => 'source_gsax_per_100_xga',
+            'source_save_percentage' => 'source_save_percentage',
             'sog_above_expected' => 'sog_above_expected',
             'expected_goals' => 'expected_goals',
             'goals_above_expected' => 'goals_above_expected',
@@ -2119,6 +2147,17 @@ class NhlModelRunController extends Controller
             'test_share' => 'test_profile_share',
             'share_drift' => 'share_drift',
             'share_drift_rate' => 'share_drift_rate',
+            'train_gsax_per_60' => 'train_gsax_per_60',
+            'test_gsax_per_60' => 'test_gsax_per_60',
+            'gsax_drift' => 'gsax_drift',
+            'gsax_drift_rate' => 'gsax_drift_rate',
+            'train_gsax_per_100_xga' => 'train_gsax_per_100_xga',
+            'test_gsax_per_100_xga' => 'test_gsax_per_100_xga',
+            'gsax_per_100_xga_drift' => 'gsax_per_100_xga_drift',
+            'gsax_per_100_xga_drift_rate' => 'gsax_per_100_xga_drift_rate',
+            'train_save_percentage' => 'train_save_percentage',
+            'test_save_percentage' => 'test_save_percentage',
+            'save_percentage_drift' => 'save_percentage_drift',
             'source_xsat_per_60' => 'train_xsat_per_60',
             'projected_xsat_per_60' => 'projected_xsat_per_60',
             'test_xsat_per_60' => 'test_xsat_per_60',
@@ -3168,7 +3207,8 @@ SQL;
 
                     $searchQuery
                         ->where('nhl_sat_model_entity_rate_comparison_aggregates.entity_name', 'ilike', $like)
-                        ->orWhere('nhl_sat_model_entity_rate_comparison_aggregates.entity_key', 'ilike', $like);
+                        ->orWhere('nhl_sat_model_entity_rate_comparison_aggregates.entity_key', 'ilike', $like)
+                        ->orWhere('nhl_sat_model_entity_rate_comparison_aggregates.strength', 'ilike', $like);
                 });
             });
     }
@@ -3615,6 +3655,12 @@ SQL;
             'projection_split_sh_regression_bucket',
             'train_pts_gp',
             'train_g_gp',
+            'train_gsax_xga',
+            'test_gsax_xga',
+            'train_gsax_per_100_xga',
+            'test_gsax_per_100_xga',
+            'gsax_per_100_xga_drift',
+            'gsax_per_100_xga_drift_pct',
         ];
     }
 
@@ -3911,6 +3957,12 @@ SQL;
             $row->projection_split_sh_regression_bucket ?? null,
             $row->train_pts_gp ?? null,
             $row->train_g_gp ?? null,
+            $row->train_gsax_xga ?? null,
+            $row->test_gsax_xga ?? null,
+            $row->train_gsax_per_100_xga ?? null,
+            $row->test_gsax_per_100_xga ?? null,
+            $row->gsax_per_100_xga_drift ?? null,
+            $row->gsax_per_100_xga_drift_rate ?? null,
         ];
     }
 
@@ -4015,6 +4067,13 @@ SQL;
         $hasRateProjections = Schema::hasTable('nhl_sat_model_entity_rate_projection_buckets')
             && DB::table('nhl_sat_model_entity_rate_projection_buckets')
                 ->where('model_run_id', $run->id)
+                ->where('profile_type', 'skater_offense')
+                ->exists();
+        $hasGoalieProfiles = Schema::hasTable('nhl_sat_model_entity_profile_buckets')
+            && DB::table('nhl_sat_model_entity_profile_buckets')
+                ->where('model_run_id', $run->id)
+                ->where('profile_type', 'goalie_faced')
+                ->whereNotNull('source_gsax_per_100_xga')
                 ->exists();
         $hasTestProfiles = $run->target_season_id !== null
             && Schema::hasTable('nhl_sat_model_entity_test_profile_buckets')
@@ -4037,7 +4096,7 @@ SQL;
             'has_rate_projections' => $hasRateProjections,
             'has_test_profiles' => $hasTestProfiles,
             'has_rate_comparisons' => $hasRateComparisons,
-            'can_build_rate_comparison' => $hasRateProjections && $hasTestProfiles,
+            'can_build_rate_comparison' => ($hasRateProjections || $hasGoalieProfiles) && $hasTestProfiles,
             'can_view_rate_comparison' => $hasRateComparisons,
         ];
     }

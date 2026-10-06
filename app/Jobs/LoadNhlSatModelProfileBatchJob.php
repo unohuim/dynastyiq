@@ -37,6 +37,7 @@ class LoadNhlSatModelProfileBatchJob implements ShouldQueue
         public ?string $predictionBuildId = null,
         int $partition = 0,
         ?string $after = null,
+        public array $profileTypes = ['skater_offense'],
     ) {
         $this->partition = $partition;
         $this->after = $after;
@@ -63,10 +64,12 @@ class LoadNhlSatModelProfileBatchJob implements ShouldQueue
             if (isset($run->metrics['profile_build']['loaded_pages'][$pageKey])) {
                 return;
             }
-            $partitions = $run->metrics['profile_build']['partitions'] ?? $builder->profilePartitions($run);
+            $partitions = $run->metrics['profile_build']['partitions'] ?? ($this->profileTypes === ['skater_offense']
+                ? $builder->profilePartitions($run)
+                : $builder->profilePartitions($run, $this->profileTypes));
             $descriptor = $partitions[$this->partition] ?? null;
-            if ($descriptor === null || $descriptor['profile_type'] !== 'skater_offense') {
-                throw new RuntimeException('Profile build scope changed. Start a fresh offensive-skater profile build.');
+            if ($descriptor === null || ! in_array($descriptor['profile_type'], $this->profileTypes, true)) {
+                throw new RuntimeException('Profile build scope changed. Start a fresh profile build.');
             }
             // Discovery can scan many facts. Do not block entity progress commits
             // on the model row while that read-only query executes.
@@ -86,7 +89,11 @@ class LoadNhlSatModelProfileBatchJob implements ShouldQueue
                     if ($this->partition !== 0 || $this->after !== null) {
                         throw new RuntimeException('Profile continuation has no initialized build.');
                     }
-                    $builder->clearProfileOutputs($run);
+                    if ($this->profileTypes === ['skater_offense']) {
+                        $builder->clearProfileOutputs($run);
+                    } else {
+                        $builder->clearProfileOutputs($run, $this->profileTypes);
+                    }
                     $build['initialized'] = true;
                     $build['partitions'] = $partitions;
                     $metrics['profile_entities_queued'] = 0;
@@ -112,7 +119,7 @@ class LoadNhlSatModelProfileBatchJob implements ShouldQueue
                 $nextAfter = count($entities) === 100 ? end($entities) : null;
                 if ($nextPartition < count($partitions)) {
                     array_unshift($jobs, new self($this->modelRunId, $this->satModelId, $this->sogModelId,
-                        $this->predictionBuildId, $nextPartition, $nextAfter));
+                        $this->predictionBuildId, $nextPartition, $nextAfter, $this->profileTypes));
                 } else {
                     $build['loading_complete'] = true;
                     if ((int) $metrics['profile_entities_queued'] === 0) {
@@ -143,6 +150,6 @@ class LoadNhlSatModelProfileBatchJob implements ShouldQueue
     {
         $this->batch()?->cancel();
         (new BuildNhlSatModelEntityProfilesJob($this->modelRunId, $this->satModelId,
-            $this->sogModelId, $this->predictionBuildId))->failed($exception);
+            $this->sogModelId, $this->predictionBuildId, $this->profileTypes))->failed($exception);
     }
 }

@@ -16,20 +16,22 @@ class NhlSatModelEntityRateComparisonBuilder
 {
     private const OTHER_BUCKET_KEY = 'L99|other=low_volume';
     private const SKATER_OFFENSE_PROFILE_TYPE = 'skater_offense';
+    private const GOALIE_FACED_PROFILE_TYPE = 'goalie_faced';
 
     /**
      * Clear comparison rows and list projected entities to compare.
      *
+     * @param  array<int, string>  $profileTypes
      * @return array<int, array{profile_type:string,entity_key:string}>
      */
-    public function prepareBuild(NhlModelRun $run): array
+    public function prepareBuild(
+        NhlModelRun $run,
+        array $profileTypes = [self::SKATER_OFFENSE_PROFILE_TYPE, self::GOALIE_FACED_PROFILE_TYPE]
+    ): array
     {
+        $profileTypes = $this->supportedProfileTypes($profileTypes);
         if ($run->target_season_id === null) {
             throw new RuntimeException('Choose a test season before comparing /60.');
-        }
-
-        if (! DB::table('nhl_sat_model_entity_rate_projection_buckets')->where('model_run_id', $run->id)->exists()) {
-            throw new RuntimeException('Build /60 before comparing /60.');
         }
 
         if (! DB::table('nhl_sat_model_entity_test_profile_buckets')
@@ -43,19 +45,22 @@ class NhlSatModelEntityRateComparisonBuilder
         DB::table('nhl_sat_model_entity_rate_comparison_buckets')
             ->where('model_run_id', $run->id)
             ->where('test_season_id', (string) $run->target_season_id)
+            ->whereIn('profile_type', $profileTypes)
             ->delete();
         DB::table('nhl_sat_model_entity_rate_comparison_aggregates')
             ->where('model_run_id', $run->id)
             ->where('test_season_id', (string) $run->target_season_id)
+            ->whereIn('profile_type', $profileTypes)
             ->delete();
-        if (Schema::hasTable('nhl_sat_model_entity_rate_comparison_splits')) {
+        if (in_array(self::SKATER_OFFENSE_PROFILE_TYPE, $profileTypes, true)
+            && Schema::hasTable('nhl_sat_model_entity_rate_comparison_splits')) {
             DB::table('nhl_sat_model_entity_rate_comparison_splits')
                 ->where('model_run_id', $run->id)
                 ->where('test_season_id', (string) $run->target_season_id)
                 ->delete();
         }
 
-        return DB::table('nhl_sat_model_entity_rate_projection_buckets')
+        $skaters = DB::table('nhl_sat_model_entity_rate_projection_buckets')
             ->where('model_run_id', $run->id)
             ->where('profile_type', self::SKATER_OFFENSE_PROFILE_TYPE)
             ->select(['profile_type', 'entity_key'])
@@ -68,6 +73,26 @@ class NhlSatModelEntityRateComparisonBuilder
                 'entity_key' => (string) $row->entity_key,
             ])
             ->all();
+
+        $goalies = DB::table('nhl_sat_model_entity_profile_buckets')
+            ->where('model_run_id', $run->id)
+            ->where('profile_type', self::GOALIE_FACED_PROFILE_TYPE)
+            ->whereNotNull('source_gsax_per_100_xga')
+            ->select(['profile_type', 'entity_key'])
+            ->distinct()
+            ->orderBy('profile_type')
+            ->orderBy('entity_key')
+            ->get()
+            ->map(fn (object $row): array => [
+                'profile_type' => (string) $row->profile_type,
+                'entity_key' => (string) $row->entity_key,
+            ])
+            ->all();
+
+        return collect([...$skaters, ...$goalies])
+            ->filter(fn (array $entity): bool => in_array($entity['profile_type'], $profileTypes, true))
+            ->values()
+            ->all();
     }
 
     /**
@@ -79,9 +104,7 @@ class NhlSatModelEntityRateComparisonBuilder
             throw new RuntimeException('Choose a test season before comparing /60.');
         }
 
-        if ($profileType !== self::SKATER_OFFENSE_PROFILE_TYPE) {
-            return 0;
-        }
+        $this->supportedProfileTypes([$profileType]);
 
         if ($profileType === self::SKATER_OFFENSE_PROFILE_TYPE) {
             app(NhlSatModelEntityRateProjectionBuilder::class)->refreshHighDangerSatForRun(
@@ -90,11 +113,12 @@ class NhlSatModelEntityRateComparisonBuilder
                 gameType: (int) ($run->game_type ?? 2),
                 entityKey: $entityKey
             );
+            $this->insertRawRows($run, $profileType, $entityKey);
+            $this->insertAggregateRow($run, $profileType, $entityKey);
+            $this->insertSplitRows($run, $profileType, $entityKey);
+        } else {
+            $this->insertGoalieRows($run, $entityKey);
         }
-
-        $this->insertRawRows($run, $profileType, $entityKey);
-        $this->insertAggregateRow($run, $profileType, $entityKey);
-        $this->insertSplitRows($run, $profileType, $entityKey);
 
         return DB::table('nhl_sat_model_entity_rate_comparison_buckets')
             ->where('model_run_id', $run->id)
@@ -102,6 +126,200 @@ class NhlSatModelEntityRateComparisonBuilder
             ->where('profile_type', $profileType)
             ->where('entity_key', $entityKey)
             ->count();
+    }
+
+    /**
+     * Compare same-strength goalie historical metrics with test-season profiles.
+     */
+    private function insertGoalieRows(NhlModelRun $run, string $entityKey): void
+    {
+        $testSeasonId = (string) $run->target_season_id;
+        $trainingByStrength = DB::table('nhl_sat_model_entity_profile_buckets')
+            ->where('model_run_id', $run->id)
+            ->where('profile_type', self::GOALIE_FACED_PROFILE_TYPE)
+            ->where('entity_key', $entityKey)
+            ->get()
+            ->groupBy('strength');
+        $testByStrength = DB::table('nhl_sat_model_entity_test_profile_buckets')
+            ->where('model_run_id', $run->id)
+            ->where('test_season_id', $testSeasonId)
+            ->where('profile_type', self::GOALIE_FACED_PROFILE_TYPE)
+            ->where('entity_key', $entityKey)
+            ->get()
+            ->groupBy('strength');
+        $now = now();
+        $savePercentage = static function (?object $profile): ?float {
+            if ($profile === null) {
+                return null;
+            }
+
+            if ($profile->source_save_percentage !== null) {
+                return (float) $profile->source_save_percentage;
+            }
+
+            $shotsOnGoal = (int) ($profile->source_sog ?? 0);
+
+            return $shotsOnGoal > 0
+                ? (($shotsOnGoal - (int) ($profile->source_goals ?? 0)) * 100 / $shotsOnGoal)
+                : null;
+        };
+
+        foreach ($trainingByStrength as $strength => $strengthTrainingRows) {
+            $training = $strengthTrainingRows->keyBy('matched_bucket_key');
+            $test = ($testByStrength->get($strength) ?? collect())->keyBy('matched_bucket_key');
+            $rows = [];
+
+            foreach ($training as $bucketKey => $train) {
+                $latest = $test->get($bucketKey);
+            $trainGsax = (float) ($train->source_gsax ?? 0);
+            $testGsax = $latest === null ? null : (float) ($latest->source_gsax ?? 0);
+            $trainXga = (float) ($train->expected_goals ?? 0);
+            $testXga = $latest === null ? null : (float) ($latest->expected_goals ?? 0);
+            $trainRate = $train->source_gsax_per_60 === null ? null : (float) $train->source_gsax_per_60;
+            $testRate = $latest?->source_gsax_per_60 === null ? null : (float) $latest->source_gsax_per_60;
+            $trainPer100Xga = $trainXga > 0 ? $trainGsax * 100 / $trainXga : null;
+            $testPer100Xga = $testXga === null || $testXga <= 0 ? null : $testGsax * 100 / $testXga;
+            $trainSavePercentage = $savePercentage($train);
+            $testSavePercentage = $savePercentage($latest);
+
+            $rows[] = [
+                'model_run_id' => $run->id,
+                'test_season_id' => $testSeasonId,
+                'profile_type' => self::GOALIE_FACED_PROFILE_TYPE,
+                'strength' => $strength,
+                'entity_key' => $entityKey,
+                'entity_id' => $train->entity_id,
+                'entity_name' => $train->entity_name,
+                'entity_role' => $train->entity_role,
+                'team_context' => $train->team_context,
+                'matched_bucket_key' => $bucketKey,
+                'bucket_dimensions' => $train->bucket_dimensions,
+                'is_other_bucket' => false,
+                'train_sat' => (int) $train->source_sat,
+                'train_sog' => (int) $train->source_sog,
+                'train_goals' => (int) $train->source_goals,
+                'test_sat' => (int) ($latest?->source_sat ?? 0),
+                'test_sog' => (int) ($latest?->source_sog ?? 0),
+                'test_goals' => (int) ($latest?->source_goals ?? 0),
+                'train_profile_share' => $train->source_profile_share,
+                'test_profile_share' => $latest?->source_profile_share,
+                'train_gsax' => $trainGsax,
+                'test_gsax' => $testGsax,
+                'train_gsax_xga' => $trainXga,
+                'test_gsax_xga' => $testXga,
+                'train_gsax_per_100_xga' => $trainPer100Xga,
+                'test_gsax_per_100_xga' => $testPer100Xga,
+                'gsax_per_100_xga_drift' => $testPer100Xga === null || $trainPer100Xga === null ? null : $testPer100Xga - $trainPer100Xga,
+                'gsax_per_100_xga_drift_rate' => $testPer100Xga === null || $trainPer100Xga === null || abs($trainPer100Xga) < 0.000001 ? null : ($testPer100Xga - $trainPer100Xga) / abs($trainPer100Xga),
+                'train_save_percentage' => $trainSavePercentage,
+                'test_save_percentage' => $testSavePercentage,
+                'save_percentage_drift' => $testSavePercentage === null || $trainSavePercentage === null ? null : $testSavePercentage - $trainSavePercentage,
+                'train_gsax_toi_seconds' => $train->source_toi_seconds,
+                'test_gsax_toi_seconds' => $latest?->source_toi_seconds,
+                'train_gsax_per_60' => $trainRate,
+                'test_gsax_per_60' => $testRate,
+                'gsax_drift' => $testRate === null || $trainRate === null ? null : $testRate - $trainRate,
+                'gsax_drift_rate' => $testRate === null || $trainRate === null || abs($trainRate) < 0.000001 ? null : ($testRate - $trainRate) / abs($trainRate),
+                'metadata' => json_encode(['source' => 'goalie_profile_history', 'metric' => 'gsax_per_100_xga', 'strength' => $strength]),
+                'compared_at' => $now,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ];
+            }
+
+            if ($rows !== []) {
+                DB::table('nhl_sat_model_entity_rate_comparison_buckets')->upsert(
+                    $rows,
+                    ['model_run_id', 'test_season_id', 'profile_type', 'strength', 'entity_key', 'matched_bucket_key'],
+                    array_keys($rows[0])
+                );
+            }
+
+            $trainGsax = $training->sum(fn (object $row): float => (float) ($row->source_gsax ?? 0));
+            $testGsax = $test->sum(fn (object $row): float => (float) ($row->source_gsax ?? 0));
+            $trainXga = $training->sum(fn (object $row): float => (float) ($row->expected_goals ?? 0));
+            $testXga = $test->sum(fn (object $row): float => (float) ($row->expected_goals ?? 0));
+            $trainSog = (int) $training->sum('source_sog');
+            $testSog = (int) $test->sum('source_sog');
+            $trainGoals = (int) $training->sum('source_goals');
+            $testGoals = (int) $test->sum('source_goals');
+            $trainToi = (int) ($training->max('source_toi_seconds') ?? 0);
+            $testToi = (int) ($test->max('source_toi_seconds') ?? 0);
+            $trainRate = $trainToi > 0 ? $trainGsax * 3600 / $trainToi : null;
+            $testRate = $testToi > 0 ? $testGsax * 3600 / $testToi : null;
+            $trainPer100Xga = $trainXga > 0 ? $trainGsax * 100 / $trainXga : null;
+            $testPer100Xga = $testXga > 0 ? $testGsax * 100 / $testXga : null;
+            $trainSavePercentage = $trainSog > 0 ? (($trainSog - $trainGoals) * 100 / $trainSog) : null;
+            $testSavePercentage = $testSog > 0 ? (($testSog - $testGoals) * 100 / $testSog) : null;
+            $first = $training->first();
+
+            if ($first !== null) {
+            DB::table('nhl_sat_model_entity_rate_comparison_aggregates')->upsert([[
+                'model_run_id' => $run->id,
+                'test_season_id' => $testSeasonId,
+                'profile_type' => self::GOALIE_FACED_PROFILE_TYPE,
+                'strength' => $strength,
+                'entity_key' => $entityKey,
+                'entity_id' => $first->entity_id,
+                'entity_name' => $first->entity_name,
+                'entity_role' => $first->entity_role,
+                'team_context' => $first->team_context,
+                'bucket_rows' => $training->count(),
+                'matched_bucket_rows' => $training->keys()->intersect($test->keys())->count(),
+                'train_sat' => $training->sum('source_sat'),
+                'train_sog' => $trainSog,
+                'train_goals' => $trainGoals,
+                'test_sat' => $test->sum('source_sat'),
+                'test_sog' => $testSog,
+                'test_goals' => $testGoals,
+                'train_gsax' => $trainGsax,
+                'test_gsax' => $testGsax,
+                'train_gsax_xga' => $trainXga,
+                'test_gsax_xga' => $testXga,
+                'train_gsax_per_100_xga' => $trainPer100Xga,
+                'test_gsax_per_100_xga' => $testPer100Xga,
+                'gsax_per_100_xga_drift' => $testPer100Xga === null || $trainPer100Xga === null ? null : $testPer100Xga - $trainPer100Xga,
+                'gsax_per_100_xga_drift_rate' => $testPer100Xga === null || $trainPer100Xga === null || abs($trainPer100Xga) < 0.000001 ? null : ($testPer100Xga - $trainPer100Xga) / abs($trainPer100Xga),
+                'train_save_percentage' => $trainSavePercentage,
+                'test_save_percentage' => $testSavePercentage,
+                'save_percentage_drift' => $testSavePercentage === null || $trainSavePercentage === null ? null : $testSavePercentage - $trainSavePercentage,
+                'train_gsax_toi_seconds' => $trainToi,
+                'test_gsax_toi_seconds' => $testToi,
+                'train_gsax_per_60' => $trainRate,
+                'test_gsax_per_60' => $testRate,
+                'gsax_drift' => $testRate === null || $trainRate === null ? null : $testRate - $trainRate,
+                'gsax_drift_rate' => $testRate === null || $trainRate === null || abs($trainRate) < 0.000001 ? null : ($testRate - $trainRate) / abs($trainRate),
+                'metadata' => json_encode(['source' => 'goalie_profile_history', 'metric' => 'gsax_per_100_xga', 'strength' => $strength]),
+                'compared_at' => $now,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]], ['model_run_id', 'test_season_id', 'profile_type', 'strength', 'entity_key'], [
+                'entity_id', 'entity_name', 'entity_role', 'team_context', 'bucket_rows', 'matched_bucket_rows',
+                'train_sat', 'train_sog', 'train_goals', 'test_sat', 'test_sog', 'test_goals', 'train_gsax', 'test_gsax',
+                'train_gsax_xga', 'test_gsax_xga', 'train_gsax_per_100_xga', 'test_gsax_per_100_xga',
+                'gsax_per_100_xga_drift', 'gsax_per_100_xga_drift_rate',
+                'train_save_percentage', 'test_save_percentage', 'save_percentage_drift',
+                'train_gsax_toi_seconds', 'test_gsax_toi_seconds', 'train_gsax_per_60', 'test_gsax_per_60',
+                'gsax_drift', 'gsax_drift_rate', 'metadata', 'compared_at', 'updated_at',
+            ]);
+            }
+        }
+    }
+
+    /**
+     * @param  array<int, string>  $profileTypes
+     * @return array<int, string>
+     */
+    private function supportedProfileTypes(array $profileTypes): array
+    {
+        $profileTypes = array_values(array_unique($profileTypes));
+        $supported = [self::SKATER_OFFENSE_PROFILE_TYPE, self::GOALIE_FACED_PROFILE_TYPE];
+
+        if ($profileTypes === [] || array_diff($profileTypes, $supported) !== []) {
+            throw new RuntimeException('Unknown SAT model /60 comparison profile type.');
+        }
+
+        return $profileTypes;
     }
 
     private function insertRawRows(NhlModelRun $run, string $profileType, string $entityKey): void
@@ -277,7 +495,7 @@ SELECT
     ?::timestamp as created_at,
     ?::timestamp as updated_at
 FROM comparison_rows
-ON CONFLICT (model_run_id, test_season_id, profile_type, entity_key, matched_bucket_key)
+ON CONFLICT (model_run_id, test_season_id, profile_type, strength, entity_key, matched_bucket_key)
 DO UPDATE SET
     entity_id = EXCLUDED.entity_id,
     entity_name = EXCLUDED.entity_name,
@@ -925,7 +1143,7 @@ SELECT
     ?::timestamp as created_at,
     ?::timestamp as updated_at
 FROM aggregate_rows
-ON CONFLICT (model_run_id, test_season_id, profile_type, entity_key)
+ON CONFLICT (model_run_id, test_season_id, profile_type, strength, entity_key)
 DO UPDATE SET
     entity_id = EXCLUDED.entity_id,
     entity_name = EXCLUDED.entity_name,

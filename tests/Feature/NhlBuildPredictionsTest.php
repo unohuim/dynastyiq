@@ -5,6 +5,8 @@ declare(strict_types=1);
 use App\Events\NhlSatModelUpdated;
 use App\Jobs\BuildNhlSatModelEntityProfilesJob;
 use App\Jobs\BuildNhlSatModelEntityProfileForEntityJob;
+use App\Jobs\BuildNhlSatModelEntityRateComparisonForEntityJob;
+use App\Jobs\BuildNhlSatModelEntityRateComparisonsJob;
 use App\Jobs\BuildNhlSatModelEntityRateProjectionsJob;
 use App\Jobs\BuildNhlSatModelEntityToiProjectionsJob;
 use App\Jobs\LoadNhlSatModelProfileBatchJob;
@@ -13,6 +15,7 @@ use App\Models\NhlModelRun;
 use App\Models\Role;
 use App\Models\User;
 use App\Services\NhlSatModelEntityProfileBuilder;
+use App\Services\NhlSatModelEntityRateComparisonBuilder;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
@@ -551,6 +554,33 @@ it('starts standalone profiles with a build identity and visible progress', func
     Bus::assertNotDispatched(BuildNhlSatModelEntityRateProjectionsJob::class);
 });
 
+it('queues goalie SAT profiles independently from offensive skater profiles', function (): void {
+    $response = $this->actingAs($this->admin)->postJson(route('admin.nhl-sat-models.profiles.build', $this->run), [
+        'profile_type' => 'goalie_faced',
+    ])->assertOk();
+
+    expect($response->json('message'))->toBe('Goalie profiles queued.')
+        ->and($response->json('row_html'))->toContain('Profiles', 'Build Goalies');
+    Bus::assertDispatched(BuildNhlSatModelEntityProfilesJob::class, fn ($job): bool => $job->predictionBuildId !== null
+        && $job->profileTypes === ['goalie_faced']);
+});
+
+it('clears only the selected SAT profile type before rebuilding it', function (): void {
+    DB::table('nhl_sat_model_entity_profile_buckets')->insert([
+        $this->profileRow,
+        [...$this->profileRow, 'profile_type' => 'goalie_faced', 'entity_key' => 'goalie_faced:201'],
+    ]);
+
+    app(NhlSatModelEntityProfileBuilder::class)->clearProfileOutputs($this->run, ['goalie_faced']);
+
+    $this->assertDatabaseHas('nhl_sat_model_entity_profile_buckets', [
+        'model_run_id' => $this->run->id, 'profile_type' => 'skater_offense', 'entity_key' => 'skater_offense:101',
+    ]);
+    $this->assertDatabaseMissing('nhl_sat_model_entity_profile_buckets', [
+        'model_run_id' => $this->run->id, 'profile_type' => 'goalie_faced', 'entity_key' => 'goalie_faced:201',
+    ]);
+});
+
 it('finishes standalone profiles without automatically starting rates', function (): void {
     $this->run->update(['status' => 'running', 'metrics' => [
         ...$this->readyMetrics, 'profile_build' => ['id' => 'profiles-1', 'status' => 'running'],
@@ -595,8 +625,242 @@ it('accepts rates after verified profile and snapshot completion', function (): 
     DB::table('nhl_sat_model_entity_profile_buckets')->insert($this->profileRow);
     $this->run->update(['metrics' => $this->readyMetrics]);
     $this->actingAs($this->admin)->postJson(route('admin.nhl-sat-models.rate-projections.build', $this->run))->assertOk();
-    Bus::assertDispatchedTimes(BuildNhlSatModelEntityRateProjectionsJob::class, 1);
+    Bus::assertDispatched(BuildNhlSatModelEntityRateProjectionsJob::class,
+        fn ($job): bool => $job->profileTypes === ['skater_offense']);
     Bus::assertNotDispatched(BuildNhlSatModelEntityToiProjectionsJob::class);
+});
+
+it('rejects goalie /60 because goalie skill remains a profile-only metric', function (): void {
+    DB::table('nhl_sat_model_entity_profile_buckets')->insert([
+        ...$this->profileRow,
+        'profile_type' => 'goalie_faced',
+        'entity_key' => 'goalie_faced:201',
+    ]);
+    $this->run->update(['metrics' => $this->readyMetrics]);
+
+    $response = $this->actingAs($this->admin)->postJson(
+        route('admin.nhl-sat-models.rate-projections.build', $this->run),
+        ['profile_type' => 'goalie_faced']
+    )->assertUnprocessable();
+
+    Bus::assertNothingDispatched();
+});
+
+it('compares goalie training GSAx per 100 xGA directly to test-season profiles', function (): void {
+    DB::table('nhl_sat_model_entity_profile_buckets')->insert([
+        ...$this->profileRow,
+        'profile_type' => 'goalie_faced',
+        'entity_key' => 'goalie_faced:201',
+        'matched_bucket_key' => 'L01|goalie_faced',
+        'source_sat' => 20,
+        'source_sog' => 12,
+        'source_goals' => 2,
+        'expected_goals' => 3,
+        'source_toi_seconds' => 3600,
+        'source_gsax' => 1,
+        'source_gsax_per_60' => 1,
+        'source_gsax_per_100_xga' => 33.3333,
+    ]);
+    DB::table('nhl_sat_model_entity_test_profile_buckets')->insert([
+        ...$this->profileRow,
+        'profile_type' => 'goalie_faced',
+        'entity_key' => 'goalie_faced:201',
+        'matched_bucket_key' => 'L01|goalie_faced',
+        'test_season_id' => $this->run->target_season_id,
+        'source_sat' => 18,
+        'source_sog' => 11,
+        'source_goals' => 3,
+        'expected_goals' => 2.5,
+        'source_toi_seconds' => 3600,
+        'source_gsax' => -0.5,
+        'source_gsax_per_60' => -0.5,
+    ]);
+
+    $builder = app(NhlSatModelEntityRateComparisonBuilder::class);
+    expect($builder->prepareBuild($this->run, ['goalie_faced']))->toBe([[
+        'profile_type' => 'goalie_faced', 'entity_key' => 'goalie_faced:201',
+    ]]);
+    $builder->buildEntity($this->run, 'goalie_faced', 'goalie_faced:201');
+
+    $this->assertDatabaseHas('nhl_sat_model_entity_rate_comparison_aggregates', [
+        'model_run_id' => $this->run->id,
+        'profile_type' => 'goalie_faced',
+        'entity_key' => 'goalie_faced:201',
+        'train_gsax_per_60' => 1,
+        'test_gsax_per_60' => -0.5,
+        'gsax_drift' => -1.5,
+        'train_gsax_xga' => 3,
+        'test_gsax_xga' => 2.5,
+        'train_gsax_per_100_xga' => 33.3333,
+        'test_gsax_per_100_xga' => -20,
+        'gsax_per_100_xga_drift' => -53.3333,
+    ]);
+});
+
+it('leaves goalie GSAx per 100 xGA null when a profile has no expected goals', function (): void {
+    DB::table('nhl_sat_model_entity_profile_buckets')->insert([
+        ...$this->profileRow,
+        'profile_type' => 'goalie_faced',
+        'entity_key' => 'goalie_faced:202',
+        'matched_bucket_key' => 'L01|goalie_faced',
+        'expected_goals' => 0,
+        'source_gsax' => 0,
+    ]);
+    DB::table('nhl_sat_model_entity_test_profile_buckets')->insert([
+        ...$this->profileRow,
+        'profile_type' => 'goalie_faced',
+        'entity_key' => 'goalie_faced:202',
+        'matched_bucket_key' => 'L01|goalie_faced',
+        'test_season_id' => $this->run->target_season_id,
+        'expected_goals' => 0,
+        'source_gsax' => 0,
+    ]);
+
+    app(NhlSatModelEntityRateComparisonBuilder::class)->buildEntity($this->run, 'goalie_faced', 'goalie_faced:202');
+
+    $this->assertDatabaseHas('nhl_sat_model_entity_rate_comparison_aggregates', [
+        'model_run_id' => $this->run->id,
+        'profile_type' => 'goalie_faced',
+        'entity_key' => 'goalie_faced:202',
+        'train_gsax_per_100_xga' => null,
+        'test_gsax_per_100_xga' => null,
+    ]);
+});
+
+it('compares goalie EV and PP profile metrics without mixing their records', function (): void {
+    DB::table('nhl_sat_model_entity_profile_buckets')->insert([
+        [
+            ...$this->profileRow,
+            'profile_type' => 'goalie_faced',
+            'strength' => 'ev',
+            'entity_key' => 'goalie_faced:203',
+            'matched_bucket_key' => 'L01|goalie_faced',
+            'source_sog' => 20,
+            'source_goals' => 2,
+            'expected_goals' => 3,
+            'source_gsax' => 1,
+            'source_gsax_per_100_xga' => 33.3333,
+        ],
+        [
+            ...$this->profileRow,
+            'profile_type' => 'goalie_faced',
+            'strength' => 'pp',
+            'entity_key' => 'goalie_faced:203',
+            'matched_bucket_key' => 'L01|goalie_faced',
+            'source_sog' => 10,
+            'source_goals' => 2,
+            'expected_goals' => 2.5,
+            'source_gsax' => 0.5,
+            'source_gsax_per_100_xga' => 20,
+        ],
+    ]);
+    DB::table('nhl_sat_model_entity_test_profile_buckets')->insert([
+        [
+            ...$this->profileRow,
+            'profile_type' => 'goalie_faced',
+            'strength' => 'ev',
+            'entity_key' => 'goalie_faced:203',
+            'matched_bucket_key' => 'L01|goalie_faced',
+            'test_season_id' => $this->run->target_season_id,
+            'source_sog' => 20,
+            'source_goals' => 1,
+            'expected_goals' => 2,
+            'source_gsax' => 1,
+            'source_gsax_per_100_xga' => 50,
+        ],
+        [
+            ...$this->profileRow,
+            'profile_type' => 'goalie_faced',
+            'strength' => 'pp',
+            'entity_key' => 'goalie_faced:203',
+            'matched_bucket_key' => 'L01|goalie_faced',
+            'test_season_id' => $this->run->target_season_id,
+            'source_sog' => 10,
+            'source_goals' => 3,
+            'expected_goals' => 2.5,
+            'source_gsax' => -0.5,
+            'source_gsax_per_100_xga' => -20,
+        ],
+    ]);
+
+    app(NhlSatModelEntityRateComparisonBuilder::class)->buildEntity($this->run, 'goalie_faced', 'goalie_faced:203');
+
+    $this->assertDatabaseHas('nhl_sat_model_entity_rate_comparison_aggregates', [
+        'model_run_id' => $this->run->id,
+        'entity_key' => 'goalie_faced:203',
+        'strength' => 'ev',
+        'train_save_percentage' => 90,
+        'test_save_percentage' => 95,
+        'save_percentage_drift' => 5,
+    ]);
+    $this->assertDatabaseHas('nhl_sat_model_entity_rate_comparison_aggregates', [
+        'model_run_id' => $this->run->id,
+        'entity_key' => 'goalie_faced:203',
+        'strength' => 'pp',
+        'train_save_percentage' => 80,
+        'test_save_percentage' => 70,
+        'save_percentage_drift' => -10,
+    ]);
+});
+
+it('completes Compare /60 when the final successful entity records progress', function (): void {
+    $this->run->update([
+        'status' => 'running',
+        'metrics' => [
+            'rate_comparison_entities_queued' => 2,
+            'rate_comparison_entities_completed' => 0,
+        ],
+    ]);
+    $builder = Mockery::mock(NhlSatModelEntityRateComparisonBuilder::class);
+    $builder->shouldReceive('buildEntity')->twice()->andReturn(0);
+
+    (new BuildNhlSatModelEntityRateComparisonForEntityJob(
+        $this->run->id,
+        'skater_offense',
+        'skater_offense:101'
+    ))->handle($builder);
+
+    expect($this->run->fresh()->status)->toBe('running')
+        ->and(data_get($this->run->fresh()->metrics, 'rate_comparison_entities_completed'))->toBe(1);
+
+    (new BuildNhlSatModelEntityRateComparisonForEntityJob(
+        $this->run->id,
+        'skater_offense',
+        'skater_offense:102'
+    ))->handle($builder);
+
+    $run = $this->run->fresh();
+    expect($run->status)->toBe('complete')->and($run->completed_at)->not->toBeNull()
+        ->and(data_get($run->metrics, 'rate_comparison_entities_completed'))->toBe(2)
+        ->and(data_get($run->metrics, 'rate_comparison_rows.total'))->toBe(0)
+        ->and(data_get($run->metrics, 'rate_comparison_aggregate_rows.total'))->toBe(0);
+    Event::assertDispatched(NhlSatModelUpdated::class, fn (NhlSatModelUpdated $event): bool =>
+        $event->modelId === $this->run->id && $event->reason === 'rate-comparisons-completed');
+});
+
+it('does not let a late comparison batch callback overwrite completed state', function (): void {
+    $this->run->update([
+        'status' => 'running',
+        'metrics' => [
+            'rate_comparison_entities_queued' => 1,
+            'rate_comparison_entities_completed' => 1,
+        ],
+    ]);
+
+    BuildNhlSatModelEntityRateComparisonsJob::markCompleteWhenAllEntitiesProcessed($this->run->id);
+    $completedAt = $this->run->fresh()->completed_at;
+    $job = new BuildNhlSatModelEntityRateComparisonsJob($this->run->id);
+    $finish = new ReflectionMethod($job, 'markFinishedForRun');
+    $finish->invoke(null, $this->run->id, false);
+
+    expect($this->run->fresh()->status)->toBe('complete')
+        ->and($this->run->fresh()->completed_at?->toIso8601String())->toBe($completedAt?->toIso8601String());
+    Event::assertDispatchedTimes(NhlSatModelUpdated::class, 1);
+});
+
+it('does not use a dispatch-time unique lock for Compare /60', function (): void {
+    expect(new BuildNhlSatModelEntityRateComparisonsJob($this->run->id))
+        ->not->toBeInstanceOf(\Illuminate\Contracts\Queue\ShouldBeUnique::class);
 });
 
 it('requires new profiles when evaluation was rerun after their build', function (): void {

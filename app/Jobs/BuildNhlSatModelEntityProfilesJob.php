@@ -51,7 +51,8 @@ class BuildNhlSatModelEntityProfilesJob implements ShouldQueue, ShouldBeUnique
         public int $modelRunId,
         public int $satModelId,
         public ?int $sogModelId = null,
-        public ?string $predictionBuildId = null
+        public ?string $predictionBuildId = null,
+        public array $profileTypes = ['skater_offense']
     ) {
         $this->afterCommit = true;
     }
@@ -117,7 +118,8 @@ class BuildNhlSatModelEntityProfilesJob implements ShouldQueue, ShouldBeUnique
                 $this->modelRunId,
                 $this->satModelId,
                 $this->sogModelId,
-                $this->predictionBuildId
+                $this->predictionBuildId,
+                profileTypes: $this->profileTypes
             )])
                 ->name('NHL SAT model profiles ' . $this->modelRunId)
                 ->allowFailures()

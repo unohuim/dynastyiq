@@ -8,7 +8,6 @@ use App\Events\NhlSatModelUpdated;
 use App\Models\NhlModelRun;
 use App\Services\NhlSatModelEntityRateComparisonBuilder;
 use Illuminate\Bus\Batch;
-use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Queue\InteractsWithQueue;
@@ -22,7 +21,7 @@ use Throwable;
 /**
  * Queues per-entity SAT model /60 comparison builds.
  */
-class BuildNhlSatModelEntityRateComparisonsJob implements ShouldQueue, ShouldBeUnique
+class BuildNhlSatModelEntityRateComparisonsJob implements ShouldQueue
 {
     use Queueable;
     use InteractsWithQueue;
@@ -38,18 +37,16 @@ class BuildNhlSatModelEntityRateComparisonsJob implements ShouldQueue, ShouldBeU
      */
     public int $timeout = 1800;
 
-    /**
-     * @var int
-     */
-    public int $uniqueFor = 21600;
-
     public function __construct(public int $modelRunId)
     {
         $this->afterCommit = true;
     }
 
     /**
-     * Prevent duplicate comparison builds for the same model run.
+     * Prevent overlapping comparison execution for the same model run.
+     *
+     * Admission is owned by the controller's database-backed running claim, so
+     * a stale cache lock cannot suppress a newly requested database job.
      */
     public function middleware(): array
     {
@@ -127,11 +124,39 @@ class BuildNhlSatModelEntityRateComparisonsJob implements ShouldQueue, ShouldBeU
         self::markFinishedForRun($this->modelRunId, $failed);
     }
 
+    /**
+     * Complete a comparison run when every queued entity has recorded success.
+     *
+     * The batch callback remains responsible for failure and cancellation. This
+     * counter-based completion path keeps a successful run terminal when batch
+     * metadata is unavailable after its children have completed.
+     */
+    public static function markCompleteWhenAllEntitiesProcessed(int $modelRunId): void
+    {
+        $shouldFinish = DB::transaction(function () use ($modelRunId): bool {
+            $run = NhlModelRun::query()->whereKey($modelRunId)->lock('for no key update')->first();
+
+            if ($run === null || $run->status !== NhlModelRun::STATUS_RUNNING) {
+                return false;
+            }
+
+            $metrics = $run->metrics ?? [];
+            $queued = (int) ($metrics['rate_comparison_entities_queued'] ?? 0);
+            $completed = (int) ($metrics['rate_comparison_entities_completed'] ?? 0);
+
+            return $queued > 0 && $completed >= $queued;
+        });
+
+        if ($shouldFinish) {
+            self::markFinishedForRun($modelRunId, failed: false);
+        }
+    }
+
     private static function markFinishedForRun(int $modelRunId, bool $failed): void
     {
         $run = NhlModelRun::query()->find($modelRunId);
 
-        if ($run === null) {
+        if ($run === null || $run->status !== NhlModelRun::STATUS_RUNNING) {
             return;
         }
 

@@ -19,11 +19,17 @@ class NhlSatModelEntityProfileBuilder
     private const TEST_PROFILE_TABLE = 'nhl_sat_model_entity_test_profile_buckets';
 
     /**
-     * Build all supported entity profile buckets for one SAT model run.
+     * Build selected entity profile buckets for one SAT model run.
      *
+     * @param  array<int, string>  $profileTypes
      * @return array<string, int>
      */
-    public function build(NhlModelRun $run, NhlExpectedGoalsModel $satModel, ?NhlExpectedGoalsModel $sogModel = null): array
+    public function build(
+        NhlModelRun $run,
+        NhlExpectedGoalsModel $satModel,
+        ?NhlExpectedGoalsModel $sogModel = null,
+        array $profileTypes = ['skater_offense']
+    ): array
     {
         $seasonIds = $this->seasonIds($run);
 
@@ -35,11 +41,14 @@ class NhlSatModelEntityProfileBuilder
         $sogBucketKeySql = $sogModel === null ? null : $this->modelBucketKeySql($sogModel, 'profile_facts');
         $counts = [];
 
+        $profileTypes = $this->supportedProfileTypes($profileTypes);
         DB::table(self::PROFILE_TABLE)
             ->where('model_run_id', $run->id)
+            ->whereIn('profile_type', $profileTypes)
             ->delete();
 
-        foreach (['skater_offense' => $this->profileDefinitions()['skater_offense']] as $profileType => $definition) {
+        foreach ($profileTypes as $profileType) {
+            $definition = $this->profileDefinitions()[$profileType];
             $this->insertProfileRows(
                 run: $run,
                 satModel: $satModel,
@@ -65,23 +74,31 @@ class NhlSatModelEntityProfileBuilder
     /**
      * List the small, fixed set of profile type/season partitions.
      *
+     * @param  array<int, string>  $profileTypes
      * @return array<int, array{profile_type:string,season_id:?string}>
      */
-    public function profilePartitions(NhlModelRun $run): array
+    public function profilePartitions(NhlModelRun $run, array $profileTypes = ['skater_offense']): array
     {
         $partitions = [];
         foreach ([null, ...$this->snapshotSeasonIds($run)] as $seasonId) {
-            $partitions[] = ['profile_type' => 'skater_offense', 'season_id' => $seasonId];
+            foreach ($this->supportedProfileTypes($profileTypes) as $profileType) {
+                $partitions[] = ['profile_type' => $profileType, 'season_id' => $seasonId];
+            }
         }
 
         return $partitions;
     }
 
-    /** Clear prior outputs once, inside the owning build's initialization transaction. */
-    public function clearProfileOutputs(NhlModelRun $run): void
+    /**
+     * Clear prior outputs once, inside the owning build's initialization transaction.
+     *
+     * @param  array<int, string>  $profileTypes
+     */
+    public function clearProfileOutputs(NhlModelRun $run, array $profileTypes = ['skater_offense']): void
     {
-        DB::table(self::PROFILE_TABLE)->where('model_run_id', $run->id)->delete();
-        DB::table(self::TEST_PROFILE_TABLE)->where('model_run_id', $run->id)->delete();
+        $profileTypes = $this->supportedProfileTypes($profileTypes);
+        DB::table(self::PROFILE_TABLE)->where('model_run_id', $run->id)->whereIn('profile_type', $profileTypes)->delete();
+        DB::table(self::TEST_PROFILE_TABLE)->where('model_run_id', $run->id)->whereIn('profile_type', $profileTypes)->delete();
     }
 
     /**
@@ -91,10 +108,8 @@ class NhlSatModelEntityProfileBuilder
      */
     public function profileEntityPage(NhlModelRun $run, string $profileType, ?string $seasonId, ?string $after): array
     {
-        if ($profileType !== 'skater_offense') {
-            throw new RuntimeException('Profile builds support offensive skaters only. Start a fresh Build Profiles.');
-        }
-        $definition = $this->profileDefinitions()[$profileType] ?? throw new RuntimeException('Unknown profile partition.');
+        $this->supportedProfileTypes([$profileType]);
+        $definition = $this->profileDefinitions()[$profileType];
 
         return $this->profileEntities($seasonId === null ? $this->seasonIds($run) : [$seasonId], $definition, $after, 100);
     }
@@ -102,17 +117,21 @@ class NhlSatModelEntityProfileBuilder
     /**
      * Clear existing rows and list profile entities that should be queued.
      *
+     * @param  array<int, string>  $profileTypes
      * @return array<int, array{profile_type:string,entity_key:string}>
      */
-    public function prepareBuild(NhlModelRun $run): array
+    public function prepareBuild(NhlModelRun $run, array $profileTypes = ['skater_offense']): array
     {
+        $profileTypes = $this->supportedProfileTypes($profileTypes);
         DB::table(self::PROFILE_TABLE)
             ->where('model_run_id', $run->id)
+            ->whereIn('profile_type', $profileTypes)
             ->delete();
 
         $entities = [];
 
-        foreach (['skater_offense' => $this->profileDefinitions()['skater_offense']] as $profileType => $definition) {
+        foreach ($profileTypes as $profileType) {
+            $definition = $this->profileDefinitions()[$profileType];
             foreach ($this->profileEntities($this->seasonIds($run), $definition) as $entityKey) {
                 $entities[] = [
                     'profile_type' => $profileType,
@@ -127,10 +146,12 @@ class NhlSatModelEntityProfileBuilder
     /**
      * Clear existing single-season snapshot rows and list entities that should be queued.
      *
+     * @param  array<int, string>  $profileTypes
      * @return array<int, array{profile_type:string,entity_key:string,season_id:string}>
      */
-    public function prepareSeasonSnapshotBuilds(NhlModelRun $run): array
+    public function prepareSeasonSnapshotBuilds(NhlModelRun $run, array $profileTypes = ['skater_offense']): array
     {
+        $profileTypes = $this->supportedProfileTypes($profileTypes);
         $seasonIds = $this->snapshotSeasonIds($run);
 
         if ($seasonIds === []) {
@@ -140,12 +161,14 @@ class NhlSatModelEntityProfileBuilder
         DB::table(self::TEST_PROFILE_TABLE)
             ->where('model_run_id', $run->id)
             ->whereIn('test_season_id', $seasonIds)
+            ->whereIn('profile_type', $profileTypes)
             ->delete();
 
         $entities = [];
 
         foreach ($seasonIds as $seasonId) {
-            foreach (['skater_offense' => $this->profileDefinitions()['skater_offense']] as $profileType => $definition) {
+            foreach ($profileTypes as $profileType) {
+                $definition = $this->profileDefinitions()[$profileType];
                 foreach ($this->profileEntities([$seasonId], $definition) as $entityKey) {
                     $entities[] = [
                         'profile_type' => $profileType,
@@ -281,6 +304,18 @@ class NhlSatModelEntityProfileBuilder
             ->sort()
             ->values()
             ->all();
+    }
+
+    /** @param array<int, string> $profileTypes @return array<int, string> */
+    private function supportedProfileTypes(array $profileTypes): array
+    {
+        $profileTypes = array_values(array_unique($profileTypes));
+        $supported = ['skater_offense', 'goalie_faced'];
+        if ($profileTypes === [] || array_diff($profileTypes, $supported) !== []) {
+            throw new RuntimeException('Unknown SAT model profile type.');
+        }
+
+        return $profileTypes;
     }
 
     /**
@@ -440,9 +475,19 @@ SQL,
         $testColumnSql = $testSeasonId === null ? '' : "    test_season_id,\n";
         $testSelectSql = $testSeasonId === null ? '' : "    ? as test_season_id,\n";
         $conflictColumns = $testSeasonId === null
-            ? 'model_run_id, profile_type, entity_key, matched_bucket_key'
-            : 'model_run_id, test_season_id, profile_type, entity_key, matched_bucket_key';
+            ? 'model_run_id, profile_type, strength, entity_key, matched_bucket_key'
+            : 'model_run_id, test_season_id, profile_type, strength, entity_key, matched_bucket_key';
         $profileSample = $testSeasonId === null ? 'training' : 'test';
+        $strengthProfileRowsSql = $profileType === 'goalie_faced'
+            ? <<<SQL
+UNION ALL
+    SELECT
+        scored_facts.*,
+        LOWER(COALESCE(NULLIF(scored_facts.strength_bucket, ''), NULLIF(scored_facts.strength, ''))) as profile_strength
+    FROM scored_facts
+    WHERE LOWER(COALESCE(NULLIF(scored_facts.strength_bucket, ''), NULLIF(scored_facts.strength, ''))) IN ('ev', 'pp', 'pk')
+SQL
+            : '';
 
         $sql = <<<SQL
 INSERT INTO {$tableName} (
@@ -453,6 +498,7 @@ INSERT INTO {$tableName} (
 {$testColumnSql}
     game_type,
     profile_type,
+    strength,
     entity_key,
     entity_id,
     entity_name,
@@ -473,6 +519,10 @@ INSERT INTO {$tableName} (
     expected_goals,
     sog_above_expected,
     goals_above_expected,
+    source_gsax,
+    source_gsax_per_60,
+    source_gsax_per_100_xga,
+    source_save_percentage,
     sat_probability,
     goal_probability,
     confidence_score,
@@ -536,10 +586,15 @@ scored_facts AS (
         AND sat_baseline.bucket_key = 'L99|baseline=league'
     {$goalBucketJoin}
 ),
-entity_totals AS (
-    SELECT entity_key, COUNT(*) as total_sat
+strength_profile_facts AS (
+    SELECT scored_facts.*, 'all'::varchar as profile_strength
     FROM scored_facts
-    GROUP BY entity_key
+    {$strengthProfileRowsSql}
+),
+entity_totals AS (
+    SELECT entity_key, profile_strength, COUNT(*) as total_sat
+    FROM strength_profile_facts
+    GROUP BY entity_key, profile_strength
 ),
 entity_games AS (
     SELECT DISTINCT entity_key, entity_id, nhl_game_id
@@ -566,40 +621,46 @@ SELECT
 {$testSelectSql}
     ? as game_type,
     ? as profile_type,
-    scored_facts.entity_key,
-    MAX(scored_facts.entity_id) as entity_id,
-    MAX(scored_facts.entity_name) as entity_name,
-    MAX(scored_facts.entity_role) as entity_role,
-    MAX(scored_facts.team_context) as team_context,
-    scored_facts.matched_bucket_key,
-    MAX(scored_facts.fallback_level) as fallback_level,
-    MAX(scored_facts.bucket_dimensions::text)::json as bucket_dimensions,
+    strength_profile_facts.profile_strength as strength,
+    strength_profile_facts.entity_key,
+    MAX(strength_profile_facts.entity_id) as entity_id,
+    MAX(strength_profile_facts.entity_name) as entity_name,
+    MAX(strength_profile_facts.entity_role) as entity_role,
+    MAX(strength_profile_facts.team_context) as team_context,
+    strength_profile_facts.matched_bucket_key,
+    MAX(strength_profile_facts.fallback_level) as fallback_level,
+    (MAX(strength_profile_facts.bucket_dimensions::text)::jsonb || jsonb_build_object('strength', strength_profile_facts.profile_strength))::json as bucket_dimensions,
     COUNT(*) as source_sat,
-    SUM(CASE WHEN scored_facts.is_shot_on_goal THEN 1 ELSE 0 END) as source_sog,
-    SUM(CASE WHEN scored_facts.is_goal THEN 1 ELSE 0 END) as source_goals,
+    SUM(CASE WHEN strength_profile_facts.is_shot_on_goal THEN 1 ELSE 0 END) as source_sog,
+    SUM(CASE WHEN strength_profile_facts.is_goal THEN 1 ELSE 0 END) as source_goals,
     ROUND((COUNT(*)::numeric / NULLIF(MAX(entity_totals.total_sat), 0)), 6) as source_profile_share,
-    MAX(entity_exposure.source_toi_seconds) as source_toi_seconds,
-    ROUND((COUNT(*)::numeric * 3600 / NULLIF(MAX(entity_exposure.source_toi_seconds), 0)), 4) as source_xsat_per_60,
-    ROUND((SUM(scored_facts.sat_probability)::numeric * 3600 / NULLIF(MAX(entity_exposure.source_toi_seconds), 0)), 4) as source_xsog_per_60,
-    ROUND((SUM(CASE WHEN scored_facts.is_shot_on_goal THEN scored_facts.goal_probability ELSE 0 END)::numeric * 3600 / NULLIF(MAX(entity_exposure.source_toi_seconds), 0)), 4) as source_xg_per_60,
-    ROUND(SUM(scored_facts.sat_probability)::numeric, 4) as expected_sog,
-    ROUND(SUM(CASE WHEN scored_facts.is_shot_on_goal THEN scored_facts.goal_probability ELSE 0 END)::numeric, 4) as expected_goals,
-    ROUND((SUM(CASE WHEN scored_facts.is_shot_on_goal THEN 1 ELSE 0 END) - SUM(scored_facts.sat_probability))::numeric, 4) as sog_above_expected,
-    ROUND((SUM(CASE WHEN scored_facts.is_goal THEN 1 ELSE 0 END) - SUM(CASE WHEN scored_facts.is_shot_on_goal THEN scored_facts.goal_probability ELSE 0 END))::numeric, 4) as goals_above_expected,
-    ROUND(AVG(scored_facts.sat_probability)::numeric, 6) as sat_probability,
-    ROUND(AVG(scored_facts.goal_probability)::numeric, 6) as goal_probability,
-    ROUND(AVG(scored_facts.confidence_score)::numeric, 4) as confidence_score,
-    ROUND(AVG(scored_facts.shrinkage_weight)::numeric, 4) as shrinkage_weight,
-    MAX(scored_facts.confidence_bucket) as confidence_bucket,
-    json_build_object('bucket_source', 'model_run_eval', 'profile_type', ?::text, 'profile_sample', ?::text) as metadata,
+    CASE WHEN strength_profile_facts.profile_strength = 'all' THEN MAX(entity_exposure.source_toi_seconds) ELSE NULL END as source_toi_seconds,
+    CASE WHEN strength_profile_facts.profile_strength = 'all' THEN ROUND((COUNT(*)::numeric * 3600 / NULLIF(MAX(entity_exposure.source_toi_seconds), 0)), 4) ELSE NULL END as source_xsat_per_60,
+    CASE WHEN strength_profile_facts.profile_strength = 'all' THEN ROUND((SUM(strength_profile_facts.sat_probability)::numeric * 3600 / NULLIF(MAX(entity_exposure.source_toi_seconds), 0)), 4) ELSE NULL END as source_xsog_per_60,
+    CASE WHEN strength_profile_facts.profile_strength = 'all' THEN ROUND((SUM(CASE WHEN strength_profile_facts.is_shot_on_goal THEN strength_profile_facts.goal_probability ELSE 0 END)::numeric * 3600 / NULLIF(MAX(entity_exposure.source_toi_seconds), 0)), 4) ELSE NULL END as source_xg_per_60,
+    ROUND(SUM(strength_profile_facts.sat_probability)::numeric, 4) as expected_sog,
+    ROUND(SUM(CASE WHEN strength_profile_facts.is_shot_on_goal THEN strength_profile_facts.goal_probability ELSE 0 END)::numeric, 4) as expected_goals,
+    ROUND((SUM(CASE WHEN strength_profile_facts.is_shot_on_goal THEN 1 ELSE 0 END) - SUM(strength_profile_facts.sat_probability))::numeric, 4) as sog_above_expected,
+    ROUND((SUM(CASE WHEN strength_profile_facts.is_goal THEN 1 ELSE 0 END) - SUM(CASE WHEN strength_profile_facts.is_shot_on_goal THEN strength_profile_facts.goal_probability ELSE 0 END))::numeric, 4) as goals_above_expected,
+    ROUND((SUM(CASE WHEN strength_profile_facts.is_shot_on_goal THEN strength_profile_facts.goal_probability ELSE 0 END) - SUM(CASE WHEN strength_profile_facts.is_goal THEN 1 ELSE 0 END))::numeric, 4) as source_gsax,
+    CASE WHEN strength_profile_facts.profile_strength = 'all' THEN ROUND(((SUM(CASE WHEN strength_profile_facts.is_shot_on_goal THEN strength_profile_facts.goal_probability ELSE 0 END) - SUM(CASE WHEN strength_profile_facts.is_goal THEN 1 ELSE 0 END)) * 3600 / NULLIF(MAX(entity_exposure.source_toi_seconds), 0))::numeric, 4) ELSE NULL END as source_gsax_per_60,
+    ROUND(((SUM(CASE WHEN strength_profile_facts.is_shot_on_goal THEN strength_profile_facts.goal_probability ELSE 0 END) - SUM(CASE WHEN strength_profile_facts.is_goal THEN 1 ELSE 0 END)) * 100 / NULLIF(SUM(CASE WHEN strength_profile_facts.is_shot_on_goal THEN strength_profile_facts.goal_probability ELSE 0 END), 0))::numeric, 4) as source_gsax_per_100_xga,
+    ROUND(((SUM(CASE WHEN strength_profile_facts.is_shot_on_goal THEN 1 ELSE 0 END) - SUM(CASE WHEN strength_profile_facts.is_goal THEN 1 ELSE 0 END)) * 100 / NULLIF(SUM(CASE WHEN strength_profile_facts.is_shot_on_goal THEN 1 ELSE 0 END), 0))::numeric, 4) as source_save_percentage,
+    ROUND(AVG(strength_profile_facts.sat_probability)::numeric, 6) as sat_probability,
+    ROUND(AVG(strength_profile_facts.goal_probability)::numeric, 6) as goal_probability,
+    ROUND(AVG(strength_profile_facts.confidence_score)::numeric, 4) as confidence_score,
+    ROUND(AVG(strength_profile_facts.shrinkage_weight)::numeric, 4) as shrinkage_weight,
+    MAX(strength_profile_facts.confidence_bucket) as confidence_bucket,
+    json_build_object('bucket_source', 'model_run_eval', 'profile_type', ?::text, 'profile_sample', ?::text, 'strength', strength_profile_facts.profile_strength) as metadata,
     ?::timestamp as profiled_at,
     ?::timestamp as created_at,
     ?::timestamp as updated_at
-FROM scored_facts
-INNER JOIN entity_totals ON entity_totals.entity_key = scored_facts.entity_key
-INNER JOIN entity_exposure ON entity_exposure.entity_key = scored_facts.entity_key
-WHERE scored_facts.matched_bucket_key IS NOT NULL
-GROUP BY scored_facts.entity_key, scored_facts.matched_bucket_key
+FROM strength_profile_facts
+INNER JOIN entity_totals ON entity_totals.entity_key = strength_profile_facts.entity_key
+    AND entity_totals.profile_strength = strength_profile_facts.profile_strength
+INNER JOIN entity_exposure ON entity_exposure.entity_key = strength_profile_facts.entity_key
+WHERE strength_profile_facts.matched_bucket_key IS NOT NULL
+GROUP BY strength_profile_facts.entity_key, strength_profile_facts.profile_strength, strength_profile_facts.matched_bucket_key
 HAVING COUNT(*) >= 1
 ON CONFLICT ({$conflictColumns})
 DO UPDATE SET
@@ -625,6 +686,10 @@ DO UPDATE SET
     expected_goals = EXCLUDED.expected_goals,
     sog_above_expected = EXCLUDED.sog_above_expected,
     goals_above_expected = EXCLUDED.goals_above_expected,
+    source_gsax = EXCLUDED.source_gsax,
+    source_gsax_per_60 = EXCLUDED.source_gsax_per_60,
+    source_gsax_per_100_xga = EXCLUDED.source_gsax_per_100_xga,
+    source_save_percentage = EXCLUDED.source_save_percentage,
     sat_probability = EXCLUDED.sat_probability,
     goal_probability = EXCLUDED.goal_probability,
     confidence_score = EXCLUDED.confidence_score,

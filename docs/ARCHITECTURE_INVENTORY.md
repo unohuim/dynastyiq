@@ -971,6 +971,7 @@ season, automatically refining offense/defense weights and searching score gaps 
 - `docs/architecture/stats/StatModelLifecycle.yaml`
 - `docs/architecture/stats/NhlModelRuns.yaml`
 - `docs/architecture/stats/NhlSatEntityRateProjection.yaml`
+- `docs/architecture/stats/NhlGoalieEvSkillProjection.yaml`
 - `docs/architecture/stats/NhlSatModelEntityToiProjection.yaml`
 
 **Purpose:**

@@ -86,7 +86,7 @@ class BuildNhlSatModelEntityRateComparisonForEntityJob implements ShouldQueue
         );
 
         DB::transaction(function (): void {
-            $run = NhlModelRun::query()->whereKey($this->modelRunId)->lockForUpdate()->first();
+            $run = NhlModelRun::query()->whereKey($this->modelRunId)->lock('for no key update')->first();
 
             if ($run === null) {
                 return;
@@ -97,6 +97,8 @@ class BuildNhlSatModelEntityRateComparisonForEntityJob implements ShouldQueue
 
             $run->forceFill(['metrics' => $metrics])->save();
         });
+
+        BuildNhlSatModelEntityRateComparisonsJob::markCompleteWhenAllEntitiesProcessed($this->modelRunId);
     }
 
     public function failed(Throwable $exception): void

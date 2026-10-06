@@ -3266,7 +3266,7 @@ Migrations remain the **sole source of truth**.
 ## nhl_sat_model_entity_profile_buckets
 
 **Organization-owned:** No
-**Purpose:** Stores model-run scoped entity SAT profile rows after Eval SAT, with optional Eval SOG expected-goal columns.
+**Purpose:** Stores model-run scoped entity SAT profile rows after Eval SAT, with optional Eval SOG expected-goal columns and historical goalie GSAx evidence for `goalie_faced` rows.
 
 ### Columns
 
@@ -3279,6 +3279,7 @@ Migrations remain the **sole source of truth**.
 | source_season_ids | json | No | Training seasons used by the SAT model |
 | game_type | unsignedTinyInteger | No | NHL game type, regular season by default |
 | profile_type | string(40) | No | Entity profile type |
+| strength | string(8) | No | `all` for every profile; goalie-facing rows also use `ev`, `pp`, and `pk` |
 | entity_key | string(120) | No | Stable entity/context key |
 | entity_id | integer | Yes | Source entity id when available |
 | entity_name | string | Yes | Display label fallback |
@@ -3299,6 +3300,10 @@ Migrations remain the **sole source of truth**.
 | expected_goals | decimal(12,4) | No | Sum of Eval SOG goal probabilities for observed SOG |
 | sog_above_expected | decimal(12,4) | No | Observed SOG minus expected SOG |
 | goals_above_expected | decimal(12,4) | No | Observed goals minus expected goals |
+| source_gsax | decimal(12,4) | Yes | Expected goals against minus goals allowed for goalie-facing rows |
+| source_gsax_per_60 | decimal(12,4) | Yes | Historical GSAx per 60; descriptive exposure-normalized value |
+| source_gsax_per_100_xga | decimal(12,4) | Yes | Historical GSAx per 100 expected goals against; primary goalie comparison rate |
+| source_save_percentage | decimal(9,4) | Yes | Historical save percentage (0–100) for goalie-facing rows |
 | sat_probability | decimal(9,6) | No | Average SAT-to-SOG probability |
 | goal_probability | decimal(9,6) | No | Average SOG-to-goal probability when available |
 | confidence_score | decimal(9,4) | No | Average matched bucket confidence |
@@ -3316,7 +3321,7 @@ Migrations remain the **sole source of truth**.
 - FK: `model_run_id` references `nhl_model_runs.id` with cascade delete
 - FK: `sat_expected_goals_model_id` references `nhl_expected_goals_models.id` with cascade delete
 - FK: `sog_expected_goals_model_id` references `nhl_expected_goals_models.id` with null on delete
-- Unique: `(model_run_id, profile_type, entity_key, matched_bucket_key)` (`uq_nhl_sat_model_entity_profile`)
+- Unique: `(model_run_id, profile_type, strength, entity_key, matched_bucket_key)` (`uq_nhl_sat_model_entity_profile_strength`)
 - Index: `(model_run_id, profile_type)` (`ix_nhl_sat_model_entity_profiles_type`)
 - Index: `(model_run_id, matched_bucket_key)` (`ix_nhl_sat_model_entity_profiles_bucket`)
 - Index: `(profile_type, entity_id)` (`ix_nhl_sat_model_entity_profiles_entity`)
@@ -3340,6 +3345,7 @@ Migrations remain the **sole source of truth**.
 | test_season_id | string(8) | No | Single profiled season id; includes training-season snapshots and held-out target-season snapshots |
 | game_type | unsignedTinyInteger | No | NHL game type, regular season by default |
 | profile_type | string(40) | No | Entity profile type |
+| strength | string(8) | No | `all` for every profile; goalie-facing rows also use `ev`, `pp`, and `pk` |
 | entity_key | string(120) | No | Stable entity/context key |
 | entity_id | integer | Yes | Source entity id when available |
 | entity_name | string | Yes | Display label fallback |
@@ -3360,6 +3366,10 @@ Migrations remain the **sole source of truth**.
 | expected_goals | decimal(12,4) | No | Sum of Eval SOG goal probabilities over single-season SOG |
 | sog_above_expected | decimal(12,4) | No | Single-season observed SOG minus expected SOG |
 | goals_above_expected | decimal(12,4) | No | Single-season observed goals minus expected goals |
+| source_gsax | decimal(12,4) | Yes | Single-season expected goals against minus goals allowed for goalie-facing rows |
+| source_gsax_per_60 | decimal(12,4) | Yes | Single-season descriptive GSAx per 60 |
+| source_gsax_per_100_xga | decimal(12,4) | Yes | Single-season GSAx per 100 expected goals against |
+| source_save_percentage | decimal(9,4) | Yes | Single-season save percentage (0–100) for goalie-facing rows |
 | sat_probability | decimal(9,6) | No | Average SAT-to-SOG probability |
 | goal_probability | decimal(9,6) | No | Average SOG-to-goal probability when available |
 | confidence_score | decimal(9,4) | No | Average matched bucket confidence |
@@ -3377,7 +3387,7 @@ Migrations remain the **sole source of truth**.
 - FK: `model_run_id` references `nhl_model_runs.id` with cascade delete
 - FK: `sat_expected_goals_model_id` references `nhl_expected_goals_models.id` with cascade delete
 - FK: `sog_expected_goals_model_id` references `nhl_expected_goals_models.id` with null on delete
-- Unique: `(model_run_id, test_season_id, profile_type, entity_key, matched_bucket_key)` (`uq_nhl_sat_model_entity_test_profile`)
+- Unique: `(model_run_id, test_season_id, profile_type, strength, entity_key, matched_bucket_key)` (`uq_nhl_sat_model_entity_test_profile_strength`)
 - Index: `(model_run_id, profile_type)` (`ix_nhl_sat_model_entity_test_profiles_type`)
 - Index: `(model_run_id, matched_bucket_key)` (`ix_nhl_sat_model_entity_test_profiles_bucket`)
 - Index: `(profile_type, entity_id)` (`ix_nhl_sat_model_entity_test_profiles_entity`)
@@ -3556,7 +3566,7 @@ Migrations remain the **sole source of truth**.
 ## nhl_sat_model_entity_rate_comparison_buckets
 
 **Organization-owned:** No
-**Purpose:** Stores model-run scoped raw bucket comparisons between training profiles, /60 projections, and held-out test profiles.
+**Purpose:** Stores model-run scoped raw bucket comparisons between training profiles and test profiles; skater rows include /60 projection comparisons, while goalie rows compare strength-partitioned historical GSAx per 100 xGA and save percentage directly.
 
 ### Columns
 
@@ -3566,6 +3576,7 @@ Migrations remain the **sole source of truth**.
 | model_run_id | bigint | No | FK -> `nhl_model_runs.id`; cascade delete |
 | test_season_id | string(8) | No | Held-out test season |
 | profile_type | string(40) | No | Entity profile type |
+| strength | string(8) | No | `all` for every comparison; goalie-facing rows also use `ev`, `pp`, and `pk` |
 | entity_key | string(120) | No | Stable entity/context key |
 | entity_id | integer | Yes | Source entity id when available |
 | entity_name | string | Yes | Display label fallback |
@@ -3586,6 +3597,7 @@ Migrations remain the **sole source of truth**.
 | xsat_drift_rate / xsog_drift_rate / xg_drift_rate | decimal(12,6) | Yes | Relative drift versus training actual /60 |
 | xsat_error / xsog_error / xg_error | decimal(12,4) | Yes | Held-out actual /60 minus projected /60 |
 | xsat_error_rate / xsog_error_rate / xg_error_rate | decimal(12,6) | Yes | Relative error versus projected /60 |
+| train_save_percentage / test_save_percentage / save_percentage_drift | decimal(9,4) | Yes | Goalie save percentage (0–100) and test-minus-train percentage-point drift |
 | confidence_score | decimal(9,4) | No | Projection confidence copied from the projection row |
 | shrinkage_weight | decimal(9,4) | No | Projection shrinkage copied from the projection row |
 | metadata | json | Yes | Build metadata |
@@ -3597,7 +3609,7 @@ Migrations remain the **sole source of truth**.
 
 - PK: `id`
 - FK: `model_run_id` references `nhl_model_runs.id` with cascade delete
-- Unique: `(model_run_id, test_season_id, profile_type, entity_key, matched_bucket_key)` (`uq_nhl_sat_model_rate_compare_bucket`)
+- Unique: `(model_run_id, test_season_id, profile_type, strength, entity_key, matched_bucket_key)` (`uq_nhl_sat_model_rate_compare_bucket_strength`)
 - Index: `(model_run_id, profile_type)` (`ix_nhl_sat_model_rate_compare_bucket_type`)
 - Index: `(profile_type, entity_id)` (`ix_nhl_sat_model_rate_compare_bucket_entity`)
 
@@ -3606,7 +3618,7 @@ Migrations remain the **sole source of truth**.
 ## nhl_sat_model_entity_rate_comparison_aggregates
 
 **Organization-owned:** No
-**Purpose:** Stores one entity/profile aggregate comparison row summed from raw /60 comparison buckets.
+**Purpose:** Stores one entity/profile aggregate comparison row summed from raw comparison buckets, including direct goalie training-versus-test GSAx/60 comparisons.
 
 ### Columns
 
@@ -3616,6 +3628,7 @@ Migrations remain the **sole source of truth**.
 | model_run_id | bigint | No | FK -> `nhl_model_runs.id`; cascade delete |
 | test_season_id | string(8) | No | Held-out test season |
 | profile_type | string(40) | No | Entity profile type |
+| strength | string(8) | No | `all` for every comparison; goalie-facing rows also use `ev`, `pp`, and `pk` |
 | entity_key | string(120) | No | Stable entity/context key |
 | entity_id | integer | Yes | Source entity id when available |
 | entity_name | string | Yes | Display label fallback |
@@ -3626,6 +3639,7 @@ Migrations remain the **sole source of truth**.
 | train_games / test_games | unsignedInteger | No | Entity/profile game denominators used for per-game train/test totals |
 | train_sat / train_hdsat / train_sog / train_goals | unsignedInteger | No | Summed training profile counts; HDSAT is populated for skater-offense player entities from `nhl_game_summaries.hdsat` |
 | test_sat / test_hdsat / test_sog / test_goals | unsignedInteger | No | Summed held-out test profile counts; HDSAT is populated for skater-offense player entities from `nhl_game_summaries.hdsat` |
+| train_save_percentage / test_save_percentage / save_percentage_drift | decimal(9,4) | Yes | Goalie save percentage (0–100) and test-minus-train percentage-point drift |
 | train_eval_gp_per_season / test_eval_gp_per_season | decimal(12,4) | Yes | Summary-derived player games per season for train/test signal analysis |
 | train_eval_toi_seconds / test_eval_toi_seconds | unsignedInteger | Yes | Summary-derived total TOI seconds for skater-offense comparison entities |
 | train_eval_toi_per_gp / test_eval_toi_per_gp | decimal(12,4) | Yes | Summary-derived TOI seconds per game |
@@ -3663,7 +3677,7 @@ Migrations remain the **sole source of truth**.
 
 - PK: `id`
 - FK: `model_run_id` references `nhl_model_runs.id` with cascade delete
-- Unique: `(model_run_id, test_season_id, profile_type, entity_key)` (`uq_nhl_sat_model_rate_compare_aggregate`)
+- Unique: `(model_run_id, test_season_id, profile_type, strength, entity_key)` (`uq_nhl_sat_model_rate_compare_aggregate_strength`)
 - Index: `(model_run_id, profile_type)` (`ix_nhl_sat_model_rate_compare_agg_type`)
 - Index: `(profile_type, entity_id)` (`ix_nhl_sat_model_rate_compare_agg_entity`)
 

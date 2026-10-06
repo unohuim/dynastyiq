@@ -96,7 +96,7 @@
                 x-transition:leave="transition duration-100 ease-in"
                 x-transition:leave-start="translate-y-0 opacity-100"
                 x-transition:leave-end="translate-y-1 opacity-0"
-                class="absolute right-0 top-9 z-30 w-40 overflow-hidden rounded-md border border-gray-200 bg-white py-1 text-left shadow-lg"
+                class="absolute right-0 top-9 z-30 w-40 rounded-md border border-gray-200 bg-white py-1 text-left shadow-lg"
                 role="menu"
             >
                 <a href="{{ route('admin.nhl-sat-models.buckets', ['run' => $run, 'target' => \App\Services\NhlExpectedGoalsBackfiller::TARGET_GOAL]) }}" class="block px-3 py-2 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950" role="menuitem">
@@ -127,15 +127,31 @@
                         Build Predictions
                     </button>
                 </form>
-                <form method="POST" action="{{ route('admin.nhl-sat-models.profiles.build', $run) }}" data-sat-model-profile-build-form>
-                    @csrf
-                    <button type="submit" class="block w-full px-3 py-2 text-left text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950 disabled:cursor-not-allowed disabled:opacity-60" role="menuitem">
-                        Build Profiles
+                <div class="relative" x-data="{ profilesOpen: false }" @mouseenter="profilesOpen = true" @mouseleave="profilesOpen = false">
+                    <button type="button" class="flex w-full items-center justify-between px-3 py-2 text-left text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950" role="menuitem" :aria-expanded="profilesOpen.toString()" @click.stop="profilesOpen = !profilesOpen">
+                        <span>Profiles</span>
+                        <svg class="size-3" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M7.22 4.22a.75.75 0 0 1 1.06 0l5.25 5.25a.75.75 0 0 1 0 1.06L8.28 15.78a.75.75 0 0 1-1.06-1.06L11.94 10 7.22 5.28a.75.75 0 0 1 0-1.06Z" clip-rule="evenodd" /></svg>
                     </button>
-                </form>
-                <a href="{{ route('admin.nhl-sat-models.profiles', $run) }}" class="block px-3 py-2 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950" role="menuitem">
-                    View Profiles
-                </a>
+                    <div x-cloak x-show="profilesOpen" x-transition.opacity.duration.150ms class="absolute right-full top-0 z-40 mr-1 w-48 rounded-md border border-gray-200 bg-white py-1 shadow-lg" role="menu">
+                        <a href="{{ route('admin.nhl-sat-models.profiles', $run) }}" class="block px-3 py-2 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950" role="menuitem">View Profiles</a>
+                        <form method="POST" action="{{ route('admin.nhl-sat-models.profiles.build', $run) }}" data-sat-model-profile-build-form>
+                            @csrf
+                            <input type="hidden" name="profile_type" value="skater_offense">
+                            <button type="submit" class="block w-full px-3 py-2 text-left text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950" role="menuitem">Build Offensive Skaters</button>
+                        </form>
+                        <form method="POST" action="{{ route('admin.nhl-sat-models.profiles.build', $run) }}" data-sat-model-profile-build-form>
+                            @csrf
+                            <input type="hidden" name="profile_type" value="goalie_faced">
+                            <button type="submit" class="block w-full px-3 py-2 text-left text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950" role="menuitem">Build Goalies</button>
+                        </form>
+                    </div>
+                </div>
+                <div class="relative" x-data="{ predictOpen: false }" @mouseenter="predictOpen = true" @mouseleave="predictOpen = false">
+                    <button type="button" class="flex w-full items-center justify-between px-3 py-2 text-left text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950" role="menuitem" :aria-expanded="predictOpen.toString()" @click.stop="predictOpen = !predictOpen">
+                        <span>Predict</span>
+                        <svg class="size-3" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M7.22 4.22a.75.75 0 0 1 1.06 0l5.25 5.25a.75.75 0 0 1 0 1.06L8.28 15.78a.75.75 0 0 1-1.06-1.06L11.94 10 7.22 5.28a.75.75 0 0 1 0-1.06Z" clip-rule="evenodd" /></svg>
+                    </button>
+                    <div x-cloak x-show="predictOpen" x-transition.opacity.duration.150ms class="absolute right-full top-0 z-40 mr-1 w-52 rounded-md border border-gray-200 bg-white py-1 shadow-lg" role="menu">
                 @if($canViewTrainingDrift)
                     <a href="{{ route('admin.nhl-sat-models.profiles.training-drift', $run) }}" class="block px-3 py-2 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950" role="menuitem">
                         Training Drift
@@ -156,8 +172,9 @@
                 @endif
                 <form method="POST" action="{{ route('admin.nhl-sat-models.rate-projections.build', $run) }}" data-sat-model-rate-build-form>
                     @csrf
+                    <input type="hidden" name="profile_type" value="skater_offense">
                     <button type="submit" class="block w-full px-3 py-2 text-left text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950 disabled:cursor-not-allowed disabled:opacity-60" role="menuitem">
-                        Build /60
+                        Build /60 — Offense
                     </button>
                 </form>
                 <a href="{{ route('admin.nhl-sat-models.rate-projections', $run) }}" class="block px-3 py-2 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950" role="menuitem">
@@ -184,33 +201,31 @@
                         View TOI
                     </span>
                 @endif
-                @if($canBuildRateComparison)
-                    <form method="POST" action="{{ route('admin.nhl-sat-models.rate-projections.compare.build', $run) }}" data-sat-model-rate-compare-build-form>
-                        @csrf
-                        <button type="submit" class="block w-full px-3 py-2 text-left text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950 disabled:cursor-not-allowed disabled:opacity-60" role="menuitem">
-                            Compare /60
-                        </button>
-                    </form>
-                @else
-                    <span class="block cursor-not-allowed px-3 py-2 text-xs font-medium text-gray-300" role="menuitem" aria-disabled="true">
-                        Compare /60
-                    </span>
-                @endif
-                @if($canViewRateComparison)
-                    <a href="{{ route('admin.nhl-sat-models.rate-projections.compare.raw', $run) }}" class="block px-3 py-2 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950" role="menuitem">
-                        Raw Compare /60
-                    </a>
-                    <a href="{{ route('admin.nhl-sat-models.rate-projections.compare.aggregates', $run) }}" class="block px-3 py-2 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950" role="menuitem">
-                        Aggregate Compare /60
-                    </a>
-                @else
-                    <span class="block cursor-not-allowed px-3 py-2 text-xs font-medium text-gray-300" role="menuitem" aria-disabled="true">
-                        Raw Compare /60
-                    </span>
-                    <span class="block cursor-not-allowed px-3 py-2 text-xs font-medium text-gray-300" role="menuitem" aria-disabled="true">
-                        Aggregate Compare /60
-                    </span>
-                @endif
+                    </div>
+                </div>
+                <div class="relative" x-data="{ compareOpen: false }" @mouseenter="compareOpen = true" @mouseleave="compareOpen = false">
+                    <button type="button" class="flex w-full items-center justify-between px-3 py-2 text-left text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950" role="menuitem" :aria-expanded="compareOpen.toString()" @click.stop="compareOpen = !compareOpen">
+                        <span>Compare</span>
+                        <svg class="size-3" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M7.22 4.22a.75.75 0 0 1 1.06 0l5.25 5.25a.75.75 0 0 1 0 1.06L8.28 15.78a.75.75 0 0 1-1.06-1.06L11.94 10 7.22 5.28a.75.75 0 0 1 0-1.06Z" clip-rule="evenodd" /></svg>
+                    </button>
+                    <div x-cloak x-show="compareOpen" x-transition.opacity.duration.150ms class="absolute right-full top-0 z-40 mr-1 w-52 rounded-md border border-gray-200 bg-white py-1 shadow-lg" role="menu">
+                        @if($canBuildRateComparison)
+                            <form method="POST" action="{{ route('admin.nhl-sat-models.rate-projections.compare.build', $run) }}" data-sat-model-rate-compare-build-form>
+                                @csrf
+                                <button type="submit" class="block w-full px-3 py-2 text-left text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950 disabled:cursor-not-allowed disabled:opacity-60" role="menuitem">Build Comparisons</button>
+                            </form>
+                        @else
+                            <span class="block cursor-not-allowed px-3 py-2 text-xs font-medium text-gray-300" role="menuitem" aria-disabled="true">Build Comparisons</span>
+                        @endif
+                        @if($canViewRateComparison)
+                            <a href="{{ route('admin.nhl-sat-models.rate-projections.compare.raw', $run) }}" class="block px-3 py-2 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950" role="menuitem">Bucket Comparisons</a>
+                            <a href="{{ route('admin.nhl-sat-models.rate-projections.compare.aggregates', $run) }}" class="block px-3 py-2 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950" role="menuitem">Player Comparisons</a>
+                        @else
+                            <span class="block cursor-not-allowed px-3 py-2 text-xs font-medium text-gray-300" role="menuitem" aria-disabled="true">Bucket Comparisons</span>
+                            <span class="block cursor-not-allowed px-3 py-2 text-xs font-medium text-gray-300" role="menuitem" aria-disabled="true">Player Comparisons</span>
+                        @endif
+                    </div>
+                </div>
             </div>
         </div>
     </td>

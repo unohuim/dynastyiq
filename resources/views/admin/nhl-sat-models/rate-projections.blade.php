@@ -33,8 +33,9 @@
             </div>
             <form method="POST" action="{{ route('admin.nhl-sat-models.rate-projections.build', $run) }}" data-sat-model-rate-build-form data-sat-model-reload-on-success>
                 @csrf
+                <input type="hidden" name="profile_type" value="skater_offense">
                 <button type="submit" class="inline-flex items-center rounded-md bg-gray-950 px-3 py-2 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-gray-800">
-                    Build /60
+                    Build /60 — Offense
                 </button>
             </form>
         </div>

@@ -2,6 +2,7 @@
     $label = fn ($value) => str($value)->replace(['_', '-'], ' ')->title();
     $formatPct = fn ($value) => number_format(((float) $value) * 100, 1) . '%';
     $formatRate = fn ($value) => $value === null ? '-' : number_format((float) $value, 2);
+    $formatSavePct = fn ($value) => $value === null ? '-' : number_format((float) $value, 2) . '%';
     $sortUrl = function (string $key) use ($run, $profileType, $sort, $direction, $includeLongTail, $search): string {
         return route('admin.nhl-sat-models.profiles', [
             'run' => $run,
@@ -53,8 +54,9 @@
             </div>
             <form method="POST" action="{{ route('admin.nhl-sat-models.profiles.build', $run) }}" data-sat-model-profile-build-form data-sat-model-reload-on-success>
                 @csrf
+                <input type="hidden" name="profile_type" value="skater_offense">
                 <button type="submit" class="inline-flex items-center rounded-md bg-gray-950 px-3 py-2 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-gray-800">
-                    Build Profiles
+                    Build Offensive Skaters
                 </button>
             </form>
         </div>
@@ -131,6 +133,11 @@
                         <tr>
                             <th class="w-[13%] px-1.5 py-2"><a href="{{ $sortUrl('entity') }}">Entity {{ $sortArrow('entity') }}</a></th>
                             <th class="w-[19%] px-1.5 py-2"><a href="{{ $sortUrl('bucket') }}">Profile {{ $sortArrow('bucket') }}</a></th>
+                            @if($profileType === 'goalie_faced')
+                                <th class="w-[5%] px-1.5 py-2"><a href="{{ $sortUrl('strength') }}">Strength {{ $sortArrow('strength') }}</a></th>
+                                <th class="w-[7%] px-1.5 py-2 text-right"><a href="{{ $sortUrl('source_gsax_per_100_xga') }}">GSAx / 100 xGA {{ $sortArrow('source_gsax_per_100_xga') }}</a></th>
+                                <th class="w-[6%] px-1.5 py-2 text-right"><a href="{{ $sortUrl('source_save_percentage') }}">SV% {{ $sortArrow('source_save_percentage') }}</a></th>
+                            @endif
                             <th class="w-[5%] px-1.5 py-2 text-right"><a href="{{ $sortUrl('source_sat') }}">SAT {{ $sortArrow('source_sat') }}</a></th>
                             <th class="w-[6%] px-1.5 py-2 text-right"><a href="{{ $sortUrl('source_xsat_per_60') }}">xSAT/60 {{ $sortArrow('source_xsat_per_60') }}</a></th>
                             <th class="w-[5%] px-1.5 py-2 text-right"><a href="{{ $sortUrl('source_sog') }}">SOG {{ $sortArrow('source_sog') }}</a></th>
@@ -175,6 +182,11 @@
                                     <div class="line-clamp-2 font-medium text-gray-950">{{ $bucketLabel !== '' ? $bucketLabel : $profile->matched_bucket_key }}</div>
                                     <div class="truncate text-gray-400">{{ $profile->matched_bucket_key }}</div>
                                 </td>
+                                @if($profileType === 'goalie_faced')
+                                    <td class="px-1.5 py-2 align-top font-semibold uppercase text-gray-700">{{ $profile->strength }}</td>
+                                    <td class="px-1.5 py-2 text-right align-top tabular-nums">{{ $formatRate($profile->source_gsax_per_100_xga) }}</td>
+                                    <td class="px-1.5 py-2 text-right align-top tabular-nums">{{ $formatSavePct($profile->source_save_percentage) }}</td>
+                                @endif
                                 <td class="px-1.5 py-2 text-right align-top tabular-nums">
                                     <div>{{ number_format((int) $profile->source_sat) }}</div>
                                     <div class="text-[10px] font-medium {{ $satGradeClass }}">{{ $satGrade }}</div>

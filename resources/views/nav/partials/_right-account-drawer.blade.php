@@ -11,11 +11,11 @@
         x-transition:enter-start="translate-x-full" x-transition:enter-end="translate-x-0"
         x-transition:leave="transform ease-in-out duration-300" x-transition:leave-start="translate-x-0"
         x-transition:leave-end="translate-x-full"
-        class="absolute right-0 top-0 h-full w-full max-w-md overflow-hidden bg-[#0B1220] text-gray-200 shadow-2xl ring-1 ring-white/10 pointer-events-auto"
+        class="absolute right-0 top-0 flex h-full w-full max-w-md flex-col overflow-hidden bg-[#0B1220] text-gray-200 shadow-2xl ring-1 ring-white/10 pointer-events-auto"
         style="will-change: transform;" @keydown.escape.window="accountOpen=false" @click.away="accountOpen=false"
         aria-modal="true" role="dialog" aria-labelledby="user-drawer-title">
 
-        <div class="flex items-center justify-between px-5 py-4 border-b border-white/10">
+        <div class="flex shrink-0 items-center justify-between border-b border-white/10 px-5 py-4">
             <div class="flex items-center gap-3">
                 @php
                     $discordAvatar = auth()->user()?->socialAccounts()?->where('provider','discord')->value('avatar');
@@ -36,7 +36,7 @@
             </button>
         </div>
 
-        <div class="h-full overflow-y-auto px-3 py-4">
+        <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-4 pb-[calc(1rem+env(safe-area-inset-bottom))]">
             @php
                 $item = fn($href, $label, $icon, $active=false) => '
                 <a href="'.$href.'"

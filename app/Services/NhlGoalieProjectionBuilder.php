@@ -270,7 +270,13 @@ class NhlGoalieProjectionBuilder
                     'confidence_score' => $bucket->source_confidence_score,
                     'confidence_bucket' => $this->confidenceBucket($bucket->source_confidence_score),
                     'flags' => json_encode([$bucket->goalie_skill_source], JSON_THROW_ON_ERROR),
-                    'projection_inputs' => json_encode(['sat_model_run_id' => $modelId], JSON_THROW_ON_ERROR),
+                    'projection_inputs' => json_encode([
+                        'sat_model_run_id' => $modelId,
+                        'goalie_skill_source' => $bucket->goalie_skill_source,
+                        'goalie_ev_skill_adjustment' => $bucket->goalie_ev_skill_adjustment,
+                        'goalie_ev_gsax_edge' => $bucket->goalie_ev_gsax_edge,
+                        'goalie_ev_history_seasons' => $bucket->goalie_ev_history_seasons,
+                    ], JSON_THROW_ON_ERROR),
                     'metadata' => json_encode(['sat_model_run_id' => $modelId, 'volume_basis' => 'all'], JSON_THROW_ON_ERROR),
                     'created_at' => $now, 'updated_at' => $now,
                 ];

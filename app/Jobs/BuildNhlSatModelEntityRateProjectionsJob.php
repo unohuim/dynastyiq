@@ -43,7 +43,14 @@ class BuildNhlSatModelEntityRateProjectionsJob implements ShouldQueue, ShouldBeU
      */
     public int $uniqueFor = 21600;
 
-    public function __construct(public int $modelRunId, public ?string $predictionBuildId = null)
+    /**
+     * @param  array<int, string>  $profileTypes
+     */
+    public function __construct(
+        public int $modelRunId,
+        public ?string $predictionBuildId = null,
+        public array $profileTypes = ['skater_offense']
+    )
     {
         $this->afterCommit = true;
     }
@@ -81,7 +88,7 @@ class BuildNhlSatModelEntityRateProjectionsJob implements ShouldQueue, ShouldBeU
         if (! $run->acceptsPredictionStage($this->predictionBuildId, 'rates')) {
             return;
         }
-        $entities = $builder->prepareBuild($run);
+        $entities = $builder->prepareBuild($run, $this->profileTypes);
         $jobs = array_map(
             fn (array $entity): BuildNhlSatModelEntityRateProjectionForEntityJob => new BuildNhlSatModelEntityRateProjectionForEntityJob(
                 modelRunId: $this->modelRunId,

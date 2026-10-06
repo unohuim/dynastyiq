@@ -67,6 +67,13 @@ class NhlSatModelUpdated implements ShouldBroadcastNow
         $hasRateProjections = Schema::hasTable('nhl_sat_model_entity_rate_projection_buckets')
             && DB::table('nhl_sat_model_entity_rate_projection_buckets')
                 ->where('model_run_id', $run->id)
+                ->where('profile_type', 'skater_offense')
+                ->exists();
+        $hasGoalieProfiles = Schema::hasTable('nhl_sat_model_entity_profile_buckets')
+            && DB::table('nhl_sat_model_entity_profile_buckets')
+                ->where('model_run_id', $run->id)
+                ->where('profile_type', 'goalie_faced')
+                ->whereNotNull('source_gsax_per_100_xga')
                 ->exists();
         $hasTestProfiles = $run->target_season_id !== null
             && Schema::hasTable('nhl_sat_model_entity_test_profile_buckets')
@@ -89,7 +96,7 @@ class NhlSatModelUpdated implements ShouldBroadcastNow
             'has_rate_projections' => $hasRateProjections,
             'has_test_profiles' => $hasTestProfiles,
             'has_rate_comparisons' => $hasRateComparisons,
-            'can_build_rate_comparison' => $hasRateProjections && $hasTestProfiles,
+            'can_build_rate_comparison' => ($hasRateProjections || $hasGoalieProfiles) && $hasTestProfiles,
             'can_view_rate_comparison' => $hasRateComparisons,
         ];
     }

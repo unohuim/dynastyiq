@@ -105,11 +105,11 @@ class BuildNhlSatModelEntityProfileForEntityJob implements ShouldQueue
         if ($this->predictionBuildId === null || $this->batch()?->cancelled()) {
             return;
         }
-        if ($this->profileType !== 'skater_offense') {
-            throw new \RuntimeException('Obsolete non-offensive profile job. Start a fresh offensive-skater profile build.');
+        if (! in_array($this->profileType, ['skater_offense', 'goalie_faced'], true)) {
+            throw new \RuntimeException('Unknown profile type. Start a fresh profile build.');
         }
         if ($this->entityKeys === [] || count($this->entityKeys) > 25) {
-            throw new \RuntimeException('Profile job requires between one and twenty-five offensive skaters.');
+            throw new \RuntimeException('Profile job requires between one and twenty-five entities.');
         }
         $receipt = $this->receiptPage ?? sha1(($this->snapshotSeasonId ?? 'training') . ':' . $this->profileType . ':' . implode(':', $this->entityKeys));
         if ($this->receiptIndex < 0 || $this->receiptIndex >= 100) {
