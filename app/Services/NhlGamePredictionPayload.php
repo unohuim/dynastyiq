@@ -16,6 +16,9 @@ use Illuminate\Validation\ValidationException;
  */
 class NhlGamePredictionPayload
 {
+    private const TONIGHT_THIRD_ENGINE_OVERRIDE_DATE = '2026-10-06';
+    private const TONIGHT_THIRD_ENGINE_MINIMUM_GAP = 0.30;
+
     private const PRESEASON_GAME_TYPE = 1;
     private const GOALIE_GSAX_WEIGHT = 0.70;
     private const GOALIE_MATCHUP_WEIGHT = 0.30;
@@ -58,12 +61,26 @@ class NhlGamePredictionPayload
             $stack = NhlSatEngineStack::query()->where('is_default', true)->with('members.engine')->first();
             if ($stack !== null) {
                 $fallback = null;
-                foreach ($stack->members as $member) {
+                foreach ($stack->members->values() as $memberIndex => $member) {
                     $engine = $member->engine;
                     $candidate = $this->build($nhlGameId, [...$overrides, '_stack_engine_id' => $engine->id,
                         'sat_model_run_id' => $stack->production_model_run_id ?? $engine->model_run_id,
                         'engine_weights' => $engine->settings]);
                     $fallback ??= $candidate;
+
+                    $tonightThirdEngineQualification = $this->tonightThirdEngineQualification($game, $memberIndex, $candidate);
+                    if ($tonightThirdEngineQualification !== null) {
+                        if (! $tonightThirdEngineQualification) {
+                            break;
+                        }
+
+                        $candidate['pick_qualified'] = true;
+                        $candidate = $this->withPresentationConfidence($candidate, $engine, true);
+                        $candidate['inputs']['stack_id'] = $stack->id;
+
+                        return $candidate;
+                    }
+
                     if (! $candidate['pick_qualified']) {
                         continue;
                     }
@@ -389,6 +406,23 @@ class NhlGamePredictionPayload
         }
 
         return $response;
+    }
+
+    /**
+     * Return the October 6, 2026 Engine 3 decision, or null for normal delegation.
+     *
+     * @param array<string, mixed> $candidate
+     */
+    private function tonightThirdEngineQualification(object $game, int $memberIndex, array $candidate): ?bool
+    {
+        if ($memberIndex !== 2
+            || (string) $game->game_date !== self::TONIGHT_THIRD_ENGINE_OVERRIDE_DATE
+            || now('America/Toronto')->toDateString() !== self::TONIGHT_THIRD_ENGINE_OVERRIDE_DATE) {
+            return null;
+        }
+
+        return abs((float) data_get($candidate, 'prediction.goal_differential', 0.0))
+            > self::TONIGHT_THIRD_ENGINE_MINIMUM_GAP;
     }
 
     private function presentationConfidence(float $internalConfidence, NhlSatEngine $engine, bool $qualified): float

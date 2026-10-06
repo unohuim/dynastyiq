@@ -5,6 +5,7 @@ declare(strict_types=1);
 use App\Models\ApiClient;
 use App\Models\NhlModelRun;
 use App\Models\NhlSatEngine;
+use App\Services\NhlGamePredictionPayload;
 use App\Services\NhlProjectedTeamMatchupSimulator;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Testing\Fluent\AssertableJson;
@@ -810,6 +811,23 @@ it('qualifies picks by inclusive confidence and score gap before display roundin
     'home lead hidden by display rounding' => [3.0, 3.0001],
     'away lead hidden by display rounding' => [3.0001, 3.0],
 ]);
+
+it('applies the October 6 third-engine stack override only after the first two members', function (): void {
+    $this->travelTo(\Illuminate\Support\Carbon::parse('2026-10-06 12:00:00 America/Toronto'));
+    $method = new ReflectionMethod(NhlGamePredictionPayload::class, 'tonightThirdEngineQualification');
+    $service = app(NhlGamePredictionPayload::class);
+    $game = (object) ['game_date' => '2026-10-06'];
+
+    expect($method->invoke($service, $game, 2, ['prediction' => ['goal_differential' => 0.3001]]))->toBeTrue()
+        ->and($method->invoke($service, $game, 2, ['prediction' => ['goal_differential' => 0.3]]))->toBeFalse()
+        ->and($method->invoke($service, $game, 1, ['prediction' => ['goal_differential' => 0.5]]))->toBeNull();
+
+    $this->travelTo(\Illuminate\Support\Carbon::parse('2026-10-07 00:01:00 America/Toronto'));
+
+    expect($method->invoke($service, $game, 2, ['prediction' => ['goal_differential' => 0.5]]))->toBeNull();
+
+    $this->travelBack();
+});
 
 it('uses the legacy fallback when saved engines have no default', function (): void {
     $token = ($this->seedPredictionInputs)();
