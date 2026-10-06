@@ -812,13 +812,13 @@ it('qualifies picks by inclusive confidence and score gap before display roundin
     'away lead hidden by display rounding' => [3.0001, 3.0],
 ]);
 
-it('applies the October 6 third-engine stack override only after the first two members', function (): void {
+it('applies the October 6 third-engine stack override to a small third-engine spread', function (): void {
     $this->travelTo(\Illuminate\Support\Carbon::parse('2026-10-06 12:00:00 America/Toronto'));
     $method = new ReflectionMethod(NhlGamePredictionPayload::class, 'tonightThirdEngineQualification');
     $service = app(NhlGamePredictionPayload::class);
     $game = (object) ['game_date' => '2026-10-06'];
 
-    expect($method->invoke($service, $game, 2, ['prediction' => ['goal_differential' => 0.3001]]))->toBeTrue()
+    expect($method->invoke($service, $game, 2, ['prediction' => ['goal_differential' => 0.2999]]))->toBeTrue()
         ->and($method->invoke($service, $game, 2, ['prediction' => ['goal_differential' => 0.3]]))->toBeFalse()
         ->and($method->invoke($service, $game, 1, ['prediction' => ['goal_differential' => 0.5]]))->toBeNull();
 

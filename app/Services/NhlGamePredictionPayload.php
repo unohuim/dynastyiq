@@ -61,15 +61,20 @@ class NhlGamePredictionPayload
             $stack = NhlSatEngineStack::query()->where('is_default', true)->with('members.engine')->first();
             if ($stack !== null) {
                 $fallback = null;
+                $fallbackEngine = null;
                 foreach ($stack->members->values() as $memberIndex => $member) {
                     $engine = $member->engine;
                     $candidate = $this->build($nhlGameId, [...$overrides, '_stack_engine_id' => $engine->id,
                         'sat_model_run_id' => $stack->production_model_run_id ?? $engine->model_run_id,
                         'engine_weights' => $engine->settings]);
                     $fallback ??= $candidate;
+                    $fallbackEngine ??= $engine;
 
                     $tonightThirdEngineQualification = $this->tonightThirdEngineQualification($game, $memberIndex, $candidate);
                     if ($tonightThirdEngineQualification !== null) {
+                        $fallback = $candidate;
+                        $fallbackEngine = $engine;
+
                         if (! $tonightThirdEngineQualification) {
                             break;
                         }
@@ -95,7 +100,7 @@ class NhlGamePredictionPayload
                     $fallback['pick_qualified'] = false;
                     $fallback['inputs']['engine_id'] = null;
                     $fallback['inputs']['stack_id'] = $stack->id;
-                    $fallback = $this->withPresentationConfidence($fallback, $stack->members->first()->engine, false);
+                    $fallback = $this->withPresentationConfidence($fallback, $fallbackEngine ?? $stack->members->first()->engine, false);
 
                     return $this->withUnqualifiedPresentationPenalty($fallback);
                 }
@@ -416,13 +421,13 @@ class NhlGamePredictionPayload
     private function tonightThirdEngineQualification(object $game, int $memberIndex, array $candidate): ?bool
     {
         if ($memberIndex !== 2
-            || (string) $game->game_date !== self::TONIGHT_THIRD_ENGINE_OVERRIDE_DATE
+            || \Illuminate\Support\Carbon::parse($game->game_date)->toDateString() !== self::TONIGHT_THIRD_ENGINE_OVERRIDE_DATE
             || now('America/Toronto')->toDateString() !== self::TONIGHT_THIRD_ENGINE_OVERRIDE_DATE) {
             return null;
         }
 
         return abs((float) data_get($candidate, 'prediction.goal_differential', 0.0))
-            > self::TONIGHT_THIRD_ENGINE_MINIMUM_GAP;
+            < self::TONIGHT_THIRD_ENGINE_MINIMUM_GAP;
     }
 
     private function presentationConfidence(float $internalConfidence, NhlSatEngine $engine, bool $qualified): float
