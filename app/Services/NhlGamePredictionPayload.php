@@ -70,20 +70,19 @@ class NhlGamePredictionPayload
                     $fallback ??= $candidate;
                     $fallbackEngine ??= $engine;
 
-                    $tonightThirdEngineQualification = $this->tonightThirdEngineQualification($game, $memberIndex, $candidate);
+                    // This one-day exception still presents the foundation forecast. The third
+                    // Engine contributes only its qualification/presentation treatment.
+                    $tonightThirdEngineQualification = $this->tonightThirdEngineQualification($game, $memberIndex, $fallback);
                     if ($tonightThirdEngineQualification !== null) {
-                        $fallback = $candidate;
-                        $fallbackEngine = $engine;
-
                         if (! $tonightThirdEngineQualification) {
                             break;
                         }
 
-                        $candidate['pick_qualified'] = true;
-                        $candidate = $this->withPresentationConfidence($candidate, $engine, true);
-                        $candidate['inputs']['stack_id'] = $stack->id;
+                        $fallback['pick_qualified'] = true;
+                        $fallback = $this->withPresentationConfidence($fallback, $engine, true);
+                        $fallback['inputs']['stack_id'] = $stack->id;
 
-                        return $candidate;
+                        return $fallback;
                     }
 
                     if (! $candidate['pick_qualified']) {
@@ -100,7 +99,10 @@ class NhlGamePredictionPayload
                     $fallback['pick_qualified'] = false;
                     $fallback['inputs']['engine_id'] = null;
                     $fallback['inputs']['stack_id'] = $stack->id;
-                    $fallback = $this->withPresentationConfidence($fallback, $fallbackEngine ?? $stack->members->first()->engine, false);
+                    $presentationEngine = isset($tonightThirdEngineQualification)
+                        ? $engine
+                        : $fallbackEngine ?? $stack->members->first()->engine;
+                    $fallback = $this->withPresentationConfidence($fallback, $presentationEngine, false);
 
                     return $this->withUnqualifiedPresentationPenalty($fallback);
                 }
