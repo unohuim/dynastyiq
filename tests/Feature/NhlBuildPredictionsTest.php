@@ -16,6 +16,7 @@ use App\Models\Role;
 use App\Models\User;
 use App\Services\NhlSatModelEntityProfileBuilder;
 use App\Services\NhlSatModelEntityRateComparisonBuilder;
+use App\Services\NhlSatModelPredictionService;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
@@ -1025,4 +1026,48 @@ it('uses a PostgreSQL progress lock compatible with concurrent profile foreign-k
         'skater_offense', 'skater_offense:101', null, 'build-1'))->handle($builder);
     expect($locks)->toHaveCount(1)->and($locks[0])->toContain('for no key update')
         ->and(data_get($this->run->fresh()->metrics, 'profile_entities_completed'))->toBe(1);
+});
+
+it('uses EV goalie skill only in EV and keeps PP and PK goalie conversion at league average', function (): void {
+    DB::table('nhl_sat_model_entity_profile_buckets')->insert([
+        [
+            ...$this->profileRow,
+            'profile_type' => 'goalie_faced', 'entity_id' => 301, 'entity_key' => 'goalie_faced:301',
+            'matched_bucket_key' => 'L01|goalie_faced', 'strength' => 'ev',
+            'source_sat' => 100, 'source_sog' => 60, 'source_goals' => 0, 'expected_goals' => 10,
+        ],
+        [
+            ...$this->profileRow,
+            'profile_type' => 'goalie_faced', 'entity_id' => 302, 'entity_key' => 'goalie_faced:302',
+            'matched_bucket_key' => 'L01|goalie_faced', 'strength' => 'ev',
+            'source_sat' => 100, 'source_sog' => 60, 'source_goals' => 10, 'expected_goals' => 10,
+        ],
+    ]);
+
+    $environment = collect([
+        (object) [
+            'matched_bucket_key' => 'EV|L01|goalie_faced',
+            'bucket_dimensions' => ['strength_group' => 'EV'],
+            'baseline_xsat' => 8.0, 'baseline_xsog' => 4.0, 'baseline_xgf' => 2.0,
+        ],
+        (object) [
+            'matched_bucket_key' => 'PP|L01|goalie_faced',
+            'bucket_dimensions' => ['strength_group' => 'PP'],
+            'baseline_xsat' => 4.0, 'baseline_xsog' => 2.0, 'baseline_xgf' => 1.0,
+        ],
+        (object) [
+            'matched_bucket_key' => 'PK|L01|goalie_faced',
+            'bucket_dimensions' => ['strength_group' => 'PK'],
+            'baseline_xsat' => 4.0, 'baseline_xsog' => 2.0, 'baseline_xgf' => 1.0,
+        ],
+    ]);
+
+    $buckets = app(NhlSatModelPredictionService::class)->goalieBuckets($this->run->id, 301, $environment);
+
+    expect($buckets->get('EV|L01|goalie_faced')->goalie_skill_source)->toBe('ev_gsax_skill')
+        ->and($buckets->get('EV|L01|goalie_faced')->projected_ga)->toBe(1.9)
+        ->and($buckets->get('PP|L01|goalie_faced')->goalie_skill_source)->toBe('league_average_strength')
+        ->and($buckets->get('PP|L01|goalie_faced')->projected_ga)->toBe(1.0)
+        ->and($buckets->get('PK|L01|goalie_faced')->goalie_skill_source)->toBe('league_average_strength')
+        ->and($buckets->get('PK|L01|goalie_faced')->projected_ga)->toBe(1.0);
 });

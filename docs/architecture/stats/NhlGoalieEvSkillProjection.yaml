@@ -9,5 +9,5 @@ rules:
   - The adjustment changes projected goals against only; it must never alter projected SAT, SOG, or xGA.
   - When EV skill inputs are unavailable, the existing per-bucket goalie calculation remains the exclusive fallback.
   - The EV and legacy bucket adjustments must never be combined.
-  - PP and PK retain their existing calculation until separately validated.
+  - PP and PK use league-average goalie conversion in the strength-split simulator: projected GA equals projected xGA. They must not consume the personal EV goalie adjustment.
   - Persisted projection inputs must identify the active skill source and EV adjustment for auditability.
