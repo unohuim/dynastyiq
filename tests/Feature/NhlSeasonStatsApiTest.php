@@ -235,7 +235,7 @@ it('emits goalie expected stats for scoped season stats pulls', function (): voi
         ->and(round((float) $stats->get('goalie_xsave_percentage'), 4))->toBe(0.6875);
 });
 
-it('uses weighted skater and starting goalie input quality for game prediction confidence', function (): void {
+it('uses skater input quality only for game prediction confidence', function (): void {
     $token = createNhlStatsApiToken();
 
     app()->bind(NhlProjectedTeamMatchupSimulator::class, fn (): NhlProjectedTeamMatchupSimulator => new class extends NhlProjectedTeamMatchupSimulator {
@@ -339,7 +339,7 @@ it('uses weighted skater and starting goalie input quality for game prediction c
 
     $response->assertJsonPath('prediction.predicted_score.away', 1.0)
         ->assertJsonPath('prediction.predicted_score.home', 4.5)
-        ->assertJsonPath('prediction.confidence_score', 62)
-        ->assertJsonPath('market_probabilities.0.confidence_score', 62)
-        ->assertJsonPath('market_probabilities.1.confidence_score', 62);
+        ->assertJsonPath('prediction.confidence_score', 59)
+        ->assertJsonPath('market_probabilities.0.confidence_score', 59)
+        ->assertJsonPath('market_probabilities.1.confidence_score', 59);
 });
