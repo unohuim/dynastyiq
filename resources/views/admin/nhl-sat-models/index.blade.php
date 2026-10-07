@@ -24,6 +24,9 @@
                     <p class="mt-1 text-sm text-gray-600">Create SAT models and evaluate SOG danger from training seasons.</p>
                 </div>
                 <div class="flex items-center gap-2">
+                    <a href="{{ route('admin.nhl-sat-models.context') }}" class="inline-flex min-h-10 items-center justify-center rounded-md border border-gray-300 bg-white px-4 text-sm font-semibold text-gray-700 shadow-sm transition-colors hover:bg-gray-50">
+                        Context
+                    </a>
                     <a href="{{ route('admin.nhl-shot-attempts.index') }}" class="inline-flex min-h-10 items-center justify-center rounded-md border border-gray-300 bg-white px-4 text-sm font-semibold text-gray-700 shadow-sm transition-colors hover:bg-gray-50">
                         Shot Attempts
                     </a>

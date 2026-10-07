@@ -1,0 +1,41 @@
+name: NHL Pregame Context Evidence
+type: Versioned Pregame Snapshot And Bounded Backfill Workflow
+location:
+  - app/Http/Controllers/Admin/NhlPregameContextController.php
+  - app/Jobs/PrepareNhlPregameContextRunJob.php
+  - app/Jobs/LoadNhlPregameContextRunJob.php
+  - app/Jobs/BuildNhlPregameContextGameJob.php
+  - app/Models/NhlPregameContextRun.php
+  - app/Models/NhlPregameContextRunGame.php
+  - app/Services/NhlPregameContextBuilder.php
+  - app/Services/NhlPregameContextOrchestrator.php
+  - database/migrations/2026_10_06_000001_create_nhl_pregame_context_tables.php
+  - resources/views/admin/nhl-sat-models/context.blade.php
+purpose: Preserve what was knowable before each historical NHL game so context factors can be evaluated against static predictions without changing live prediction behavior.
+when_to_use:
+  - Backfilling pregame schedule, travel, opponent, momentum, Corsi, PDO, IPP, shooting, and strength-split evidence.
+  - Reviewing whether one context factor improves later-season next-game accuracy beyond a static baseline.
+when_not_to_use:
+  - Changing SAT /60 rates, Engine qualification, confidence, game simulation, or partner API output.
+  - Replacing raw game summaries, strength summaries, shot facts, or play-by-play facts.
+rules:
+  - Every snapshot uses only completed regular-season games strictly before the target game's scheduled start time; target-game outcomes and later games are forbidden inputs.
+  - Player snapshots record the completed-game participant only for historical evidence and label that source explicitly; future prediction use requires independently selected pregame rosters.
+  - Raw results remain in existing NHL fact tables. Context snapshots store compact derived metrics, sample counts, and ranks only.
+  - Metrics are separated by All, EV, PP, and PK and preserve missing evidence as unavailable rather than manufacturing zero values.
+  - Backfills use durable run and run-game rows. A loader may claim only a bounded page from the earliest unfinished game date and must never enqueue one job per player or a run-sized job burst.
+  - Later dates may not begin until every game on the current date succeeds. A blocked game fails its run instead of allowing an invalid chronological continuation.
+  - Arena travel uses dated venue coordinates and great-circle distance. Missing venue evidence leaves travel metrics unavailable.
+  - The reviewed NhlArenaLocationSeeder supplies the past-three-season NHL home-venue reference rows. It is reference data only and must be run separately from context builds; venue changes require dated replacement rows rather than overwriting history.
+  - Context collection and inspection are analysis-only. A context factor may affect predictions only after a separately approved, later-season evidence change.
+public_interface:
+  - GET /admin/nhl-sat-models/context
+  - POST /admin/nhl-sat-models/context
+  - nhl_pregame_context_runs
+  - nhl_pregame_context_run_games
+  - nhl_team_game_pregame_contexts
+  - nhl_player_game_pregame_contexts
+example_usage: |
+  Select 20232024, 20242025, and 20252026 in Admin > NHL SAT Models > Context.
+  The run creates durable game work rows, processes the oldest date in bounded pages,
+  and stores each player's pregame EV/PP/PK context without changing predictions.

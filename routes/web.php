@@ -420,6 +420,10 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                     ->name('admin.nhl-sat-models.index');
                 Route::post('/nhl-sat-models', [\App\Http\Controllers\Admin\NhlModelRunController::class, 'store'])
                     ->name('admin.nhl-sat-models.store');
+                Route::get('/nhl-sat-models/context', [\App\Http\Controllers\Admin\NhlPregameContextController::class, 'index'])
+                    ->name('admin.nhl-sat-models.context');
+                Route::post('/nhl-sat-models/context', [\App\Http\Controllers\Admin\NhlPregameContextController::class, 'store'])
+                    ->name('admin.nhl-sat-models.context.store');
                 Route::get('/nhl-sat-models/{run}/buckets', [\App\Http\Controllers\Admin\NhlModelRunController::class, 'buckets'])
                     ->whereNumber('run')
                     ->name('admin.nhl-sat-models.buckets');
