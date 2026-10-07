@@ -24,7 +24,7 @@ rules:
   - Raw results remain in existing NHL fact tables. Context snapshots store compact derived metrics, sample counts, and ranks only.
   - Metrics are separated by All, EV, PP, and PK and preserve missing evidence as unavailable rather than manufacturing zero values.
   - Backfills use durable run and run-game rows. A loader may claim only a bounded page from the earliest unfinished game date and must never enqueue one job per player or a run-sized job burst.
-  - Later dates may not begin until every game on the current date succeeds. A blocked game fails its run instead of allowing an invalid chronological continuation.
+  - Later dates may begin after the current date's work is terminal. Missing historical source data blocks only that game with a durable readiness reason; later snapshots use their available prior-game facts. Unexpected execution failures fail the run.
   - Arena travel uses dated venue coordinates and great-circle distance. Missing venue evidence leaves travel metrics unavailable.
   - The reviewed NhlArenaLocationSeeder supplies the past-three-season NHL home-venue reference rows. It is reference data only and must be run separately from context builds; venue changes require dated replacement rows rather than overwriting history.
   - Context collection and inspection are analysis-only. A context factor may affect predictions only after a separately approved, later-season evidence change.

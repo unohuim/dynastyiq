@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Jobs;
 
+use App\Exceptions\NhlPregameContextDataUnavailable;
 use App\Models\NhlPregameContextRun;
 use App\Models\NhlPregameContextRunGame;
 use App\Services\NhlPregameContextBuilder;
@@ -49,9 +50,14 @@ class BuildNhlPregameContextGameJob implements ShouldQueue
                 'completed_at' => now(),
                 'last_error' => null,
             ]);
-        } catch (Throwable $exception) {
+        } catch (NhlPregameContextDataUnavailable $exception) {
             $work->update([
                 'state' => NhlPregameContextRunGame::STATE_BLOCKED,
+                'last_error' => mb_strimwidth($exception->getMessage(), 0, 2000),
+            ]);
+        } catch (Throwable $exception) {
+            $work->update([
+                'state' => NhlPregameContextRunGame::STATE_FAILED,
                 'last_error' => mb_strimwidth($exception->getMessage(), 0, 2000),
             ]);
             $run->update([
