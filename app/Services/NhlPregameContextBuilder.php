@@ -4,12 +4,12 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Exceptions\NhlPregameContextDataUnavailable;
 use App\Models\NhlPregameContextRun;
 use App\Models\NhlPregameContextRunGame;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
-use RuntimeException;
 
 /** Builds compact, pregame-only team and player context snapshots for one game. */
 class NhlPregameContextBuilder
@@ -23,7 +23,7 @@ class NhlPregameContextBuilder
     {
         $game = DB::table('nhl_games')->where('nhl_game_id', $gameId)->first();
         if ($game === null || $game->start_time_utc === null || $game->home_team_id === null || $game->away_team_id === null) {
-            throw new RuntimeException('The game is missing schedule context.');
+            throw new NhlPregameContextDataUnavailable('The game is missing schedule context.');
         }
 
         $cutoff = now()->parse($game->start_time_utc);
@@ -34,7 +34,7 @@ class NhlPregameContextBuilder
             ->get(['nhl_player_id', 'nhl_team_id']);
 
         if ($participants->isEmpty()) {
-            throw new RuntimeException('The game has no completed player summaries.');
+            throw new NhlPregameContextDataUnavailable('The game has no completed player summaries.');
         }
 
         $teamContextIds = [];
