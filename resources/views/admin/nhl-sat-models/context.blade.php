@@ -10,7 +10,10 @@
                     <h1 class="mt-2 text-2xl font-semibold tracking-tight text-gray-950">Prediction Context</h1>
                     <p class="mt-1 max-w-3xl text-sm text-gray-600">Build pregame-only evidence for venue, schedule, travel, opponent history, momentum, Corsi, PDO, IPP, and strength splits. This never changes predictions.</p>
                 </div>
-                <a href="{{ route('admin.nhl-sat-models.index') }}" class="inline-flex min-h-10 items-center rounded-md border border-gray-300 bg-white px-3 text-sm font-semibold text-gray-700 shadow-sm transition-colors hover:bg-gray-50">Models</a>
+                <div class="flex items-center gap-2">
+                    <a href="{{ route('admin.nhl-sat-models.context.effects') }}" class="inline-flex min-h-10 items-center rounded-md bg-gray-950 px-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-gray-800">Context effects</a>
+                    <a href="{{ route('admin.nhl-sat-models.index') }}" class="inline-flex min-h-10 items-center rounded-md border border-gray-300 bg-white px-3 text-sm font-semibold text-gray-700 shadow-sm transition-colors hover:bg-gray-50">Models</a>
+                </div>
             </div>
 
             @if(session('status'))<div class="mb-4 rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">{{ session('status') }}</div>@endif

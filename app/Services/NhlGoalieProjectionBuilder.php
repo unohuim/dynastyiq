@@ -55,7 +55,9 @@ class NhlGoalieProjectionBuilder
         $goaliePlayerIds = $this->eligibleGoalieIds($targetSeasonId, $goalieWorkloadProjectionVersion);
         if ($satModelId !== null) {
             if (! DB::table('nhl_sat_model_entity_profile_buckets')->where('model_run_id', $satModelId)
-                ->where('profile_type', 'skater_defense')->exists()) {
+                ->where('profile_type', 'skater_defense')
+                ->where('strength', 'all')
+                ->exists()) {
                 throw new RuntimeException('Build defensive profiles for the selected SAT run first.');
             }
 

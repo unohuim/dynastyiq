@@ -1,0 +1,46 @@
+name: NHL Next Game Bucket Evaluation
+type: Chronological Historical Experiment
+location:
+  - app/Services/NhlNextGameEvaluationService.php
+  - app/Jobs/EvaluateNhlNextGameJob.php
+  - app/Models/NhlNextGameEvaluation.php
+  - app/Http/Controllers/Admin/NhlNextGameEvaluationController.php
+  - resources/views/admin/nhl-sat-models/next-game.blade.php
+  - resources/js/pages/nhl-next-game-evaluation.js
+purpose: Compare frozen offensive shot-bucket baselines with recent-appearance rates without changing live predictions.
+when_to_use:
+  - Measuring next-game individual SAT bucket rates across a completed model test season.
+  - Inspecting whether recent evidence improves the same player/game cohort over its baseline.
+when_not_to_use:
+  - Predicting roster participation, ice time, game winners, or goalie performance.
+  - Applying context effects to production predictions or tuning formulas on test outcomes.
+rules:
+  - Only administrators may create, resume, or read these global NHL experiments.
+  - The target season must match the training model's test season and follow every training season.
+  - Training rates, projection rates, shot-bucket mapping, and model provenance are frozen before target games are evaluated.
+  - Recent windows select prior completed regular-season appearances strictly before the target start, including zero-attempt appearances and the last training season when needed.
+  - Target summaries select observed participants for evaluation only. Target ice time weights scoring errors but never determines forecast rates.
+  - Every strength uses its own exposure and shot counts. Missing strength-specific bucket projections use explicitly labeled training history, never all-strength projection rates.
+  - Historical profile construction and evaluation share the same shot-shape mapping and empty-net/shootout exclusions.
+  - Strength summaries are sparse by observed shifts. An absent strength has zero exposure only when other strength rows establish a summarized player appearance; shots without exposure or entirely absent strength summaries exclude the game.
+  - Missing game facts are not zero attempts. Missing baselines are counted and excluded from every method on the same cohort.
+  - Missing recent exposure falls back to the baseline with visible fallback counts. Positive exposure with zero shots remains a genuine zero-shot estimate.
+  - Errors are absolute per bucket and game before aggregation; signed errors must not cancel. Zero-observed players have unavailable percentage error, while their absolute errors remain in total error.
+  - Existing all-strength projection rows containing a merged Other bucket are not used as a partial baseline; the full historical shape is used instead.
+  - Preparation reads bounded metadata, freezes one player's baselines per checkpoint, then materializes a bounded page of game IDs. It must never hydrate season-wide profiles, snapshots, or projections.
+  - Baseline preparation records source counts and update signatures and rejects source rebuilds before publishing the frozen baseline. A changed source requires a new evaluation, not mixed evidence.
+  - Games advance chronologically, one skater per job. Each job commits its output and cursor atomically and publishes only one successor at the queue tail. No run-sized job burst, artificial sleep between successors, or synchronous queue driver is permitted.
+  - A database row lock serializes checkpoint writes. A rolling token rejects duplicate or obsolete deliveries and their failure callbacks, including legacy jobs after Resume. No cache lock may discard a valid successor during the previous job's completion.
+  - Activity is committed before expensive work. Query and lock waits are bounded below the worker timeout, with finite retry/backoff and visible errors. Worker death or a lost successor is recoverable from the last committed checkpoint through Resume.
+  - Resume rotates the token and preserves baseline and player checkpoints, completed games, and exclusions. Duplicate active starts reuse the existing run; no queue-wide clearing or retry is required.
+  - Partial player outputs are unpublished until their game completes. If required evidence excludes that game, only its tentative evaluation output is removed; source data and completed games are preserved.
+  - Queue states and evaluation methods are canonical in docs/ENUMS.md. Schema is canonical in the evaluation migration.
+  - Browser progress uses a lightweight status-only poll while active, pauses in hidden tabs, and displays preparation stage, committed checkpoint counts, last activity, errors, and a resume action for failed or stalled work. Full result aggregation occurs on explicit filter/read actions and once on completion, not every status poll.
+public_interface:
+  - GET /admin/nhl-sat-models/next-game
+  - POST /admin/nhl-sat-models/next-game
+  - POST /admin/nhl-sat-models/next-game/{evaluation}/resume
+example_usage: |
+  Open SAT Models > Next-game evaluation and select a training model.
+  Start its test-season experiment, compare methods separately by strength,
+  and inspect player bucket rates before considering a production change.

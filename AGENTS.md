@@ -115,6 +115,8 @@ If conflicts are detected between authoritative sources, work MUST pause and be 
 
 ## Completion Gate (Non-Negotiable)
 
+- When a change requires a database migration, Codex MUST explicitly state **Migration required** in the final handoff, name the migration, and provide the exact command the human must run before using the affected feature. Mentioning a new migration file or saying migrations were not run is not sufficient. Flag this requirement in the implementation plan as well; do not leave the human to discover it through a failure. This does not authorize Codex to run migrations.
+
 Codex may NOT declare a task, PR, or change set “complete”, “finished”, or “ready”
 until the human explicitly approves completion in chat.
 

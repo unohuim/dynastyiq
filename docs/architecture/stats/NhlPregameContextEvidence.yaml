@@ -11,10 +11,12 @@ location:
   - app/Services/NhlPregameContextOrchestrator.php
   - database/migrations/2026_10_06_000001_create_nhl_pregame_context_tables.php
   - resources/views/admin/nhl-sat-models/context.blade.php
+  - resources/views/admin/nhl-sat-models/context-effects.blade.php
 purpose: Preserve what was knowable before each historical NHL game so context factors can be evaluated against static predictions without changing live prediction behavior.
 when_to_use:
   - Backfilling pregame schedule, travel, opponent, momentum, Corsi, PDO, IPP, shooting, and strength-split evidence.
   - Reviewing whether one context factor improves later-season next-game accuracy beyond a static baseline.
+  - Comparing actual next-game EV outcomes across pregame context groups in Admin > NHL SAT Models > Context Effects.
 when_not_to_use:
   - Changing SAT /60 rates, Engine qualification, confidence, game simulation, or partner API output.
   - Replacing raw game summaries, strength summaries, shot facts, or play-by-play facts.
@@ -31,6 +33,7 @@ rules:
 public_interface:
   - GET /admin/nhl-sat-models/context
   - POST /admin/nhl-sat-models/context
+  - GET /admin/nhl-sat-models/context/effects
   - nhl_pregame_context_runs
   - nhl_pregame_context_run_games
   - nhl_team_game_pregame_contexts

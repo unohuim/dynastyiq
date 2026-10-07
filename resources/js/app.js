@@ -18,6 +18,7 @@ import './components/draft-round-scrollbar';
 import './pages/discord-bot-installed';
 import { registerToastStack } from './components/toast-stack';
 import { mount as mountLineupsTest } from './pages/lineups-test';
+import { mount as mountNextGameEvaluation } from './pages/nhl-next-game-evaluation';
 
 // import "./components/RangeSlider/range-slider.css";
 // import { RangeSlider } from "./components/RangeSlider/range-slider.js";
@@ -58,6 +59,11 @@ const lineupsTestRoot = document.querySelector('[data-page="lineups-test"]');
 if (lineupsTestRoot) {
     const payload = JSON.parse(document.getElementById(lineupsTestRoot.dataset.payload).textContent);
     mountLineupsTest(lineupsTestRoot, payload, Alpine);
+}
+
+const nextGameEvaluationRoot = document.querySelector('[data-page="nhl-next-game-evaluation"]');
+if (nextGameEvaluationRoot) {
+    mountNextGameEvaluation(nextGameEvaluationRoot);
 }
 
 // Only start Alpine once per page load.

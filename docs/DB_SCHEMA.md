@@ -1,5 +1,27 @@
 # Database Schema Inventory (DB_SCHEMA)
 
+## NHL next-game evaluations
+
+Migration: `2026_10_07_000002_create_nhl_next_game_evaluations.php`.
+Global admin experiment tables, separate from live prediction storage:
+
+- `nhl_next_game_evaluations`: model and creator references, test season, version,
+  status, frozen input JSON, total/completed/excluded game counts, last error, timestamps.
+  Input JSON also holds `_work` stage, rotating checkpoint token, baseline/game/player
+  cursors, preparation counts, activity timestamps and committed-checkpoint count.
+  Source signatures record count/max-ID/max-update metadata for the baseline freeze.
+  These checkpoints use the existing JSON column; no additional migration is required.
+  Model deletion cascades; creator deletion nulls attribution.
+- `nhl_next_game_evaluation_games`: evaluation reference, NHL game ID, start time,
+  state, exclusion reason and timestamps. Evaluation/game is unique; pending work is indexed.
+- `nhl_next_game_evaluation_baselines`: evaluation/player/strength unique key and
+  frozen rate JSON containing baseline, last-season rates and source label.
+- `nhl_next_game_evaluation_results`: evaluation/game/player/strength unique key,
+  team, player name, observed TOI, prior appearance count, baseline source,
+  bucket rates/actuals/window JSON and method error JSON. Player/strength and team filters are indexed.
+  All child tables cascade with evaluation deletion. NHL IDs retain source provenance.
+
+
 ## SAT engine management
 
 Migrations: `2026_10_01_000001_create_nhl_sat_engines.php` through

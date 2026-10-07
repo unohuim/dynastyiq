@@ -37,6 +37,7 @@ class NhlSatModelEntityRateComparisonBuilder
         if (! DB::table('nhl_sat_model_entity_test_profile_buckets')
             ->where('model_run_id', $run->id)
             ->where('test_season_id', (string) $run->target_season_id)
+            ->where('strength', 'all')
             ->exists()
         ) {
             throw new RuntimeException('Build test profiles before comparing /60.');
@@ -404,6 +405,7 @@ test_exact AS (
         AND test_profiles.test_season_id = ?
         AND test_profiles.profile_type = ?
         AND test_profiles.entity_key = ?
+        AND test_profiles.strength = 'all'
     GROUP BY test_profiles.matched_bucket_key
 ),
 test_other AS (
@@ -421,6 +423,7 @@ test_other AS (
         AND test_profiles.test_season_id = ?
         AND test_profiles.profile_type = ?
         AND test_profiles.entity_key = ?
+        AND test_profiles.strength = 'all'
         AND NOT EXISTS (
             SELECT 1
             FROM core_projection_keys
@@ -917,6 +920,7 @@ latest_exact_rows AS (
         AND latest_profiles.test_season_id = ?
         AND latest_profiles.profile_type = ?
         AND latest_profiles.entity_key = ?
+        AND latest_profiles.strength = 'all'
     GROUP BY latest_profiles.matched_bucket_key
 ),
 latest_other_rows AS (
@@ -928,6 +932,7 @@ latest_other_rows AS (
         AND latest_profiles.test_season_id = ?
         AND latest_profiles.profile_type = ?
         AND latest_profiles.entity_key = ?
+        AND latest_profiles.strength = 'all'
         AND NOT EXISTS (
             SELECT 1
             FROM core_bucket_keys

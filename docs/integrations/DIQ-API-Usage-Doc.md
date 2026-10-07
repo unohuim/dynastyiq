@@ -24,12 +24,14 @@ ordinary predictions retain the legacy fallback: no engine model or weights are
 selected, `inputs.engine_id` is null, and pick qualification uses confidence 67–70
 with a score gap strictly greater than zero.
 
-For October 6, 2026 in America/Toronto only, after the first two default-stack
+For October 6–11, 2026 inclusive, when both the game's date and the current
+America/Toronto date fall within that window, after the first two default-stack
 Engines decline, the foundation forecast is force-qualified when its unrounded
 absolute goal differential is below 0.30. Its score and internal confidence stay
 unchanged; the third Engine supplies the presentation-confidence treatment. At
 or above 0.30, the foundation forecast remains unqualified and the stack stops
-without evaluating later members. This temporary exception expires after that date.
+without evaluating later members. This temporary exception expires at midnight
+starting October 12 in America/Toronto.
 
 
 ## Prediction roster player identifiers

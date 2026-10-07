@@ -1,5 +1,21 @@
 # ENUMS - Canonical Enum Authority
 
+## NHL next-game evaluation
+
+- Run `status`: `queued`, `preparing`, `running`, `completed`, `failed`.
+- Run `inputs._work.stage`: `initialize`, `baselines`, `games`, `evaluate`.
+  `_work.token` is an opaque rotating checkpoint token, not a queue job ID.
+  `Stalled` is a UI label for active work with no recent activity, not a stored status.
+- Work `state`: `pending`, `completed`, `excluded`.
+- `version`: `next_game_buckets_v1`.
+- `strength`: `all`, `ev`, `pp`, `pk`.
+- `baseline_source`: `static_projection`, `training_history`, `unavailable`.
+- Method: `baseline`, `last_season`, `recent_5`, `recent_10`, `recent_20`,
+  `blend_5`, `blend_10`, `blend_20`. Blends are fixed equal-weight experiments.
+- Frozen `participant_source`: `completed_game_summary`; identifies an observed-participant
+  evaluation, not an advance lineup forecast.
+
+
 ## NHL SAT engine evaluation
 
 - Stack `is_default`: the sole active stack for ordinary game predictions. `true` is unique;
@@ -2486,6 +2502,21 @@ This boolean grouping choice is independent of the existing `display` values
 - `staff_offense`: Shot attempts taken by the staff member's assigned team.
 - `staff_defense`: Shot attempts taken by opponents against the staff member's assigned team.
 - `official`: Shot attempts associated with an official assignment context.
+
+---
+
+### NHL SAT Model Profile Strength
+
+**Storage location(s):** `nhl_sat_model_entity_profile_buckets.strength`, `nhl_sat_model_entity_test_profile_buckets.strength` (string columns)
+
+**Allowed values:**
+
+- `all`
+- `ev`
+- `pp`
+- `pk`
+
+**Semantic meaning:** Historical player bucket evidence partitioned by all situations, even strength, power play, or penalty kill. Existing rate projections consume only `all` until strength-specific bucket forecasting is approved.
 
 ---
 

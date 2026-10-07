@@ -1,5 +1,12 @@
 # Architecture Inventory
 
+Admin SAT Models includes a chronological next-game shot-bucket evaluation.
+Frozen baselines are compared with prior appearances by strength using durable,
+single-player checkpoints, paged game preparation, stale-job fencing, and lightweight
+progress polling. This does not change live predictions. Authority:
+`docs/architecture/stats/NhlNextGameEvaluation.yaml`.
+
+
 Game and goalie prediction inputs use separate SAT-model and historical services.
 Model rates and TOI are paired per player; compatible model buckets reach the
 defense/goalie calculation before totals are assembled. Missing individual defensive
@@ -1659,6 +1666,8 @@ WHERE target_season_id = '20262027';
 **Type:** Versioned Pregame Snapshot And Bounded Backfill Workflow
 
 **Purpose:** Preserve only the evidence known before each game so context factors can be tested without changing predictions.
+
+**Public interface:** `GET /admin/nhl-sat-models/context/effects` groups actual next-game EV outcomes by pregame-only context factors and compares each group to its selected-season baseline.
 
 **Public Interface:**
 - `admin.nhl-sat-models.context`

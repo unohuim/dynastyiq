@@ -108,11 +108,13 @@ class NhlHistoricalPredictionService
         // present in aggregate training, not snapshot-only or held-out entities.
         $ids = DB::table('nhl_sat_model_entity_profile_buckets')
             ->where('model_run_id', $modelId)->where('profile_type', $type)->where('game_type', 2)
+            ->where('strength', 'all')
             ->whereNotNull('entity_id')->distinct()->select('entity_id');
         $columns = ['entity_id', 'matched_bucket_key', 'bucket_dimensions', 'source_toi_seconds',
             'source_sat', 'source_sog', 'source_goals', 'expected_sog', 'expected_goals'];
         $training = DB::table('nhl_sat_model_entity_profile_buckets as profiles')
             ->where('model_run_id', $modelId)->where('profile_type', $type)->where('game_type', 2)
+            ->where('strength', 'all')
             ->whereNotNull('entity_id')->select($columns);
         $season = collect(NhlModelRun::query()->find($modelId)?->train_season_ids ?? [])->sort()->last();
         $resolved = $training;
@@ -120,6 +122,7 @@ class NhlHistoricalPredictionService
             $snapshots = DB::table('nhl_sat_model_entity_test_profile_buckets')
                 ->where('model_run_id', $modelId)->where('test_season_id', $season)
                 ->where('profile_type', $type)->where('game_type', 2)
+                ->where('strength', 'all')
                 ->whereIn('entity_id', $ids)->select($columns);
             // Replacement is per entity, not per bucket: do not fill missing
             // latest-season buckets from that entity's aggregate training rows.
@@ -127,6 +130,7 @@ class NhlHistoricalPredictionService
                 $query->selectRaw('1')->from('nhl_sat_model_entity_test_profile_buckets as snapshot')
                     ->where('snapshot.model_run_id', $modelId)->where('snapshot.test_season_id', $season)
                     ->where('snapshot.profile_type', $type)->where('snapshot.game_type', 2)
+                    ->where('snapshot.strength', 'all')
                     ->whereColumn('snapshot.entity_id', 'profiles.entity_id');
             });
             $resolved = $snapshots->unionAll($training);
@@ -227,13 +231,16 @@ class NhlHistoricalPredictionService
             $rows = DB::table('nhl_sat_model_entity_test_profile_buckets')
                 ->where('model_run_id', $modelId)->where('test_season_id', $season)
                 ->where('profile_type', $type)->where('game_type', 2)->whereIn('entity_id', $ids)
+                ->when($type === 'skater_offense', fn ($query) => $query->where('strength', 'all'))
                 ->get()->groupBy('entity_id');
         }
         $missing = array_values(array_diff($ids, $rows->keys()->all()));
         if ($missing !== []) {
             $training = DB::table('nhl_sat_model_entity_profile_buckets')
                 ->where('model_run_id', $modelId)->where('profile_type', $type)
-                ->where('game_type', 2)->whereIn('entity_id', $missing)->get()->groupBy('entity_id');
+                ->where('game_type', 2)
+                ->when($type === 'skater_offense', fn ($query) => $query->where('strength', 'all'))
+                ->whereIn('entity_id', $missing)->get()->groupBy('entity_id');
             foreach ($training as $id => $profile) {
                 $rows->put($id, $profile);
             }

@@ -80,6 +80,7 @@ class NhlSatModelUpdated implements ShouldBroadcastNow
             && DB::table('nhl_sat_model_entity_test_profile_buckets')
                 ->where('model_run_id', $run->id)
                 ->where('test_season_id', (string) $run->target_season_id)
+                ->where('strength', 'all')
                 ->exists();
         $hasRateComparisons = Schema::hasTable('nhl_sat_model_entity_rate_comparison_buckets')
             && Schema::hasTable('nhl_sat_model_entity_rate_comparison_aggregates')

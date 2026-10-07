@@ -17,6 +17,12 @@ class NhlSatModelEntityProfileBuilder
     private const REGULAR_SEASON_GAME_TYPE = 2;
     private const PROFILE_TABLE = 'nhl_sat_model_entity_profile_buckets';
     private const TEST_PROFILE_TABLE = 'nhl_sat_model_entity_test_profile_buckets';
+    private const PROFILE_STRENGTHS = [
+        'all' => null,
+        'ev' => 'EV',
+        'pp' => 'PP',
+        'pk' => 'PK',
+    ];
 
     /**
      * Build selected entity profile buckets for one SAT model run.
@@ -49,16 +55,20 @@ class NhlSatModelEntityProfileBuilder
 
         foreach ($profileTypes as $profileType) {
             $definition = $this->profileDefinitions()[$profileType];
-            $this->insertProfileRows(
-                run: $run,
-                satModel: $satModel,
-                sogModel: $sogModel,
-                profileType: $profileType,
-                definition: $definition,
-                seasonIds: $seasonIds,
-                satBucketKeySql: $satBucketKeySql,
-                sogBucketKeySql: $sogBucketKeySql
-            );
+            foreach (($profileType === 'skater_offense' ? self::PROFILE_STRENGTHS : ['all' => null]) as $projectionStrength => $factStrength) {
+                $this->insertProfileRows(
+                    run: $run,
+                    satModel: $satModel,
+                    sogModel: $sogModel,
+                    profileType: $profileType,
+                    definition: $definition,
+                    seasonIds: $seasonIds,
+                    satBucketKeySql: $satBucketKeySql,
+                    sogBucketKeySql: $sogBucketKeySql,
+                    projectionStrength: $projectionStrength,
+                    factStrength: $factStrength
+                );
+            }
 
             $counts[$profileType] = DB::table(self::PROFILE_TABLE)
                 ->where('model_run_id', $run->id)
@@ -204,17 +214,21 @@ class NhlSatModelEntityProfileBuilder
             throw new RuntimeException('Unknown SAT model profile type.');
         }
 
-        $this->insertProfileRows(
-            run: $run,
-            satModel: $satModel,
-            sogModel: $sogModel,
-            profileType: $profileType,
-            definition: $definition,
-            seasonIds: $seasonIds,
-            satBucketKeySql: $this->modelBucketKeySql($satModel, 'profile_facts'),
-            sogBucketKeySql: $sogModel === null ? null : $this->modelBucketKeySql($sogModel, 'profile_facts'),
-            entityKey: $entityKey
-        );
+        foreach (($profileType === 'skater_offense' ? self::PROFILE_STRENGTHS : ['all' => null]) as $projectionStrength => $factStrength) {
+            $this->insertProfileRows(
+                run: $run,
+                satModel: $satModel,
+                sogModel: $sogModel,
+                profileType: $profileType,
+                definition: $definition,
+                seasonIds: $seasonIds,
+                satBucketKeySql: $this->modelBucketKeySql($satModel, 'profile_facts'),
+                sogBucketKeySql: $sogModel === null ? null : $this->modelBucketKeySql($sogModel, 'profile_facts'),
+                entityKey: $entityKey,
+                projectionStrength: $projectionStrength,
+                factStrength: $factStrength
+            );
+        }
 
         return DB::table(self::PROFILE_TABLE)
             ->where('model_run_id', $run->id)
@@ -244,19 +258,23 @@ class NhlSatModelEntityProfileBuilder
             throw new RuntimeException('Unknown SAT model profile type.');
         }
 
-        $this->insertProfileRows(
-            run: $run,
-            satModel: $satModel,
-            sogModel: $sogModel,
-            profileType: $profileType,
-            definition: $definition,
-            seasonIds: [$seasonId],
-            satBucketKeySql: $this->modelBucketKeySql($satModel, 'profile_facts'),
-            sogBucketKeySql: $sogModel === null ? null : $this->modelBucketKeySql($sogModel, 'profile_facts'),
-            entityKey: $entityKey,
-            tableName: self::TEST_PROFILE_TABLE,
-            testSeasonId: $seasonId
-        );
+        foreach (($profileType === 'skater_offense' ? self::PROFILE_STRENGTHS : ['all' => null]) as $projectionStrength => $factStrength) {
+            $this->insertProfileRows(
+                run: $run,
+                satModel: $satModel,
+                sogModel: $sogModel,
+                profileType: $profileType,
+                definition: $definition,
+                seasonIds: [$seasonId],
+                satBucketKeySql: $this->modelBucketKeySql($satModel, 'profile_facts'),
+                sogBucketKeySql: $sogModel === null ? null : $this->modelBucketKeySql($sogModel, 'profile_facts'),
+                entityKey: $entityKey,
+                tableName: self::TEST_PROFILE_TABLE,
+                testSeasonId: $seasonId,
+                projectionStrength: $projectionStrength,
+                factStrength: $factStrength
+            );
+        }
 
         return DB::table(self::TEST_PROFILE_TABLE)
             ->where('model_run_id', $run->id)
@@ -450,7 +468,9 @@ SQL,
         ?string $sogBucketKeySql,
         ?string $entityKey = null,
         string $tableName = self::PROFILE_TABLE,
-        ?string $testSeasonId = null
+        ?string $testSeasonId = null,
+        string $projectionStrength = 'all',
+        ?string $factStrength = null
     ): void {
         $now = now();
         $seasonJson = json_encode($seasonIds, JSON_THROW_ON_ERROR);
@@ -468,16 +488,26 @@ SQL,
             ? '0'
             : 'COALESCE(goal_buckets.smoothed_goal_probability, goal_baseline.smoothed_goal_probability, 0)';
         $usesPlayerExposure = in_array($profileType, ['skater_offense', 'skater_defense', 'goalie_faced'], true);
-        $sourceExposureSeconds = $usesPlayerExposure
-            ? 'COALESCE(game_summaries.toi, boxscores.toi_seconds, 0)'
-            : '3600';
+        $sourceExposureSeconds = $factStrength === null
+            ? ($usesPlayerExposure ? 'COALESCE(game_summaries.toi, boxscores.toi_seconds, 0)' : '3600')
+            : 'COALESCE(strength_summaries.toi, 0)';
         $entityWhereSql = $entityKey === null ? '' : "AND {$definition['entity_key']} = ?";
+        $factStrengthSql = $factStrength === null
+            ? ''
+            : "AND UPPER(COALESCE(NULLIF(facts.strength_bucket, ''), NULLIF(facts.strength, ''))) = ?";
+        $strengthSummaryJoin = $factStrength === null
+            ? ''
+            : "LEFT JOIN nhl_player_game_strength_summaries strength_summaries\n        ON strength_summaries.nhl_game_id = entity_games.nhl_game_id\n        AND strength_summaries.nhl_player_id = entity_games.entity_id\n        AND strength_summaries.strength = ?";
         $testColumnSql = $testSeasonId === null ? '' : "    test_season_id,\n";
         $testSelectSql = $testSeasonId === null ? '' : "    ? as test_season_id,\n";
         $conflictColumns = $testSeasonId === null
             ? 'model_run_id, profile_type, strength, entity_key, matched_bucket_key'
             : 'model_run_id, test_season_id, profile_type, strength, entity_key, matched_bucket_key';
         $profileSample = $testSeasonId === null ? 'training' : 'test';
+        // Skater partitions use their own strength exposure; goalie split rates remain historical ratios only.
+        $hasStrengthExposure = $profileType === 'goalie_faced'
+            ? "strength_profile_facts.profile_strength = 'all'"
+            : 'true';
         $strengthProfileRowsSql = $profileType === 'goalie_faced'
             ? <<<SQL
 UNION ALL
@@ -564,6 +594,7 @@ WITH profile_facts AS (
         AND COALESCE(facts.period_type, '') <> 'SO'
         AND COALESCE(facts.is_empty_net, false) = false
         AND {$definition['where']}
+        {$factStrengthSql}
         {$entityWhereSql}
 ),
 scored_facts AS (
@@ -587,7 +618,7 @@ scored_facts AS (
     {$goalBucketJoin}
 ),
 strength_profile_facts AS (
-    SELECT scored_facts.*, 'all'::varchar as profile_strength
+    SELECT scored_facts.*, ?::varchar as profile_strength
     FROM scored_facts
     {$strengthProfileRowsSql}
 ),
@@ -611,6 +642,7 @@ entity_exposure AS (
     LEFT JOIN nhl_boxscores boxscores
         ON boxscores.nhl_game_id = entity_games.nhl_game_id
         AND boxscores.nhl_player_id = entity_games.entity_id
+    {$strengthSummaryJoin}
     GROUP BY entity_games.entity_key
 )
 SELECT
@@ -634,16 +666,16 @@ SELECT
     SUM(CASE WHEN strength_profile_facts.is_shot_on_goal THEN 1 ELSE 0 END) as source_sog,
     SUM(CASE WHEN strength_profile_facts.is_goal THEN 1 ELSE 0 END) as source_goals,
     ROUND((COUNT(*)::numeric / NULLIF(MAX(entity_totals.total_sat), 0)), 6) as source_profile_share,
-    CASE WHEN strength_profile_facts.profile_strength = 'all' THEN MAX(entity_exposure.source_toi_seconds) ELSE NULL END as source_toi_seconds,
-    CASE WHEN strength_profile_facts.profile_strength = 'all' THEN ROUND((COUNT(*)::numeric * 3600 / NULLIF(MAX(entity_exposure.source_toi_seconds), 0)), 4) ELSE NULL END as source_xsat_per_60,
-    CASE WHEN strength_profile_facts.profile_strength = 'all' THEN ROUND((SUM(strength_profile_facts.sat_probability)::numeric * 3600 / NULLIF(MAX(entity_exposure.source_toi_seconds), 0)), 4) ELSE NULL END as source_xsog_per_60,
-    CASE WHEN strength_profile_facts.profile_strength = 'all' THEN ROUND((SUM(CASE WHEN strength_profile_facts.is_shot_on_goal THEN strength_profile_facts.goal_probability ELSE 0 END)::numeric * 3600 / NULLIF(MAX(entity_exposure.source_toi_seconds), 0)), 4) ELSE NULL END as source_xg_per_60,
+    CASE WHEN {$hasStrengthExposure} THEN MAX(entity_exposure.source_toi_seconds) ELSE NULL END as source_toi_seconds,
+    CASE WHEN {$hasStrengthExposure} THEN ROUND((COUNT(*)::numeric * 3600 / NULLIF(MAX(entity_exposure.source_toi_seconds), 0)), 4) ELSE NULL END as source_xsat_per_60,
+    CASE WHEN {$hasStrengthExposure} THEN ROUND((SUM(strength_profile_facts.sat_probability)::numeric * 3600 / NULLIF(MAX(entity_exposure.source_toi_seconds), 0)), 4) ELSE NULL END as source_xsog_per_60,
+    CASE WHEN {$hasStrengthExposure} THEN ROUND((SUM(CASE WHEN strength_profile_facts.is_shot_on_goal THEN strength_profile_facts.goal_probability ELSE 0 END)::numeric * 3600 / NULLIF(MAX(entity_exposure.source_toi_seconds), 0)), 4) ELSE NULL END as source_xg_per_60,
     ROUND(SUM(strength_profile_facts.sat_probability)::numeric, 4) as expected_sog,
     ROUND(SUM(CASE WHEN strength_profile_facts.is_shot_on_goal THEN strength_profile_facts.goal_probability ELSE 0 END)::numeric, 4) as expected_goals,
     ROUND((SUM(CASE WHEN strength_profile_facts.is_shot_on_goal THEN 1 ELSE 0 END) - SUM(strength_profile_facts.sat_probability))::numeric, 4) as sog_above_expected,
     ROUND((SUM(CASE WHEN strength_profile_facts.is_goal THEN 1 ELSE 0 END) - SUM(CASE WHEN strength_profile_facts.is_shot_on_goal THEN strength_profile_facts.goal_probability ELSE 0 END))::numeric, 4) as goals_above_expected,
     ROUND((SUM(CASE WHEN strength_profile_facts.is_shot_on_goal THEN strength_profile_facts.goal_probability ELSE 0 END) - SUM(CASE WHEN strength_profile_facts.is_goal THEN 1 ELSE 0 END))::numeric, 4) as source_gsax,
-    CASE WHEN strength_profile_facts.profile_strength = 'all' THEN ROUND(((SUM(CASE WHEN strength_profile_facts.is_shot_on_goal THEN strength_profile_facts.goal_probability ELSE 0 END) - SUM(CASE WHEN strength_profile_facts.is_goal THEN 1 ELSE 0 END)) * 3600 / NULLIF(MAX(entity_exposure.source_toi_seconds), 0))::numeric, 4) ELSE NULL END as source_gsax_per_60,
+    CASE WHEN {$hasStrengthExposure} THEN ROUND(((SUM(CASE WHEN strength_profile_facts.is_shot_on_goal THEN strength_profile_facts.goal_probability ELSE 0 END) - SUM(CASE WHEN strength_profile_facts.is_goal THEN 1 ELSE 0 END)) * 3600 / NULLIF(MAX(entity_exposure.source_toi_seconds), 0))::numeric, 4) ELSE NULL END as source_gsax_per_60,
     ROUND(((SUM(CASE WHEN strength_profile_facts.is_shot_on_goal THEN strength_profile_facts.goal_probability ELSE 0 END) - SUM(CASE WHEN strength_profile_facts.is_goal THEN 1 ELSE 0 END)) * 100 / NULLIF(SUM(CASE WHEN strength_profile_facts.is_shot_on_goal THEN strength_profile_facts.goal_probability ELSE 0 END), 0))::numeric, 4) as source_gsax_per_100_xga,
     ROUND(((SUM(CASE WHEN strength_profile_facts.is_shot_on_goal THEN 1 ELSE 0 END) - SUM(CASE WHEN strength_profile_facts.is_goal THEN 1 ELSE 0 END)) * 100 / NULLIF(SUM(CASE WHEN strength_profile_facts.is_shot_on_goal THEN 1 ELSE 0 END), 0))::numeric, 4) as source_save_percentage,
     ROUND(AVG(strength_profile_facts.sat_probability)::numeric, 6) as sat_probability,
@@ -672,6 +704,7 @@ DO UPDATE SET
     entity_name = EXCLUDED.entity_name,
     entity_role = EXCLUDED.entity_role,
     team_context = EXCLUDED.team_context,
+    strength = EXCLUDED.strength,
     fallback_level = EXCLUDED.fallback_level,
     bucket_dimensions = EXCLUDED.bucket_dimensions,
     source_sat = EXCLUDED.source_sat,
@@ -703,9 +736,12 @@ SQL;
         DB::statement($sql, [
             ...$seasonIds,
             self::REGULAR_SEASON_GAME_TYPE,
+            ...($factStrength === null ? [] : [$factStrength]),
             ...($entityKey === null ? [] : [$entityKey]),
             $satModel->id,
             $satModel->id,
+            $projectionStrength,
+            ...($factStrength === null ? [] : [$factStrength]),
             $run->id,
             $satModel->id,
             $sogModel?->id,
@@ -719,6 +755,73 @@ SQL;
             $now,
             $now,
         ]);
+
+        if ($factStrength !== null) {
+            $this->assertStrengthProfilesExist(
+                $run, $definition, $seasonIds, $profileType, $projectionStrength,
+                $entityKey, $tableName, $testSeasonId
+            );
+        }
+    }
+
+    /**
+     * Fail the owning job before its completion receipt if eligible split evidence was lost.
+     * Players without attempts at a strength legitimately have no profile at that strength.
+     *
+     * @param array<string, string> $definition
+     * @param array<int, string> $seasonIds
+     */
+    private function assertStrengthProfilesExist(
+        NhlModelRun $run,
+        array $definition,
+        array $seasonIds,
+        string $profileType,
+        string $strength,
+        ?string $entityKey,
+        string $tableName,
+        ?string $testSeasonId
+    ): void {
+        $seasonPlaceholders = implode(', ', array_fill(0, count($seasonIds), '?'));
+        $entityFilter = $entityKey === null ? '' : "AND {$definition['entity_key']} = ?";
+        $snapshotFilter = $testSeasonId === null ? '' : 'AND profiles.test_season_id = ?';
+        $missing = DB::selectOne(<<<SQL
+SELECT {$definition['entity_key']} AS entity_key
+FROM nhl_shot_attempts_facts facts
+INNER JOIN nhl_games games ON games.nhl_game_id = facts.nhl_game_id
+{$definition['joins']}
+WHERE facts.season_id IN ({$seasonPlaceholders})
+    AND games.game_type = ?
+    AND COALESCE(facts.period_type, '') <> 'SO'
+    AND COALESCE(facts.is_empty_net, false) = false
+    AND {$definition['where']}
+    AND LOWER(COALESCE(NULLIF(facts.strength_bucket, ''), NULLIF(facts.strength, ''))) = ?
+    {$entityFilter}
+    AND NOT EXISTS (
+        SELECT 1 FROM {$tableName} profiles
+        WHERE profiles.model_run_id = ?
+            AND profiles.profile_type = ?
+            AND profiles.strength = ?
+            AND profiles.entity_key = {$definition['entity_key']}
+            {$snapshotFilter}
+    )
+LIMIT 1
+SQL, [
+            ...$seasonIds,
+            self::REGULAR_SEASON_GAME_TYPE,
+            strtolower($strength),
+            ...($entityKey === null ? [] : [$entityKey]),
+            $run->id,
+            $profileType,
+            $strength,
+            ...($testSeasonId === null ? [] : [$testSeasonId]),
+        ]);
+
+        if ($missing !== null) {
+            $sample = $testSeasonId ?? 'training';
+            throw new RuntimeException(
+                "Missing {$strength} profile for {$missing->entity_key} ({$sample}) despite eligible source shots."
+            );
+        }
     }
 
     /**
@@ -763,8 +866,12 @@ SQL;
             ->all();
     }
 
-    private function modelBucketKeySql(NhlExpectedGoalsModel $model, string $tableAlias): string
+    /** Share the profile builder's exact shot-shape mapping with read-only evaluations. */
+    public function modelBucketKeySql(NhlExpectedGoalsModel $model, string $tableAlias): string
     {
+        if (preg_match('/^[a-z_][a-z0-9_]*$/i', $tableAlias) !== 1) {
+            throw new \InvalidArgumentException('Invalid shot-fact table alias.');
+        }
         $fallbackLevels = collect((array) data_get($model->feature_config, 'fallback_levels', []));
         $factorKeys = $fallbackLevels
             ->first(function (mixed $level): bool {

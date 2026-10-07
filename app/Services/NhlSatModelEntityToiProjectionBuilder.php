@@ -33,6 +33,7 @@ class NhlSatModelEntityToiProjectionBuilder
             ->leftJoin('players', 'players.nhl_id', '=', 'profiles.entity_id')
             ->where('profiles.model_run_id', $run->id)
             ->whereIn('profiles.profile_type', ['skater_offense', 'skater_defense'])
+            ->where('profiles.strength', 'all')
             ->whereNotNull('profiles.entity_id')
             ->where(function ($query): void {
                 $query->whereNull('players.position')
@@ -64,6 +65,7 @@ class NhlSatModelEntityToiProjectionBuilder
         $profile = DB::table('nhl_sat_model_entity_profile_buckets')
             ->where('model_run_id', $run->id)
             ->where('profile_type', $profileType)
+            ->where('strength', 'all')
             ->where('entity_key', $entityKey)
             ->whereNotNull('entity_id')
             ->select([

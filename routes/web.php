@@ -420,10 +420,18 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                     ->name('admin.nhl-sat-models.index');
                 Route::post('/nhl-sat-models', [\App\Http\Controllers\Admin\NhlModelRunController::class, 'store'])
                     ->name('admin.nhl-sat-models.store');
+                Route::get('/nhl-sat-models/next-game', [\App\Http\Controllers\Admin\NhlNextGameEvaluationController::class, 'index'])
+                    ->name('admin.nhl-sat-models.next-game');
+                Route::post('/nhl-sat-models/next-game', [\App\Http\Controllers\Admin\NhlNextGameEvaluationController::class, 'store'])
+                    ->name('admin.nhl-sat-models.next-game.store');
+                Route::post('/nhl-sat-models/next-game/{evaluation}/resume', [\App\Http\Controllers\Admin\NhlNextGameEvaluationController::class, 'resume'])
+                    ->whereNumber('evaluation')->name('admin.nhl-sat-models.next-game.resume');
                 Route::get('/nhl-sat-models/context', [\App\Http\Controllers\Admin\NhlPregameContextController::class, 'index'])
                     ->name('admin.nhl-sat-models.context');
                 Route::post('/nhl-sat-models/context', [\App\Http\Controllers\Admin\NhlPregameContextController::class, 'store'])
                     ->name('admin.nhl-sat-models.context.store');
+                Route::get('/nhl-sat-models/context/effects', [\App\Http\Controllers\Admin\NhlPregameContextController::class, 'effects'])
+                    ->name('admin.nhl-sat-models.context.effects');
                 Route::get('/nhl-sat-models/{run}/buckets', [\App\Http\Controllers\Admin\NhlModelRunController::class, 'buckets'])
                     ->whereNumber('run')
                     ->name('admin.nhl-sat-models.buckets');

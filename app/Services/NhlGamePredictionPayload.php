@@ -16,7 +16,8 @@ use Illuminate\Validation\ValidationException;
  */
 class NhlGamePredictionPayload
 {
-    private const TONIGHT_THIRD_ENGINE_OVERRIDE_DATE = '2026-10-06';
+    private const TONIGHT_THIRD_ENGINE_OVERRIDE_START_DATE = '2026-10-06';
+    private const TONIGHT_THIRD_ENGINE_OVERRIDE_END_DATE = '2026-10-11';
     private const TONIGHT_THIRD_ENGINE_MINIMUM_GAP = 0.30;
 
     private const PRESEASON_GAME_TYPE = 1;
@@ -70,7 +71,7 @@ class NhlGamePredictionPayload
                     $fallback ??= $candidate;
                     $fallbackEngine ??= $engine;
 
-                    // This one-day exception still presents the foundation forecast. The third
+                    // This date-window exception still presents the foundation forecast. The third
                     // Engine contributes only its qualification/presentation treatment.
                     $tonightThirdEngineQualification = $this->tonightThirdEngineQualification($game, $memberIndex, $fallback);
                     if ($tonightThirdEngineQualification !== null) {
@@ -416,15 +417,23 @@ class NhlGamePredictionPayload
     }
 
     /**
-     * Return the October 6, 2026 Engine 3 decision, or null for normal delegation.
+     * Return the October 6–11, 2026 Engine 3 decision, or null for normal delegation.
      *
      * @param array<string, mixed> $candidate
      */
     private function tonightThirdEngineQualification(object $game, int $memberIndex, array $candidate): ?bool
     {
-        if ($memberIndex !== 2
-            || \Illuminate\Support\Carbon::parse($game->game_date)->toDateString() !== self::TONIGHT_THIRD_ENGINE_OVERRIDE_DATE
-            || now('America/Toronto')->toDateString() !== self::TONIGHT_THIRD_ENGINE_OVERRIDE_DATE) {
+        if ($memberIndex !== 2) {
+            return null;
+        }
+
+        $gameDate = \Illuminate\Support\Carbon::parse($game->game_date)->toDateString();
+        $today = now('America/Toronto')->toDateString();
+
+        if ($gameDate < self::TONIGHT_THIRD_ENGINE_OVERRIDE_START_DATE
+            || $gameDate > self::TONIGHT_THIRD_ENGINE_OVERRIDE_END_DATE
+            || $today < self::TONIGHT_THIRD_ENGINE_OVERRIDE_START_DATE
+            || $today > self::TONIGHT_THIRD_ENGINE_OVERRIDE_END_DATE) {
             return null;
         }
 

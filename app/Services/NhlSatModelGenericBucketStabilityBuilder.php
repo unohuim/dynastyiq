@@ -160,6 +160,7 @@ WITH training_rows AS (
         SUM(COALESCE(profiles.source_toi_seconds, 0)) as toi_seconds
     FROM nhl_sat_model_entity_profile_buckets profiles
     WHERE profiles.model_run_id = ?
+        AND profiles.strength = 'all'
     GROUP BY profiles.profile_type, profiles.matched_bucket_key
 ),
 snapshot_rows AS (
@@ -176,6 +177,7 @@ snapshot_rows AS (
         SUM(COALESCE(snapshots.source_toi_seconds, 0)) as toi_seconds
     FROM nhl_sat_model_entity_test_profile_buckets snapshots
     WHERE snapshots.model_run_id = ?
+        AND snapshots.strength = 'all'
         AND snapshots.test_season_id IN (?, ?, ?)
     GROUP BY snapshots.test_season_id, snapshots.profile_type, snapshots.matched_bucket_key
 ),

@@ -35,6 +35,7 @@ class NhlSatModelEntityRateProjectionBuilder
         $profileTypes = DB::table('nhl_sat_model_entity_profile_buckets')
             ->where('model_run_id', $run->id)
             ->whereIn('profile_type', $profileTypes)
+            ->where('strength', 'all')
             ->distinct()
             ->orderBy('profile_type')
             ->pluck('profile_type')
@@ -98,6 +99,7 @@ class NhlSatModelEntityRateProjectionBuilder
         return DB::table('nhl_sat_model_entity_profile_buckets')
             ->where('model_run_id', $run->id)
             ->whereIn('profile_type', $profileTypes)
+            ->where('strength', 'all')
             ->select(['profile_type', 'entity_key'])
             ->distinct()
             ->orderBy('profile_type')
@@ -307,6 +309,7 @@ WITH source_rows AS (
     FROM nhl_sat_model_entity_profile_buckets profiles
     WHERE profiles.model_run_id = ?
         AND profiles.profile_type = ?
+        AND profiles.strength = 'all'
         AND profiles.source_xsat_per_60 IS NOT NULL
 ),
 grouped_rows AS (
@@ -347,6 +350,7 @@ latest_source_rows AS (
     WHERE latest_profiles.model_run_id = ?
         AND latest_profiles.test_season_id = ?
         AND latest_profiles.profile_type = ?
+        AND latest_profiles.strength = 'all'
         AND latest_profiles.source_xsat_per_60 IS NOT NULL
 ),
 latest_grouped_rows AS (
@@ -368,6 +372,7 @@ prior_source_rows AS (
     WHERE prior_profiles.model_run_id = ?
         AND prior_profiles.test_season_id = ?
         AND prior_profiles.profile_type = ?
+        AND prior_profiles.strength = 'all'
         AND prior_profiles.source_xsat_per_60 IS NOT NULL
 ),
 prior_grouped_rows AS (
@@ -2631,6 +2636,7 @@ WITH profile_rows AS (
     FROM nhl_sat_model_entity_profile_buckets profiles
     WHERE profiles.model_run_id = ?
         AND profiles.profile_type = ?
+        AND profiles.strength = 'all'
         AND profiles.source_xsat_per_60 IS NOT NULL
 ),
 qualified_source_rows AS (
@@ -2710,6 +2716,7 @@ latest_source_rows AS (
     WHERE latest_profiles.model_run_id = ?
         AND latest_profiles.test_season_id = ?
         AND latest_profiles.profile_type = ?
+        AND latest_profiles.strength = 'all'
         AND latest_profiles.source_xsat_per_60 IS NOT NULL
 ),
 latest_grouped_rows AS (

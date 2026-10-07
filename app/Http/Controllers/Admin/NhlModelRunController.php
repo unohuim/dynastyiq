@@ -394,6 +394,7 @@ class NhlModelRunController extends Controller
             || ! DB::table('nhl_sat_model_entity_profile_buckets')
                 ->where('model_run_id', $run->id)
                 ->where('profile_type', $profileType)
+                ->where('strength', 'all')
                 ->exists()) {
             $message = 'Finish a successful Build Offensive Skaters, including season snapshots, before building /60.';
 
@@ -543,7 +544,10 @@ class NhlModelRunController extends Controller
             return back()->withErrors(['run' => $message]);
         }
 
-        if (! DB::table('nhl_sat_model_entity_profile_buckets')->where('model_run_id', $run->id)->exists()) {
+        if (! DB::table('nhl_sat_model_entity_profile_buckets')
+            ->where('model_run_id', $run->id)
+            ->where('strength', 'all')
+            ->exists()) {
             $message = 'Build profiles before building TOI.';
 
             if ($request->expectsJson()) {
@@ -649,6 +653,7 @@ class NhlModelRunController extends Controller
         if (! DB::table('nhl_sat_model_entity_test_profile_buckets')
             ->where('model_run_id', $run->id)
             ->where('test_season_id', (string) $run->target_season_id)
+            ->where('strength', 'all')
             ->exists()
         ) {
             $message = 'Build test profiles before comparing /60.';
@@ -714,6 +719,8 @@ class NhlModelRunController extends Controller
         $sorts = $this->profileSorts();
         $hasShrinkageWeight = Schema::hasColumn('nhl_sat_model_entity_profile_buckets', 'shrinkage_weight');
         $hasPer60 = Schema::hasColumn('nhl_sat_model_entity_profile_buckets', 'source_xsat_per_60');
+        $hasProfileStrength = Schema::hasColumn('nhl_sat_model_entity_profile_buckets', 'strength');
+        $profileStrengths = ['all' => 'All', 'ev' => 'EV', 'pp' => 'PP', 'pk' => 'PK'];
 
         if (! $hasShrinkageWeight) {
             $sorts['shrinkage_weight'] = 'confidence_score';
@@ -727,18 +734,21 @@ class NhlModelRunController extends Controller
 
         $input = $request->validate([
             'profile_type' => ['nullable', Rule::in(array_keys($profileTypes))],
+            'strength' => ['nullable', Rule::in(array_keys($profileStrengths))],
             'sort' => ['nullable', Rule::in(array_keys($sorts))],
             'direction' => ['nullable', Rule::in(['asc', 'desc'])],
             'include_long_tail' => ['nullable', 'boolean'],
             'q' => ['nullable', 'string', 'max:120'],
         ]);
         $profileType = $input['profile_type'] ?? 'skater_offense';
+        $profileStrength = $hasProfileStrength ? ($input['strength'] ?? 'all') : 'all';
         $sort = $input['sort'] ?? 'source_sat';
         $direction = $input['direction'] ?? 'desc';
         $includeLongTail = (bool) ($input['include_long_tail'] ?? false);
         $search = trim((string) ($input['q'] ?? ''));
         $summary = DB::table('nhl_sat_model_entity_profile_buckets')
             ->where('model_run_id', $run->id)
+            ->when($hasProfileStrength, fn ($query) => $query->where('strength', $profileStrength))
             ->selectRaw('profile_type')
             ->selectRaw('COUNT(*) as rows')
             ->selectRaw('COUNT(DISTINCT entity_key) as entities')
@@ -751,6 +761,7 @@ class NhlModelRunController extends Controller
         $profileAverages = DB::table('nhl_sat_model_entity_profile_buckets')
             ->where('model_run_id', $run->id)
             ->where('profile_type', $profileType)
+            ->when($hasProfileStrength, fn ($query) => $query->where('strength', $profileStrength))
             ->selectRaw('AVG(source_sat) as source_sat')
             ->selectRaw('AVG(source_sog) as source_sog')
             ->selectRaw('AVG(source_goals) as source_goals')
@@ -769,6 +780,7 @@ class NhlModelRunController extends Controller
         $profileRows = DB::table('nhl_sat_model_entity_profile_buckets as profile_rows')
             ->where('model_run_id', $run->id)
             ->where('profile_type', $profileType)
+            ->when($hasProfileStrength, fn ($query) => $query->where('profile_rows.strength', $profileStrength))
             ->when($search !== '', function ($query) use ($search): void {
                 $query->where(function ($searchQuery) use ($search): void {
                     $like = '%' . $search . '%';
@@ -826,6 +838,8 @@ class NhlModelRunController extends Controller
             'profileAverages' => $profileAverages,
             'profileType' => $profileType,
             'profileTypes' => $profileTypes,
+            'profileStrength' => $profileStrength,
+            'profileStrengths' => $profileStrengths,
             'profiles' => $profiles,
             'run' => $run,
             'search' => $search,
@@ -890,9 +904,11 @@ class NhlModelRunController extends Controller
                     ->on('latest.profile_type', '=', 'training.profile_type')
                     ->on('latest.entity_key', '=', 'training.entity_key')
                     ->on('latest.matched_bucket_key', '=', 'training.matched_bucket_key')
+                    ->on('latest.strength', '=', 'training.strength')
                     ->where('latest.test_season_id', '=', $latestTrainingSeasonId);
             })
             ->where('training.model_run_id', $run->id)
+            ->where('training.strength', 'all')
             ->selectRaw('training.profile_type')
             ->selectRaw('COUNT(*) as rows')
             ->selectRaw('COUNT(DISTINCT training.entity_key) as entities')
@@ -923,12 +939,14 @@ class NhlModelRunController extends Controller
                     ->on('latest.profile_type', '=', 'training.profile_type')
                     ->on('latest.entity_key', '=', 'training.entity_key')
                     ->on('latest.matched_bucket_key', '=', 'training.matched_bucket_key')
+                    ->on('latest.strength', '=', 'training.strength')
                     ->where('latest.test_season_id', '=', $latestTrainingSeasonId);
             })
             ->leftJoinSub($trainGameRows, 'train_games', 'train_games.entity_key', '=', 'training.entity_key')
             ->leftJoinSub($latestGameRows, 'latest_games', 'latest_games.entity_key', '=', 'training.entity_key')
             ->where('training.model_run_id', $run->id)
             ->where('training.profile_type', $profileType)
+            ->where('training.strength', 'all')
             ->when($search !== '', function ($query) use ($search): void {
                 $query->where(function ($searchQuery) use ($search): void {
                     $like = '%' . $search . '%';
@@ -1297,6 +1315,7 @@ class NhlModelRunController extends Controller
         $profileTrainToiSubquery = DB::table('nhl_sat_model_entity_profile_buckets')
             ->where('model_run_id', $run->id)
             ->where('profile_type', $profileType)
+            ->where('strength', 'all')
             ->selectRaw('profile_type')
             ->selectRaw('entity_key')
             ->selectRaw('MAX(source_toi_seconds) as profile_train_toi_seconds')
@@ -1305,6 +1324,7 @@ class NhlModelRunController extends Controller
             ->where('model_run_id', $run->id)
             ->where('profile_type', $profileType)
             ->where('test_season_id', (string) $latestTrainingSeasonId)
+            ->where('strength', 'all')
             ->selectRaw('profile_type')
             ->selectRaw('entity_key')
             ->selectRaw('MAX(source_toi_seconds) as profile_latest_toi_seconds')
@@ -2383,10 +2403,12 @@ SQL;
                     ->on('latest.profile_type', '=', 'training.profile_type')
                     ->on('latest.entity_key', '=', 'training.entity_key')
                     ->on('latest.matched_bucket_key', '=', 'training.matched_bucket_key')
+                    ->on('latest.strength', '=', 'training.strength')
                     ->where('latest.test_season_id', '=', $latestTrainingSeasonId);
             })
             ->where('training.model_run_id', $run->id)
-            ->where('training.profile_type', $profileType);
+            ->where('training.profile_type', $profileType)
+            ->where('training.strength', 'all');
 
         if ($ageDate !== null && $ageWhere !== null) {
             $query
@@ -3098,6 +3120,7 @@ SQL;
         $trainingSeasonIds = $this->seasonIdsFromArray($run->train_season_ids ?? []);
         $trainToiSubquery = DB::table('nhl_sat_model_entity_profile_buckets')
             ->where('model_run_id', $run->id)
+            ->where('strength', 'all')
             ->selectRaw('profile_type as train_toi_profile_type')
             ->selectRaw('entity_key as train_toi_entity_key')
             ->selectRaw('MAX(source_toi_seconds) as train_toi_seconds')
@@ -3105,6 +3128,7 @@ SQL;
         $latestRateSubquery = DB::table('nhl_sat_model_entity_test_profile_buckets')
             ->where('model_run_id', $run->id)
             ->where('test_season_id', (string) $latestTrainingSeasonId)
+            ->where('strength', 'all')
             ->selectRaw('profile_type as latest_profile_type')
             ->selectRaw('entity_key as latest_entity_key')
             ->selectRaw('SUM(source_xsat_per_60) as last_xsat_per_60')
@@ -3120,6 +3144,7 @@ SQL;
         $testToiSubquery = DB::table('nhl_sat_model_entity_test_profile_buckets')
             ->where('model_run_id', $run->id)
             ->where('test_season_id', $testSeasonId)
+            ->where('strength', 'all')
             ->selectRaw('profile_type as test_toi_profile_type')
             ->selectRaw('entity_key as test_toi_entity_key')
             ->selectRaw('MAX(source_toi_seconds) as test_toi_seconds')
