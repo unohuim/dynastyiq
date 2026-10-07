@@ -443,7 +443,7 @@ class NhlGamePredictionPayload
             return false;
         }
 
-        return abs((float) $goalDifferential) < self::TONIGHT_THIRD_ENGINE_MINIMUM_GAP;
+        return abs((float) $goalDifferential) > self::TONIGHT_THIRD_ENGINE_MINIMUM_GAP;
     }
 
     private function presentationConfidence(float $internalConfidence, NhlSatEngine $engine, bool $qualified): float
