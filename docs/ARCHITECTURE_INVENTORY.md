@@ -1642,6 +1642,26 @@ WHERE target_season_id = '20262027';
 
 ---
 
+### NHL Pregame Context Evidence
+
+**Name:** NHL Pregame Context Evidence
+**Type:** Versioned Pregame Snapshot And Bounded Backfill Workflow
+
+**Purpose:** Preserve only the evidence known before each game so context factors can be tested without changing predictions.
+
+**Public Interface:**
+- `admin.nhl-sat-models.context`
+- `nhl_pregame_context_runs`
+- `nhl_pregame_context_run_games`
+- `nhl_team_game_pregame_contexts`
+- `nhl_player_game_pregame_contexts`
+- `NhlPregameContextBuilder`
+- `NhlPregameContextOrchestrator`
+
+**Authority:** `docs/architecture/stats/NhlPregameContextEvidence.yaml`
+
+---
+
 ## NHL Imports
 
 ### NHL Import Orchestrator
