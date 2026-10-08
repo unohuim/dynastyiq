@@ -25,7 +25,8 @@ const sortedPredictions = computed(() => [...predictionRows.value].sort((a, b) =
     return (typeof first === 'string' ? first.localeCompare(second) : Number(first) - Number(second)) * predictionSort.value.direction;
 }));
 const predictionColumns = [
-    ['game', 'Game'], ['score', 'Predicted score'], ['spread', 'Spread'],
+    ['game', 'Game'], ['model', 'Model'], ['score', 'Predicted score'], ['spread', 'Spread'],
+    ['skater', 'Skater confidence'], ['goalie', 'Goalie confidence'],
     ['internal', 'Internal confidence'], ['presentation', 'Presentation confidence'], ['qualified', 'Pick qualified'],
 ];
 const sortPredictions = key => {
@@ -50,18 +51,25 @@ const predictToday = async member => {
         const { data } = await axios.get(`${endpoint}/today`, { signal: request.signal });
         if (request.signal.aborted) return;
         predictionDate.value = data.date;
-        predictionRows.value = data.games.map(game => ({ id: game.nhl_game_id,
+        predictionRows.value = data.games.flatMap(game => ['production', 'test'].map(source => ({ id: game.nhl_game_id,
+            key: `${game.nhl_game_id}-${source}`, source,
+            model: source === 'production' ? 'Production' : 'Test/Train',
+            modelName: props.models.find(model => Number(model.id) === Number(source === 'production'
+                ? props.stack.production_model_run_id ?? member.engine.model_run_id : member.engine.test_model_run_id))?.name ?? 'Unavailable',
             game: `${game.away_team_abbrev} @ ${game.home_team_abbrev}`, status: 'Waiting',
-            score: null, spread: null, internal: null, presentation: null, qualified: null, error: null }));
+            score: null, spread: null, skater: null, goalie: null, internal: null, presentation: null, qualified: null, error: null })));
         for (const row of predictionRows.value) {
             if (request.signal.aborted) break;
             row.status = 'Predicting';
             try {
-                const { data: result } = await axios.post(`${endpoint}/${row.id}`, {}, { signal: request.signal });
+                const { data: result } = await axios.post(`${endpoint}/${row.id}`, { model_source: row.source }, { signal: request.signal });
                 if (request.signal.aborted) break;
                 const prediction = result.prediction;
                 row.status = result.prediction_available ? 'Calculated' : 'Unavailable';
                 row.internal = result.internal_confidence;
+                row.skater = result.skater_confidence;
+                row.goalie = result.goalie_confidence;
+                row.modelName = result.model_name ?? `Model #${result.model_run_id}`;
                 row.presentation = prediction?.confidence_score ?? null;
                 row.spread = prediction ? Math.abs(Number(prediction.goal_differential)) : null;
                 row.score = prediction ? `${prediction.predicted_score.away} – ${prediction.predicted_score.home}` : null;
@@ -115,7 +123,7 @@ const reorder = (from, to) => {
         <section v-if="predictionMember" class="rounded-xl border border-gray-200 bg-white shadow-sm" aria-labelledby="predictions-title" :aria-busy="predicting">
             <div class="flex flex-wrap items-center justify-between gap-3 p-5">
                 <div><h2 id="predictions-title" class="text-lg font-semibold">Predict today · {{ predictionMember.engine.name }}</h2>
-                    <p class="mt-1 text-sm text-gray-600">{{ predictionDate }} · America/Toronto · {{ effectiveModelName(predictionMember.engine.model_run_id) }} · Saved settings</p>
+                    <p class="mt-1 text-sm text-gray-600">{{ predictionDate }} · America/Toronto · Production versus saved Test/Train model · Same Engine settings</p>
                     <p class="mt-1 text-xs text-gray-500">Selected Engine only. Scores are away–home; spread is the absolute goal difference.</p></div>
                 <button v-if="predicting" type="button" class="rounded-lg border border-gray-300 px-3 py-2 text-sm" @click="cancelPredictions">Stop remaining games</button>
             </div>
@@ -128,16 +136,20 @@ const reorder = (from, to) => {
                             <button type="button" class="whitespace-nowrap px-4 py-3 font-medium text-gray-600" @click="sortPredictions(key)">{{ label }} ↕</button>
                         </th><th scope="col" class="px-4 py-3">Status</th>
                     </tr></thead>
-                    <tbody><tr v-for="row in sortedPredictions" :key="row.id" class="border-b border-gray-100">
+                    <tbody><tr v-for="row in sortedPredictions" :key="row.key" class="border-b border-gray-100" :class="row.source === 'test' ? 'bg-gray-50' : ''">
                         <th scope="row" class="whitespace-nowrap px-4 py-3 font-medium">{{ row.game }}</th>
+                        <td class="whitespace-nowrap px-4 py-3">{{ row.model }}<span class="block text-xs text-gray-500">{{ row.modelName }}</span></td>
                         <td class="whitespace-nowrap px-4 py-3">{{ row.score ?? '—' }}</td>
                         <td class="px-4 py-3">{{ row.spread == null ? '—' : row.spread.toFixed(4) }}</td>
+                        <td class="px-4 py-3">{{ row.skater == null ? '—' : Number(row.skater).toFixed(2) + '%' }}</td>
+                        <td class="px-4 py-3">{{ row.goalie == null ? '—' : Number(row.goalie).toFixed(2) + '%' }}</td>
                         <td class="px-4 py-3">{{ row.internal == null ? '—' : row.internal + '%' }}</td>
                         <td class="px-4 py-3">{{ row.presentation == null ? '—' : Number(row.presentation).toFixed(1) + '%' }}</td>
                         <td class="px-4 py-3 font-medium">{{ row.qualified == null ? '—' : row.qualified ? 'Yes' : 'No' }}</td>
                         <td class="max-w-xs px-4 py-3 text-xs text-gray-600">{{ row.status }}<span v-if="row.error" class="mt-1 block text-red-700">{{ row.error }}</span></td>
                     </tr></tbody>
                 </table>
+                <p class="p-5 text-xs text-gray-500">Skater and goalie confidence are the two-team averages before weighting. Internal confidence = rounded (70% skater + 30% goalie). Test/Train uses today's lineups with the saved test model, not an old discovery result.</p>
                 <p v-if="!predicting && !predictionError && !predictionRows.length" class="p-5 text-sm text-gray-500">No games scheduled today.</p>
             </div>
         </section>

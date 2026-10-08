@@ -62,6 +62,7 @@ class NhlGamePredictionPayload
             '_stack_engine_id' => $engine->id,
             'sat_model_run_id' => $productionModelId ?? $engine->model_run_id,
             'engine_weights' => $engine->settings,
+            '_include_confidence_components' => true,
         ]);
         $internal = data_get($result, 'prediction.confidence_score');
         if (($result['prediction_available'] ?? false) === true) {
@@ -76,6 +77,9 @@ class NhlGamePredictionPayload
             'prediction_available' => $result['prediction_available'] ?? false,
             'pick_qualified' => $result['pick_qualified'] ?? null,
             'internal_confidence' => $internal,
+            'skater_confidence' => data_get($result, '_confidence_components.skater'),
+            'goalie_confidence' => data_get($result, '_confidence_components.goalie'),
+            'model_run_id' => data_get($result, 'inputs.sat_model_run_id'),
             'prediction' => $result['prediction'] ?? null,
             'reason' => $result['reason'] ?? null,
         ];
@@ -447,6 +451,17 @@ class NhlGamePredictionPayload
                 'source_fetched_at' => now()->toIso8601String(),
             ],
         ];
+
+        if (($overrides['_include_confidence_components'] ?? false) === true) {
+            $resultSkaterConfidence = ($this->weightedSkaterConfidence($awaySide)
+                + $this->weightedSkaterConfidence($homeSide)) / 2 * 100;
+            $resultGoalieConfidence = (max(0.0, min(100.0, (float) ($awayGoalie['confidence_score'] ?? 50)))
+                + max(0.0, min(100.0, (float) ($homeGoalie['confidence_score'] ?? 50)))) / 2;
+            $response['_confidence_components'] = [
+                'skater' => round($resultSkaterConfidence, 4),
+                'goalie' => round($resultGoalieConfidence, 4),
+            ];
+        }
 
         if (! isset($overrides['_stack_engine_id']) && ! array_key_exists('sat_model_run_id', $overrides)
             && ! $response['pick_qualified']) {

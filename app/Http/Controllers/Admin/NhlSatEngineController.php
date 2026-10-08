@@ -38,8 +38,9 @@ class NhlSatEngineController extends Controller
         ])->header('Cache-Control', 'no-store');
     }
 
-    /** Predict one game with the selected member and this stack's saved model override. */
+    /** Predict one game with the selected member's production or test model. */
     public function predictGame(
+        Request $request,
         NhlSatEngineStack $stack,
         NhlSatEngineStackMember $member,
         int $game,
@@ -49,7 +50,20 @@ class NhlSatEngineController extends Controller
         abort_unless(DB::table('nhl_games')->where('nhl_game_id', $game)
             ->where('game_date', now('America/Toronto')->toDateString())->exists(), 404);
 
-        return response()->json($payload->previewEngine($game, $member->engine, $stack->production_model_run_id))
+        $input = $request->validate(['model_source' => ['sometimes', Rule::in(['production', 'test'])]]);
+        $source = $input['model_source'] ?? 'production';
+        $engine = $member->engine;
+        $modelId = $source === 'test' ? $engine->test_model_run_id
+            : ($stack->production_model_run_id ?? $engine->model_run_id);
+        if ($modelId === null) {
+            throw ValidationException::withMessages(['model_source' => 'This Engine has no saved model for the selected source.']);
+        }
+
+        return response()->json([
+            ...$payload->previewEngine($game, $engine, (int) $modelId),
+            'model_source' => $source,
+            'model_name' => NhlModelRun::query()->whereKey($modelId)->value('name'),
+        ])
             ->header('Cache-Control', 'no-store');
     }
 
