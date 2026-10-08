@@ -955,7 +955,30 @@ Every successful prediction payload includes `prediction_available`. Consumers
 must check this field before reading prediction or market output.
 
 `meta.cache` is `fresh` for a current cached or synchronous response and `stale`
-only when DynastyIQ has queued a rebuild of a response no more than five minutes old.
+only when DynastyIQ has queued a rebuild of a response no more than five minutes old
+whose input fingerprint still matches. Engine settings, stack membership/order,
+default-stack selection and production-model changes invalidate previous responses;
+an outdated fingerprint is never served as stale.
+
+To request a new prediction immediately, send `force_refresh=1`:
+
+```text
+GET /api/nhl-game-predictions?nhl_game_id=2026020001&force_refresh=1
+```
+
+This optional boolean accepts `1`/`0` query values, defaults to false, and uses
+the existing bearer-token authentication and `nhl-stats:read` scope. It bypasses
+the prediction response cache, not underlying provider/source-data caches, and
+does not alter engine qualification. Use it after prediction-code changes as well
+as for manual refreshes. Successful refreshes update the normal cache entry.
+
+Only one build per game runs under the shared 600-second build-lock lease.
+If a build is already running, or inputs change during a build, the endpoint
+returns HTTP `503` with `Retry-After: 2` rather than an outdated prediction.
+Consumers should retain their existing saved result and retry after that delay
+with bounded retries. They must not interpret this error as an unqualified pick.
+Force refresh can still take the full prediction-build time. This option does
+not create a G8 UI control automatically.
 
 During preseason (`game_type: 1`), DynastyIQ publishes a prediction only when
 both teams have a complete official NHL roster or a complete reported lineup

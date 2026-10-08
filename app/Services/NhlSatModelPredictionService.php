@@ -58,6 +58,14 @@ class NhlSatModelPredictionService
      */
     public function inputs(int $modelId, ?array $ids = null): Collection
     {
+        return app(NhlPredictionInputContext::class)->remember(
+            __METHOD__, [$modelId, $ids], fn (): Collection => $this->loadInputs($modelId, $ids)
+        );
+    }
+
+    /** Resolve an uncached input snapshot; see inputs() for its input contract. */
+    private function loadInputs(int $modelId, ?array $ids = null): Collection
+    {
         if ($ids === []) {
             return collect();
         }
@@ -216,6 +224,20 @@ class NhlSatModelPredictionService
         float $teamSeconds,
         int $skatersOnIce
     ): Collection {
+        return app(NhlPredictionInputContext::class)->remember(
+            __METHOD__, [$modelId, $ids, $profileType, $strength, $teamSeconds, $skatersOnIce], fn (): Collection => $this->loadHistoricalStrengthBuckets($modelId, $ids, $profileType, $strength, $teamSeconds, $skatersOnIce)
+        );
+    }
+
+    /** Resolve an uncached input snapshot; see historicalStrengthBuckets() for its input contract. */
+    private function loadHistoricalStrengthBuckets(
+        int $modelId,
+        array $ids,
+        string $profileType,
+        string $strength,
+        float $teamSeconds,
+        int $skatersOnIce
+    ): Collection {
         $strength = mb_strtolower($strength);
         $run = NhlModelRun::query()->find($modelId);
         $seasons = $run?->train_season_ids ?? [];
@@ -265,6 +287,14 @@ class NhlSatModelPredictionService
     /** League-average team seconds for one PP or PK opportunity lane. */
     public function leagueStrengthSeconds(int $modelId, string $strength, int $skatersOnIce): float
     {
+        return app(NhlPredictionInputContext::class)->remember(
+            __METHOD__, [$modelId, $strength, $skatersOnIce], fn (): float => $this->loadLeagueStrengthSeconds($modelId, $strength, $skatersOnIce)
+        );
+    }
+
+    /** Resolve an uncached input snapshot; see leagueStrengthSeconds() for its input contract. */
+    private function loadLeagueStrengthSeconds(int $modelId, string $strength, int $skatersOnIce): float
+    {
         $seasons = NhlModelRun::query()->find($modelId)?->train_season_ids ?? [];
         if ($seasons === []) {
             return 0.0;
@@ -285,6 +315,14 @@ class NhlSatModelPredictionService
      * @return Collection<int,array<string,mixed>>
      */
     public function defensePlayers(int $modelId, array $ids, string $targetSeason, string $toiVersion): Collection
+    {
+        return app(NhlPredictionInputContext::class)->remember(
+            __METHOD__, [$modelId, $ids, $targetSeason, $toiVersion], fn (): Collection => $this->loadDefensePlayers($modelId, $ids, $targetSeason, $toiVersion)
+        );
+    }
+
+    /** Resolve an uncached input snapshot; see defensePlayers() for its input contract. */
+    private function loadDefensePlayers(int $modelId, array $ids, string $targetSeason, string $toiVersion): Collection
     {
         $profiles = $this->historical->profiles($modelId, 'skater_defense', $ids)
             ->map(function (Collection $rows): Collection {

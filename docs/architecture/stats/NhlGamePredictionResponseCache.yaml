@@ -7,9 +7,11 @@ location:
 purpose: Serve bounded cached partner prediction responses without blocking requests on repeated full matchup assembly.
 rules:
   - Cache only the partner API path. Historical engine evaluations call the uncached payload builder and retain deterministic pinned inputs.
-  - A matching response is fresh for one minute. The last response may be served stale for at most five minutes only after an identical refresh is queued or already queued.
+  - A matching response is fresh for one minute. Only a response with the current fingerprint may be served stale for at most five minutes after an identical refresh is queued or already queued. Changed Engine settings, stack membership/order/default selection, or production model must never reuse a mismatched stale response.
   - A cache miss, expired stale response, or refresh-dispatch failure calculates synchronously and replaces the cached response on success.
-  - Cache identity includes normalized request inputs, default-stack membership/order/Engine metrics and model state, game/starter state, selected current-lineup evidence, and stored starting-goalie evidence. A refresh verifies its fingerprint before writing so changed inputs cannot replace a newer response.
+  - Cache identity includes normalized request inputs, default-stack membership/order/Engine metrics and model state, game/starter state, selected current-lineup evidence, and stored starting-goalie evidence. Both synchronous and queued builds verify their fingerprint before and after building; changed inputs prevent publication. Synchronous callers receive a retryable 503 rather than obsolete results.
+  - The authenticated force_refresh boolean bypasses existing response reuse and shares the ordinary cache entry. It is removed before constructing prediction inputs and cache identity. It does not bypass authentication, authorization, source-data caches or qualification rules.
+  - All synchronous, forced and queued builds use one atomic game-level lock with a 600-second lease. Contending HTTP requests receive 503 with Retry-After 2; queued refreshes yield without duplicating work. Successful queued refreshes recheck for an already-fresh result after acquiring the lock. Locks release in finally; process death relies on lease expiry. Deployment execution limits must keep builds below the lease.
   - Concurrent stale reads deduplicate refresh jobs. Refreshes use the existing lineups queue so discovery work on default cannot delay them.
   - Responses expose meta.cache as fresh or stale. Cached payloads retain all ordinary prediction fields and errors remain uncached.
 public_interface:

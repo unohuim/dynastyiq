@@ -48,6 +48,14 @@ class NhlGamePredictionPayload
      */
     public function build(int $nhlGameId, array $overrides = []): array
     {
+        return app(NhlPredictionInputContext::class)->run(
+            fn (): array => $this->buildPrediction($nhlGameId, $overrides)
+        );
+    }
+
+    /** @param array<string,mixed> $overrides @return array<string,mixed> */
+    private function buildPrediction(int $nhlGameId, array $overrides): array
+    {
         $game = $this->game($nhlGameId);
         $awayTeam = mb_strtoupper((string) $game->away_team_abbrev);
         $homeTeam = mb_strtoupper((string) $game->home_team_abbrev);
@@ -685,6 +693,7 @@ class NhlGamePredictionPayload
             $teamId = DB::table('nhl_teams')->where('abbrev', $teamAbbrev)->value('nhl_id');
             if ($teamId !== null) {
                 $this->lineupImporter->importOfficial($game, $teamAbbrev, (int) $teamId);
+                app(NhlPredictionInputContext::class)->forget(NhlAnticipatedLineupPayload::class . '::forGameTeam');
             }
         }
     }
@@ -910,6 +919,21 @@ class NhlGamePredictionPayload
      * @return array<string, mixed>
      */
     private function resolveGoalie(
+        string $targetSeasonId,
+        string $goalieProjectionVersion,
+        string $team,
+        mixed $providedGoalieId,
+        int $nhlGameId,
+        bool $storedBoxscore = false
+    ): array
+    {
+        return app(NhlPredictionInputContext::class)->remember(
+            __METHOD__, [$targetSeasonId, $goalieProjectionVersion, $team, $providedGoalieId, $nhlGameId, $storedBoxscore], fn (): array => $this->loadResolveGoalie($targetSeasonId, $goalieProjectionVersion, $team, $providedGoalieId, $nhlGameId, $storedBoxscore)
+        );
+    }
+
+    /** Resolve an uncached input snapshot; see resolveGoalie() for its input contract. */
+    private function loadResolveGoalie(
         string $targetSeasonId,
         string $goalieProjectionVersion,
         string $team,

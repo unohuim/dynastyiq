@@ -39,14 +39,20 @@ class NhlStartingGoalieSelector
         $game = DB::table('nhl_games')->where('nhl_game_id', $nhlGameId)->first();
         $boxscore = null;
         if ($game !== null) {
-            try {
-                $boxscore = Cache::remember('nhl:gamecenter:boxscore:' . $nhlGameId, 60, function () use ($nhlGameId): mixed {
-                    return Http::acceptJson()->connectTimeout(5)->timeout(15)
-                        ->get($this->getApiUrl('nhl', 'boxscore', ['gameId' => $nhlGameId]))->throw()->json();
-                });
-            } catch (\Throwable $exception) {
-                report($exception);
-            }
+            $boxscore = app(NhlPredictionInputContext::class)->remember(
+                __METHOD__ . ':boxscore', [$nhlGameId], function () use ($nhlGameId): mixed {
+                    try {
+                        return Cache::remember('nhl:gamecenter:boxscore:' . $nhlGameId, 60, function () use ($nhlGameId): mixed {
+                            return Http::acceptJson()->connectTimeout(5)->timeout(15)
+                                ->get($this->getApiUrl('nhl', 'boxscore', ['gameId' => $nhlGameId]))->throw()->json();
+                        });
+                    } catch (\Throwable $exception) {
+                        report($exception);
+
+                        return null;
+                    }
+                }
+            );
         }
         $validBoxscore = is_array($boxscore) && (int) ($boxscore['id'] ?? 0) === $nhlGameId;
         $state = mb_strtoupper((string) ($validBoxscore ? ($boxscore['gameState'] ?? '') : ($game->game_state ?? '')));

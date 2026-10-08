@@ -19,6 +19,7 @@ class NhlGamePredictionsController extends Controller
     {
         $input = $request->validate([
             'nhl_game_id' => ['required', 'integer'],
+            'force_refresh' => ['sometimes', 'boolean'],
             'source_season_id' => ['nullable', 'digits:8'],
             'target_season_id' => ['nullable', 'digits:8'],
             'projection_version' => ['nullable', 'string', 'max:80'],
@@ -36,7 +37,10 @@ class NhlGamePredictionsController extends Controller
             'total_lines.*' => ['numeric', 'gt:0'],
         ]);
 
+        $forceRefresh = (bool) ($input['force_refresh'] ?? false);
+        unset($input['force_refresh']);
+
         return response()->json($cache->respond((int) $input['nhl_game_id'], $input,
-            fn (): array => $payload->build((int) $input['nhl_game_id'], $input)), 200, [], JSON_PRESERVE_ZERO_FRACTION);
+            fn (): array => $payload->build((int) $input['nhl_game_id'], $input), $forceRefresh), 200, [], JSON_PRESERVE_ZERO_FRACTION);
     }
 }

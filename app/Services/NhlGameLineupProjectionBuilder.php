@@ -50,6 +50,14 @@ final class NhlGameLineupProjectionBuilder
      */
     public function projectedRosterPreview(string $targetSeasonId, string $toiProjectionVersion, string $team, ?array $rosterIds = null): array
     {
+        return app(NhlPredictionInputContext::class)->remember(
+            __METHOD__, [$targetSeasonId, $toiProjectionVersion, $team, $rosterIds], fn (): array => $this->loadProjectedRosterPreview($targetSeasonId, $toiProjectionVersion, $team, $rosterIds)
+        );
+    }
+
+    /** Resolve an uncached input snapshot; see projectedRosterPreview() for its input contract. */
+    private function loadProjectedRosterPreview(string $targetSeasonId, string $toiProjectionVersion, string $team, ?array $rosterIds = null): array
+    {
         $rows = DB::table('nhl_player_toi_projections as toi')
             ->leftJoin('players', 'players.nhl_id', '=', 'toi.player_id')
             ->where('toi.target_season_id', $targetSeasonId)
@@ -151,6 +159,14 @@ final class NhlGameLineupProjectionBuilder
      */
     public function applySatModel(array $players, ?int $modelId, string $targetSeasonId, int $gameType): array
     {
+        return app(NhlPredictionInputContext::class)->remember(
+            __METHOD__, [$players, $modelId, $targetSeasonId, $gameType], fn (): array => $this->loadApplySatModel($players, $modelId, $targetSeasonId, $gameType)
+        );
+    }
+
+    /** Resolve an uncached input snapshot; see applySatModel() for its input contract. */
+    private function loadApplySatModel(array $players, ?int $modelId, string $targetSeasonId, int $gameType): array
+    {
         $nhlIdFor = fn (array $player): ?int => isset($player['nhl_player_id']) ? (int) $player['nhl_player_id']
             : (array_key_exists('nhl_player_id', $player) ? null : ($player['player_id'] ?? null));
         $ids = collect($players)->map($nhlIdFor)->filter()->unique()->values()->all();
@@ -229,6 +245,20 @@ final class NhlGameLineupProjectionBuilder
 
     /** @param array<string,mixed>|null $lineup @return array<int,array<string,mixed>>|null */
     public function build(
+        ?array $lineup,
+        string $sourceSeasonId,
+        string $targetSeasonId,
+        string $projectionVersion,
+        string $toiProjectionVersion,
+        int $gameType = 2
+    ): ?array {
+        return app(NhlPredictionInputContext::class)->remember(
+            __METHOD__, [$lineup, $sourceSeasonId, $targetSeasonId, $projectionVersion, $toiProjectionVersion, $gameType], fn (): ?array => $this->loadBuild($lineup, $sourceSeasonId, $targetSeasonId, $projectionVersion, $toiProjectionVersion, $gameType)
+        );
+    }
+
+    /** Resolve an uncached input snapshot; see build() for its input contract. */
+    private function loadBuild(
         ?array $lineup,
         string $sourceSeasonId,
         string $targetSeasonId,
@@ -422,6 +452,19 @@ final class NhlGameLineupProjectionBuilder
      * @return array<int,array<string,mixed>>|null
      */
     public function buildFromRosterIds(
+        array $rosterIds,
+        string $sourceSeasonId,
+        string $targetSeasonId,
+        string $projectionVersion,
+        string $toiProjectionVersion
+    ): ?array {
+        return app(NhlPredictionInputContext::class)->remember(
+            __METHOD__, [$rosterIds, $sourceSeasonId, $targetSeasonId, $projectionVersion, $toiProjectionVersion], fn (): ?array => $this->loadBuildFromRosterIds($rosterIds, $sourceSeasonId, $targetSeasonId, $projectionVersion, $toiProjectionVersion)
+        );
+    }
+
+    /** Resolve an uncached input snapshot; see buildFromRosterIds() for its input contract. */
+    private function loadBuildFromRosterIds(
         array $rosterIds,
         string $sourceSeasonId,
         string $targetSeasonId,

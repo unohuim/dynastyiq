@@ -1,5 +1,10 @@
 # Architecture Inventory
 
+Game prediction builds reuse copied input snapshots across stack engines and clear
+them after each outer build. Different models and input arguments remain isolated;
+engine simulations and qualification are not cached. Authority:
+`docs/architecture/stats/NhlPredictionInputContext.yaml`.
+
 Admin SAT Models includes a chronological next-game shot-bucket evaluation.
 Frozen baselines are compared with prior appearances by strength using durable,
 single-player checkpoints, paged game preparation, stale-job fencing, and lightweight

@@ -27,6 +27,7 @@ class AppServiceProvider extends ServiceProvider
     {
         $this->app->scoped(\App\Services\NhlHistoricalPredictionService::class);
         $this->app->scoped(\App\Services\NhlSatModelPredictionService::class);
+        $this->app->scoped(\App\Services\NhlPredictionInputContext::class);
     }
 
     /**

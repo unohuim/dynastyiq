@@ -220,6 +220,14 @@ class NhlHistoricalPredictionService
      */
     public function profiles(int $modelId, string $type, array $ids): Collection
     {
+        return app(NhlPredictionInputContext::class)->remember(
+            __METHOD__, [$modelId, $type, $ids], fn (): Collection => $this->loadProfiles($modelId, $type, $ids)
+        );
+    }
+
+    /** Resolve an uncached input snapshot; see profiles() for its input contract. */
+    private function loadProfiles(int $modelId, string $type, array $ids): Collection
+    {
         if (! Schema::hasTable('nhl_sat_model_entity_profile_buckets')) {
             return collect();
         }

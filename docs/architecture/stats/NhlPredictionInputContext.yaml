@@ -1,0 +1,27 @@
+name: NHL Prediction Input Context
+type: Prediction-Build Input Snapshot
+location:
+  - app/Services/NhlPredictionInputContext.php
+  - app/Services/NhlGamePredictionPayload.php
+  - app/Providers/AppServiceProvider.php
+purpose: Reuse identical expensive inputs across stack engines without sharing engine-specific results or persisting additional caches.
+when_to_use:
+  - Resolving model, roster, historical bucket, opportunity and goalie inputs during one game prediction build.
+when_not_to_use:
+  - Caching engine simulations, qualification decisions or presentation confidence.
+  - Sharing snapshots across separate predictions, requests or queue jobs.
+rules:
+  - The scoped context is active only within a game payload build and its recursive engine delegation. The outer build clears all snapshots in finally, including on failure. Reads outside an active build remain uncached.
+  - Keys contain the input operation and all arguments affecting its result, including model, roster, season, projection version, strength and opportunity where applicable. Engines using different models never share model-dependent entries.
+  - Cached arrays, collections and plain bucket objects are copied recursively before use. Engine-specific mutation must not modify another engine's inputs.
+  - Valid zeros, empty collections and null input results are reusable. Thrown resolver exceptions are not stored.
+  - Goalie NHL boxscore lookup failures resolve to null under the existing fallback policy and are reused only within the build, preventing repeated provider waits. A subsequent build can retry.
+  - Intentional preseason lineup imports invalidate the lineup snapshot before rereading current evidence.
+  - Engine ordering, independent weights, qualification, confidence, persistent response cache and queue dispatch behavior remain governed by their existing services and contracts.
+public_interface:
+  - NhlPredictionInputContext::run
+  - NhlPredictionInputContext::remember
+  - NhlPredictionInputContext::forget
+example_usage: |
+  Wrap one payload build in run(). Its engines reuse leagueStrengthSeconds
+  for the same model, strength and skater count, but simulate independently.

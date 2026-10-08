@@ -157,6 +157,15 @@ class NhlAnticipatedLineupPayload
     /** @return array<string,mixed>|null */
     public function forGameTeam(int $nhlGameId, string $teamAbbrev, bool $requireCorroboration = true): ?array
     {
+        return app(NhlPredictionInputContext::class)->remember(
+            __METHOD__, [$nhlGameId, $teamAbbrev, $requireCorroboration],
+            fn (): ?array => $this->loadGameTeam($nhlGameId, $teamAbbrev, $requireCorroboration)
+        );
+    }
+
+    /** Resolve current lineup evidence without the prediction-local snapshot. */
+    private function loadGameTeam(int $nhlGameId, string $teamAbbrev, bool $requireCorroboration): ?array
+    {
         $row = NhlCurrentLineup::query()->with([
             'observation.players',
             'observation.source',
