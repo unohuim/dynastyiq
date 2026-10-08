@@ -27,7 +27,7 @@ const sortedPredictions = computed(() => [...predictionRows.value].sort((a, b) =
 const predictionColumns = [
     ['game', 'Game'], ['model', 'Model'], ['score', 'Predicted score'], ['spread', 'Spread'],
     ['skater', 'Skater confidence'], ['goalie', 'Goalie confidence'],
-    ['internal', 'Internal confidence'], ['presentation', 'Presentation confidence'], ['qualified', 'Pick qualified'],
+    ['internal', 'Internal confidence'], ['presentation', 'Presentation confidence'], ['qualified', 'Test-qualified pick'],
 ];
 const sortPredictions = key => {
     predictionSort.value = { key, direction: predictionSort.value.key === key ? -predictionSort.value.direction : 1 };
@@ -124,7 +124,7 @@ const reorder = (from, to) => {
             <div class="flex flex-wrap items-center justify-between gap-3 p-5">
                 <div><h2 id="predictions-title" class="text-lg font-semibold">Predict today · {{ predictionMember.engine.name }}</h2>
                     <p class="mt-1 text-sm text-gray-600">{{ predictionDate }} · America/Toronto · Production versus saved Test/Train model · Same Engine settings</p>
-                    <p class="mt-1 text-xs text-gray-500">Selected Engine only. Scores are away–home; spread is the absolute goal difference.</p></div>
+                    <p class="mt-1 text-xs text-gray-500">Test/Train decides qualification; Production supplies the live outcome. Scores are away–home; spread is the absolute goal difference.</p></div>
                 <button v-if="predicting" type="button" class="rounded-lg border border-gray-300 px-3 py-2 text-sm" @click="cancelPredictions">Stop remaining games</button>
             </div>
             <p v-if="predictionError" role="alert" class="px-5 pb-4 text-sm text-red-700">{{ predictionError }}</p>

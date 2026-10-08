@@ -6,6 +6,7 @@ location:
   - app/Http/Controllers/Api/NhlGamePredictionsController.php
 purpose: Serve bounded cached partner prediction responses without blocking requests on repeated full matchup assembly.
 rules:
+  - Fingerprints include every member's Test Model update timestamp as well as Production Model state. Qualification-policy changes version the response-cache namespace so earlier selection results cannot be reused.
   - Cache only the partner API path. Historical engine evaluations call the uncached payload builder and retain deterministic pinned inputs.
   - A matching response is fresh for one minute. Only a response with the current fingerprint may be served stale for at most five minutes after an identical refresh is queued or already queued. Changed Engine settings, stack membership/order/default selection, or production model must never reuse a mismatched stale response.
   - A cache miss, expired stale response, or refresh-dispatch failure calculates synchronously and replaces the cached response on success.

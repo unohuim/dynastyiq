@@ -16,9 +16,6 @@ use Illuminate\Validation\ValidationException;
  */
 class NhlGamePredictionPayload
 {
-    private const TONIGHT_THIRD_ENGINE_OVERRIDE_START_DATE = '2026-10-06';
-    private const TONIGHT_THIRD_ENGINE_OVERRIDE_END_DATE = '2026-10-07';
-    private const TONIGHT_THIRD_ENGINE_MINIMUM_GAP = 0.30;
 
     private const PRESEASON_GAME_TYPE = 1;
     private const GOALIE_GSAX_WEIGHT = 0.70;
@@ -58,12 +55,7 @@ class NhlGamePredictionPayload
      */
     public function previewEngine(int $gameId, NhlSatEngine $engine, ?int $productionModelId): array
     {
-        $result = $this->build($gameId, [
-            '_stack_engine_id' => $engine->id,
-            'sat_model_run_id' => $productionModelId ?? $engine->model_run_id,
-            'engine_weights' => $engine->settings,
-            '_include_confidence_components' => true,
-        ]);
+        $result = $this->evaluateEngine($gameId, $engine, $productionModelId, ['_include_confidence_components' => true]);
         $internal = data_get($result, 'prediction.confidence_score');
         if (($result['prediction_available'] ?? false) === true) {
             $qualified = (bool) $result['pick_qualified'];
@@ -80,9 +72,37 @@ class NhlGamePredictionPayload
             'skater_confidence' => data_get($result, '_confidence_components.skater'),
             'goalie_confidence' => data_get($result, '_confidence_components.goalie'),
             'model_run_id' => data_get($result, 'inputs.sat_model_run_id'),
+            'qualification_model_run_id' => $engine->test_model_run_id,
             'prediction' => $result['prediction'] ?? null,
             'reason' => $result['reason'] ?? null,
         ];
+    }
+
+    /**
+     * Qualify on test evidence and forecast on production evidence without changing either model.
+     *
+     * @param array<string,mixed> $overrides
+     * @return array<string,mixed>
+     */
+    private function evaluateEngine(int $gameId, NhlSatEngine $engine, ?int $productionModelId, array $overrides = []): array
+    {
+        if ($engine->test_model_run_id === null) {
+            throw ValidationException::withMessages(['test_model_run_id' => 'Engine qualification requires its saved test SAT model.']);
+        }
+
+        return app(NhlPredictionInputContext::class)->run(function () use ($gameId, $engine, $productionModelId, $overrides): array {
+            $testModelId = (int) $engine->test_model_run_id;
+            $forecastModelId = (int) ($productionModelId ?? $engine->model_run_id);
+            $inputs = [...$overrides, '_stack_engine_id' => $engine->id, 'engine_weights' => $engine->settings];
+            $test = $this->build($gameId, [...$inputs, 'sat_model_run_id' => $testModelId]);
+            $forecast = $forecastModelId === $testModelId ? $test
+                : $this->build($gameId, [...$inputs, 'sat_model_run_id' => $forecastModelId]);
+            $forecast['pick_qualified'] = ($test['prediction_available'] ?? false)
+                && ($forecast['prediction_available'] ?? false) && ($test['pick_qualified'] ?? false);
+            $forecast['inputs']['qualification_model_run_id'] = $testModelId;
+
+            return $forecast;
+        });
     }
 
     /** @param array<string,mixed> $overrides @return array<string,mixed> */
@@ -103,28 +123,11 @@ class NhlGamePredictionPayload
             if ($stack !== null) {
                 $fallback = null;
                 $fallbackEngine = null;
-                foreach ($stack->members->values() as $memberIndex => $member) {
+                foreach ($stack->members->values() as $member) {
                     $engine = $member->engine;
-                    $candidate = $this->build($nhlGameId, [...$overrides, '_stack_engine_id' => $engine->id,
-                        'sat_model_run_id' => $stack->production_model_run_id ?? $engine->model_run_id,
-                        'engine_weights' => $engine->settings]);
+                    $candidate = $this->evaluateEngine($nhlGameId, $engine, $stack->production_model_run_id, $overrides);
                     $fallback ??= $candidate;
                     $fallbackEngine ??= $engine;
-
-                    // This date-window exception still presents the foundation forecast. The third
-                    // Engine contributes only its qualification/presentation treatment.
-                    $tonightThirdEngineQualification = $this->tonightThirdEngineQualification($game, $memberIndex, $fallback);
-                    if ($tonightThirdEngineQualification !== null) {
-                        if (! $tonightThirdEngineQualification) {
-                            break;
-                        }
-
-                        $fallback['pick_qualified'] = true;
-                        $fallback = $this->withPresentationConfidence($fallback, $engine, true);
-                        $fallback['inputs']['stack_id'] = $stack->id;
-
-                        return $fallback;
-                    }
 
                     if (! $candidate['pick_qualified']) {
                         continue;
@@ -140,9 +143,7 @@ class NhlGamePredictionPayload
                     $fallback['pick_qualified'] = false;
                     $fallback['inputs']['engine_id'] = null;
                     $fallback['inputs']['stack_id'] = $stack->id;
-                    $presentationEngine = isset($tonightThirdEngineQualification)
-                        ? $engine
-                        : $fallbackEngine ?? $stack->members->first()->engine;
+                    $presentationEngine = $fallbackEngine ?? $stack->members->first()->engine;
                     $fallback = $this->withPresentationConfidence($fallback, $presentationEngine, false);
 
                     return $this->withUnqualifiedPresentationPenalty($fallback);
@@ -469,36 +470,6 @@ class NhlGamePredictionPayload
         }
 
         return $response;
-    }
-
-    /**
-     * Return the October 6–7, 2026 Engine 3 decision, or null for normal delegation.
-     *
-     * @param array<string, mixed> $candidate
-     */
-    private function tonightThirdEngineQualification(object $game, int $memberIndex, array $candidate): ?bool
-    {
-        if ($memberIndex !== 2) {
-            return null;
-        }
-
-        $gameDate = \Illuminate\Support\Carbon::parse($game->game_date)->toDateString();
-        $today = now('America/Toronto')->toDateString();
-
-        if ($gameDate < self::TONIGHT_THIRD_ENGINE_OVERRIDE_START_DATE
-            || $gameDate > self::TONIGHT_THIRD_ENGINE_OVERRIDE_END_DATE
-            || $today < self::TONIGHT_THIRD_ENGINE_OVERRIDE_START_DATE
-            || $today > self::TONIGHT_THIRD_ENGINE_OVERRIDE_END_DATE) {
-            return null;
-        }
-
-        $goalDifferential = data_get($candidate, 'prediction.goal_differential');
-
-        if (! is_numeric($goalDifferential)) {
-            return false;
-        }
-
-        return abs((float) $goalDifferential) > self::TONIGHT_THIRD_ENGINE_MINIMUM_GAP;
     }
 
     private function presentationConfidence(float $internalConfidence, NhlSatEngine $engine, bool $qualified): float
