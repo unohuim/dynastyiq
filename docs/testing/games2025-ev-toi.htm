@@ -1,0 +1,574 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Sep2026 research snapshot: Train, pregame context, first ten games and four Test-season blocks for five NHL skaters.">
+    <title>EV TOI/GP · Train vs Test · DynastyIQ research</title>
+    <!-- Local research report only. Tailwind Play CDN requires an internet connection. -->
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+</head>
+<body class="min-h-screen bg-slate-50 font-sans text-slate-900 antialiased">
+    <a href="#comparison" class="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:bg-white focus:p-4 focus:text-indigo-700">Skip to player comparison</a>
+    <header class="border-b border-slate-200 bg-white">
+        <div class="mx-auto flex max-w-screen-2xl flex-wrap items-center justify-between gap-3 px-5 py-5 sm:px-8">
+            <div class="flex items-center gap-4">
+                <span class="text-lg font-bold tracking-tight">DynastyIQ<span class="text-indigo-600">.</span></span>
+                <span class="border-l border-slate-200 pl-4 text-sm text-slate-500">Research notebook</span>
+            </div>
+            <span class="rounded-md bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-600">Local snapshot · 07 Oct 2026</span>
+        </div>
+    </header>
+    <main data-page="games2025-ev-toi-report" class="mx-auto max-w-screen-2xl space-y-8 px-5 py-8 sm:px-8 sm:py-12">
+        <section aria-labelledby="page-title">
+            <div class="mb-4 flex flex-wrap gap-2 text-xs font-medium">
+                <span class="rounded-md bg-indigo-50 px-2.5 py-1 text-indigo-700">2025–26 Test season</span>
+                <span class="rounded-md bg-white px-2.5 py-1 text-slate-600 ring-1 ring-inset ring-slate-200">Even strength</span>
+                <span class="rounded-md bg-white px-2.5 py-1 text-slate-600 ring-1 ring-inset ring-slate-200">EV minutes per game</span>
+            </div>
+            <h1 id="page-title" class="text-3xl font-semibold tracking-tight sm:text-4xl">EV ice time · Train meets Test</h1>
+            <p class="mt-3 max-w-3xl text-base leading-7 text-slate-600">Train, pregame context and actual game results. The same players and windows, with one metric: <strong class="font-semibold text-slate-900">EV minutes per game played.</strong></p>
+        </section>
+
+        <section id="comparison" aria-labelledby="comparison-title" class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+            <div class="flex flex-wrap items-center justify-between gap-5 px-5 py-5 sm:px-6">
+                <div>
+                    <h2 id="comparison-title" class="text-lg font-semibold tracking-tight">First ten games</h2>
+                    <p id="row-status" data-role="row-status" role="status" aria-live="polite" class="mt-1 text-sm text-slate-500">5 players · league reference pinned below</p>
+                </div>
+                <div class="flex w-full flex-wrap items-end gap-2 sm:w-auto">
+                    <div class="w-full sm:w-64">
+                        <label for="player-search" class="mb-1.5 block text-xs font-medium text-slate-600">Find a player</label>
+                        <input id="player-search" data-role="player-search" type="search" placeholder="Search by name…" autocomplete="off" disabled class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:border-indigo-500 focus:outline-2 focus:outline-indigo-100 disabled:opacity-50">
+                    </div>
+                    <button id="reset" data-role="reset" type="button" disabled class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-indigo-600 disabled:opacity-50 transition-colors duration-150 motion-reduce:transition-none">Reset</button>
+                </div>
+            </div>
+            <div class="flex flex-wrap items-center justify-between gap-3 border-y border-slate-100 bg-slate-50 px-5 py-3 text-xs text-slate-500 sm:px-6">
+                <p id="table-help">Scroll sideways for all games. Names and Test stay pinned. Select any header to sort players.</p>
+                <div class="flex items-center gap-2">
+                    <button type="button" data-scroll="-1" disabled aria-label="Scroll table left" class="rounded border border-slate-200 bg-white px-3 py-1 text-slate-700 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-indigo-600 disabled:opacity-40">←</button>
+                    <button type="button" data-scroll="1" disabled aria-label="Scroll table right" class="rounded border border-slate-200 bg-white px-3 py-1 text-slate-700 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-indigo-600 disabled:opacity-40">→</button>
+                </div>
+            </div>
+            <div id="table-scroll" data-role="table-scroll" tabindex="0" role="region" aria-label="Scrollable player comparison" aria-describedby="table-help" class="max-h-[65vh] overflow-auto focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600">
+                <table class="w-full min-w-[1550px] border-separate border-spacing-0">
+                    <caption class="sr-only">EV TOI/GP: Name, Train, Last 5, Last 10, Last 20, Last season, G1 through G10, Test.</caption>
+                    <thead class="sticky top-0 z-20">
+                        <tr>
+                            <th scope="col" aria-sort="none" class="border-b border-slate-200 sticky left-0 z-30 min-w-48 bg-slate-50 text-left">
+                                <button type="button" data-sort="0" title="Player name" disabled class="flex w-full items-center justify-between gap-2 whitespace-nowrap px-4 py-4 text-xs font-semibold focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 enabled:cursor-pointer enabled:hover:text-indigo-700 transition-colors duration-150 motion-reduce:transition-none">Name<span data-sort-icon aria-hidden="true" class="text-slate-400">↕</span></button>
+                            </th>
+                            <th scope="col" aria-sort="none" class="border-b border-slate-200 bg-slate-50 text-slate-600">
+                                <button type="button" data-sort="1" title="Pooled 2022–23 through 2024–25" disabled class="flex w-full items-center justify-end gap-2 whitespace-nowrap px-4 py-4 text-xs font-semibold focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 enabled:cursor-pointer enabled:hover:text-indigo-700 transition-colors duration-150 motion-reduce:transition-none">Train<span data-sort-icon aria-hidden="true" class="text-slate-400">↕</span></button>
+                            </th>
+                            <th scope="col" aria-sort="none" class="border-b border-slate-200 bg-slate-50 text-slate-600">
+                                <button type="button" data-sort="2" title="Five appearances before G1" disabled class="flex w-full items-center justify-end gap-2 whitespace-nowrap px-4 py-4 text-xs font-semibold focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 enabled:cursor-pointer enabled:hover:text-indigo-700 transition-colors duration-150 motion-reduce:transition-none">Last 5<span data-sort-icon aria-hidden="true" class="text-slate-400">↕</span></button>
+                            </th>
+                            <th scope="col" aria-sort="none" class="border-b border-slate-200 bg-slate-50 text-slate-600">
+                                <button type="button" data-sort="3" title="Ten appearances before G1" disabled class="flex w-full items-center justify-end gap-2 whitespace-nowrap px-4 py-4 text-xs font-semibold focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 enabled:cursor-pointer enabled:hover:text-indigo-700 transition-colors duration-150 motion-reduce:transition-none">Last 10<span data-sort-icon aria-hidden="true" class="text-slate-400">↕</span></button>
+                            </th>
+                            <th scope="col" aria-sort="none" class="border-b border-slate-200 bg-slate-50 text-slate-600">
+                                <button type="button" data-sort="4" title="Twenty appearances before G1" disabled class="flex w-full items-center justify-end gap-2 whitespace-nowrap px-4 py-4 text-xs font-semibold focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 enabled:cursor-pointer enabled:hover:text-indigo-700 transition-colors duration-150 motion-reduce:transition-none">Last 20<span data-sort-icon aria-hidden="true" class="text-slate-400">↕</span></button>
+                            </th>
+                            <th scope="col" aria-sort="none" class="border-b border-slate-200 bg-slate-50 text-slate-600">
+                                <button type="button" data-sort="5" title="2024–25 regular season" disabled class="flex w-full items-center justify-end gap-2 whitespace-nowrap px-4 py-4 text-xs font-semibold focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 enabled:cursor-pointer enabled:hover:text-indigo-700 transition-colors duration-150 motion-reduce:transition-none">Last season<span data-sort-icon aria-hidden="true" class="text-slate-400">↕</span></button>
+                            </th>
+                            <th scope="col" aria-sort="none" class="border-b border-slate-200 bg-slate-50 text-slate-600">
+                                <button type="button" data-sort="6" title="Actual EV TOI/GP in Test appearance 1" disabled class="flex w-full items-center justify-end gap-2 whitespace-nowrap px-4 py-4 text-xs font-semibold focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 enabled:cursor-pointer enabled:hover:text-indigo-700 transition-colors duration-150 motion-reduce:transition-none">G1<span data-sort-icon aria-hidden="true" class="text-slate-400">↕</span></button>
+                            </th>
+                            <th scope="col" aria-sort="none" class="border-b border-slate-200 bg-slate-50 text-slate-600">
+                                <button type="button" data-sort="7" title="Actual EV TOI/GP in Test appearance 2" disabled class="flex w-full items-center justify-end gap-2 whitespace-nowrap px-4 py-4 text-xs font-semibold focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 enabled:cursor-pointer enabled:hover:text-indigo-700 transition-colors duration-150 motion-reduce:transition-none">G2<span data-sort-icon aria-hidden="true" class="text-slate-400">↕</span></button>
+                            </th>
+                            <th scope="col" aria-sort="none" class="border-b border-slate-200 bg-slate-50 text-slate-600">
+                                <button type="button" data-sort="8" title="Actual EV TOI/GP in Test appearance 3" disabled class="flex w-full items-center justify-end gap-2 whitespace-nowrap px-4 py-4 text-xs font-semibold focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 enabled:cursor-pointer enabled:hover:text-indigo-700 transition-colors duration-150 motion-reduce:transition-none">G3<span data-sort-icon aria-hidden="true" class="text-slate-400">↕</span></button>
+                            </th>
+                            <th scope="col" aria-sort="none" class="border-b border-slate-200 bg-slate-50 text-slate-600">
+                                <button type="button" data-sort="9" title="Actual EV TOI/GP in Test appearance 4" disabled class="flex w-full items-center justify-end gap-2 whitespace-nowrap px-4 py-4 text-xs font-semibold focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 enabled:cursor-pointer enabled:hover:text-indigo-700 transition-colors duration-150 motion-reduce:transition-none">G4<span data-sort-icon aria-hidden="true" class="text-slate-400">↕</span></button>
+                            </th>
+                            <th scope="col" aria-sort="none" class="border-b border-slate-200 bg-slate-50 text-slate-600">
+                                <button type="button" data-sort="10" title="Actual EV TOI/GP in Test appearance 5" disabled class="flex w-full items-center justify-end gap-2 whitespace-nowrap px-4 py-4 text-xs font-semibold focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 enabled:cursor-pointer enabled:hover:text-indigo-700 transition-colors duration-150 motion-reduce:transition-none">G5<span data-sort-icon aria-hidden="true" class="text-slate-400">↕</span></button>
+                            </th>
+                            <th scope="col" aria-sort="none" class="border-b border-slate-200 bg-slate-50 text-slate-600">
+                                <button type="button" data-sort="11" title="Actual EV TOI/GP in Test appearance 6" disabled class="flex w-full items-center justify-end gap-2 whitespace-nowrap px-4 py-4 text-xs font-semibold focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 enabled:cursor-pointer enabled:hover:text-indigo-700 transition-colors duration-150 motion-reduce:transition-none">G6<span data-sort-icon aria-hidden="true" class="text-slate-400">↕</span></button>
+                            </th>
+                            <th scope="col" aria-sort="none" class="border-b border-slate-200 bg-slate-50 text-slate-600">
+                                <button type="button" data-sort="12" title="Actual EV TOI/GP in Test appearance 7" disabled class="flex w-full items-center justify-end gap-2 whitespace-nowrap px-4 py-4 text-xs font-semibold focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 enabled:cursor-pointer enabled:hover:text-indigo-700 transition-colors duration-150 motion-reduce:transition-none">G7<span data-sort-icon aria-hidden="true" class="text-slate-400">↕</span></button>
+                            </th>
+                            <th scope="col" aria-sort="none" class="border-b border-slate-200 bg-slate-50 text-slate-600">
+                                <button type="button" data-sort="13" title="Actual EV TOI/GP in Test appearance 8" disabled class="flex w-full items-center justify-end gap-2 whitespace-nowrap px-4 py-4 text-xs font-semibold focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 enabled:cursor-pointer enabled:hover:text-indigo-700 transition-colors duration-150 motion-reduce:transition-none">G8<span data-sort-icon aria-hidden="true" class="text-slate-400">↕</span></button>
+                            </th>
+                            <th scope="col" aria-sort="none" class="border-b border-slate-200 bg-slate-50 text-slate-600">
+                                <button type="button" data-sort="14" title="Actual EV TOI/GP in Test appearance 9" disabled class="flex w-full items-center justify-end gap-2 whitespace-nowrap px-4 py-4 text-xs font-semibold focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 enabled:cursor-pointer enabled:hover:text-indigo-700 transition-colors duration-150 motion-reduce:transition-none">G9<span data-sort-icon aria-hidden="true" class="text-slate-400">↕</span></button>
+                            </th>
+                            <th scope="col" aria-sort="none" class="border-b border-slate-200 bg-slate-50 text-slate-600">
+                                <button type="button" data-sort="15" title="Actual EV TOI/GP in Test appearance 10" disabled class="flex w-full items-center justify-end gap-2 whitespace-nowrap px-4 py-4 text-xs font-semibold focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 enabled:cursor-pointer enabled:hover:text-indigo-700 transition-colors duration-150 motion-reduce:transition-none">G10<span data-sort-icon aria-hidden="true" class="text-slate-400">↕</span></button>
+                            </th>
+                            <th scope="col" aria-sort="none" class="border-b border-slate-200 sticky right-0 z-20 bg-indigo-50 text-indigo-900">
+                                <button type="button" data-sort="16" title="Pooled G1–G10, not the full season" disabled class="flex w-full items-center justify-end gap-2 whitespace-nowrap px-4 py-4 text-xs font-semibold focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 enabled:cursor-pointer enabled:hover:text-indigo-700 transition-colors duration-150 motion-reduce:transition-none">Test<span data-sort-icon aria-hidden="true" class="text-slate-400">↕</span></button>
+                            </th>
+                        </tr>
+                    </thead>
+                    <tbody id="players" data-role="players">
+                        <tr data-player-row data-name="filip forsberg" class="group bg-white hover:bg-slate-50">
+                            <th scope="row" data-value="Forsberg" class="sticky left-0 z-10 border-b border-slate-100 bg-white group-hover:bg-slate-50 px-5 py-5 text-left">
+                                <span class="block whitespace-nowrap text-sm font-semibold text-slate-900">Filip Forsberg</span>
+                                <span class="mt-1 block whitespace-nowrap text-xs font-normal text-slate-500">Nashville · Skater</span>
+                            </th>
+                            <td data-value="15.20" title="train: 201 measured / 208 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums font-semibold text-slate-900"><span class="block">15.20</span><span class="mt-1 block text-xs font-normal text-slate-500">201/208 measured</span></td>
+                            <td data-value="14.39" title="last_5: 5 measured / 5 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">14.39</span></td>
+                            <td data-value="15.56" title="last_10: 10 measured / 10 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">15.56</span></td>
+                            <td data-value="15.11" title="last_20: 20 measured / 20 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">15.11</span></td>
+                            <td data-value="15.43" title="last_season: 82 measured / 82 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">15.43</span></td>
+                            <td data-value="15.40" title="g1: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900 border-l border-l-slate-200"><span class="block">15.40</span></td>
+                            <td data-value="13.53" title="g2: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">13.53</span></td>
+                            <td data-value="13.67" title="g3: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">13.67</span></td>
+                            <td data-value="15.23" title="g4: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">15.23</span></td>
+                            <td data-value="16.02" title="g5: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">16.02</span></td>
+                            <td data-value="17.75" title="g6: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">17.75</span></td>
+                            <td data-value="15.90" title="g7: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">15.90</span></td>
+                            <td data-value="12.83" title="g8: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">12.83</span></td>
+                            <td data-value="15.75" title="g9: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">15.75</span></td>
+                            <td data-value="18.85" title="g10: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">18.85</span></td>
+                            <td data-value="15.49" title="test10: 10 measured / 10 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums sticky right-0 z-10 bg-indigo-50 font-bold text-indigo-900"><span class="block">15.49</span></td>
+                        </tr>
+                        <tr data-player-row data-name="connor mcdavid" class="group bg-white hover:bg-slate-50">
+                            <th scope="row" data-value="McDavid" class="sticky left-0 z-10 border-b border-slate-100 bg-white group-hover:bg-slate-50 px-5 py-5 text-left">
+                                <span class="block whitespace-nowrap text-sm font-semibold text-slate-900">Connor McDavid</span>
+                                <span class="mt-1 block whitespace-nowrap text-xs font-normal text-slate-500">Edmonton · Skater</span>
+                            </th>
+                            <td data-value="17.86" title="train: 203 measured / 216 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums font-semibold text-slate-900"><span class="block">17.86</span><span class="mt-1 block text-xs font-normal text-slate-500">203/216 measured</span></td>
+                            <td data-value="15.69" title="last_5: 5 measured / 5 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">15.69</span></td>
+                            <td data-value="17.16" title="last_10: 10 measured / 10 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">17.16</span></td>
+                            <td data-value="18.53" title="last_20: 20 measured / 20 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">18.53</span></td>
+                            <td data-value="18.75" title="last_season: 67 measured / 67 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">18.75</span></td>
+                            <td data-value="19.00" title="g1: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900 border-l border-l-slate-200"><span class="block">19.00</span></td>
+                            <td data-value="15.37" title="g2: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">15.37</span></td>
+                            <td data-value="19.35" title="g3: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">19.35</span></td>
+                            <td data-value="19.22" title="g4: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">19.22</span></td>
+                            <td data-value="16.65" title="g5: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">16.65</span></td>
+                            <td data-value="20.08" title="g6: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">20.08</span></td>
+                            <td data-value="17.15" title="g7: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">17.15</span></td>
+                            <td data-value="14.95" title="g8: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">14.95</span></td>
+                            <td data-value="21.98" title="g9: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">21.98</span></td>
+                            <td data-value="19.47" title="g10: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">19.47</span></td>
+                            <td data-value="18.32" title="test10: 10 measured / 10 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums sticky right-0 z-10 bg-indigo-50 font-bold text-indigo-900"><span class="block">18.32</span></td>
+                        </tr>
+                        <tr data-player-row data-name="david pastrnak" class="group bg-white hover:bg-slate-50">
+                            <th scope="row" data-value="Pastrnak" class="sticky left-0 z-10 border-b border-slate-100 bg-white group-hover:bg-slate-50 px-5 py-5 text-left">
+                                <span class="block whitespace-nowrap text-sm font-semibold text-slate-900">David Pastrnak</span>
+                                <span class="mt-1 block whitespace-nowrap text-xs font-normal text-slate-500">Boston · Skater</span>
+                            </th>
+                            <td data-value="16.17" title="train: 227 measured / 236 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums font-semibold text-slate-900"><span class="block">16.17</span><span class="mt-1 block text-xs font-normal text-slate-500">227/236 measured</span></td>
+                            <td data-value="16.15" title="last_5: 5 measured / 5 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">16.15</span></td>
+                            <td data-value="16.27" title="last_10: 10 measured / 10 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">16.27</span></td>
+                            <td data-value="17.30" title="last_20: 20 measured / 20 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">17.30</span></td>
+                            <td data-value="16.72" title="last_season: 82 measured / 82 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">16.72</span></td>
+                            <td data-value="16.58" title="g1: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900 border-l border-l-slate-200"><span class="block">16.58</span></td>
+                            <td data-value="14.68" title="g2: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">14.68</span></td>
+                            <td data-value="14.37" title="g3: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">14.37</span></td>
+                            <td data-value="15.87" title="g4: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">15.87</span></td>
+                            <td data-value="18.58" title="g5: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">18.58</span></td>
+                            <td data-value="11.35" title="g6: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">11.35</span></td>
+                            <td data-value="16.07" title="g7: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">16.07</span></td>
+                            <td data-value="15.78" title="g8: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">15.78</span></td>
+                            <td data-value="17.60" title="g9: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">17.60</span></td>
+                            <td data-value="15.50" title="g10: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">15.50</span></td>
+                            <td data-value="15.64" title="test10: 10 measured / 10 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums sticky right-0 z-10 bg-indigo-50 font-bold text-indigo-900"><span class="block">15.64</span></td>
+                        </tr>
+                        <tr data-player-row data-name="blake coleman" class="group bg-white hover:bg-slate-50">
+                            <th scope="row" data-value="Coleman" class="sticky left-0 z-10 border-b border-slate-100 bg-white group-hover:bg-slate-50 px-5 py-5 text-left">
+                                <span class="block whitespace-nowrap text-sm font-semibold text-slate-900">Blake Coleman</span>
+                                <span class="mt-1 block whitespace-nowrap text-xs font-normal text-slate-500">Calgary · Skater</span>
+                            </th>
+                            <td data-value="14.31" title="train: 216 measured / 227 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums font-semibold text-slate-900"><span class="block">14.31</span><span class="mt-1 block text-xs font-normal text-slate-500">216/227 measured</span></td>
+                            <td data-value="14.65" title="last_5: 5 measured / 5 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">14.65</span></td>
+                            <td data-value="14.36" title="last_10: 10 measured / 10 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">14.36</span></td>
+                            <td data-value="14.36" title="last_20: 20 measured / 20 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">14.36</span></td>
+                            <td data-value="14.26" title="last_season: 82 measured / 82 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">14.26</span></td>
+                            <td data-value="16.07" title="g1: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900 border-l border-l-slate-200"><span class="block">16.07</span></td>
+                            <td data-value="11.93" title="g2: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">11.93</span></td>
+                            <td data-value="12.87" title="g3: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">12.87</span></td>
+                            <td data-value="15.18" title="g4: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">15.18</span></td>
+                            <td data-value="12.30" title="g5: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">12.30</span></td>
+                            <td data-value="13.87" title="g6: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">13.87</span></td>
+                            <td data-value="12.77" title="g7: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">12.77</span></td>
+                            <td data-value="15.55" title="g8: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">15.55</span></td>
+                            <td data-value="11.68" title="g9: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">11.68</span></td>
+                            <td data-value="15.10" title="g10: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">15.10</span></td>
+                            <td data-value="13.73" title="test10: 10 measured / 10 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums sticky right-0 z-10 bg-indigo-50 font-bold text-indigo-900"><span class="block">13.73</span></td>
+                        </tr>
+                        <tr data-player-row data-name="auston matthews" class="group bg-white hover:bg-slate-50">
+                            <th scope="row" data-value="Matthews" class="sticky left-0 z-10 border-b border-slate-100 bg-white group-hover:bg-slate-50 px-5 py-5 text-left">
+                                <span class="block whitespace-nowrap text-sm font-semibold text-slate-900">Auston Matthews</span>
+                                <span class="mt-1 block whitespace-nowrap text-xs font-normal text-slate-500">Toronto · Skater</span>
+                            </th>
+                            <td data-value="16.44" title="train: 205 measured / 218 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums font-semibold text-slate-900"><span class="block">16.44</span><span class="mt-1 block text-xs font-normal text-slate-500">205/218 measured</span></td>
+                            <td data-value="14.57" title="last_5: 5 measured / 5 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">14.57</span></td>
+                            <td data-value="15.46" title="last_10: 10 measured / 10 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">15.46</span></td>
+                            <td data-value="15.99" title="last_20: 20 measured / 20 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">15.99</span></td>
+                            <td data-value="15.83" title="last_season: 67 measured / 67 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">15.83</span></td>
+                            <td data-value="16.73" title="g1: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900 border-l border-l-slate-200"><span class="block">16.73</span></td>
+                            <td data-value="16.77" title="g2: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">16.77</span></td>
+                            <td data-value="18.07" title="g3: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">18.07</span></td>
+                            <td data-value="16.93" title="g4: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">16.93</span></td>
+                            <td data-value="18.02" title="g5: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">18.02</span></td>
+                            <td data-value="17.95" title="g6: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">17.95</span></td>
+                            <td data-value="18.22" title="g7: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">18.22</span></td>
+                            <td data-value="18.40" title="g8: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">18.40</span></td>
+                            <td data-value="16.63" title="g9: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">16.63</span></td>
+                            <td data-value="13.65" title="g10: 1 measured / 1 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">13.65</span></td>
+                            <td data-value="17.14" title="test10: 10 measured / 10 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums sticky right-0 z-10 bg-indigo-50 font-bold text-indigo-900"><span class="block">17.14</span></td>
+                        </tr>
+                        <tr id="empty-state" data-role="empty-state" hidden>
+                            <td colspan="17" class="px-6 py-10 text-left">
+                                <p class="font-medium text-slate-900">No players match your search.</p>
+                                <button id="clear-search" data-role="clear-search" type="button" class="mt-2 text-sm font-medium text-indigo-700 underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-indigo-600">Clear search</button>
+                            </td>
+                        </tr>
+                    </tbody>
+                    <tfoot>
+                        <tr  class="group bg-slate-100 font-semibold">
+                            <th scope="row" data-value="League average" class="sticky left-0 z-10 border-b border-slate-100 bg-slate-100 px-5 py-5 text-left">
+                                <span class="block whitespace-nowrap text-sm font-semibold text-slate-900">League average</span>
+                                <span class="mt-1 block whitespace-nowrap text-xs font-normal text-slate-500">All available skaters</span>
+                            </th>
+                            <td data-value="14.11" title="train: 128,594 measured / 136,114 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums font-semibold text-slate-900"><span class="block">14.11</span><span class="mt-1 block text-xs font-normal text-slate-500">128,594/136,114 measured</span></td>
+                            <td data-value="13.89" title="last_5: 3,961 measured / 3,974 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">13.89</span><span class="mt-1 block text-xs font-normal text-slate-500">3,961/3,974 measured</span></td>
+                            <td data-value="13.90" title="last_10: 7,706 measured / 7,745 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">13.90</span><span class="mt-1 block text-xs font-normal text-slate-500">7,706/7,745 measured</span></td>
+                            <td data-value="13.99" title="last_20: 14,902 measured / 14,976 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">13.99</span><span class="mt-1 block text-xs font-normal text-slate-500">14,902/14,976 measured</span></td>
+                            <td data-value="14.29" title="last_season: 47,224 measured / 47,224 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">14.29</span></td>
+                            <td data-value="12.80" title="g1: 940 measured / 940 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900 border-l border-l-slate-200"><span class="block">12.80</span></td>
+                            <td data-value="12.77" title="g2: 909 measured / 909 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">12.77</span></td>
+                            <td data-value="12.63" title="g3: 886 measured / 886 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">12.63</span></td>
+                            <td data-value="13.23" title="g4: 852 measured / 852 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">13.23</span></td>
+                            <td data-value="13.44" title="g5: 828 measured / 828 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">13.44</span></td>
+                            <td data-value="13.36" title="g6: 813 measured / 813 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">13.36</span></td>
+                            <td data-value="13.18" title="g7: 803 measured / 803 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">13.18</span></td>
+                            <td data-value="13.21" title="g8: 797 measured / 797 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">13.21</span></td>
+                            <td data-value="13.66" title="g9: 789 measured / 789 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">13.66</span></td>
+                            <td data-value="13.74" title="g10: 778 measured / 778 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">13.74</span></td>
+                            <td data-value="13.18" title="test10: 8,395 measured / 8,395 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums sticky right-0 z-10 bg-indigo-50 font-bold text-indigo-900"><span class="block">13.18</span></td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+            <p class="border-t border-slate-200 px-5 py-3 text-xs leading-5 text-slate-500 sm:px-6">G1–G10 refer to each player’s first ten available Test appearances, not shared calendar dates. League values do not change when you search or sort.</p>
+        </section>
+
+        <section id="blocks-comparison" aria-labelledby="blocks-comparison-title" class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+            <div class="flex flex-wrap items-center justify-between gap-5 px-5 py-5 sm:px-6">
+                <div>
+                    <h2 id="blocks-comparison-title" class="text-lg font-semibold tracking-tight">Season in four blocks</h2>
+                    <p id="blocks-row-status" data-role="row-status" role="status" aria-live="polite" class="mt-1 text-sm text-slate-500">5 players · league reference pinned below</p>
+                </div>
+                <div class="flex w-full flex-wrap items-end gap-2 sm:w-auto">
+                    <div class="w-full sm:w-64">
+                        <label for="blocks-player-search" class="mb-1.5 block text-xs font-medium text-slate-600">Find a player</label>
+                        <input id="blocks-player-search" data-role="player-search" type="search" placeholder="Search by name…" autocomplete="off" disabled class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:border-indigo-500 focus:outline-2 focus:outline-indigo-100 disabled:opacity-50">
+                    </div>
+                    <button id="blocks-reset" data-role="reset" type="button" disabled class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-indigo-600 disabled:opacity-50 transition-colors duration-150 motion-reduce:transition-none">Reset</button>
+                </div>
+            </div>
+            <div class="flex flex-wrap items-center justify-between gap-3 border-y border-slate-100 bg-slate-50 px-5 py-3 text-xs text-slate-500 sm:px-6">
+                <p id="blocks-table-help">Pooled EV TOI/GP per block. Names and Test stay pinned. Select any header to sort players.</p>
+                <div class="flex items-center gap-2">
+                    <button type="button" data-scroll="-1" disabled aria-label="Scroll table left" class="rounded border border-slate-200 bg-white px-3 py-1 text-slate-700 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-indigo-600 disabled:opacity-40">←</button>
+                    <button type="button" data-scroll="1" disabled aria-label="Scroll table right" class="rounded border border-slate-200 bg-white px-3 py-1 text-slate-700 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-indigo-600 disabled:opacity-40">→</button>
+                </div>
+            </div>
+            <div id="blocks-table-scroll" data-role="table-scroll" tabindex="0" role="region" aria-label="Scrollable player comparison" aria-describedby="blocks-table-help" class="max-h-[65vh] overflow-auto focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600">
+                <table class="w-full min-w-[1250px] border-separate border-spacing-0">
+                    <caption class="sr-only">EV TOI/GP: Name, Train, Last 5, Last 10, Last 20, Last season, First 20, Next 20, Next 20, Next 22, Test.</caption>
+                    <thead class="sticky top-0 z-20">
+                        <tr>
+                            <th scope="col" aria-sort="none" class="border-b border-slate-200 sticky left-0 z-30 min-w-48 bg-slate-50 text-left">
+                                <button type="button" data-sort="0" title="Player name" disabled class="flex w-full items-center justify-between gap-2 whitespace-nowrap px-4 py-4 text-xs font-semibold focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 enabled:cursor-pointer enabled:hover:text-indigo-700 transition-colors duration-150 motion-reduce:transition-none">Name<span data-sort-icon aria-hidden="true" class="text-slate-400">↕</span></button>
+                            </th>
+                            <th scope="col" aria-sort="none" class="border-b border-slate-200 bg-slate-50 text-slate-600">
+                                <button type="button" data-sort="1" title="Pooled 2022–23 through 2024–25" disabled class="flex w-full items-center justify-end gap-2 whitespace-nowrap px-4 py-4 text-xs font-semibold focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 enabled:cursor-pointer enabled:hover:text-indigo-700 transition-colors duration-150 motion-reduce:transition-none">Train<span data-sort-icon aria-hidden="true" class="text-slate-400">↕</span></button>
+                            </th>
+                            <th scope="col" aria-sort="none" class="border-b border-slate-200 bg-slate-50 text-slate-600">
+                                <button type="button" data-sort="2" title="Five appearances before G1" disabled class="flex w-full items-center justify-end gap-2 whitespace-nowrap px-4 py-4 text-xs font-semibold focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 enabled:cursor-pointer enabled:hover:text-indigo-700 transition-colors duration-150 motion-reduce:transition-none">Last 5<span data-sort-icon aria-hidden="true" class="text-slate-400">↕</span></button>
+                            </th>
+                            <th scope="col" aria-sort="none" class="border-b border-slate-200 bg-slate-50 text-slate-600">
+                                <button type="button" data-sort="3" title="Ten appearances before G1" disabled class="flex w-full items-center justify-end gap-2 whitespace-nowrap px-4 py-4 text-xs font-semibold focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 enabled:cursor-pointer enabled:hover:text-indigo-700 transition-colors duration-150 motion-reduce:transition-none">Last 10<span data-sort-icon aria-hidden="true" class="text-slate-400">↕</span></button>
+                            </th>
+                            <th scope="col" aria-sort="none" class="border-b border-slate-200 bg-slate-50 text-slate-600">
+                                <button type="button" data-sort="4" title="Twenty appearances before G1" disabled class="flex w-full items-center justify-end gap-2 whitespace-nowrap px-4 py-4 text-xs font-semibold focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 enabled:cursor-pointer enabled:hover:text-indigo-700 transition-colors duration-150 motion-reduce:transition-none">Last 20<span data-sort-icon aria-hidden="true" class="text-slate-400">↕</span></button>
+                            </th>
+                            <th scope="col" aria-sort="none" class="border-b border-slate-200 bg-slate-50 text-slate-600">
+                                <button type="button" data-sort="5" title="2024–25 regular season" disabled class="flex w-full items-center justify-end gap-2 whitespace-nowrap px-4 py-4 text-xs font-semibold focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 enabled:cursor-pointer enabled:hover:text-indigo-700 transition-colors duration-150 motion-reduce:transition-none">Last season<span data-sort-icon aria-hidden="true" class="text-slate-400">↕</span></button>
+                            </th>
+                            <th scope="col" aria-sort="none" class="border-b border-slate-200 bg-slate-50 text-slate-600">
+                                <button type="button" data-sort="6" title="Pooled EV TOI/GP for available Test appearances 1–20" disabled class="flex w-full items-center justify-end gap-2 whitespace-nowrap px-4 py-4 text-xs font-semibold focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 enabled:cursor-pointer enabled:hover:text-indigo-700 transition-colors duration-150 motion-reduce:transition-none">First 20<span data-sort-icon aria-hidden="true" class="text-slate-400">↕</span></button>
+                            </th>
+                            <th scope="col" aria-sort="none" class="border-b border-slate-200 bg-slate-50 text-slate-600">
+                                <button type="button" data-sort="7" title="Pooled EV TOI/GP for available Test appearances 21–40" disabled class="flex w-full items-center justify-end gap-2 whitespace-nowrap px-4 py-4 text-xs font-semibold focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 enabled:cursor-pointer enabled:hover:text-indigo-700 transition-colors duration-150 motion-reduce:transition-none">Next 20<span data-sort-icon aria-hidden="true" class="text-slate-400">↕</span></button>
+                            </th>
+                            <th scope="col" aria-sort="none" class="border-b border-slate-200 bg-slate-50 text-slate-600">
+                                <button type="button" data-sort="8" title="Pooled EV TOI/GP for available Test appearances 41–60" disabled class="flex w-full items-center justify-end gap-2 whitespace-nowrap px-4 py-4 text-xs font-semibold focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 enabled:cursor-pointer enabled:hover:text-indigo-700 transition-colors duration-150 motion-reduce:transition-none">Next 20<span data-sort-icon aria-hidden="true" class="text-slate-400">↕</span></button>
+                            </th>
+                            <th scope="col" aria-sort="none" class="border-b border-slate-200 bg-slate-50 text-slate-600">
+                                <button type="button" data-sort="9" title="Pooled EV TOI/GP for available Test appearances 61–82" disabled class="flex w-full items-center justify-end gap-2 whitespace-nowrap px-4 py-4 text-xs font-semibold focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 enabled:cursor-pointer enabled:hover:text-indigo-700 transition-colors duration-150 motion-reduce:transition-none">Next 22<span data-sort-icon aria-hidden="true" class="text-slate-400">↕</span></button>
+                            </th>
+                            <th scope="col" aria-sort="none" class="border-b border-slate-200 sticky right-0 z-20 bg-indigo-50 text-indigo-900">
+                                <button type="button" data-sort="10" title="Pooled available Test appearances 1–82" disabled class="flex w-full items-center justify-end gap-2 whitespace-nowrap px-4 py-4 text-xs font-semibold focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 enabled:cursor-pointer enabled:hover:text-indigo-700 transition-colors duration-150 motion-reduce:transition-none">Test<span data-sort-icon aria-hidden="true" class="text-slate-400">↕</span></button>
+                            </th>
+                        </tr>
+                    </thead>
+                    <tbody id="blocks-players" data-role="players">
+                        <tr data-player-row data-name="filip forsberg" class="group bg-white hover:bg-slate-50">
+                            <th scope="row" data-value="Forsberg" class="sticky left-0 z-10 border-b border-slate-100 bg-white group-hover:bg-slate-50 px-5 py-5 text-left">
+                                <span class="block whitespace-nowrap text-sm font-semibold text-slate-900">Filip Forsberg</span>
+                                <span class="mt-1 block whitespace-nowrap text-xs font-normal text-slate-500">Nashville · Skater</span>
+                            </th>
+                            <td data-value="15.20" title="train: 201 measured / 208 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums font-semibold text-slate-900"><span class="block">15.20</span><span class="mt-1 block text-xs font-normal text-slate-500">201/208 measured</span></td>
+                            <td data-value="14.39" title="last_5: 5 measured / 5 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">14.39</span></td>
+                            <td data-value="15.56" title="last_10: 10 measured / 10 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">15.56</span></td>
+                            <td data-value="15.11" title="last_20: 20 measured / 20 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">15.11</span></td>
+                            <td data-value="15.43" title="last_season: 82 measured / 82 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">15.43</span></td>
+                            <td data-value="15.88" title="block1: 20 measured / 20 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900 border-l border-l-slate-200"><span class="block">15.88</span><span class="mt-1 block text-xs font-normal text-slate-500">20 games</span></td>
+                            <td data-value="15.59" title="block2: 20 measured / 20 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">15.59</span><span class="mt-1 block text-xs font-normal text-slate-500">20 games</span></td>
+                            <td data-value="15.95" title="block3: 20 measured / 20 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">15.95</span><span class="mt-1 block text-xs font-normal text-slate-500">20 games</span></td>
+                            <td data-value="15.99" title="block4: 22 measured / 22 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">15.99</span><span class="mt-1 block text-xs font-normal text-slate-500">22 games</span></td>
+                            <td data-value="15.86" title="test82: 82 measured / 82 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums sticky right-0 z-10 bg-indigo-50 font-bold text-indigo-900"><span class="block">15.86</span><span class="mt-1 block text-xs font-normal text-slate-500">82 games</span></td>
+                        </tr>
+                        <tr data-player-row data-name="connor mcdavid" class="group bg-white hover:bg-slate-50">
+                            <th scope="row" data-value="McDavid" class="sticky left-0 z-10 border-b border-slate-100 bg-white group-hover:bg-slate-50 px-5 py-5 text-left">
+                                <span class="block whitespace-nowrap text-sm font-semibold text-slate-900">Connor McDavid</span>
+                                <span class="mt-1 block whitespace-nowrap text-xs font-normal text-slate-500">Edmonton · Skater</span>
+                            </th>
+                            <td data-value="17.86" title="train: 203 measured / 216 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums font-semibold text-slate-900"><span class="block">17.86</span><span class="mt-1 block text-xs font-normal text-slate-500">203/216 measured</span></td>
+                            <td data-value="15.69" title="last_5: 5 measured / 5 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">15.69</span></td>
+                            <td data-value="17.16" title="last_10: 10 measured / 10 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">17.16</span></td>
+                            <td data-value="18.53" title="last_20: 20 measured / 20 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">18.53</span></td>
+                            <td data-value="18.75" title="last_season: 67 measured / 67 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">18.75</span></td>
+                            <td data-value="18.85" title="block1: 20 measured / 20 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900 border-l border-l-slate-200"><span class="block">18.85</span><span class="mt-1 block text-xs font-normal text-slate-500">20 games</span></td>
+                            <td data-value="17.71" title="block2: 20 measured / 20 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">17.71</span><span class="mt-1 block text-xs font-normal text-slate-500">20 games</span></td>
+                            <td data-value="18.36" title="block3: 20 measured / 20 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">18.36</span><span class="mt-1 block text-xs font-normal text-slate-500">20 games</span></td>
+                            <td data-value="18.42" title="block4: 22 measured / 22 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">18.42</span><span class="mt-1 block text-xs font-normal text-slate-500">22 games</span></td>
+                            <td data-value="18.34" title="test82: 82 measured / 82 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums sticky right-0 z-10 bg-indigo-50 font-bold text-indigo-900"><span class="block">18.34</span><span class="mt-1 block text-xs font-normal text-slate-500">82 games</span></td>
+                        </tr>
+                        <tr data-player-row data-name="david pastrnak" class="group bg-white hover:bg-slate-50">
+                            <th scope="row" data-value="Pastrnak" class="sticky left-0 z-10 border-b border-slate-100 bg-white group-hover:bg-slate-50 px-5 py-5 text-left">
+                                <span class="block whitespace-nowrap text-sm font-semibold text-slate-900">David Pastrnak</span>
+                                <span class="mt-1 block whitespace-nowrap text-xs font-normal text-slate-500">Boston · Skater</span>
+                            </th>
+                            <td data-value="16.17" title="train: 227 measured / 236 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums font-semibold text-slate-900"><span class="block">16.17</span><span class="mt-1 block text-xs font-normal text-slate-500">227/236 measured</span></td>
+                            <td data-value="16.15" title="last_5: 5 measured / 5 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">16.15</span></td>
+                            <td data-value="16.27" title="last_10: 10 measured / 10 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">16.27</span></td>
+                            <td data-value="17.30" title="last_20: 20 measured / 20 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">17.30</span></td>
+                            <td data-value="16.72" title="last_season: 82 measured / 82 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">16.72</span></td>
+                            <td data-value="15.71" title="block1: 20 measured / 20 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900 border-l border-l-slate-200"><span class="block">15.71</span><span class="mt-1 block text-xs font-normal text-slate-500">20 games</span></td>
+                            <td data-value="16.68" title="block2: 20 measured / 20 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">16.68</span><span class="mt-1 block text-xs font-normal text-slate-500">20 games</span></td>
+                            <td data-value="17.94" title="block3: 20 measured / 20 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">17.94</span><span class="mt-1 block text-xs font-normal text-slate-500">20 games</span></td>
+                            <td data-value="17.79" title="block4: 17 measured / 17 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">17.79</span><span class="mt-1 block text-xs font-normal text-slate-500">17 games</span></td>
+                            <td data-value="17.00" title="test82: 77 measured / 77 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums sticky right-0 z-10 bg-indigo-50 font-bold text-indigo-900"><span class="block">17.00</span><span class="mt-1 block text-xs font-normal text-slate-500">77 games</span></td>
+                        </tr>
+                        <tr data-player-row data-name="blake coleman" class="group bg-white hover:bg-slate-50">
+                            <th scope="row" data-value="Coleman" class="sticky left-0 z-10 border-b border-slate-100 bg-white group-hover:bg-slate-50 px-5 py-5 text-left">
+                                <span class="block whitespace-nowrap text-sm font-semibold text-slate-900">Blake Coleman</span>
+                                <span class="mt-1 block whitespace-nowrap text-xs font-normal text-slate-500">Calgary · Skater</span>
+                            </th>
+                            <td data-value="14.31" title="train: 216 measured / 227 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums font-semibold text-slate-900"><span class="block">14.31</span><span class="mt-1 block text-xs font-normal text-slate-500">216/227 measured</span></td>
+                            <td data-value="14.65" title="last_5: 5 measured / 5 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">14.65</span></td>
+                            <td data-value="14.36" title="last_10: 10 measured / 10 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">14.36</span></td>
+                            <td data-value="14.36" title="last_20: 20 measured / 20 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">14.36</span></td>
+                            <td data-value="14.26" title="last_season: 82 measured / 82 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">14.26</span></td>
+                            <td data-value="13.49" title="block1: 20 measured / 20 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900 border-l border-l-slate-200"><span class="block">13.49</span><span class="mt-1 block text-xs font-normal text-slate-500">20 games</span></td>
+                            <td data-value="14.13" title="block2: 20 measured / 20 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">14.13</span><span class="mt-1 block text-xs font-normal text-slate-500">20 games</span></td>
+                            <td data-value="13.99" title="block3: 20 measured / 20 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">13.99</span><span class="mt-1 block text-xs font-normal text-slate-500">20 games</span></td>
+                            <td data-value="13.99" title="block4: 9 measured / 9 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">13.99</span><span class="mt-1 block text-xs font-normal text-slate-500">9 games</span></td>
+                            <td data-value="13.89" title="test82: 69 measured / 69 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums sticky right-0 z-10 bg-indigo-50 font-bold text-indigo-900"><span class="block">13.89</span><span class="mt-1 block text-xs font-normal text-slate-500">69 games</span></td>
+                        </tr>
+                        <tr data-player-row data-name="auston matthews" class="group bg-white hover:bg-slate-50">
+                            <th scope="row" data-value="Matthews" class="sticky left-0 z-10 border-b border-slate-100 bg-white group-hover:bg-slate-50 px-5 py-5 text-left">
+                                <span class="block whitespace-nowrap text-sm font-semibold text-slate-900">Auston Matthews</span>
+                                <span class="mt-1 block whitespace-nowrap text-xs font-normal text-slate-500">Toronto · Skater</span>
+                            </th>
+                            <td data-value="16.44" title="train: 205 measured / 218 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums font-semibold text-slate-900"><span class="block">16.44</span><span class="mt-1 block text-xs font-normal text-slate-500">205/218 measured</span></td>
+                            <td data-value="14.57" title="last_5: 5 measured / 5 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">14.57</span></td>
+                            <td data-value="15.46" title="last_10: 10 measured / 10 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">15.46</span></td>
+                            <td data-value="15.99" title="last_20: 20 measured / 20 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">15.99</span></td>
+                            <td data-value="15.83" title="last_season: 67 measured / 67 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">15.83</span></td>
+                            <td data-value="16.39" title="block1: 20 measured / 20 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900 border-l border-l-slate-200"><span class="block">16.39</span><span class="mt-1 block text-xs font-normal text-slate-500">20 games</span></td>
+                            <td data-value="16.66" title="block2: 20 measured / 20 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">16.66</span><span class="mt-1 block text-xs font-normal text-slate-500">20 games</span></td>
+                            <td data-value="17.58" title="block3: 20 measured / 20 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">17.58</span><span class="mt-1 block text-xs font-normal text-slate-500">20 games</span></td>
+                            <td data-value="" title="block4: 0 measured / 0 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">—</span><span class="mt-1 block text-xs font-normal text-slate-500">0 games</span></td>
+                            <td data-value="16.88" title="test82: 60 measured / 60 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums sticky right-0 z-10 bg-indigo-50 font-bold text-indigo-900"><span class="block">16.88</span><span class="mt-1 block text-xs font-normal text-slate-500">60 games</span></td>
+                        </tr>
+                        <tr id="blocks-empty-state" data-role="empty-state" hidden>
+                            <td colspan="11" class="px-6 py-10 text-left">
+                                <p class="font-medium text-slate-900">No players match your search.</p>
+                                <button id="blocks-clear-search" data-role="clear-search" type="button" class="mt-2 text-sm font-medium text-indigo-700 underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-indigo-600">Clear search</button>
+                            </td>
+                        </tr>
+                    </tbody>
+                    <tfoot>
+                        <tr  class="group bg-slate-100 font-semibold">
+                            <th scope="row" data-value="League average" class="sticky left-0 z-10 border-b border-slate-100 bg-slate-100 px-5 py-5 text-left">
+                                <span class="block whitespace-nowrap text-sm font-semibold text-slate-900">League average</span>
+                                <span class="mt-1 block whitespace-nowrap text-xs font-normal text-slate-500">All available skaters</span>
+                            </th>
+                            <td data-value="14.11" title="train: 128,594 measured / 136,114 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums font-semibold text-slate-900"><span class="block">14.11</span><span class="mt-1 block text-xs font-normal text-slate-500">128,594/136,114 measured</span></td>
+                            <td data-value="13.89" title="last_5: 3,961 measured / 3,974 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">13.89</span><span class="mt-1 block text-xs font-normal text-slate-500">3,961/3,974 measured</span></td>
+                            <td data-value="13.90" title="last_10: 7,706 measured / 7,745 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">13.90</span><span class="mt-1 block text-xs font-normal text-slate-500">7,706/7,745 measured</span></td>
+                            <td data-value="13.99" title="last_20: 14,902 measured / 14,976 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">13.99</span><span class="mt-1 block text-xs font-normal text-slate-500">14,902/14,976 measured</span></td>
+                            <td data-value="14.29" title="last_season: 47,224 measured / 47,224 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-600"><span class="block">14.29</span></td>
+                            <td data-value="13.51" title="block1: 15,807 measured / 15,807 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900 border-l border-l-slate-200"><span class="block">13.51</span><span class="mt-1 block text-xs font-normal text-slate-500">15,807 appearances</span></td>
+                            <td data-value="14.16" title="block2: 13,261 measured / 13,261 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">14.16</span><span class="mt-1 block text-xs font-normal text-slate-500">13,261 appearances</span></td>
+                            <td data-value="14.55" title="block3: 11,050 measured / 11,050 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">14.55</span><span class="mt-1 block text-xs font-normal text-slate-500">11,050 appearances</span></td>
+                            <td data-value="15.10" title="block4: 7,111 measured / 7,111 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums text-slate-900"><span class="block">15.10</span><span class="mt-1 block text-xs font-normal text-slate-500">7,111 appearances</span></td>
+                            <td data-value="14.17" title="test82: 47,229 measured / 47,229 recorded appearances" class="whitespace-nowrap border-b border-slate-100 px-4 py-5 text-right text-sm tabular-nums sticky right-0 z-10 bg-indigo-50 font-bold text-indigo-900"><span class="block">14.17</span><span class="mt-1 block text-xs font-normal text-slate-500">47,229 appearances</span></td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+            <p class="border-t border-slate-200 px-5 py-3 text-xs leading-5 text-slate-500 sm:px-6">Blocks use each player’s available Test appearances: 1–20, 21–40, 41–60 and 61–82. Counts beneath each rate show available games. Last 5/10/20 remain the context before G1; Test pools all four blocks. League stays unchanged by filters.</p>
+        </section>
+
+        <section aria-labelledby="guide-title">
+            <h2 id="guide-title" class="text-sm font-semibold text-slate-900">How to read these tables</h2>
+            <dl class="mt-4 grid gap-x-8 gap-y-5 text-sm sm:grid-cols-2 lg:grid-cols-4">
+                <div><dt class="font-semibold text-slate-900">Train</dt><dd class="mt-1.5 leading-6 text-slate-500">EV seconds pooled across measured games in 2022–23, 2023–24 and 2024–25, divided by measured GP and 60. Last season is 2024–25.</dd></div>
+                <div><dt class="font-semibold text-slate-900">Last 5 / 10 / 20</dt><dd class="mt-1.5 leading-6 text-slate-500">Context immediately before G1. Earlier appearances only; these columns stay fixed.</dd></div>
+                <div><dt class="font-semibold text-slate-900">G1–G10</dt><dd class="mt-1.5 leading-6 text-slate-500">Actual EV minutes in each played game. Games with zero shot attempts still count; games not played do not.</dd></div>
+                <div><dt class="font-semibold text-indigo-700">Test</dt><dd class="mt-1.5 leading-6 text-slate-500">Total EV seconds ÷ measured appearances ÷ 60. G1–G10 above; appearances 1–82 in the four-block table. Decimal minutes: 15.50 means 15 minutes 30 seconds.</dd></div>
+            </dl>
+        </section>
+
+        <section aria-labelledby="notes-title" class="border-t border-slate-200 pt-6">
+            <h2 id="notes-title" class="text-sm font-semibold">Data notes</h2>
+            <ul class="mt-3 list-disc space-y-2 pl-5 text-sm leading-6 text-slate-500">
+                <li>Regular-season games only. Players must have positive total boxscore ice time to count as an appearance. EV TOI comes from nhl_player_game_strength_summaries.toi (seconds), not all-strength boxscore TOI.</li>
+                <li>EV uses the stored strength definition, including empty-net contexts classified as EV. No shot-bucket confidence filter applies to ice time.</li>
+                <li>Missing EV records are excluded from the average, never treated as zero. Train cells show measured/recorded appearance counts. A stored zero remains zero.</li>
+                <li>All five players have EV records for every recorded Test appearance: Forsberg 82, McDavid 82, Pastrnak 77, Coleman 69, Matthews 60. These are available local records, not a claim of complete league source coverage.</li>
+                <li>League average = total EV seconds across measured skater appearances ÷ measured appearances ÷ 60, not an average of these five players. Train includes all available training skaters. Pregame league windows use each Test skater’s prior appearances before his own G1.</li>
+                <li>G1–G10 and the four blocks use each player’s appearance number, not shared dates. League cohorts change as fewer players reach later appearances; a rising league block average alone is not evidence that an individual gains ice time.</li>
+                <li>Last 5/10/20 are fixed immediately before each player’s first Test appearance, drawing from prior regular-season games, never future games or playoffs. Missing records within a window are not replaced by older games. Last season is 2024–25.</li>
+                <li>Train and Last season are observed averages, not stored TOI forecasts. Game results and Test are retrospective references, never pregame inputs.</li>
+            </ul>
+        </section>
+        <details class="border-t border-slate-200 pt-5">
+            <summary class="cursor-pointer text-sm font-medium text-slate-700">Read-only calculation source (SQL)</summary>
+            <p class="mt-3 text-xs text-slate-500">Snapshot from local dynastyiq, 07 Oct 2026. Executed in a read-only transaction; no jobs or model rebuilds.</p>
+            <pre class="mt-3 max-h-96 overflow-auto rounded-lg bg-slate-100 p-4 text-xs"><code>WITH base AS MATERIALIZED (
+SELECT b.nhl_player_id,g.nhl_game_id,g.season_id,g.start_time_utc,g.game_date,s.toi
+FROM nhl_boxscores b JOIN nhl_games g USING(nhl_game_id)
+LEFT JOIN nhl_player_game_strength_summaries s ON s.nhl_game_id=b.nhl_game_id AND s.nhl_player_id=b.nhl_player_id AND s.strength='EV'
+WHERE g.game_type=2 AND g.game_state IN ('OFF','FINAL') AND g.season_id IN ('20222023','20232024','20242025','20252026') AND b.position &lt;&gt; 'G' AND b.toi_seconds&gt;0
+), test AS (
+SELECT *, row_number() OVER(PARTITION BY nhl_player_id ORDER BY start_time_utc,nhl_game_id) n FROM base WHERE season_id='20252026'
+), first_game AS (SELECT nhl_player_id,start_time_utc FROM test WHERE n=1),
+prior AS (
+SELECT b.*,row_number() OVER(PARTITION BY b.nhl_player_id ORDER BY b.start_time_utc DESC,b.nhl_game_id DESC) rn
+FROM base b JOIN first_game f USING(nhl_player_id) WHERE b.start_time_utc&lt;f.start_time_utc
+), measures AS (
+SELECT nhl_player_id,'train' metric,sum(toi) seconds,count(*) games,count(toi) measured FROM base WHERE season_id&lt;&gt;'20252026' GROUP BY nhl_player_id
+UNION ALL SELECT nhl_player_id,'last_season',sum(toi),count(*),count(toi) FROM base WHERE season_id='20242025' GROUP BY nhl_player_id
+UNION ALL SELECT p.nhl_player_id,'last_'||w.n,sum(p.toi),count(*),count(p.toi) FROM prior p CROSS JOIN (VALUES(5),(10),(20)) w(n) WHERE rn&lt;=w.n GROUP BY p.nhl_player_id,w.n
+UNION ALL SELECT nhl_player_id,'g'||n,sum(toi),count(*),count(toi) FROM test WHERE n&lt;=10 GROUP BY nhl_player_id,n
+UNION ALL SELECT nhl_player_id,'test10',sum(toi),count(*),count(toi) FROM test WHERE n&lt;=10 GROUP BY nhl_player_id
+UNION ALL SELECT nhl_player_id,'block'||least(4,((n-1)/20+1)),sum(toi),count(*),count(toi) FROM test WHERE n&lt;=82 GROUP BY nhl_player_id,least(4,((n-1)/20+1))
+UNION ALL SELECT nhl_player_id,'test82',sum(toi),count(*),count(toi) FROM test WHERE n&lt;=82 GROUP BY nhl_player_id
+), results AS (
+SELECT nhl_player_id::text entity,metric,round(seconds::numeric/nullif(measured,0)/60,4) value,games,measured FROM measures WHERE nhl_player_id IN (8476887,8478402,8477956,8476399,8479318)
+UNION ALL SELECT 'league',metric,round(sum(seconds)::numeric/nullif(sum(measured),0)/60,4),sum(games),sum(measured) FROM measures GROUP BY metric
+) SELECT json_agg(results ORDER BY entity,metric) FROM results;</code></pre>
+        </details>
+        <footer class="flex flex-wrap justify-between gap-3 border-t border-slate-200 pt-5 text-xs leading-5 text-slate-500">
+            <p>Sep2026 seasons · Local database snapshot · Observed EV ice time<br>Read-only report. No live predictions or database changes.</p>
+            <p class="sm:text-right"><a href="games2025.htm" class="font-medium text-indigo-700 underline underline-offset-4">Original SAT/60 report</a><br>Tailwind styling requires internet access.</p>
+        </footer>
+        <noscript><p class="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">JavaScript is disabled. The data is still available, but search, sorting and Tailwind styling require JavaScript.</p></noscript>
+    </main>
+    <script type="module">
+        // Standalone local report: all state is scoped to this module, not the application.
+        for (const root of document.querySelectorAll('#comparison, #blocks-comparison')) {
+        const search = root.querySelector('[data-role="player-search"]');
+        const tbody = root.querySelector('[data-role="players"]');
+        const originalRows = [...tbody.querySelectorAll('[data-player-row]')];
+        const emptyState = root.querySelector('[data-role="empty-state"]');
+        const status = root.querySelector('[data-role="row-status"]');
+        const headers = [...root.querySelectorAll('[data-sort]')];
+        const viewport = root.querySelector('[data-role="table-scroll"]');
+        const scrollButtons = [...root.querySelectorAll('[data-scroll]')];
+        let sortIndex = null;
+        let ascending = true;
+
+        function render() {
+            const query = search.value.trim().toLocaleLowerCase();
+            const ordered = [...originalRows];
+            if (sortIndex !== null) {
+                ordered.sort((a, b) => {
+                    const left = a.cells[sortIndex].dataset.value;
+                    const right = b.cells[sortIndex].dataset.value;
+                    if (left === '' || right === '') {
+                        return left === right ? 0 : left === '' ? 1 : -1;
+                    }
+                    const result = sortIndex === 0 ? left.localeCompare(right) : Number(left) - Number(right);
+                    return ascending ? result : -result;
+                });
+            }
+            let visible = 0;
+            for (const row of ordered) {
+                row.hidden = !row.dataset.name.includes(query);
+                if (!row.hidden) visible++;
+                tbody.insertBefore(row, emptyState);
+            }
+            emptyState.hidden = visible !== 0;
+            status.textContent = visible + ' of 5 players · league reference pinned below';
+            for (const button of headers) {
+                const active = Number(button.dataset.sort) === sortIndex;
+                button.closest('th').setAttribute('aria-sort', active ? (ascending ? 'ascending' : 'descending') : 'none');
+                button.querySelector('[data-sort-icon]').textContent = active ? (ascending ? '↑' : '↓') : '↕';
+            }
+        }
+
+        search.disabled = false;
+        search.addEventListener('input', render);
+        for (const button of headers) {
+            button.disabled = false;
+            button.addEventListener('click', () => {
+                const index = Number(button.dataset.sort);
+                ascending = sortIndex === index ? !ascending : index === 0;
+                sortIndex = index;
+                render();
+            });
+        }
+        const reset = root.querySelector('[data-role="reset"]');
+        reset.disabled = false;
+        reset.addEventListener('click', () => {
+            search.value = '';
+            sortIndex = null;
+            ascending = true;
+            render();
+            search.focus();
+        });
+        root.querySelector('[data-role="clear-search"]').addEventListener('click', () => {
+            search.value = '';
+            render();
+            search.focus();
+        });
+
+        function updateScrollButtons() {
+            scrollButtons[0].disabled = viewport.scrollLeft <= 1;
+            scrollButtons[1].disabled = viewport.scrollLeft + viewport.clientWidth >= viewport.scrollWidth - 1;
+        }
+        for (const button of scrollButtons) {
+            button.addEventListener('click', () => {
+                viewport.scrollBy({
+                    left: Number(button.dataset.scroll) * viewport.clientWidth * 0.65,
+                    behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth',
+                });
+            });
+        }
+        viewport.addEventListener('scroll', updateScrollButtons, { passive: true });
+        new ResizeObserver(updateScrollButtons).observe(viewport);
+        updateScrollButtons();
+        }
+    </script>
+</body>
+</html>

@@ -17,7 +17,7 @@ use Illuminate\Validation\ValidationException;
 class NhlGamePredictionPayload
 {
     private const TONIGHT_THIRD_ENGINE_OVERRIDE_START_DATE = '2026-10-06';
-    private const TONIGHT_THIRD_ENGINE_OVERRIDE_END_DATE = '2026-10-11';
+    private const TONIGHT_THIRD_ENGINE_OVERRIDE_END_DATE = '2026-10-07';
     private const TONIGHT_THIRD_ENGINE_MINIMUM_GAP = 0.30;
 
     private const PRESEASON_GAME_TYPE = 1;
@@ -421,7 +421,7 @@ class NhlGamePredictionPayload
     }
 
     /**
-     * Return the October 6–11, 2026 Engine 3 decision, or null for normal delegation.
+     * Return the October 6–7, 2026 Engine 3 decision, or null for normal delegation.
      *
      * @param array<string, mixed> $candidate
      */

@@ -23,11 +23,15 @@ when_not_to_use:
 rules:
   - Every snapshot uses only completed regular-season games strictly before the target game's scheduled start time; target-game outcomes and later games are forbidden inputs.
   - Player snapshots record the completed-game participant only for historical evidence and label that source explicitly; future prediction use requires independently selected pregame rosters.
+  - Player history follows the player across team changes. Opponent and home/away filters use the player's team on each historical summary, not the target game's team.
+  - Rest and back-to-back classification use forward calendar-day differences between scheduled game dates. One day means a back-to-back with zero intervening rest days; absent prior history leaves rest unavailable.
   - Raw results remain in existing NHL fact tables. Context snapshots store compact derived metrics, sample counts, and ranks only.
   - Metrics are separated by All, EV, PP, and PK and preserve missing evidence as unavailable rather than manufacturing zero values.
   - Backfills use durable run and run-game rows. A loader may claim only a bounded page from the earliest unfinished game date and must never enqueue one job per player or a run-sized job burst.
   - Later dates may begin after the current date's work is terminal. Missing historical source data blocks only that game with a durable readiness reason; later snapshots use their available prior-game facts. Unexpected execution failures fail the run.
   - Arena travel uses dated venue coordinates and great-circle distance. Missing venue evidence leaves travel metrics unavailable.
+  - Seven-day travel is an arena-to-arena arrival proxy, not an observed itinerary. Include arrivals at prior games in the seven days before the scheduled start and the target game, anchored by the preceding historical venue even when its game is outside the window. Zero known distance is zero; missing anchor or any required venue makes the seven-day total unavailable rather than a partial sum.
+  - Venue date selection uses the scheduled game date rather than the UTC timestamp's calendar date. Rerunning the same context version upserts corrected snapshots; changed builder logic does not retroactively update stored rows without a rebuild.
   - The reviewed NhlArenaLocationSeeder supplies the past-three-season NHL home-venue reference rows. It is reference data only and must be run separately from context builds; venue changes require dated replacement rows rather than overwriting history.
   - Context collection and inspection are analysis-only. A context factor may affect predictions only after a separately approved, later-season evidence change.
 public_interface:

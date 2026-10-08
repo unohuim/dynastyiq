@@ -31,6 +31,8 @@ class NhlArenaLocationSeeder extends Seeder
             ['VGK', 'T-Mobile Arena', 36.1029, -115.1785], ['WSH', 'Capital One Arena', 38.8981, -77.0209],
             ['WPG', 'Canada Life Centre', 49.8928, -97.1436], ['ARI', 'Mullett Arena', 33.4255, -111.9325, '2022-10-01', '2024-06-30'],
             ['UTA', 'Delta Center', 40.7683, -111.9011, '2024-07-01', null],
+            // Utah's 2024–25 games retain ID 59, absent from the current team lookup.
+            ['UTA', 'Delta Center', 40.7683, -111.9011, '2024-07-01', '2025-06-30', 59],
         ];
 
         $now = now();
@@ -38,7 +40,7 @@ class NhlArenaLocationSeeder extends Seeder
             [$abbrev, $name, $latitude, $longitude] = $venue;
             $from = $venue[4] ?? null;
             $to = $venue[5] ?? null;
-            $teamId = $teamIds->get($abbrev);
+            $teamId = $venue[6] ?? $teamIds->get($abbrev);
             if ($teamId === null) {
                 continue;
             }

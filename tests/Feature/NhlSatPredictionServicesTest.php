@@ -575,8 +575,8 @@ it('rejects a negative attempt projection instead of silently converting it to z
 });
 
 
-it('retains only reliable buckets and rescales them to the entity target', function (): void {
-    foreach (['A' => [96, 0.99], 'B' => [3, 0.98], 'C' => [1, 0.50]] as $key => [$sat, $confidence]) {
+it('retains buckets at or above fifty percent and rescales only retained buckets', function (): void {
+    foreach (['A' => [95, 0.99], 'B' => [3, 0.5001], 'C' => [1, 0.50], 'D' => [1, 0.4999]] as $key => [$sat, $confidence]) {
         ($this->profile)([
             'matched_bucket_key' => $key, 'bucket_dimensions' => json_encode(['shot_type_group' => $key]),
             'source_sat' => $sat, 'source_sog' => $sat, 'source_goals' => 0,
@@ -585,27 +585,61 @@ it('retains only reliable buckets and rescales them to the entity target', funct
             'expected_sog' => $sat, 'expected_goals' => 0, 'confidence_score' => $confidence,
         ]);
     }
+    $profilesBefore = DB::table('nhl_sat_model_entity_profile_buckets')
+        ->where('model_run_id', $this->run->id)
+        ->orderBy('matched_bucket_key')->get()->toJson();
     $builder = app(NhlSatModelEntityRateProjectionBuilder::class);
     expect($builder->buildEntity($this->run, 'skater_offense', 'skater_offense:101'))->toBe(3);
     $rows = DB::table('nhl_sat_model_entity_rate_projection_buckets')
         ->where('model_run_id', $this->run->id)->where('entity_id', 101)
         ->orderBy('matched_bucket_key')->get();
-    expect($rows->pluck('matched_bucket_key')->all())->toBe(['A', 'B'])
+    expect($rows->pluck('matched_bucket_key')->all())->toBe(['A', 'B', 'C'])
         ->and((int) $rows->sum('source_sat'))->toBe(99)
+        ->and((float) $rows->sum('projected_xsat_per_60'))->toEqualWithDelta(10.0, 0.0002)
+        ->and((float) $rows->sum('projected_xsog_per_60'))->toEqualWithDelta(10.0, 0.0002)
         ->and($rows->where('is_other_bucket', true))->toBeEmpty();
     foreach ($rows as $row) {
         expect(json_decode($row->bucket_dimensions, true))->toBe(['shot_type_group' => $row->matched_bucket_key])
             ->and((float) $row->projected_xsat_per_60)->toBeGreaterThan(0);
         $metadata = json_decode($row->metadata, true);
         expect($metadata['minimum_source_sat'])->toBe(0)
-            ->and((float) $metadata['minimum_bucket_confidence'])->toBe(0.97)
+            ->and((float) $metadata['minimum_bucket_confidence'])->toBe(0.50)
+            ->and((float) $metadata['entity_projection_scale'])->toEqualWithDelta(10 / 9.9, 0.000001)
             ->and((float) $metadata['profile_input_share_coverage'])->toBe(1.0);
     }
+    expect(DB::table('nhl_sat_model_entity_profile_buckets')
+        ->where('model_run_id', $this->run->id)
+        ->orderBy('matched_bucket_key')->get()->toJson())->toBe($profilesBefore);
     ($this->toi)();
     $input = $this->service->inputs($this->run->id)->get(101);
-    expect($input['buckets']->pluck('matched_bucket_key')->sort()->values()->all())->toBe(['A', 'B'])
+    expect($input['buckets']->pluck('matched_bucket_key')->sort()->values()->all())->toBe(['A', 'B', 'C'])
         ->and($input['buckets']->sum('baseline_xsat'))
         ->toEqualWithDelta((float) $rows->sum('projected_xsat_per_60') / 4, 0.000001);
+    Http::assertNothingSent();
+});
+
+it('leaves projections empty when every source bucket is below fifty percent', function (): void {
+    foreach (['A' => 0.4999, 'B' => 0.0] as $key => $confidence) {
+        ($this->profile)([
+            'matched_bucket_key' => $key,
+            'source_xsat_per_60' => 10,
+            'source_xsog_per_60' => 5,
+            'source_xg_per_60' => 0.2,
+            'confidence_score' => $confidence,
+        ]);
+    }
+
+    $profilesBefore = DB::table('nhl_sat_model_entity_profile_buckets')
+        ->where('model_run_id', $this->run->id)
+        ->orderBy('matched_bucket_key')->get()->toJson();
+
+    expect(app(NhlSatModelEntityRateProjectionBuilder::class)
+        ->buildEntity($this->run, 'skater_offense', 'skater_offense:101'))->toBe(0);
+    $this->assertDatabaseCount('nhl_sat_model_entity_rate_projection_buckets', 0);
+    expect(DB::table('nhl_sat_model_entity_profile_buckets')
+        ->where('model_run_id', $this->run->id)
+        ->orderBy('matched_bucket_key')->get()->toJson())->toBe($profilesBefore);
+
     Http::assertNothingSent();
 });
 

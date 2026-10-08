@@ -20,7 +20,7 @@ class NhlSatModelEntityRateProjectionBuilder
     private const GOALIE_FACED_PROFILE_TYPE = 'goalie_faced';
     private const PROFILE_INPUT_SHARE_COVERAGE = 0.95;
     private const MIN_SAT_PER_SEASON = 4;
-    private const MINIMUM_BUCKET_CONFIDENCE = 0.97;
+    private const MINIMUM_BUCKET_CONFIDENCE = 0.50;
     private const HIGH_DANGER_GOAL_PROBABILITY = 0.10;
 
     /**
@@ -245,7 +245,7 @@ class NhlSatModelEntityRateProjectionBuilder
         }
     }
 
-    /** Preserve every historical bucket identity with a usable source rate. */
+    /** Project buckets at or above the confidence floor without changing stored profiles. */
     private function insertSkaterOffenseProfileType(
         NhlModelRun $run,
         ?string $entityKey = null
@@ -697,7 +697,7 @@ reliable_bucket_totals AS (
         entity_key,
         SUM(preliminary_xsat_per_60) as reliable_preliminary_xsat_per_60
     FROM bucket_preliminary_rows
-    WHERE confidence_score > {$minimumBucketConfidence}
+    WHERE confidence_score >= {$minimumBucketConfidence}
     GROUP BY entity_key
 ),
 adjusted_rows AS (
@@ -778,7 +778,7 @@ adjusted_rows AS (
     INNER JOIN entity_peer_totals ON entity_peer_totals.entity_key = bucket_preliminary_rows.entity_key
     INNER JOIN entity_targets ON entity_targets.entity_key = bucket_preliminary_rows.entity_key
     INNER JOIN reliable_bucket_totals ON reliable_bucket_totals.entity_key = bucket_preliminary_rows.entity_key
-    WHERE bucket_preliminary_rows.confidence_score > {$minimumBucketConfidence}
+    WHERE bucket_preliminary_rows.confidence_score >= {$minimumBucketConfidence}
 )
 SELECT
     adjusted_rows.model_run_id,

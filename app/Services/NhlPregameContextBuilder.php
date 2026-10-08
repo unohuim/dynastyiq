@@ -84,9 +84,13 @@ class NhlPregameContextBuilder
         $opponentHistory = $history->filter(fn (object $row): bool => (int) $row->opponent_team_id === $side['opponent_id'])->take(10);
         $lastGame = $history->first();
         $travel = $this->travelMetrics($side['team_id'], $game, $lastGame, $history);
+        $daysSinceLastGame = $lastGame === null
+            ? null
+            : (int) now()->parse($lastGame->game_date)->startOfDay()
+                ->diffInDays(now()->parse($game->game_date)->startOfDay());
         $schedule = [
-            'days_rest' => $lastGame === null ? null : max(0, $cutoff->copy()->startOfDay()->diffInDays(now()->parse($lastGame->start_time_utc)->startOfDay()) - 1),
-            'back_to_back' => $lastGame !== null && $cutoff->copy()->startOfDay()->diffInDays(now()->parse($lastGame->start_time_utc)->startOfDay()) === 1,
+            'days_rest' => $daysSinceLastGame === null ? null : max(0, $daysSinceLastGame - 1),
+            'back_to_back' => $daysSinceLastGame === 1,
             'games_last_4_days' => $history->filter(fn (object $row): bool => now()->parse($row->start_time_utc)->gte($cutoff->copy()->subDays(4)))->count(),
             'games_last_7_days' => $history->filter(fn (object $row): bool => now()->parse($row->start_time_utc)->gte($cutoff->copy()->subDays(7)))->count(),
             'three_in_four' => $history->filter(fn (object $row): bool => now()->parse($row->start_time_utc)->gte($cutoff->copy()->subDays(4)))->count() >= 2,
@@ -129,7 +133,7 @@ class NhlPregameContextBuilder
             ->where('start_time_utc', '<', $cutoff)
             ->where(fn ($query) => $query->where('home_team_id', $teamId)->orWhere('away_team_id', $teamId))
             ->orderByDesc('start_time_utc')->orderByDesc('nhl_game_id')
-            ->get(['nhl_game_id', 'home_team_id', 'away_team_id', 'home_team_score', 'away_team_score', 'start_time_utc'])
+            ->get(['nhl_game_id', 'home_team_id', 'away_team_id', 'home_team_score', 'away_team_score', 'start_time_utc', 'game_date'])
             ->map(function (object $row) use ($teamId): object {
                 $home = (int) $row->home_team_id === $teamId;
                 $row->opponent_team_id = $home ? (int) $row->away_team_id : (int) $row->home_team_id;
@@ -145,13 +149,13 @@ class NhlPregameContextBuilder
     {
         $history = DB::table('nhl_game_summaries as summaries')
             ->join('nhl_games as games', 'games.nhl_game_id', '=', 'summaries.nhl_game_id')
-            ->where('summaries.nhl_player_id', $playerId)->where('summaries.nhl_team_id', $teamId)
+            ->where('summaries.nhl_player_id', $playerId)
             ->where('games.game_type', 2)->whereIn('games.game_state', ['OFF', 'FINAL'])
             ->where('games.start_time_utc', '<', $cutoff)->orderByDesc('games.start_time_utc')->orderByDesc('games.nhl_game_id')
             ->get(['summaries.*', 'games.season_id', 'games.home_team_id', 'games.away_team_id', 'games.start_time_utc']);
 
-        $isOpponent = fn (object $row): bool => ((int) $row->home_team_id === $teamId ? (int) $row->away_team_id : (int) $row->home_team_id) === $opponentId;
-        $isVenue = fn (object $row): bool => $venue === 'home' ? (int) $row->home_team_id === $teamId : (int) $row->away_team_id === $teamId;
+        $isOpponent = fn (object $row): bool => ((int) $row->home_team_id === (int) $row->nhl_team_id ? (int) $row->away_team_id : (int) $row->home_team_id) === $opponentId;
+        $isVenue = fn (object $row): bool => $venue === 'home' ? (int) $row->home_team_id === (int) $row->nhl_team_id : (int) $row->away_team_id === (int) $row->nhl_team_id;
 
         return [
             'all' => [
@@ -190,12 +194,12 @@ class NhlPregameContextBuilder
     {
         $history = DB::table('nhl_player_game_strength_summaries as summaries')
             ->join('nhl_games as games', 'games.nhl_game_id', '=', 'summaries.nhl_game_id')
-            ->where('summaries.nhl_player_id', $playerId)->where('summaries.team_id', $teamId)->where('summaries.strength', $strength)
+            ->where('summaries.nhl_player_id', $playerId)->where('summaries.strength', $strength)
             ->where('games.game_type', 2)->whereIn('games.game_state', ['OFF', 'FINAL'])
             ->where('games.start_time_utc', '<', $cutoff)->orderByDesc('games.start_time_utc')->orderByDesc('games.nhl_game_id')
             ->get(['summaries.*', 'games.season_id', 'games.home_team_id', 'games.away_team_id']);
-        $isOpponent = fn (object $row): bool => ((int) $row->home_team_id === $teamId ? (int) $row->away_team_id : (int) $row->home_team_id) === $opponentId;
-        $isVenue = fn (object $row): bool => $venue === 'home' ? (int) $row->home_team_id === $teamId : (int) $row->away_team_id === $teamId;
+        $isOpponent = fn (object $row): bool => ((int) $row->home_team_id === (int) $row->team_id ? (int) $row->away_team_id : (int) $row->home_team_id) === $opponentId;
+        $isVenue = fn (object $row): bool => $venue === 'home' ? (int) $row->home_team_id === (int) $row->team_id : (int) $row->away_team_id === (int) $row->team_id;
 
         return [
             'last_5' => $this->onIceMetrics($history->take(5)),
@@ -242,17 +246,23 @@ class NhlPregameContextBuilder
             return ['travel_km_since_last_game' => null, 'travel_mi_since_last_game' => null, 'travel_km_last_7_days' => null];
         }
 
-        $lastVenue = $this->arenaForTeam((int) $lastGame->home_team_id, now()->parse($lastGame->start_time_utc)->toDateString());
+        $lastVenue = $this->arenaForTeam((int) $lastGame->home_team_id, $lastGame->game_date);
         $distance = $lastVenue === null ? null : $this->distanceKm($lastVenue, $current);
+        $windowStart = now()->parse($game->start_time_utc)->subDays(7);
         $recentGames = $history
-            ->filter(fn (object $row): bool => now()->parse($row->start_time_utc)->gte(now()->parse($game->start_time_utc)->subDays(7)))
+            ->filter(fn (object $row): bool => now()->parse($row->start_time_utc)->gte($windowStart))
             ->sortBy('start_time_utc')
             ->values();
+        // The preceding venue anchors the first arrival inside the window.
+        $anchor = $history->first(fn (object $row): bool => now()->parse($row->start_time_utc)->lt($windowStart));
+        $priorVenue = $anchor === null ? null : $this->arenaForTeam((int) $anchor->home_team_id, $anchor->game_date);
+        $complete = $priorVenue !== null;
         $rolling = 0.0;
-        $priorVenue = null;
-        foreach ($recentGames as $recentGame) {
-            $venue = $this->arenaForTeam((int) $recentGame->home_team_id, now()->parse($recentGame->start_time_utc)->toDateString());
-            if ($priorVenue !== null && $venue !== null) {
+        foreach ($recentGames->concat([$game]) as $recentGame) {
+            $venue = $this->arenaForTeam((int) $recentGame->home_team_id, $recentGame->game_date);
+            if ($priorVenue === null || $venue === null) {
+                $complete = false;
+            } else {
                 $rolling += $this->distanceKm($priorVenue, $venue);
             }
             $priorVenue = $venue;
@@ -261,7 +271,7 @@ class NhlPregameContextBuilder
         return [
             'travel_km_since_last_game' => $distance === null ? null : round($distance, 2),
             'travel_mi_since_last_game' => $distance === null ? null : round($distance * 0.621371, 2),
-            'travel_km_last_7_days' => $rolling > 0 ? round($rolling, 2) : null,
+            'travel_km_last_7_days' => $complete ? round($rolling, 2) : null,
         ];
     }
 
