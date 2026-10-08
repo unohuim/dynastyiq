@@ -38,6 +38,21 @@ class RankNhlSatEngineCandidatesJob implements ShouldQueue
             || DB::table('nhl_sat_engine_results')->where('run_id', $run->id)->count() !== (int) $run->prediction_count) {
             throw new \RuntimeException('Cannot rank an incomplete game evaluation.');
         }
+        if (! DB::table('nhl_sat_engine_results')->where('run_id', $run->id)->where('status', 'complete')->exists()) {
+            DB::transaction(function (): void {
+                $run = NhlSatEngineRun::query()->whereKey($this->runId)->lock('for no key update')->first();
+                if ($run === null || $run->status !== 'ranking' || ! $this->matchesGeneration($run)) {
+                    return;
+                }
+                $run->update([
+                    'status' => 'failed',
+                    'error' => 'No eligible games: every evaluated game was excluded. Review game exclusion reasons, correct the missing inputs, and start a new run.',
+                    'completed_at' => now(),
+                ]);
+            });
+
+            return;
+        }
         $automatic = ($run->definition['confidence_search'] ?? null) === 'automatic';
         $rows = DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->whereNull('metrics')
             ->where('id', '>', $this->afterId)->orderBy('id')->limit($automatic ? 1 : 10)->get();

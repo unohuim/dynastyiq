@@ -142,10 +142,14 @@ class NhlGamePredictionPayload
             // supply only roster identities, projected-starter identity, and evidence fields.
             $targetSeasonId = (string) $game->season_id;
             $sourceSeasonId = (string) collect($pinnedRun->train_season_ids)->sort()->last();
-            $projectionVersion = (string) $this->latestProjectionVersion($targetSeasonId);
-            $toiProjectionVersion = (string) $this->latestToiProjectionVersion($targetSeasonId);
-            $goalieProjectionVersion = (string) $this->latestGoalieProjectionVersion($targetSeasonId);
-            $this->assertSimulationInputs($sourceSeasonId, $targetSeasonId, $projectionVersion, $toiProjectionVersion, $goalieProjectionVersion);
+            // Historical evaluation gets identities from stored boxscores and rates from
+            // the pinned SAT run; unrelated season projections are not prerequisites.
+            $projectionVersion = $storedBoxscore ? '' : (string) $this->latestProjectionVersion($targetSeasonId);
+            $toiProjectionVersion = $storedBoxscore ? '' : (string) $this->latestToiProjectionVersion($targetSeasonId);
+            $goalieProjectionVersion = $storedBoxscore ? '' : (string) $this->latestGoalieProjectionVersion($targetSeasonId);
+            if (! $storedBoxscore) {
+                $this->assertSimulationInputs($sourceSeasonId, $targetSeasonId, $projectionVersion, $toiProjectionVersion, $goalieProjectionVersion);
+            }
         } else {
             $targetSeasonId = (string) ($overrides['target_season_id'] ?? $this->latestTargetSeasonId());
             $sourceSeasonId = (string) ($overrides['source_season_id'] ?? $this->latestSourceSeasonId($targetSeasonId));
