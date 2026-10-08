@@ -15,6 +15,7 @@ when_not_to_use:
   - Calculating discovery recommendations; NhlSatEngineStackAnalysis owns that read-only work.
   - Deleting or mutating an engine merely because its stack membership changes.
 rules:
+  - Stack detail offers Predict today per member. Admin-only requests validate membership and today's America/Toronto game date, evaluate that Engine alone through NhlGamePredictionPayload with the saved stack production-model override, and never change defaults. The UI requests one game at a time without queue dispatch and shows away/home scores, absolute spread, internal and presentation confidence, and pick qualification. Unavailable or failed predictions are not represented as false picks. These diagnostic responses bypass the partner response cache; internal confidence remains admin-only. Normal source-resolution behavior, including official starter locks or preseason lineup imports, is unchanged.
   - A newly saved stack contains one or more distinct saved engines with contiguous one-based priority; lower priority numbers take precedence. Later membership removal may leave a stack empty. Stack length has no fixed cap.
   - Saving a recommendation validates every ordered candidate against its source run, creates one saved engine for each candidate, and records discovery provenance without starting evaluation or changing the default stack.
   - Created engine names derive from the approved stack name and their Foundation or Supplement priority; saved stack names remain independently editable. Stack members display each Engine's frozen candidate test record, win and coverage metrics, never an Engine-default state. When all members retain completed candidate provenance from one run, detail also displays each member's unique contribution and cumulative stack impact in priority order; mixed or manually created memberships display unavailable impact rather than inferred values.
@@ -25,6 +26,8 @@ rules:
   - A stack may select one completed SAT Production Model. When present, that model is used for every member evaluation at ordinary prediction time, ahead of the member Engine's own saved Production Model. It is a runtime override scoped to that stack: it never rewrites an Engine definition and an Engine may therefore retain a different model in another stack or outside a stack.
   - Partner-facing prediction and market confidence is presentation confidence, calculated only after internal qualification as `min(95, max(70, blend(internal + 5, observed_win_pct, coverage^(1/5)) + 12))`, with frozen discovery percentages normalized to 0–1. Missing frozen metrics use internal confidence plus five and the twelve-point presentation lift within the same 70–95 range. A normal unqualified response subtracts 20 percentage points from presentation confidence, floored at zero. Internal confidence is never changed or exposed as the partner confidence score.
 public_interface:
+  - GET /admin/nhl-sat-engines/stacks/{stack}/members/{member}/predictions/today
+  - POST /admin/nhl-sat-engines/stacks/{stack}/members/{member}/predictions/{game}
   - GET /admin/nhl-sat-engines/stacks/{stack}
   - POST /admin/nhl-sat-engines/runs/{run}/stacks
   - PATCH /admin/nhl-sat-engines/stacks/{stack}

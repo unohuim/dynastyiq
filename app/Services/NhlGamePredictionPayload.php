@@ -53,6 +53,34 @@ class NhlGamePredictionPayload
         );
     }
 
+    /** Evaluate one explicit Engine without stack delegation or the partner response cache.
+     * @return array<string,mixed>
+     */
+    public function previewEngine(int $gameId, NhlSatEngine $engine, ?int $productionModelId): array
+    {
+        $result = $this->build($gameId, [
+            '_stack_engine_id' => $engine->id,
+            'sat_model_run_id' => $productionModelId ?? $engine->model_run_id,
+            'engine_weights' => $engine->settings,
+        ]);
+        $internal = data_get($result, 'prediction.confidence_score');
+        if (($result['prediction_available'] ?? false) === true) {
+            $qualified = (bool) $result['pick_qualified'];
+            $result = $this->withPresentationConfidence($result, $engine, $qualified);
+            if (! $qualified) {
+                $result = $this->withUnqualifiedPresentationPenalty($result);
+            }
+        }
+
+        return [
+            'prediction_available' => $result['prediction_available'] ?? false,
+            'pick_qualified' => $result['pick_qualified'] ?? null,
+            'internal_confidence' => $internal,
+            'prediction' => $result['prediction'] ?? null,
+            'reason' => $result['reason'] ?? null,
+        ];
+    }
+
     /** @param array<string,mixed> $overrides @return array<string,mixed> */
     private function buildPrediction(int $nhlGameId, array $overrides): array
     {

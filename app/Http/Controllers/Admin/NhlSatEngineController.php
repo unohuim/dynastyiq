@@ -25,6 +25,34 @@ use Inertia\Response;
 /** Admin-only saved engines and explicitly started discovery runs. */
 class NhlSatEngineController extends Controller
 {
+    /** List today's games without starting predictions or queue work. */
+    public function predictionGames(NhlSatEngineStack $stack, NhlSatEngineStackMember $member): \Illuminate\Http\JsonResponse
+    {
+        abort_unless((int) $member->stack_id === (int) $stack->id, 404);
+        $date = now('America/Toronto')->toDateString();
+
+        return response()->json([
+            'date' => $date,
+            'games' => DB::table('nhl_games')->where('game_date', $date)->orderBy('start_time_utc')->orderBy('nhl_game_id')
+                ->get(['nhl_game_id', 'away_team_abbrev', 'home_team_abbrev']),
+        ])->header('Cache-Control', 'no-store');
+    }
+
+    /** Predict one game with the selected member and this stack's saved model override. */
+    public function predictGame(
+        NhlSatEngineStack $stack,
+        NhlSatEngineStackMember $member,
+        int $game,
+        \App\Services\NhlGamePredictionPayload $payload
+    ): \Illuminate\Http\JsonResponse {
+        abort_unless((int) $member->stack_id === (int) $stack->id, 404);
+        abort_unless(DB::table('nhl_games')->where('nhl_game_id', $game)
+            ->where('game_date', now('America/Toronto')->toDateString())->exists(), 404);
+
+        return response()->json($payload->previewEngine($game, $member->engine, $stack->production_model_run_id))
+            ->header('Cache-Control', 'no-store');
+    }
+
     /** Paginated CRUD index, using the shared Inertia application shell. */
     public function index(Request $request): Response
     {
