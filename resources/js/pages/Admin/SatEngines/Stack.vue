@@ -27,6 +27,11 @@ const loadingSaves = ref(false);
 const deletePending = ref(false);
 const capturedStack = ref(null);
 const restoredName = ref('');
+const effectiveConfidenceMax = computed(() => {
+    const settings = predictionMember.value?.engine?.settings;
+    if (settings?.confidence_max == null) return '—';
+    return Math.min(100, Number(settings.confidence_max) + Number(settings.diagnostic_confidence_upper_tolerance ?? 0));
+});
 const messageFor = error => Object.values(error.response?.data?.errors ?? {}).flat()[0]
     ?? error.response?.data?.message ?? 'Could not save predictions. Your results are still on this page.';
 const refreshSaves = async () => {
@@ -83,7 +88,7 @@ const deleteSave = async () => {
     finally { saving.value = false; }
 };
 onMounted(refreshSaves);
-const sortedPredictions = computed(() => [...predictionRows.value].sort((a, b) => {
+const sortedPredictions = computed(() => predictionRows.value.filter(row => row.source === 'production').sort((a, b) => {
     const key = predictionSort.value.key;
     const first = a[key];
     const second = b[key];
@@ -108,6 +113,7 @@ const predictToday = async member => {
     const request = new AbortController();
     predictionRequest = request;
     predictionMember.value = JSON.parse(JSON.stringify(member));
+    predictionMember.value.engine.settings.diagnostic_confidence_upper_tolerance = 1;
     capturedStack.value = { id: props.stack.id, name: props.stack.name, production_model_run_id: props.stack.production_model_run_id };
     restoredName.value = '';
     saveError.value = '';
@@ -132,13 +138,12 @@ const predictToday = async member => {
         const { data } = await axios.get(`${endpoint}/today`, { signal: request.signal });
         if (request.signal.aborted) return;
         predictionDate.value = data.date;
-        predictionRows.value = data.games.flatMap(game => ['production', 'test'].map(source => ({ id: game.nhl_game_id,
-            key: `${game.nhl_game_id}-${source}`, source,
-            model: source === 'production' ? 'Production' : 'Test/Train',
-            modelName: props.models.find(model => Number(model.id) === Number(source === 'production'
-                ? props.stack.production_model_run_id ?? member.engine.model_run_id : member.engine.test_model_run_id))?.name ?? 'Unavailable',
+        predictionRows.value = data.games.map(game => ({ id: game.nhl_game_id,
+            key: `${game.nhl_game_id}-production`, source: 'production', model: 'Production',
+            modelName: props.models.find(model => Number(model.id) === Number(
+                props.stack.production_model_run_id ?? member.engine.model_run_id))?.name ?? 'Unavailable',
             game: `${game.away_team_abbrev} @ ${game.home_team_abbrev}`, status: 'Waiting',
-            score: null, spread: null, skater: null, goalie: null, internal: null, presentation: null, qualified: null, error: null })));
+            score: null, spread: null, skater: null, goalie: null, internal: null, presentation: null, qualified: null, error: null }));
         await checkpoint();
         for (const row of predictionRows.value) {
             if (request.signal.aborted) break;
@@ -241,11 +246,11 @@ const reorder = (from, to) => {
         <section v-if="predictionMember" class="rounded-xl border border-gray-200 bg-white shadow-sm" aria-labelledby="predictions-title" :aria-busy="predicting">
             <div class="flex flex-wrap items-center justify-between gap-3 p-5">
                 <div><h2 id="predictions-title" class="text-lg font-semibold">Predict today · {{ predictionMember.engine.name }}</h2>
-                    <p class="mt-1 text-sm text-gray-600">{{ predictionDate }} · America/Toronto · Production versus saved Test/Train model · Same Engine settings</p>
-                    <p class="mt-2 inline-flex rounded-lg bg-indigo-50 px-3 py-1.5 text-sm font-semibold tabular-nums text-indigo-800">Engine qualifying confidence: {{ predictionMember.engine.settings?.confidence_min ?? '—' }}%–{{ predictionMember.engine.settings?.confidence_max ?? '—' }}% (inclusive)</p>
+                    <p class="mt-1 text-sm text-gray-600">{{ predictionDate }} · America/Toronto · Production model</p>
+                    <p class="mt-2 inline-flex rounded-lg bg-indigo-50 px-3 py-1.5 text-sm font-semibold tabular-nums text-indigo-800">Engine qualifying confidence: {{ predictionMember.engine.settings?.confidence_min ?? '—' }}%–{{ effectiveConfidenceMax }}% (inclusive)<span v-if="predictionMember.engine.settings?.diagnostic_confidence_upper_tolerance" class="ml-1 font-normal">· includes +1 upper tolerance</span></p>
                     <p class="mt-2 text-sm font-semibold tabular-nums text-indigo-800">Required spread: &gt; {{ predictionMember.engine.settings?.gap ?? '—' }} goals · No upper limit</p>
                     <p v-if="restoredName" class="mt-2 text-sm text-gray-600">Saved snapshot: {{ restoredName }} · {{ capturedStack?.name }} · Historical results, not recalculated</p>
-                    <p class="mt-1 text-xs text-gray-500">Production determines qualification and outcome. Test/Train qualification is a comparison only. Saved snapshots retain the rules used when captured. Scores are away–home; spread is the absolute goal difference.</p></div>
+                    <p class="mt-1 text-xs text-gray-500">Production determines qualification and outcome. Saved snapshots retain the rules used when captured. Scores are away–home; spread is the absolute goal difference.</p></div>
                 <button v-if="predicting" type="button" class="rounded-lg border border-gray-300 px-3 py-2 text-sm" @click="cancelPredictions">Stop remaining games</button>
             </div>
             <p v-if="predictionError" role="alert" class="px-5 pb-4 text-sm text-red-700">{{ predictionError }}</p>
@@ -270,7 +275,7 @@ const reorder = (from, to) => {
                         <td class="max-w-xs px-4 py-3 text-xs text-gray-600">{{ row.status }}<span v-if="row.error" class="mt-1 block text-red-700">{{ row.error }}</span></td>
                     </tr></tbody>
                 </table>
-                <p class="p-5 text-xs text-gray-500">Skater and goalie confidence are the two-team averages before weighting. Internal confidence = rounded (70% skater + 30% goalie). Test/Train uses today's lineups with the saved test model, not an old discovery result.</p>
+                <p class="p-5 text-xs text-gray-500">Skater and goalie confidence are the two-team averages before weighting. Internal confidence = rounded (70% skater + 30% goalie).</p>
                 <p v-if="!predicting && !predictionError && !predictionRows.length" class="p-5 text-sm text-gray-500">No games scheduled today.</p>
             </div>
         </section>

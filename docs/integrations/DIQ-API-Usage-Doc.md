@@ -7,6 +7,10 @@ tools. A named Default stack supplies ordinary prediction API calls. Its Engines
 may be evaluated in saved priority order, but only one Engine may be selected to
 make a stack prediction: the first whose internal confidence window and score-gap
 rule qualifies the game using its effective Production Model. If none qualifies, no Engine prediction is selected.
+Runtime Engine qualification adds one percentage point to the configured upper
+confidence bound, capped at 100; the lower bound and strict spread requirement
+are unchanged. For example, a saved 74–76 range accepts 74–77 inclusive. This does
+not alter stored Engine settings or discovery records, or the no-Engine legacy range.
 Engine selection is not a partner request parameter. Historical Engine discovery
 and testing use an Engine's Test Model; they do not change API predictions.
 When the Default stack has a completed Production SAT Model selected, that model

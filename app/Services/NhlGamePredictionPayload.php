@@ -394,7 +394,9 @@ class NhlGamePredictionPayload
         $response = [
             'prediction_available' => true,
             'pick_qualified' => $prediction['confidence_score'] >= ($defaultEngine?->settings['confidence_min'] ?? self::PICK_CONFIDENCE_MIN)
-                && $prediction['confidence_score'] <= ($defaultEngine?->settings['confidence_max'] ?? self::PICK_CONFIDENCE_MAX)
+                && $prediction['confidence_score'] <= ($defaultEngine === null
+                    ? self::PICK_CONFIDENCE_MAX
+                    : min(100, (float) ($defaultEngine->settings['confidence_max'] ?? self::PICK_CONFIDENCE_MAX) + 1))
                 && abs($homeGoals - $awayGoals) > (float) ($defaultEngine?->settings['gap'] ?? 0),
             'game' => $this->gamePayload($game),
             'inputs' => [
