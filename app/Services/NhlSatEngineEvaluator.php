@@ -16,6 +16,8 @@ use Illuminate\Validation\ValidationException;
 /** Coordinates bounded historical evaluations without changing production selection. */
 class NhlSatEngineEvaluator
 {
+    private const DISCOVERY_LANES = 16;
+
     /** Share validated settings between saved engines and discovery runs. */
     public function __construct(private readonly NhlSatEngineSettings $settings)
     {
@@ -127,7 +129,7 @@ class NhlSatEngineEvaluator
                     'gap_unit' => $candidates[0]['gap_unit'] ?? 'goals',
                     'automatic_search' => $input['kind'] === 'discovery' ? [
                         'strategy' => 'qualification_first_v1', 'stage' => 0, 'weight_stage' => -1,
-                        'stage_first_split' => 0, 'stage_split_count' => count($splits), 'lanes' => 4,
+                        'stage_first_split' => 0, 'stage_split_count' => count($splits), 'lanes' => self::DISCOVERY_LANES,
                     ] : null,
                     'confidence_search' => $input['kind'] === 'discovery' ? 'automatic' : 'configured',
                 ],
@@ -139,7 +141,7 @@ class NhlSatEngineEvaluator
                     'created_at' => now(), 'updated_at' => now(),
                 ], $chunk));
             }
-            foreach (array_slice(array_values($splits), 0, $input['kind'] === 'discovery' ? 4 : count($splits)) as $split) {
+            foreach (array_slice(array_values($splits), 0, $input['kind'] === 'discovery' ? self::DISCOVERY_LANES : count($splits)) as $split) {
                 EvaluateNhlSatEngineGameJob::dispatch($run->id, $split['index'], 0, $run->work_generation)->afterCommit();
             }
 

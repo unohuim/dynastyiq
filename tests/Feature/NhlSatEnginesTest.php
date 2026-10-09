@@ -687,7 +687,7 @@ it('starts stage three after ranking and preserves fixed weights and confidence 
     }
     $job->handle(app(NhlSatEngineEvaluator::class));
     expect($run->fresh()->candidate_count)->toBe($updated->candidate_count);
-    Bus::assertDispatchedTimes(EvaluateNhlSatEngineGameJob::class, 4);
+    Bus::assertDispatchedTimes(EvaluateNhlSatEngineGameJob::class, 8);
 });
 
 it('finishes after qualification ranking when both weights are fixed', function (): void {
@@ -726,6 +726,7 @@ it('starts discovery with only the fixed starting pair before searching weights'
     expect($run->prediction_count)->toBe(3)->and($run->candidate_count)->toBe(1)
         ->and($run->definition['splits'][0])->toBe(['index' => 0, 'offense' => 100, 'defense' => 50])
         ->and($run->definition['automatic_search']['strategy'])->toBe('qualification_first_v1')
+        ->and($run->definition['automatic_search']['lanes'])->toBe(16)
         ->and($run->definition['search'])->toBeNull();
     $this->assertDatabaseCount('nhl_sat_engine_candidates', 1);
     Bus::assertDispatchedTimes(EvaluateNhlSatEngineGameJob::class, 1);
@@ -1427,13 +1428,13 @@ it('discovers separate home and away candidates for one selected team', function
         ->and(collect($rows)->pluck('metrics.eligible')->all())->toBe([1, 1]);
 });
 
-it('advances a bounded lane to its next split only after the last game', function (): void {
+it('advances a bounded lane to its next split only after the last game', function (int $lanes): void {
     $run = app(NhlSatEngineEvaluator::class)->start([...$this->input, 'kind' => 'discovery',
         'scope' => [...$this->scope, 'mode' => 'games', 'count' => 1]], $this->engine);
     // A persisted legacy discovery retains its original lane scheduling.
     $run->update(['prediction_count' => 81, 'definition' => [...$run->definition,
         'automatic_search' => ['strategy' => 'coarse_to_fine_v1', 'stage' => 0,
-            'stage_first_split' => 0, 'stage_split_count' => 81, 'lanes' => 4]]]);
+            'stage_first_split' => 0, 'stage_split_count' => 81, 'lanes' => $lanes]]]);
     Bus::fake();
     $evaluator = Mockery::mock(NhlSatEngineEvaluator::class);
     $evaluator->shouldReceive('assertModelUnchanged')->once();
@@ -1442,8 +1443,25 @@ it('advances a bounded lane to its next split only after the last game', functio
     $job->handle($evaluator);
     $job->handle($evaluator);
     Bus::assertDispatchedTimes(EvaluateNhlSatEngineGameJob::class, 1);
-    Bus::assertDispatched(EvaluateNhlSatEngineGameJob::class, fn ($next) => $next->splitIndex === 4 && $next->gameIndex === 0);
+    Bus::assertDispatched(EvaluateNhlSatEngineGameJob::class, fn ($next) => $next->splitIndex === $lanes && $next->gameIndex === 0);
     expect($run->fresh()->predictions_completed)->toBe(1);
+})->with([4, 16]);
+
+it('dispatches sixteen lanes when discovery opens its unrestricted weight search', function (): void {
+    $run = app(NhlSatEngineEvaluator::class)->start([...$this->input, 'kind' => 'discovery'], $this->engine);
+    $run->update(['status' => 'ranking', 'predictions_completed' => 3]);
+    foreach ($run->definition['game_ids'] as $id) {
+        DB::table('nhl_sat_engine_results')->insert(($this->result)($run, $id, ['confidence' => 75]));
+    }
+    Bus::fake();
+    (new RankNhlSatEngineCandidatesJob($run->id, 0, 1))->handle(app(NhlSatEngineEvaluator::class));
+
+    expect($run->fresh()->definition['automatic_search']['lanes'])->toBe(16);
+    Bus::assertDispatchedTimes(EvaluateNhlSatEngineGameJob::class, 16);
+    foreach (range(1, 16) as $splitIndex) {
+        Bus::assertDispatched(EvaluateNhlSatEngineGameJob::class, fn ($job) =>
+            $job->splitIndex === $splitIndex && $job->gameIndex === 0 && $job->queue === 'projections');
+    }
 });
 
 it('appends refinement work once and preserves the original game sample', function (): void {
