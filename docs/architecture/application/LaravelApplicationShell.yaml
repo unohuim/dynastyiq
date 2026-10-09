@@ -7,6 +7,7 @@ location:
   - resources/views/
   - resources/js/app.js
   - app/Http/Middleware/HandleInertiaRequests.php
+  - app/Providers/HorizonServiceProvider.php
 purpose: Provide the primary authenticated and public web application using Laravel, Jetstream/Fortify, Blade, Alpine, staged Inertia/Vue pages, Tailwind, Livewire, queues, and Vite.
 when_to_use:
   - Adding first-party HTTP routes.
@@ -21,6 +22,9 @@ rules:
   - The public /games and /games/{nhlGameId} pages are Inertia/Vue-owned and must not reintroduce page Blade templates, Alpine state, or Livewire behavior.
   - Vite-managed JavaScript owns browser-side behavior.
   - Domain persistence and authorization stay in Laravel, not in the Discord bot runtime.
+  - Horizon dashboard and internal API access is permitted only in production on the exact horizon-diq.on-forge.com request host; other hosts and environments are denied, including local and authenticated users.
+  - Horizon permits Laravel guests through viewHorizon because Nginx Basic Authentication must protect the entire dedicated site. Laravel cannot verify that protection; the host restriction is not authentication and must not be deployed on an unprotected origin.
+  - Horizon authorization is separate from Discord OAuth and must not alter main-application authentication, queue processing, or worker configuration.
   - Horizon must isolate time-sensitive anticipated-lineup work on the lineups queue, Fantrax provider work on the fantrax queue, and unrelated work on the default queue.
   - Horizon worker allocation is twelve fixed default workers, two fixed Fantrax workers, and one fixed lineup worker in every environment.
 public_interface:

@@ -193,6 +193,7 @@ php artisan api-client:create partner-app --scope=nhl-reference:read --scope=nhl
 **Purpose:**
 Provide the primary authenticated and public web application using Laravel, Jetstream/Fortify, Blade, Alpine, staged Inertia/Vue pages, Tailwind, Livewire, queues, and Vite.
 Horizon isolates nine `default` workers, one `fantrax` worker, and one time-sensitive `lineups` worker in every environment.
+Dashboard authorization is owned by `app/Providers/HorizonServiceProvider.php` and restricted to the dedicated production host behind Nginx Basic Authentication. See `docs/architecture/application/LaravelApplicationShell.yaml` and `docs/operations/horizon-dashboard.md`.
 
 **When to Use:**
 Adding first-party HTTP routes, controllers, views, approved Inertia pages, request validation, policies, jobs, and application JavaScript.

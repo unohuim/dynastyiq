@@ -22,7 +22,6 @@ yarn-error.log
 /.nova
 /.vscode
 /.zed
-app/Providers/HorizonServiceProvider.php
 
 diq-bot/node_modules/
 
