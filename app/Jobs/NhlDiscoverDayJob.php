@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Jobs;
 
 use App\Events\NhlGameImportStatusUpdated;
+use App\Events\GamesDiscovered;
 use App\Models\NhlGameImportRun;
 use App\Services\NhlDiscoverGames;
 use Illuminate\Bus\Queueable;
@@ -77,6 +78,15 @@ class NhlDiscoverDayJob implements ShouldQueue
         return [self::TAG_DISCOVERY_DAY, "date:{$this->date}", 'run-id:' . ($this->runId ?? 'none')];
     }
 
+    /** A failed discovery day must not strand the parent as perpetually active. */
+    public function failed(?\Throwable $exception): void
+    {
+        if ($this->runId !== null) {
+            NhlGameImportRun::query()->whereKey($this->runId)->whereIn('status', ['queued', 'running'])
+                ->update(['status' => 'failed']);
+        }
+    }
+
     /**
      * Mark one date in a discovery run as resolved.
      */
@@ -92,11 +102,14 @@ class NhlDiscoverDayJob implements ShouldQueue
                 ->lockForUpdate()
                 ->first();
 
-            if (! $run || $run->action !== NhlGameImportRun::ACTION_DISCOVER) {
+            if (! $run || $run->action !== NhlGameImportRun::ACTION_DISCOVER || $run->status === 'failed') {
                 return false;
             }
 
             $payload = $run->payload ?? [];
+            if (in_array($this->date, $payload['discovery_completed_dates'] ?? [], true)) {
+                return false;
+            }
             $dates = collect($payload['discovery_completed_dates'] ?? [])
                 ->map(fn ($date): string => (string) $date)
                 ->push($this->date)
@@ -119,6 +132,10 @@ class NhlDiscoverDayJob implements ShouldQueue
             }
 
             $run->forceFill($updates)->save();
+
+            if ($updates['status'] === NhlGameImportRun::STATUS_COMPLETED) {
+                GamesDiscovered::dispatch($run->id);
+            }
 
             return $updates['status'] === NhlGameImportRun::STATUS_COMPLETED;
         });

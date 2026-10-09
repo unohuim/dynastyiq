@@ -1,5 +1,70 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+describe('game discovery schedule settings', () => {
+    beforeEach(() => {
+        vi.restoreAllMocks();
+        global.fetch = vi.fn();
+    });
+
+    it('loads persisted settings and opens the drawer', async () => {
+        fetch.mockResolvedValue({ ok: true, json: async () => ({
+            enabled: true, start_time: '03:50', frequency_hours: 24, settings: { days_back: 3 },
+        }) });
+        const hub = (await loadAdminHub())();
+        await hub.openDiscoverySchedule();
+        expect(hub.discoverySchedule).toMatchObject({ open: true, loaded: true, enabled: true, days_back: 3 });
+        expect(fetch).toHaveBeenCalledWith('/admin/scheduled-processes/nhl-game-discovery', expect.any(Object));
+    });
+
+    it('persists only enabled when the recycling toggle is pressed', async () => {
+        fetch.mockResolvedValue({ ok: true, json: async () => ({ enabled: false }) });
+        const hub = (await loadAdminHub())();
+        Object.assign(hub.discoverySchedule, { loaded: true, enabled: true, frequency_hours: 12 });
+        await hub.saveDiscoverySchedule(true);
+        expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ enabled: false });
+        expect(hub.discoverySchedule.enabled).toBe(false);
+        expect(hub.discoverySchedule.frequency_hours).toBe(12);
+    });
+
+    it('retains the enabled state when a toggle save fails', async () => {
+        fetch.mockRejectedValue(new Error('Network failure'));
+        const hub = (await loadAdminHub())();
+        Object.assign(hub.discoverySchedule, { loaded: true, enabled: true });
+        await hub.saveDiscoverySchedule(true);
+        expect(hub.discoverySchedule).toMatchObject({ enabled: true, saving: false, error: 'Network failure' });
+    });
+
+    it('keeps entered values and displays field validation errors', async () => {
+        fetch.mockResolvedValue({ ok: false, json: async () => ({ errors: { days_back: ['Days back is invalid.'] } }) });
+        const hub = (await loadAdminHub())();
+        Object.assign(hub.discoverySchedule, { loaded: true, days_back: 99, open: true });
+        await hub.saveDiscoverySchedule();
+        expect(hub.discoverySchedule).toMatchObject({ days_back: 99, open: true, error: 'Days back is invalid.' });
+    });
+
+    it('saves timing without changing the toggle and announces success', async () => {
+        fetch.mockResolvedValue({ ok: true, json: async () => ({
+            enabled: false, start_time: '06:00', frequency_hours: 12, settings: { days_back: 4 },
+        }) });
+        const hub = (await loadAdminHub())();
+        hub.$dispatch = vi.fn();
+        Object.assign(hub.discoverySchedule, { loaded: true, start_time: '06:00', frequency_hours: '12', days_back: '4' });
+        await hub.saveDiscoverySchedule();
+        expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ start_time: '06:00', frequency_hours: 12, days_back: 4 });
+        expect(hub.discoverySchedule.enabled).toBe(false);
+        expect(hub.$dispatch).toHaveBeenCalledWith('toast', expect.objectContaining({ type: 'success' }));
+    });
+
+    it('blocks saves until settings load and ignores concurrent saves', async () => {
+        const hub = (await loadAdminHub())();
+        await hub.saveDiscoverySchedule();
+        Object.assign(hub.discoverySchedule, { loaded: true, saving: true });
+        await hub.saveDiscoverySchedule(true);
+        expect(fetch).not.toHaveBeenCalled();
+    });
+});
+
+
 const loadAdminHub = async () => {
     vi.resetModules();
     return (await import('./admin-hub.js')).default;

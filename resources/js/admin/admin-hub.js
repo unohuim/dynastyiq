@@ -51,6 +51,10 @@ export default function adminHub(options = {}) {
 
     return {
         activeTab: initialTab,
+        discoverySchedule: {
+            open: false, loading: false, saving: false, loaded: false, error: '', enabled: false,
+            start_time: '03:50', frequency_hours: 24, days_back: 3,
+        },
         importItems: hydrateImportSchedules(options.imports),
         adminUsers: options.users ?? [],
         activityData: options.activity ?? {},
@@ -278,8 +282,63 @@ export default function adminHub(options = {}) {
             }
 
             if (tab === 'game-imports') {
+                await this.loadDiscoverySchedule();
                 await this.loadGameImports();
                 await this.loadGameImportSourceGaps();
+            }
+        },
+
+        async loadDiscoverySchedule() {
+            const state = this.discoverySchedule;
+            if (state.loading || state.loaded) return;
+            state.loading = true;
+            state.error = '';
+            try {
+                const response = await fetch('/admin/scheduled-processes/nhl-game-discovery', {
+                    headers: { Accept: 'application/json' },
+                });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.message || 'Unable to load discovery settings.');
+                Object.assign(state, { enabled: data.enabled, start_time: data.start_time,
+                    frequency_hours: data.frequency_hours, days_back: data.settings.days_back, loaded: true });
+            } catch (error) {
+                state.error = error.message || 'Unable to load discovery settings.';
+            } finally {
+                state.loading = false;
+            }
+        },
+
+        async openDiscoverySchedule() {
+            this.discoverySchedule.open = true;
+            await this.loadDiscoverySchedule();
+        },
+
+        async saveDiscoverySchedule(toggle = false) {
+            const state = this.discoverySchedule;
+            if (!state.loaded || state.saving) return;
+            state.saving = true;
+            state.error = '';
+            const body = toggle ? { enabled: !state.enabled } : {
+                start_time: state.start_time, frequency_hours: Number(state.frequency_hours), days_back: Number(state.days_back),
+            };
+            try {
+                const response = await fetch('/admin/scheduled-processes/nhl-game-discovery', {
+                    method: 'PUT',
+                    headers: { Accept: 'application/json', 'Content-Type': 'application/json',
+                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') },
+                    body: JSON.stringify(body),
+                });
+                const data = await response.json();
+                if (!response.ok) throw new Error(Object.values(data.errors || {}).flat().join(' ') || data.message || 'Unable to save discovery settings.');
+                state.enabled = data.enabled;
+                if (!toggle) {
+                    Object.assign(state, { start_time: data.start_time, frequency_hours: data.frequency_hours, days_back: data.settings.days_back });
+                }
+                this.$dispatch?.('toast', { message: 'Discovery settings saved.', type: 'success' });
+            } catch (error) {
+                state.error = error.message || 'Unable to save discovery settings.';
+            } finally {
+                state.saving = false;
             }
         },
 

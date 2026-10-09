@@ -16,13 +16,16 @@ class RankNhlSatEngineCandidatesJob implements ShouldQueue
 {
     use Queueable;
 
+    public ?int $splitIndex = null;
+
     public int $tries = 2;
     public int $timeout = 120;
     public bool $failOnTimeout = true;
 
     /** Resume ranking after a stable candidate ID. */
-    public function __construct(public int $runId, public int $afterId, public ?int $workGeneration = null)
+    public function __construct(public int $runId, public int $afterId, public ?int $workGeneration = null, ?int $splitIndex = null)
     {
+        $this->splitIndex = $splitIndex;
         $this->onQueue('projections');
         $this->afterCommit = true;
     }
@@ -56,6 +59,7 @@ class RankNhlSatEngineCandidatesJob implements ShouldQueue
         }
         $automatic = ($run->definition['confidence_search'] ?? null) === 'automatic';
         $rows = DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->whereNull('metrics')
+            ->when($this->splitIndex !== null, fn ($query) => $query->where('split_index', $this->splitIndex))
             ->where('id', '>', $this->afterId)->orderBy('id')->limit($automatic ? 1 : 10)->get();
         $computed = [];
         foreach ($rows as $candidate) {
@@ -115,7 +119,20 @@ class RankNhlSatEngineCandidatesJob implements ShouldQueue
             }
             $run->save();
             if ($run->status === 'ranking') {
-                self::dispatch($run->id, (int) $rows->last()->id, $run->work_generation)->afterCommit();
+                if ($this->splitIndex === null) {
+                    self::dispatch($run->id, (int) $rows->last()->id, $run->work_generation)->afterCommit();
+                } else {
+                    $search = $run->definition['automatic_search'];
+                    $next = $this->splitIndex + $search['lanes'];
+                    while ($next < $search['stage_first_split'] + $search['stage_split_count']
+                        && ! DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)
+                            ->where('split_index', $next)->whereNull('metrics')->exists()) {
+                        $next += $search['lanes'];
+                    }
+                    if ($next < $search['stage_first_split'] + $search['stage_split_count']) {
+                        self::dispatch($run->id, 0, $run->work_generation, $next)->afterCommit();
+                    }
+                }
             }
         });
     }

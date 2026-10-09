@@ -55,7 +55,7 @@ class EvaluateNhlSatEngineGameJob implements ShouldQueue
         }
         $row = $evaluator->predict($run, $this->splitIndex, $gameId);
         $evaluator->assertModelUnchanged($run);
-        DB::transaction(function () use ($row): void {
+        DB::transaction(function () use ($row, $evaluator): void {
             $run = NhlSatEngineRun::query()->whereKey($this->runId)->lock('for no key update')->first();
             if ($run === null || ! in_array($run->status, ['queued', 'running'], true)
                 || ! $this->matchesGeneration($run)) {
@@ -76,7 +76,22 @@ class EvaluateNhlSatEngineGameJob implements ShouldQueue
                 $run->definition = $definition;
             }
             $run->save();
-            if ($this->gameIndex + 1 < $run->game_count) {
+            $search = $run->definition['automatic_search'] ?? [];
+            if (($search['work_scheduling'] ?? null) === 'game_lanes_v1') {
+                $first = (int) $search['stage_first_split'];
+                $offset = ($this->splitIndex - $first) * $run->game_count + $this->gameIndex + $search['lanes'];
+                // A resumed legacy run can have completed coordinates later in this lane.
+                while ($offset < $search['stage_split_count'] * $run->game_count
+                    && DB::table('nhl_sat_engine_results')->where('run_id', $run->id)
+                        ->where('split_index', $first + intdiv($offset, $run->game_count))
+                        ->where('nhl_game_id', $run->definition['game_ids'][$offset % $run->game_count])->exists()) {
+                    $offset += $search['lanes'];
+                }
+                if ($offset < $search['stage_split_count'] * $run->game_count) {
+                    self::dispatch($run->id, $first + intdiv($offset, $run->game_count),
+                        $offset % $run->game_count, $run->work_generation)->afterCommit();
+                }
+            } elseif ($this->gameIndex + 1 < $run->game_count) {
                 self::dispatch($run->id, $this->splitIndex, $this->gameIndex + 1, $run->work_generation)->afterCommit();
             } elseif (in_array($run->definition['automatic_search']['strategy'] ?? null, ['coarse_to_fine_v1', 'qualification_first_v1'], true)) {
                 $search = $run->definition['automatic_search'];
@@ -86,7 +101,7 @@ class EvaluateNhlSatEngineGameJob implements ShouldQueue
                 }
             }
             if ($run->status === 'ranking') {
-                RankNhlSatEngineCandidatesJob::dispatch($run->id, 0, $run->work_generation)->afterCommit();
+                $evaluator->dispatchRankingJobs($run);
             }
         });
     }

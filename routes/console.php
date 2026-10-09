@@ -19,14 +19,10 @@ Schedule::command('cap:import --per-page=100 --all=true')
     ->timezone('America/Toronto')
     ->unlessBetween('08:00', '12:00');
 
-Schedule::command('nhl:discover --days=2')
-    ->dailyAt('03:50')
-    ->timezone('America/Toronto')
-    ->unlessBetween('08:00', '12:00');
-Schedule::command('nhl:process')
+Schedule::command('processes:dispatch-due')
     ->everyMinute()
-    ->timezone('America/Toronto')
-    ->unlessBetween('08:00', '12:00');
+    ->withoutOverlapping(1)
+    ->timezone('America/Toronto');
 Schedule::command('patreon:sync-nightly')
     ->dailyAt('03:15')
     ->timezone('America/Toronto')

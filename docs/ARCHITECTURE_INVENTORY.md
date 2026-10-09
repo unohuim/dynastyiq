@@ -178,6 +178,15 @@ php artisan api-client:create partner-app --scope=nhl-reference:read --scope=nhl
 
 ---
 
+### Scheduled Process Manager
+
+Scheduled process timing is incrementally centralized in `ScheduledProcessManager`
+and `scheduled_processes`, starting with NHL game discovery. The existing Games
+Import Pipeline exposes its toggle and settings drawer; `GamesDiscovered` starts
+processing through the established orchestrator after commit. Canonical authority:
+`docs/architecture/application/ScheduledProcessManager.yaml` and
+`docs/architecture/imports/NhlDiscoveryPipeline.yaml`.
+
 ### Laravel Application Shell
 
 **Name:** Laravel Application Shell

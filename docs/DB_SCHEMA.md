@@ -1,5 +1,16 @@
 # Database Schema Inventory (DB_SCHEMA)
 
+## Scheduled processes
+
+Migration: `2026_10_10_000001_create_scheduled_processes_table.php`.
+Global operational table `scheduled_processes` stores a unique allowlisted key,
+enabled flag, local start time, timezone, integer frequency hours, process settings
+JSON, last dispatch, indexed next-due timestamp, bounded last-error text and
+timestamps. The migration seeds enabled NHL game discovery at 03:50 Toronto,
+24 hours, three previous dates excluding today. No game-processing schedule row
+is needed: processing is triggered by discovery readiness. Existing provider
+import schedules and historical game-import runs are not rewritten.
+
 ## Private admin engine prediction saves
 
 Migration: `2026_10_08_000001_create_admin_engine_game_predictions.php`.

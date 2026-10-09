@@ -725,8 +725,53 @@
                             >
                                 Discovery
                             </button>
+                            <button type="button" class="inline-flex size-8 items-center justify-center rounded-full border bg-white shadow-sm transition-colors hover:bg-gray-50 disabled:opacity-50"
+                                :class="discoverySchedule.enabled ? 'border-green-400 text-green-400' : 'border-gray-300 text-gray-500'"
+                                :aria-pressed="discoverySchedule.enabled ? 'true' : 'false'"
+                                :aria-label="discoverySchedule.enabled ? 'Disable automatic game discovery' : 'Enable automatic game discovery'"
+                                :disabled="!discoverySchedule.loaded || discoverySchedule.saving"
+                                @click="saveDiscoverySchedule(true)">
+                                <svg class="size-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M3.5 7.25A6.5 6.5 0 0 1 14.7 4.8L16.5 6.5m0 0V2.75m0 3.75h-3.75M16.5 12.75A6.5 6.5 0 0 1 5.3 15.2L3.5 13.5m0 0v3.75m0-3.75h3.75" />
+                                </svg>
+                            </button>
+                            <button type="button" class="inline-flex size-8 items-center justify-center rounded-md border border-gray-300 bg-white text-gray-600 transition-colors hover:bg-gray-50"
+                                aria-label="Game discovery settings" :aria-expanded="discoverySchedule.open" aria-controls="discovery-schedule-title" @click="openDiscoverySchedule()">
+                                <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 3h6l1 3 3 1 2 5-2 5-3 1-1 3H9l-1-3-3-1-2-5 2-5 3-1 1-3Z" />
+                                    <circle cx="12" cy="12" r="3" />
+                                </svg>
+                            </button>
                         </div>
                     </div>
+
+                    <p x-show="discoverySchedule.error" x-cloak role="alert" class="px-4 py-2 text-sm text-red-700" x-text="discoverySchedule.error"></p>
+                    <x-ui.slide-over show="discoverySchedule.open" close-action="discoverySchedule.open = false" title-id="discovery-schedule-title" max-width="max-w-md">
+                        <form class="flex h-full flex-col" @submit.prevent="saveDiscoverySchedule()">
+                            <div class="flex items-center justify-between border-b border-gray-200 px-5 py-4">
+                                <h3 id="discovery-schedule-title" class="font-semibold text-gray-900">Game discovery settings</h3>
+                                <button type="button" class="rounded-md px-2 py-1 text-gray-600 hover:bg-gray-100" @click="discoverySchedule.open = false" aria-label="Close discovery settings">Close</button>
+                            </div>
+                            <div class="space-y-5 overflow-y-auto p-5">
+                                <p class="text-sm text-gray-500">America/Toronto. Processing starts automatically after discovery finishes.</p>
+                                <p x-show="discoverySchedule.loading" role="status" class="text-sm text-gray-500">Loading settings…</p>
+                                <label class="block text-sm font-medium text-gray-700">Start time
+                                    <input type="time" required x-model="discoverySchedule.start_time" class="mt-1 block w-full rounded-md border-gray-300" />
+                                </label>
+                                <label class="block text-sm font-medium text-gray-700">Frequency (hours)
+                                    <input type="number" min="1" max="168" step="1" required x-model="discoverySchedule.frequency_hours" class="mt-1 block w-full rounded-md border-gray-300" />
+                                </label>
+                                <label class="block text-sm font-medium text-gray-700">Days back
+                                    <input type="number" min="1" max="31" step="1" required x-model="discoverySchedule.days_back" class="mt-1 block w-full rounded-md border-gray-300" />
+                                </label>
+                                <p class="text-sm text-gray-500">3 means yesterday and the two days before. Today is excluded.</p>
+                                <p x-show="discoverySchedule.error" role="alert" class="text-sm text-red-700" x-text="discoverySchedule.error"></p>
+                            </div>
+                            <div class="mt-auto border-t border-gray-200 p-5">
+                                <button type="submit" :disabled="discoverySchedule.saving || !discoverySchedule.loaded" class="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" x-text="discoverySchedule.saving ? 'Saving…' : 'Save settings'"></button>
+                            </div>
+                        </form>
+                    </x-ui.slide-over>
 
                     <div
                         x-show="gameImports.error"

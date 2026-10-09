@@ -13,8 +13,9 @@ Model jobs set their own queue; model batches also explicitly select `projection
 so batched children and later loader additions stay on that queue. Existing
 progress checkpoints, overlap locks, dispatch pacing, and retries are unchanged.
 New SAT Engine discovery runs can maintain up to sixteen evaluation lanes per
-run when enough weight pairs are available. The initial single-pair stage still
-uses one lane. Existing runs retain their saved lane count. This application
+run, including games within the initial single-pair stage. Ranking runs across
+up to sixteen independent pairs (one lane when only one pair exists). Pause and
+resume an older automatic run to upgrade its scheduling without discarding results. This application
 limit does not increase Horizon workers: actual parallel execution is bounded by
 the available projections workers across all queued work.
 Interactive synchronous predictions are not converted to background jobs.

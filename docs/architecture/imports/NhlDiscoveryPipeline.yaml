@@ -4,6 +4,9 @@ location:
   - app/Support/NhlImportStages.php
   - app/Services/NhlDiscoverGames.php
   - app/Services/NhlDiscovery.php
+  - app/Events/GamesDiscovered.php
+  - app/Listeners/StartDiscoveredGameProcessing.php
+  - app/Services/DiscoveredGameProcessing.php
   - app/Console/Commands/NhlDiscoverCommand.php
   - app/Jobs/NhlDiscoveryJob.php
   - app/Jobs/NhlDiscoverDayJob.php
@@ -23,6 +26,9 @@ rules:
   - Discovery must seed import progress rows from NhlImportStages instead of maintaining its own stage list.
   - Command-line discovery must record an admin-visible nhl_game_import_runs row before dispatching so CLI and UI discovery share the same orchestration ledger.
   - Discovery jobs must write nhl_import_progress.run_id when an admin-visible run created the discovery work.
+  - The final distinct resolved discovery date emits GamesDiscovered after its transaction commits. Duplicate date delivery must not emit readiness twice or reopen a processing-completed run. Failed discovery runs must not be revived by later date completions.
+  - A queued default-queue listener delegates readiness to DiscoveredGameProcessing, which verifies complete discovery and pending run-owned work before asking NhlImportOrchestrator to fill its existing game slots. Repeated events do not reset stages or duplicate completed processing.
+  - Discovery job failures mark active discovery parents failed so automatic scheduling does not remain blocked indefinitely by an abandoned running parent.
 public_interface:
   - NhlDiscoverCommand
   - NhlDiscoveryJob

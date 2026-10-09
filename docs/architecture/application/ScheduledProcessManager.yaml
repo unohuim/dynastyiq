@@ -1,0 +1,34 @@
+name: Scheduled Process Manager
+type: Persistent Scheduling Abstraction
+location:
+  - app/Models/ScheduledProcess.php
+  - app/Services/ScheduledProcessManager.php
+  - app/Console/Commands/DispatchScheduledProcessesCommand.php
+  - app/Http/Controllers/Admin/ScheduledProcessController.php
+  - routes/console.php
+purpose: Centralize due-process decisions in persisted settings while migrating existing scheduler entries incrementally.
+when_to_use:
+  - Managing automatic NHL game discovery timing and scope.
+  - Migrating another scheduled process after explicit approval.
+when_not_to_use:
+  - Replacing all existing provider-import schedules at once.
+  - Performing heavy work inside the scheduler tick.
+  - Accepting arbitrary command names or executable settings from HTTP.
+rules:
+  - scheduled_processes is global super-admin-managed operational data, not tenant data. Its initial allowlisted process is NHL game discovery; provider schedules remain in admin_import_schedules.
+  - Laravel calls the manager every minute; enabled state and due times are authoritative in the database. A dispatch lock and locked schedule row suppress overlapping ticks. Dispatch at most one occurrence per process per tick; missed intervals must not create catch-up bursts.
+  - Discovery starts at the persisted America/Toronto wall-clock time with a default 24-hour frequency. Daily schedules preserve local time across DST; other frequencies advance from actual dispatch time. Initial schedules wait for today's start time; an already overdue next_due_at remains due.
+  - Discovery defaults to the previous three calendar dates, excluding today. Start time, integer frequency hours, and integer days back are validated server-side; the enable toggle saves independently and immediately.
+  - Active automatic discovery or processing for the same process suppresses a new automatic run. Dispatch failures retain bounded error evidence; no scheduler entry performs game imports synchronously.
+  - Settings reads and writes reuse authenticated super-admin and lifecycle middleware. Saving settings must not dispatch work. The Games Import Pipeline header exposes the existing recycle icon toggle and a settings slide-over.
+  - NHL game processing is event-driven through GamesDiscovered after all discovery dates commit. It is not a separately timed scheduled process. Existing slot, claim, stage and per-game locking safeguards remain owned by the NHL import orchestrator.
+  - The former direct nhl:discover and nhl:process schedules are removed only when this manager is deployed; all other scheduler entries remain unchanged. Manual commands remain available.
+public_interface:
+  - ScheduledProcessManager::tick()
+  - processes:dispatch-due
+  - GET /admin/scheduled-processes/nhl-game-discovery
+  - PUT /admin/scheduled-processes/nhl-game-discovery
+example_usage: |
+  Laravel's minute tick invokes processes:dispatch-due.
+  An enabled due discovery queues yesterday through three days ago.
+  GamesDiscovered starts bounded processing after the discovery commits.

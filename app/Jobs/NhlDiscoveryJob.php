@@ -75,4 +75,13 @@ class NhlDiscoveryJob implements ShouldQueue
             'run-id:' . ($this->runId ?? 'none'),
         ];
     }
+
+    /** Release the automatic schedule's active-run guard after a discovery failure. */
+    public function failed(?\Throwable $exception): void
+    {
+        if ($this->runId !== null) {
+            NhlGameImportRun::query()->whereKey($this->runId)->whereIn('status', ['queued', 'running'])
+                ->update(['status' => 'failed']);
+        }
+    }
 }

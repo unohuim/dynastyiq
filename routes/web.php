@@ -348,6 +348,10 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                     ->name('admin.yahoo.players.import');
 
                 // NHL game import orchestration
+                Route::get('/scheduled-processes/nhl-game-discovery', [\App\Http\Controllers\Admin\ScheduledProcessController::class, 'show'])
+                    ->name('admin.scheduled-processes.discovery.show');
+                Route::put('/scheduled-processes/nhl-game-discovery', [\App\Http\Controllers\Admin\ScheduledProcessController::class, 'update'])
+                    ->name('admin.scheduled-processes.discovery.update');
                 Route::get('/nhl-game-imports/status', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'status'])
                     ->name('admin.nhl-game-imports.status');
                 Route::get('/nhl-game-imports/source-gaps', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'sourceGaps'])
