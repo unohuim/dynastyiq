@@ -120,6 +120,45 @@ is restricted to the requested game. Same-team same-day RotoWire evidence may
 still be checked to avoid conflicting split-squad goalie assignments. No NHL/X
 calls are made. The date endpoint remains unchanged.
 
+### Pregame, live and final: the lineup API keeps the same shape
+
+Live starter resolution prefers NHL's explicit starter flag. If that flag is
+absent, the only goalie with recorded nonzero ice time can establish the starter.
+When multiple goalies have played, the earliest NHL play identifying a team
+goalie is used. Unresolved evidence stays unavailable, and an existing starter
+lock is never replaced by a relief goalie. This resolution occurs in prediction
+and live-context processing; the lineup API only reads persisted selections and
+does not fetch game events itself. Response fields remain unchanged.
+
+`GET /api/nhl/lineups/{nhl_game_id}` does **not** switch to a different payload
+when a game goes live or finishes. Consumers must continue reading:
+
+| Single-game response path | Contract in every game state |
+| --- | --- |
+| `game.game_state` | Stored NHL game state; its value can change without changing the response structure. |
+| `game.teams.away.players` / `game.teams.home.players` | Accepted lineup players, or `[]` when no eligible lineup is stored. |
+| `game.teams.away.lineup_status` / `game.teams.home.lineup_status` | Current lineup evidence status, including `not_reported` when unavailable. |
+| `game.teams.away.starting_goalie` / `game.teams.home.starting_goalie` | Independently selected starter, or `null`. |
+
+The date endpoint uses those same game fields under `games[]` instead of `game`.
+Updated imports or manual selections can change the values, but starting a game
+does not remove `teams`, move `players`, or introduce a `live_mode` branch here.
+
+Do not confuse this API with DynastyIQ's separate game-page presentation. That
+presentation can switch to `live_mode: true`, with NHL boxscore data under
+`away` and `home`, roster players under `lineup.players`, live scores and goalie
+statistics, and without pregame projection/injury enrichment. Its NHL boxscore
+fetch is cached for 60 seconds. **That live presentation is not the response of
+either `/api/nhl/lineups` endpoint**, and its cache does not describe lineup API
+freshness.
+
+The single-game route calls `NhlLineupsController::show()` →
+`NhlAnticipatedLineupPayload::schedule()`, not `gamePage()`. If a consumer sees
+missing `game.teams` or a `live_mode` payload from this route, capture the exact
+requested URL and response body: that is not the current route's response
+contract. An empty `players` array, however, is valid and means no eligible
+stored lineup was returned; it does not mean the API switched to live mode.
+
 ### Read all games on a date
 
 `GET /api/nhl/lineups?date=2026-09-24`

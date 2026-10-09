@@ -150,7 +150,7 @@ class NhlStartingGoalieSelector
             : $this->result((int) $workload, 'workload_projection', 'projected');
     }
 
-    /** Persist each side's first unambiguous NHL starter after puck drop, atomically. */
+    /** Persist each side's first resolved NHL starter after puck drop, atomically. */
     public function lockBoxscoreStarters(int $nhlGameId, array $boxscore): void
     {
         $state = mb_strtoupper((string) ($boxscore['gameState'] ?? ''));
@@ -164,16 +164,16 @@ class NhlStartingGoalieSelector
         foreach (['away', 'home'] as $side) {
             $teamField = $side . '_team_abbrev';
             $column = $side . '_starter_lock';
+            if ($game->{$column} !== null) {
+                continue;
+            }
             if (mb_strtoupper((string) data_get($boxscore, $side . 'Team.abbrev')) !== mb_strtoupper((string) $game->{$teamField})) {
                 continue;
             }
-            $starters = collect(data_get($boxscore, 'playerByGameStats.' . $side . 'Team.goalies', []))
-                ->filter(fn ($row): bool => is_array($row) && ($row['starter'] ?? false) === true
-                    && (int) ($row['playerId'] ?? 0) > 0)->values();
-            if ($starters->count() !== 1) {
+            $starter = $this->boxscoreStarter($nhlGameId, $boxscore, $side);
+            if ($starter === null) {
                 continue;
             }
-            $starter = $starters->first();
             DB::table('nhl_games')->where('nhl_game_id', $nhlGameId)->whereNull($column)->update([
                 $column => json_encode([
                     'nhl_player_id' => (int) $starter['playerId'],
@@ -182,6 +182,57 @@ class NhlStartingGoalieSelector
                 ], JSON_THROW_ON_ERROR),
             ]);
         }
+    }
+
+    /**
+     * Resolve official starter identity without using projected workload or list order.
+     *
+     * @param array<string,mixed> $boxscore
+     * @return array<string,mixed>|null
+     */
+    private function boxscoreStarter(int $gameId, array $boxscore, string $side): ?array
+    {
+        $rows = collect(data_get($boxscore, "playerByGameStats.{$side}Team.goalies", []))
+            ->filter(fn ($row): bool => is_array($row) && (int) ($row['playerId'] ?? 0) > 0)
+            ->keyBy('playerId');
+        $explicit = $rows->filter(fn (array $row): bool => ($row['starter'] ?? false) === true);
+        if ($explicit->isNotEmpty()) {
+            return $explicit->count() === 1 ? $explicit->first() : null;
+        }
+        $played = $rows->filter(fn (array $row): bool => preg_match('/[1-9]/', (string) ($row['toi'] ?? '')) === 1);
+        if ($played->count() === 1) {
+            return $played->first();
+        }
+        if ($played->count() < 2) {
+            return null;
+        }
+
+        $events = app(NhlPredictionInputContext::class)->remember(
+            __METHOD__ . ':events', [$gameId], function () use ($gameId): ?array {
+                try {
+                    $response = Cache::remember('nhl:starter-events:' . $gameId, 60, function () use ($gameId): mixed {
+                        return Http::acceptJson()->connectTimeout(5)->timeout(15)
+                            ->get($this->getApiUrl('nhl', 'pbp', ['gameId' => $gameId]))->throw()->json();
+                    });
+
+                    return is_array($response) && (int) ($response['id'] ?? 0) === $gameId ? $response : null;
+                } catch (\Throwable $exception) {
+                    report($exception);
+
+                    return null;
+                }
+            }
+        );
+        if ($events === null
+            || data_get($events, "{$side}Team.abbrev") !== data_get($boxscore, "{$side}Team.abbrev")) {
+            return null;
+        }
+        $event = collect($events['plays'] ?? [])
+            ->filter(fn ($play): bool => is_array($play) && isset($play['sortOrder'])
+                && $played->has((int) data_get($play, 'details.goalieInNetId')))
+            ->sortBy('sortOrder')->first();
+
+        return $event === null ? null : $played->get((int) data_get($event, 'details.goalieInNetId'));
     }
 
     /** Read a durable starter independently of cache, observations or later provider corrections. */
