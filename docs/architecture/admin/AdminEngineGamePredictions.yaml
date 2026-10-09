@@ -17,7 +17,7 @@ rules:
   - Autosaves retain the latest partial workspace per run. Starting another run reserves an unused slot or replaces the least recently updated slot. A session token prevents a displaced tab from writing into its replacement. Named saves are never automatically overwritten or evicted.
   - Snapshots are bounded to 128 display rows and 256 KiB. They retain displayed model results, engine settings, stack context, date and sort state. Browser snapshots are diagnostic copies, not trusted prediction inputs.
   - Restoring never triggers model evaluation, provider requests, queues, or live definition changes. Deleted engines or stacks do not remove saved copies. Account deletion removes its private saves.
-  - Predict today displays the captured Test confidence bounds and strict minimum absolute spread with no upper limit. Stored results retain their original presentation confidence after later formula changes.
+  - Predict today displays captured Engine confidence bounds and strict minimum absolute spread with no upper limit. Production qualifies and predicts; Test/Train reports independent comparison results. Stored results retain their original qualification decisions and presentation confidence after later policy changes and are labelled historical, not recalculated.
 public_interface:
   - GET /admin/admin-engine-game-predictions
   - POST /admin/admin-engine-game-predictions

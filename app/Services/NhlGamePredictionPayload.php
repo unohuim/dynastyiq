@@ -72,37 +72,30 @@ class NhlGamePredictionPayload
             'skater_confidence' => data_get($result, '_confidence_components.skater'),
             'goalie_confidence' => data_get($result, '_confidence_components.goalie'),
             'model_run_id' => data_get($result, 'inputs.sat_model_run_id'),
-            'qualification_model_run_id' => $engine->test_model_run_id,
+            'qualification_model_run_id' => data_get($result, 'inputs.qualification_model_run_id'),
             'prediction' => $result['prediction'] ?? null,
             'reason' => $result['reason'] ?? null,
         ];
     }
 
     /**
-     * Qualify on test evidence and forecast on production evidence without changing either model.
+     * Use the selected model for both qualification and outcome with unchanged Engine thresholds.
      *
      * @param array<string,mixed> $overrides
      * @return array<string,mixed>
      */
     private function evaluateEngine(int $gameId, NhlSatEngine $engine, ?int $productionModelId, array $overrides = []): array
     {
-        if ($engine->test_model_run_id === null) {
-            throw ValidationException::withMessages(['test_model_run_id' => 'Engine qualification requires its saved test SAT model.']);
-        }
+        $modelId = (int) ($productionModelId ?? $engine->model_run_id);
+        $forecast = $this->build($gameId, [
+            ...$overrides,
+            '_stack_engine_id' => $engine->id,
+            'engine_weights' => $engine->settings,
+            'sat_model_run_id' => $modelId,
+        ]);
+        $forecast['inputs']['qualification_model_run_id'] = $modelId;
 
-        return app(NhlPredictionInputContext::class)->run(function () use ($gameId, $engine, $productionModelId, $overrides): array {
-            $testModelId = (int) $engine->test_model_run_id;
-            $forecastModelId = (int) ($productionModelId ?? $engine->model_run_id);
-            $inputs = [...$overrides, '_stack_engine_id' => $engine->id, 'engine_weights' => $engine->settings];
-            $test = $this->build($gameId, [...$inputs, 'sat_model_run_id' => $testModelId]);
-            $forecast = $forecastModelId === $testModelId ? $test
-                : $this->build($gameId, [...$inputs, 'sat_model_run_id' => $forecastModelId]);
-            $forecast['pick_qualified'] = ($test['prediction_available'] ?? false)
-                && ($forecast['prediction_available'] ?? false) && ($test['pick_qualified'] ?? false);
-            $forecast['inputs']['qualification_model_run_id'] = $testModelId;
-
-            return $forecast;
-        });
+        return $forecast;
     }
 
     /** @param array<string,mixed> $overrides @return array<string,mixed> */

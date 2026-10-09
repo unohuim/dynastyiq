@@ -94,7 +94,7 @@ const sortedPredictions = computed(() => [...predictionRows.value].sort((a, b) =
 const predictionColumns = [
     ['game', 'Game'], ['model', 'Model'], ['score', 'Predicted score'], ['spread', 'Spread'],
     ['skater', 'Skater confidence'], ['goalie', 'Goalie confidence'],
-    ['internal', 'Internal confidence'], ['presentation', 'Presentation confidence'], ['qualified', 'Test-qualified pick'],
+    ['internal', 'Internal confidence'], ['presentation', 'Presentation confidence'], ['qualified', 'Qualifies in model'],
 ];
 const sortPredictions = key => {
     predictionSort.value = { key, direction: predictionSort.value.key === key ? -predictionSort.value.direction : 1 };
@@ -242,10 +242,10 @@ const reorder = (from, to) => {
             <div class="flex flex-wrap items-center justify-between gap-3 p-5">
                 <div><h2 id="predictions-title" class="text-lg font-semibold">Predict today · {{ predictionMember.engine.name }}</h2>
                     <p class="mt-1 text-sm text-gray-600">{{ predictionDate }} · America/Toronto · Production versus saved Test/Train model · Same Engine settings</p>
-                    <p class="mt-2 inline-flex rounded-lg bg-indigo-50 px-3 py-1.5 text-sm font-semibold tabular-nums text-indigo-800">Test qualifying confidence: {{ predictionMember.engine.settings?.confidence_min ?? '—' }}%–{{ predictionMember.engine.settings?.confidence_max ?? '—' }}% (inclusive)</p>
-                    <p class="mt-2 text-sm font-semibold tabular-nums text-indigo-800">Required Test spread: &gt; {{ predictionMember.engine.settings?.gap ?? '—' }} goals · No upper limit</p>
+                    <p class="mt-2 inline-flex rounded-lg bg-indigo-50 px-3 py-1.5 text-sm font-semibold tabular-nums text-indigo-800">Engine qualifying confidence: {{ predictionMember.engine.settings?.confidence_min ?? '—' }}%–{{ predictionMember.engine.settings?.confidence_max ?? '—' }}% (inclusive)</p>
+                    <p class="mt-2 text-sm font-semibold tabular-nums text-indigo-800">Required spread: &gt; {{ predictionMember.engine.settings?.gap ?? '—' }} goals · No upper limit</p>
                     <p v-if="restoredName" class="mt-2 text-sm text-gray-600">Saved snapshot: {{ restoredName }} · {{ capturedStack?.name }} · Historical results, not recalculated</p>
-                    <p class="mt-1 text-xs text-gray-500">Test/Train decides qualification; Production supplies the live outcome. Scores are away–home; spread is the absolute goal difference.</p></div>
+                    <p class="mt-1 text-xs text-gray-500">Production determines qualification and outcome. Test/Train qualification is a comparison only. Saved snapshots retain the rules used when captured. Scores are away–home; spread is the absolute goal difference.</p></div>
                 <button v-if="predicting" type="button" class="rounded-lg border border-gray-300 px-3 py-2 text-sm" @click="cancelPredictions">Stop remaining games</button>
             </div>
             <p v-if="predictionError" role="alert" class="px-5 pb-4 text-sm text-red-700">{{ predictionError }}</p>

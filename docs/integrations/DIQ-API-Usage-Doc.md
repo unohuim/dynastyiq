@@ -6,12 +6,12 @@ Saved SAT engines and discovery at `/admin/nhl-sat-engines` are administrative
 tools. A named Default stack supplies ordinary prediction API calls. Its Engines
 may be evaluated in saved priority order, but only one Engine may be selected to
 make a stack prediction: the first whose internal confidence window and score-gap
-rule qualifies the game using its saved Test Model. If none qualifies, no Engine prediction is selected.
+rule qualifies the game using its effective Production Model. If none qualifies, no Engine prediction is selected.
 Engine selection is not a partner request parameter. Historical Engine discovery
 and testing use an Engine's Test Model; they do not change API predictions.
 When the Default stack has a completed Production SAT Model selected, that model
-supplies every Engine's outcome forecast in that stack, while its saved Test Model
-still determines qualification. This is a stack-scoped runtime
+supplies every Engine's qualification and outcome forecast in that stack. Without
+that override, the Engine's own Production Model supplies both. This is a stack-scoped runtime
 override and does not change the saved Production Model on any Engine.
 The returned `prediction.confidence_score` and each market row's `confidence_score`
 are presentation confidence, not the Engine's internal qualification confidence:
@@ -27,9 +27,10 @@ with a score gap strictly greater than zero.
 
 There is no date-based or spread-only forced-pick exception. Production supplies
 the returned score, winner, probabilities and internal input to presentation
-confidence. `inputs.qualification_model_run_id` identifies the Test Model used
-for selection; `inputs.sat_model_run_id` identifies the forecast model. Different
-model winners do not introduce an additional rejection rule.
+confidence. `inputs.qualification_model_run_id` and `inputs.sat_model_run_id`
+identify the same effective Production Model for ordinary stack predictions.
+The admin Test/Train comparison evaluates its own model against the same Engine
+thresholds, but does not gate the Production result or require winner agreement.
 
 
 ## Prediction roster player identifiers
@@ -1116,7 +1117,8 @@ explicit line:
 
 Every successful response includes a top-level `pick_qualified` boolean.
 It is `true` only when a production prediction is available and an Engine in the
-Default stack qualifies the game using its Test Model's inclusive internal
+Default stack qualifies the game using its Production Model's internal confidence
+against the Engine's inclusive
 confidence range and unrounded score gap.
 Either an away or home lead qualifies. Exact ties and confidence outside that
 range return `false`; when no Engine in the Default stack qualifies, the response
@@ -1127,8 +1129,8 @@ responses are unchanged.
 
 This flag does not suppress predictions, scores or market probabilities, or
 override the winner. A pair of displayed scores
-can look tied while `pick_qualified` is true: qualification uses the Test Model,
-not the displayed Production scores, and uses unrounded values.
+can look tied while `pick_qualified` is true because qualification uses the
+unrounded Production score gap rather than rounded display values.
 It describes selection criteria, not a guaranteed win rate. Consumers use
 `prediction.winner` for the selected side.
 

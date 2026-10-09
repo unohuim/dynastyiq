@@ -112,8 +112,6 @@ final class NhlGamePredictionResponseCache
         $modelIds = $stack?->production_model_run_id !== null
             ? [$stack->production_model_run_id]
             : ($stack?->members->pluck('engine.model_run_id')->filter()->unique()->values()->all() ?? []);
-        $modelIds = array_unique(array_merge($modelIds,
-            $stack?->members->pluck('engine.test_model_run_id')->filter()->all() ?? []));
         $models = NhlModelRun::query()->whereIn('id', $modelIds)->orderBy('id')->get(['id', 'updated_at']);
         $lineups = DB::table('nhl_current_lineups')->where('nhl_game_id', $gameId)
             ->orderBy('team_id')->get(['team_id', 'nhl_lineup_observation_id', 'structure_hash', 'last_observed_at', 'updated_at']);
@@ -128,7 +126,7 @@ final class NhlGamePredictionResponseCache
     {
         ksort($input);
 
-        return 'nhl:game-prediction:test-qualified-boost7-v2:' . $gameId . ':' . hash('sha256', json_encode($input, JSON_THROW_ON_ERROR));
+        return 'nhl:game-prediction:production-qualified-boost7-v3:' . $gameId . ':' . hash('sha256', json_encode($input, JSON_THROW_ON_ERROR));
     }
 
     /** @param array<string,mixed> $input */
