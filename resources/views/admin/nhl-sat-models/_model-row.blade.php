@@ -28,6 +28,8 @@
     $canViewGenericBucketStability = (bool) data_get($genericBucketStabilityState ?? [], 'can_view_bucket_stability', false);
     $canBuildToiProjection = (bool) data_get($toiProjectionState ?? [], 'can_build_toi_projection', false);
     $canViewToiProjection = (bool) data_get($toiProjectionState ?? [], 'can_view_toi_projection', false);
+    $pregameBuild = $pregameBuild ?? null;
+    $pregameActive = in_array($pregameBuild?->status, ['queued', 'running'], true);
 @endphp
 
 <tr data-sat-model-row="{{ $run->id }}" class="transition-colors hover:bg-gray-50/70">
@@ -49,7 +51,10 @@
         @endif
     </td>
     <td class="whitespace-nowrap px-4 py-3">
-        <span class="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset {{ $statusClasses[$run->status] ?? 'bg-gray-100 text-gray-700 ring-gray-200' }}">
+        <div data-pregame-progress data-progress-url="{{ route('admin.nhl-sat-models.context.progress', $run) }}">
+            @include('admin.nhl-sat-models._pregame-progress', ['pregameBuild' => $pregameBuild])
+        </div>
+        <span data-model-training-status @class(['hidden' => $pregameActive, 'inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset', $statusClasses[$run->status] ?? 'bg-gray-100 text-gray-700 ring-gray-200'])>
             {{ $label($run->status) }}
         </span>
         @if(($predictionBuild['status'] ?? null) === 'running' && $run->status === 'running')
@@ -201,6 +206,18 @@
                         View TOI
                     </span>
                 @endif
+                    </div>
+                </div>
+                <div class="relative" x-data="{ analysisOpen: false }" @mouseenter="analysisOpen = true" @mouseleave="analysisOpen = false" @keydown.escape.stop="analysisOpen = false">
+                    <button type="button" class="flex w-full items-center justify-between px-3 py-2 text-left text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950" role="menuitem" aria-haspopup="menu" aria-controls="analysis-menu-{{ $run->id }}" :aria-expanded="analysisOpen.toString()" @click.stop="analysisOpen = !analysisOpen">
+                        <span>Analysis</span>
+                        <svg class="size-3 transition-transform duration-300 ease-out motion-reduce:transition-none" :class="{ 'rotate-90': analysisOpen }" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="m7 4 6 6-6 6V4Z" /></svg>
+                    </button>
+                    <div id="analysis-menu-{{ $run->id }}" x-cloak x-show="analysisOpen" x-transition.opacity.duration.150ms class="absolute right-full top-0 z-40 mr-1 w-52 rounded-md border border-gray-200 bg-white py-1 shadow-lg motion-reduce:transition-none" role="menu">
+                        <form method="POST" action="{{ route('admin.nhl-sat-models.context.build', $run) }}" data-sat-model-pregame-build-form>
+                            @csrf
+                            <button type="submit" @disabled($pregameActive) class="block w-full px-3 py-2 text-left text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950 disabled:cursor-not-allowed disabled:opacity-60" role="menuitem">Build Pregame</button>
+                        </form>
                     </div>
                 </div>
                 <div class="relative" x-data="{ compareOpen: false }" @mouseenter="compareOpen = true" @mouseleave="compareOpen = false">

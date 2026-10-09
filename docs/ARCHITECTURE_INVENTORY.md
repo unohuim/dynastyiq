@@ -1694,6 +1694,8 @@ WHERE target_season_id = '20262027';
 
 **Purpose:** Preserve only the evidence known before each game so context factors can be tested without changing predictions.
 
+Model actions expose **Analysis > Build Pregame**, using the model's Train and optional Test seasons. The model row shows independent context progress without changing model training state.
+
 **Public interface:** `GET /admin/nhl-sat-models/context/effects` groups actual next-game EV outcomes by pregame-only context factors and compares each group to its selected-season baseline.
 
 **Public Interface:**

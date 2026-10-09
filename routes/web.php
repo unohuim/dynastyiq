@@ -448,6 +448,10 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                     ->name('admin.nhl-sat-models.context.store');
                 Route::get('/nhl-sat-models/context/effects', [\App\Http\Controllers\Admin\NhlPregameContextController::class, 'effects'])
                     ->name('admin.nhl-sat-models.context.effects');
+                Route::post('/nhl-sat-models/{run}/context/build', [\App\Http\Controllers\Admin\NhlPregameContextController::class, 'buildForModel'])
+                    ->whereNumber('run')->name('admin.nhl-sat-models.context.build');
+                Route::get('/nhl-sat-models/{run}/context/progress', [\App\Http\Controllers\Admin\NhlPregameContextController::class, 'modelProgress'])
+                    ->whereNumber('run')->name('admin.nhl-sat-models.context.progress');
                 Route::get('/nhl-sat-models/{run}/buckets', [\App\Http\Controllers\Admin\NhlModelRunController::class, 'buckets'])
                     ->whereNumber('run')
                     ->name('admin.nhl-sat-models.buckets');

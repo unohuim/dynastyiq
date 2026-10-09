@@ -29,6 +29,12 @@ class NhlPregameContextRun extends Model
         'current_game_date' => 'date',
     ];
 
+    /** Resolve the latest context build initiated from this SAT model. */
+    public static function latestForModel(int $modelId): ?self
+    {
+        return static::query()->where('options->model_run_id', $modelId)->orderByDesc('id')->first();
+    }
+
     public function creator(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');

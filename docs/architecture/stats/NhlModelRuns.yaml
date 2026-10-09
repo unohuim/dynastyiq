@@ -59,6 +59,7 @@ when_not_to_use:
   - Replacing domain-specific prediction, profile, or projection output tables.
   - Modeling non-SAT stats before those aggregate/modeling workflows exist.
 rules:
+  - Analysis > Build Pregame starts the existing bounded context backfill using the selected model's Train and optional Test seasons. Its independent Building/progress indicator does not modify model training status or outputs; NhlPregameContextEvidence.yaml owns this workflow.
   - Build Predictions is a super-admin action on an existing SAT training run. Atomically reserve the run, then run Build Profiles (including all training/evaluation snapshots and generic stability), Build /60, and standalone Build TOI/GP in that order. Reuse existing per-entity batches; a parent dispatch is not stage completion.
   - Combined prediction builds remain running between stages and advance only after the full stage batch succeeds. Failed, cancelled, or empty stages stop the workflow; record the failed stage and error. A build identifier plus stage guard makes stale or duplicate completion callbacks inert. Individual build/evaluation actions must not overlap a running combined build.
   - Build Predictions stores its identifier, stage, status and timestamps in existing model-run metrics; it creates no new model and performs no model training or held-out comparison. Standalone build actions retain their separate behavior. Stage counts and failures appear in the existing model menu row via the authenticated SAT model broadcast channel.

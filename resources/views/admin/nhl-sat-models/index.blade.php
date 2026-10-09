@@ -121,6 +121,7 @@
                             <tbody class="divide-y divide-gray-100 bg-white" data-sat-model-rows>
                                 @foreach($runs as $run)
                                     @include('admin.nhl-sat-models._model-row', [
+                                        'pregameBuild' => $pregameBuilds[$run->id] ?? null,
                                         'comparisonState' => $comparisonStates[$run->id] ?? null,
                                         'genericBucketStabilityState' => $genericBucketStabilityStates[$run->id] ?? null,
                                         'run' => $run,

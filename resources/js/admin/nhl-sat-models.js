@@ -140,9 +140,73 @@ const request = async (form) => {
     return payload;
 };
 
+/** Update only context progress; preserve the model row and its open menus. */
+export const updatePregameProgress = (row, html) => {
+    const progress = row?.querySelector('[data-pregame-progress]');
+    if (!progress) return;
+
+    progress.innerHTML = html;
+    const active = Boolean(progress.querySelector('[data-pregame-active="1"]'));
+    row.querySelector('[data-model-training-status]')?.classList.toggle('hidden', active);
+    const button = row.querySelector('[data-sat-model-pregame-build-form] button[type="submit"]');
+    if (button) button.disabled = active;
+};
+
+/** Poll active builds serially, without jobs or full model-page reloads. */
+export const mountPregameProgress = (root) => {
+    const controller = new AbortController();
+    let timer;
+    const poll = async () => {
+        if (!document.hidden) {
+            for (const progress of root.querySelectorAll('[data-pregame-progress]')) {
+                if (!progress.querySelector('[data-pregame-active="1"]')) continue;
+                try {
+                    const response = await fetch(progress.dataset.progressUrl, {
+                        headers: { Accept: 'application/json' },
+                        cache: 'no-store',
+                        signal: controller.signal,
+                    });
+                    if (!response.ok) throw new Error('Progress unavailable');
+                    const payload = await response.json();
+                    updatePregameProgress(progress.closest('[data-sat-model-row]'), payload.progress_html);
+                } catch {
+                    // Preserve the last known progress and retry on the next tick.
+                }
+            }
+        }
+        if (!controller.signal.aborted && root.isConnected) timer = setTimeout(poll, 5000);
+    };
+    timer = setTimeout(poll, 5000);
+    const stop = () => {
+        clearTimeout(timer);
+        controller.abort();
+        window.removeEventListener('pagehide', stop);
+    };
+    window.addEventListener('pagehide', stop, { once: true });
+    return stop;
+};
+
 const mountSatModels = (root) => {
     const createForm = root.querySelector('[data-sat-model-create-form]');
     const rows = root.querySelector('[data-sat-model-rows]');
+    mountPregameProgress(root);
+
+    root.addEventListener('submit', async (event) => {
+        const form = event.target.closest('[data-sat-model-pregame-build-form]');
+        if (!form) return;
+
+        event.preventDefault();
+        const row = form.closest('[data-sat-model-row]');
+        setSubmitting(form, true);
+        try {
+            const payload = await request(form);
+            updatePregameProgress(row, payload.progress_html);
+            showToast(payload.message);
+        } catch (error) {
+            setSubmitting(form, false);
+            showToast(error.message, 'error');
+        }
+    });
 
     createForm?.addEventListener('submit', async (event) => {
         event.preventDefault();

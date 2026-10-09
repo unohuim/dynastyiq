@@ -65,6 +65,9 @@ class NhlModelRunController extends Controller
             'trainingDriftStates' => $this->trainingDriftStatesForRuns($runs->getCollection()),
             'trainingSummaries' => $this->trainingSummariesForRuns($runs->getCollection()),
             'runs' => $runs,
+            'pregameBuilds' => $runs->getCollection()->mapWithKeys(fn (NhlModelRun $run): array => [
+                $run->id => \App\Models\NhlPregameContextRun::latestForModel($run->id),
+            ]),
         ]);
     }
 
@@ -4244,6 +4247,7 @@ SQL;
         $run = $run->fresh();
 
         return view('admin.nhl-sat-models._model-row', [
+            'pregameBuild' => \App\Models\NhlPregameContextRun::latestForModel($run->id),
             'comparisonState' => $this->rateComparisonStateForRun($run),
             'genericBucketStabilityState' => $this->genericBucketStabilityStateForRun($run),
             'run' => $run,

@@ -52,6 +52,7 @@ class NhlSatModelUpdated implements ShouldBroadcastNow
             'row_html' => $model === null
                 ? null
                 : view('admin.nhl-sat-models._model-row', [
+                    'pregameBuild' => \App\Models\NhlPregameContextRun::latestForModel($model->id),
                     'comparisonState' => $this->rateComparisonStateForRun($model),
                     'run' => $model,
                 ])->render(),

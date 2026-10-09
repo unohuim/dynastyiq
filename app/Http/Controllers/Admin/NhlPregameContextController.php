@@ -6,12 +6,15 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Jobs\PrepareNhlPregameContextRunJob;
+use App\Models\NhlModelRun;
 use App\Models\NhlPregameContextRun;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 
 /** Admin surface for durable, analysis-only pregame context builds. */
@@ -55,28 +58,100 @@ class NhlPregameContextController extends Controller
             'season_ids.*' => ['required', Rule::in($seasonIds)],
         ]);
         $selected = collect($input['season_ids'])->map(fn (mixed $id): string => (string) $id)->unique()->sort()->values()->all();
-        $active = NhlPregameContextRun::query()->whereIn('status', [NhlPregameContextRun::STATUS_QUEUED, NhlPregameContextRun::STATUS_RUNNING])
-            ->whereJsonContains('season_ids', $selected[0])->exists();
-        if ($active) {
-            return $request->expectsJson()
-                ? response()->json(['message' => 'A context build is already active for one of these seasons.'], 422)
-                : back()->withErrors(['season_ids' => 'A context build is already active for one of these seasons.']);
-        }
-
-        $run = NhlPregameContextRun::query()->create([
-            'action' => NhlPregameContextRun::ACTION_BACKFILL,
-            'status' => NhlPregameContextRun::STATUS_QUEUED,
-            'season_ids' => $selected,
-            'created_by' => $request->user()?->id,
-            'options' => ['context_version' => \App\Services\NhlPregameContextBuilder::VERSION],
-        ]);
-        PrepareNhlPregameContextRunJob::dispatch($run->id);
+        $run = $this->queueBackfill($request, $selected);
 
         if ($request->expectsJson()) {
             return response()->json(['message' => 'Queued bounded pregame-context backfill.', 'run' => $run], 202);
         }
 
         return redirect()->route('admin.nhl-sat-models.context')->with('status', 'Queued bounded pregame-context backfill.');
+    }
+
+    /** Build the model's Train and optional Test seasons using the existing context pipeline. */
+    public function buildForModel(Request $request, NhlModelRun $run): RedirectResponse|JsonResponse
+    {
+        $this->assertSatModel($run);
+        $seasons = collect($run->train_season_ids ?? [])
+            ->push($run->target_season_id)
+            ->filter(fn (mixed $season): bool => $season !== null && $season !== '')
+            ->map(fn (mixed $season): string => (string) $season)
+            ->unique()->sort()->values()->all();
+        if ($seasons === []) {
+            throw ValidationException::withMessages(['season_ids' => 'This model has no seasons to build.']);
+        }
+
+        $build = $this->queueBackfill($request, $seasons, $run->id);
+        if (! $request->expectsJson()) {
+            return redirect()->route('admin.nhl-sat-models.index')->with('status', 'Queued Build Pregame.');
+        }
+
+        return response()->json([
+            'message' => 'Queued Build Pregame.',
+            'progress_html' => view('admin.nhl-sat-models._pregame-progress', ['pregameBuild' => $build])->render(),
+        ], 202);
+    }
+
+    /** Read progress without loading model projections or changing the model's training state. */
+    public function modelProgress(NhlModelRun $run): JsonResponse
+    {
+        $this->assertSatModel($run);
+
+        return response()->json([
+            'progress_html' => view('admin.nhl-sat-models._pregame-progress', [
+                'pregameBuild' => NhlPregameContextRun::latestForModel($run->id),
+            ])->render(),
+        ])->header('Cache-Control', 'no-store');
+    }
+
+    /** Restrict model actions to the SAT training registry. */
+    private function assertSatModel(NhlModelRun $run): void
+    {
+        abort_unless($run->model_family === NhlModelRun::FAMILY_SAT
+            && $run->workflow_stage === NhlModelRun::STAGE_TRAINING, 404);
+    }
+
+    /**
+     * Share admission and bounded dispatch between manual backfills and model actions.
+     *
+     * @param array<int, string> $seasons
+     */
+    private function queueBackfill(Request $request, array $seasons, ?int $modelId = null): NhlPregameContextRun
+    {
+        $lock = Cache::lock('nhl-pregame-context-admission', 30);
+        if (! $lock->get()) {
+            throw ValidationException::withMessages(['season_ids' => 'Another context build is being queued. Please retry.']);
+        }
+
+        try {
+            return DB::transaction(function () use ($request, $seasons, $modelId): NhlPregameContextRun {
+                $active = NhlPregameContextRun::query()
+                    ->whereIn('status', [NhlPregameContextRun::STATUS_QUEUED, NhlPregameContextRun::STATUS_RUNNING])
+                    ->where(function ($query) use ($seasons): void {
+                        foreach ($seasons as $season) {
+                            $query->orWhereJsonContains('season_ids', $season);
+                        }
+                    })->exists();
+                if ($active) {
+                    throw ValidationException::withMessages(['season_ids' => 'A context build is already active for one of these seasons.']);
+                }
+
+                $build = NhlPregameContextRun::query()->create([
+                    'action' => NhlPregameContextRun::ACTION_BACKFILL,
+                    'status' => NhlPregameContextRun::STATUS_QUEUED,
+                    'season_ids' => $seasons,
+                    'created_by' => $request->user()?->id,
+                    'options' => array_filter([
+                        'context_version' => \App\Services\NhlPregameContextBuilder::VERSION,
+                        'model_run_id' => $modelId,
+                    ], fn (mixed $value): bool => $value !== null),
+                ]);
+                PrepareNhlPregameContextRunJob::dispatch($build->id);
+
+                return $build;
+            });
+        } finally {
+            $lock->release();
+        }
     }
 
     /** Display grouped, pregame-only context effects against actual EV game outcomes. */

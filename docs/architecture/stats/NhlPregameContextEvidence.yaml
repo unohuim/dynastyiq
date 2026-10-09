@@ -21,6 +21,10 @@ when_not_to_use:
   - Changing SAT /60 rates, Engine qualification, confidence, game simulation, or partner API output.
   - Replacing raw game summaries, strength summaries, shot facts, or play-by-play facts.
 rules:
+  - SAT model actions expose Analysis > Build Pregame first. This queues the existing context backfill for the model's distinct Train seasons plus its optional Test season, ignoring client-supplied season overrides. It does not train models or change context calculations.
+  - Model-initiated context runs retain model_run_id in existing run options. Context snapshots remain shared, versioned upserts; model association does not duplicate snapshots or mutate model training status, timestamps, or outputs.
+  - Manual and model-triggered context builds share serialized admission and reject active runs overlapping any selected season. Existing bounded, date-ordered dispatch remains unchanged.
+  - The model status cell shows Building and context game counts while queued or running, then Pregame completed or Pregame failed. Page-local polling reads active progress every five seconds without full-page reloads or queue dispatch; training status remains independent.
   - Every snapshot uses only completed regular-season games strictly before the target game's scheduled start time; target-game outcomes and later games are forbidden inputs.
   - Player snapshots record the completed-game participant only for historical evidence and label that source explicitly; future prediction use requires independently selected pregame rosters.
   - Player history follows the player across team changes. Opponent and home/away filters use the player's team on each historical summary, not the target game's team.
@@ -35,6 +39,8 @@ rules:
   - The reviewed NhlArenaLocationSeeder supplies the past-three-season NHL home-venue reference rows. It is reference data only and must be run separately from context builds; venue changes require dated replacement rows rather than overwriting history.
   - Context collection and inspection are analysis-only. A context factor may affect predictions only after a separately approved, later-season evidence change.
 public_interface:
+  - POST /admin/nhl-sat-models/{run}/context/build
+  - GET /admin/nhl-sat-models/{run}/context/progress
   - GET /admin/nhl-sat-models/context
   - POST /admin/nhl-sat-models/context
   - GET /admin/nhl-sat-models/context/effects
