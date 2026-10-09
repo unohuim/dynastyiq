@@ -32,12 +32,12 @@ class AdminEngineGamePredictionController extends Controller
     /** Create a named snapshot or rotate/update a private autosave, serialized per user. */
     public function store(Request $request): JsonResponse
     {
-        $input = $request->validate([
+        $rules = [
             'name' => ['required_without:session_token', 'nullable', 'string', 'max:120', 'not_regex:/^autosave-/i'],
             'session_token' => ['nullable', 'uuid'],
             'autosave_id' => ['nullable', 'integer', 'min:1', 'required_with:session_token'],
             'snapshot' => ['required', 'array:version,stack,member,date,rows,sort'],
-            'snapshot.version' => ['required', 'integer', 'in:1'],
+            'snapshot.version' => ['required', 'integer', 'in:1,2'],
             'snapshot.stack' => ['required', 'array:id,name,production_model_run_id'],
             'snapshot.stack.id' => ['required', 'integer', 'min:1'],
             'snapshot.stack.name' => ['required', 'string', 'max:160'],
@@ -71,7 +71,26 @@ class AdminEngineGamePredictionController extends Controller
             'snapshot.sort' => ['required', 'array:key,direction'],
             'snapshot.sort.key' => ['required', 'in:game,model,score,spread,skater,goalie,internal,presentation,qualified'],
             'snapshot.sort.direction' => ['required', 'integer', 'in:-1,1'],
-        ]);
+        ];
+        if ((int) $request->input('snapshot.version') === 2) {
+            $rules['snapshot'] = ['required', 'array:version,stack,sections'];
+            $rules['snapshot.sections'] = ['required', 'array', 'min:1', 'max:128'];
+            $rules['snapshot.sections.*'] = ['required', 'array:member,date,rows,sort,open,error,status'];
+            $rules['snapshot.sections.*.open'] = ['required', 'boolean'];
+            $rules['snapshot.sections.*.error'] = ['nullable', 'string', 'max:4000'];
+            $rules['snapshot.sections.*.status'] = ['required', 'in:Waiting,Predicting,Calculated,Failed,Stopped'];
+            // Reuse the v1 member/row contracts inside each independently sortable accordion.
+            foreach (array_keys($rules) as $key) {
+                if (preg_match('/^snapshot\.(member|date|rows|sort)(\.|$)/', $key)) {
+                    $nestedKey = 'snapshot.sections.*.' . substr($key, strlen('snapshot.'));
+                    $rules[$nestedKey] = array_values(array_diff($rules[$key], ['distinct']));
+                    unset($rules[$key]);
+                }
+            }
+            $rules['snapshot.sections.*.date'] = ['nullable', 'date_format:Y-m-d'];
+            $rules['snapshot.sections.*.member.engine.id'][] = 'distinct';
+        }
+        $input = $request->validate($rules);
         if (strlen(json_encode($input['snapshot'], JSON_THROW_ON_ERROR)) > 262144) {
             throw ValidationException::withMessages(['snapshot' => 'Save is too large (maximum 256 KiB).']);
         }

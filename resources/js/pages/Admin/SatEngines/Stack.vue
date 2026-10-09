@@ -9,12 +9,9 @@ const name = ref(props.stack.name);
 const productionModelRunId = ref(props.stack.production_model_run_id ?? '');
 const engineId = ref('');
 const action = useForm({});
-const predictionRows = ref([]);
-const predictionMember = ref(null);
-const predictionDate = ref('');
-const predictionError = ref('');
+const predictionSections = ref([]);
 const predicting = ref(false);
-const predictionSort = ref({ key: 'game', direction: 1 });
+const stopRequested = ref(false);
 let predictionRequest = null;
 const savesUrl = '/admin/admin-engine-game-predictions';
 const saves = ref([]);
@@ -27,25 +24,22 @@ const loadingSaves = ref(false);
 const deletePending = ref(false);
 const capturedStack = ref(null);
 const restoredName = ref('');
-const effectiveConfidenceMax = computed(() => {
-    const settings = predictionMember.value?.engine?.settings;
+const busy = computed(() => predicting.value || saving.value || action.processing);
+const copy = value => JSON.parse(JSON.stringify(value));
+const effectiveConfidenceMax = section => {
+    const settings = section.member.engine.settings;
     if (settings?.confidence_max == null) return '—';
     return Math.min(100, Number(settings.confidence_max) + Number(settings.diagnostic_confidence_upper_tolerance ?? 0));
-});
+};
 const messageFor = error => Object.values(error.response?.data?.errors ?? {}).flat()[0]
-    ?? error.response?.data?.message ?? 'Could not save predictions. Your results are still on this page.';
+    ?? error.response?.data?.message ?? 'Request failed. Your results are still on this page.';
 const refreshSaves = async () => {
     loadingSaves.value = true;
     try { saves.value = (await axios.get(savesUrl)).data.saves; }
     catch (error) { saveError.value = messageFor(error); }
     finally { loadingSaves.value = false; }
 };
-const snapshot = () => JSON.parse(JSON.stringify({ version: 1, stack: capturedStack.value,
-    member: predictionMember.value ? { id: predictionMember.value.id, engine: {
-        id: predictionMember.value.engine.id, name: predictionMember.value.engine.name,
-        settings: predictionMember.value.engine.settings, model_run_id: predictionMember.value.engine.model_run_id,
-        test_model_run_id: predictionMember.value.engine.test_model_run_id,
-    } } : null, date: predictionDate.value, rows: predictionRows.value, sort: predictionSort.value }));
+const snapshot = () => copy({ version: 2, stack: capturedStack.value, sections: predictionSections.value });
 const saveNamed = async () => {
     saving.value = true;
     saveError.value = '';
@@ -58,18 +52,24 @@ const saveNamed = async () => {
     finally { saving.value = false; }
 };
 const restoreSave = async () => {
+    if (predicting.value) return;
     saving.value = true;
     saveError.value = '';
     try {
         const { data } = await axios.get(`${savesUrl}/${selectedSave.value}`);
-        if (data.snapshot?.version !== 1) throw new Error('This autosave has no results yet.');
-        cancelPredictions();
-        predictionMember.value = data.snapshot.member;
-        predictionDate.value = data.snapshot.date;
-        predictionRows.value = data.snapshot.rows;
-        predictionSort.value = data.snapshot.sort;
-        capturedStack.value = data.snapshot.stack;
-        predictionError.value = '';
+        const saved = data.snapshot;
+        if (![1, 2].includes(saved?.version)) throw new Error('This autosave has no results yet.');
+        predictionSections.value = saved.version === 2 ? saved.sections : [{
+            member: saved.member, date: saved.date, rows: saved.rows, sort: saved.sort,
+            open: true, error: '', status: 'Stopped',
+        }];
+        for (const section of predictionSections.value) {
+            if (['Waiting', 'Predicting'].includes(section.status)) section.status = 'Stopped';
+            for (const row of section.rows) {
+                if (['Waiting', 'Predicting'].includes(row.status)) row.status = 'Stopped';
+            }
+        }
+        capturedStack.value = saved.stack;
         restoredName.value = data.name;
         saveStatus.value = `Restored ${data.name}; no games recalculated.`;
     } catch (error) { saveError.value = error.response ? messageFor(error) : error.message; }
@@ -88,109 +88,137 @@ const deleteSave = async () => {
     finally { saving.value = false; }
 };
 onMounted(refreshSaves);
-const sortedPredictions = computed(() => predictionRows.value.filter(row => row.source === 'production').sort((a, b) => {
-    const key = predictionSort.value.key;
+const sortedPredictions = section => section.rows.filter(row => row.source === 'production').sort((a, b) => {
+    const key = section.sort.key;
     const first = a[key];
     const second = b[key];
     if (first == null) return second == null ? 0 : 1;
     if (second == null) return -1;
-    return (typeof first === 'string' ? first.localeCompare(second) : Number(first) - Number(second)) * predictionSort.value.direction;
-}));
+    return (typeof first === 'string' ? first.localeCompare(second) : Number(first) - Number(second)) * section.sort.direction;
+});
 const predictionColumns = [
     ['game', 'Game'], ['model', 'Model'], ['score', 'Predicted score'], ['spread', 'Spread'],
     ['skater', 'Skater confidence'], ['goalie', 'Goalie confidence'],
     ['internal', 'Internal confidence'], ['presentation', 'Presentation confidence'], ['qualified', 'Qualifies in model'],
 ];
-const sortPredictions = key => {
-    predictionSort.value = { key, direction: predictionSort.value.key === key ? -predictionSort.value.direction : 1 };
+const sortPredictions = (section, key) => {
+    section.sort = { key, direction: section.sort.key === key ? -section.sort.direction : 1 };
 };
-const cancelPredictions = () => {
-    predictionRequest?.abort();
-};
-const predictToday = async member => {
-    if (saving.value) return;
-    cancelPredictions();
+// Let the in-flight request finish before another batch may begin; aborting a browser
+// request does not necessarily stop PHP from calculating that game.
+const cancelPredictions = () => { stopRequested.value = true; };
+const newSection = member => ({
+    member: { id: member.id, engine: { id: member.engine.id, name: member.engine.name,
+        settings: { ...copy(member.engine.settings), diagnostic_confidence_upper_tolerance: 1 },
+        model_run_id: member.engine.model_run_id, test_model_run_id: member.engine.test_model_run_id } },
+    date: null, rows: [], sort: { key: 'game', direction: 1 }, open: true, error: '', status: 'Waiting',
+});
+const predictMembers = async members => {
+    if (busy.value || !members.length) return;
     const request = new AbortController();
     predictionRequest = request;
-    predictionMember.value = JSON.parse(JSON.stringify(member));
-    predictionMember.value.engine.settings.diagnostic_confidence_upper_tolerance = 1;
-    capturedStack.value = { id: props.stack.id, name: props.stack.name, production_model_run_id: props.stack.production_model_run_id };
+    predicting.value = true;
+    stopRequested.value = false;
+    const stackContext = { id: props.stack.id, name: props.stack.name, production_model_run_id: props.stack.production_model_run_id };
+    if (capturedStack.value && JSON.stringify(capturedStack.value) !== JSON.stringify(stackContext)) predictionSections.value = [];
+    capturedStack.value = stackContext;
     restoredName.value = '';
     saveError.value = '';
     saveStatus.value = '';
+    const engineIds = [];
+    for (const member of members) {
+        const section = newSection(member);
+        const index = predictionSections.value.findIndex(item => item.member.engine.id === member.engine.id);
+        if (index === -1) predictionSections.value.push(section);
+        else predictionSections.value.splice(index, 1, section);
+        engineIds.push(member.engine.id);
+    }
+    const pending = engineIds.map(id => predictionSections.value.find(section => section.member.engine.id === id));
     let autosave = null;
     const sessionToken = crypto.randomUUID();
+    const active = () => predictionRequest === request && !request.signal.aborted;
     const checkpoint = async () => {
-        if (predictionRequest !== request || !predictionMember.value || !predictionDate.value) return;
+        if (!active() || !predictionSections.value.length) return;
         const captured = snapshot();
         try {
             if (!autosave) autosave = (await axios.post(`${savesUrl}/autosave`, { session_token: sessionToken })).data;
             await axios.post(savesUrl, { autosave_id: autosave.id, session_token: sessionToken, snapshot: captured });
-            saveStatus.value = `Saved ${autosave.name}`;
-        } catch (error) { saveError.value = messageFor(error); }
+            if (active()) saveStatus.value = `Saved ${autosave.name}`;
+        } catch (error) { if (active()) saveError.value = messageFor(error); }
     };
-    predictionRows.value = [];
-    predictionError.value = '';
-    predictionDate.value = '';
-    predicting.value = true;
-    const endpoint = `${baseUrl}/stacks/${props.stack.id}/members/${member.id}/predictions`;
     try {
-        const { data } = await axios.get(`${endpoint}/today`, { signal: request.signal });
-        if (request.signal.aborted) return;
-        predictionDate.value = data.date;
-        predictionRows.value = data.games.map(game => ({ id: game.nhl_game_id,
-            key: `${game.nhl_game_id}-production`, source: 'production', model: 'Production',
-            modelName: props.models.find(model => Number(model.id) === Number(
-                props.stack.production_model_run_id ?? member.engine.model_run_id))?.name ?? 'Unavailable',
-            game: `${game.away_team_abbrev} @ ${game.home_team_abbrev}`, status: 'Waiting',
-            score: null, spread: null, skater: null, goalie: null, internal: null, presentation: null, qualified: null, error: null }));
         await checkpoint();
-        for (const row of predictionRows.value) {
-            if (request.signal.aborted) break;
-            row.status = 'Predicting';
+        for (const section of pending) {
+            if (!active() || stopRequested.value) break;
+            section.status = 'Predicting';
+            const endpoint = `${baseUrl}/stacks/${stackContext.id}/members/${section.member.id}/predictions`;
             try {
-                const { data: result } = await axios.post(`${endpoint}/${row.id}`, { model_source: row.source }, { signal: request.signal });
-                if (request.signal.aborted) break;
-                const prediction = result.prediction;
-                row.status = result.prediction_available ? 'Calculated' : 'Unavailable';
-                row.internal = result.internal_confidence;
-                row.skater = result.skater_confidence;
-                row.goalie = result.goalie_confidence;
-                row.modelName = result.model_name ?? `Model #${result.model_run_id}`;
-                row.presentation = prediction?.confidence_score ?? null;
-                row.spread = prediction ? Math.abs(Number(prediction.goal_differential)) : null;
-                row.score = prediction ? `${prediction.predicted_score.away} – ${prediction.predicted_score.home}` : null;
-                row.qualified = result.prediction_available ? result.pick_qualified : null;
-                row.error = result.reason;
+                const { data } = await axios.get(`${endpoint}/today`, { signal: request.signal });
+                if (!active()) break;
+                section.date = data.date;
+                section.rows = data.games.map(game => ({ id: game.nhl_game_id,
+                    key: `${game.nhl_game_id}-production`, source: 'production', model: 'Production',
+                    modelName: props.models.find(model => Number(model.id) === Number(
+                        stackContext.production_model_run_id ?? section.member.engine.model_run_id))?.name ?? 'Unavailable',
+                    game: `${game.away_team_abbrev} @ ${game.home_team_abbrev}`, status: 'Waiting',
+                    score: null, spread: null, skater: null, goalie: null, internal: null, presentation: null, qualified: null, error: null }));
+                await checkpoint();
+                for (const row of section.rows) {
+                    if (!active() || stopRequested.value) break;
+                    row.status = 'Predicting';
+                    try {
+                        const { data: result } = await axios.post(`${endpoint}/${row.id}`, { model_source: 'production' }, { signal: request.signal });
+                        if (!active()) break;
+                        const prediction = result.prediction;
+                        row.status = result.prediction_available ? 'Calculated' : 'Unavailable';
+                        row.internal = result.internal_confidence;
+                        row.skater = result.skater_confidence;
+                        row.goalie = result.goalie_confidence;
+                        row.modelName = result.model_name ?? `Model #${result.model_run_id}`;
+                        row.presentation = prediction?.confidence_score ?? null;
+                        row.spread = prediction ? Math.abs(Number(prediction.goal_differential)) : null;
+                        row.score = prediction ? `${prediction.predicted_score.away} – ${prediction.predicted_score.home}` : null;
+                        row.qualified = result.prediction_available ? result.pick_qualified : null;
+                        row.error = result.reason ?? null;
+                    } catch (error) {
+                        if (!active()) break;
+                        row.status = 'Failed';
+                        row.error = messageFor(error);
+                    }
+                    await checkpoint();
+                }
+                section.status = stopRequested.value ? 'Stopped'
+                    : section.rows.some(row => row.status === 'Failed') ? 'Failed' : 'Calculated';
             } catch (error) {
-                if (request.signal.aborted) break;
-                row.status = 'Failed';
-                row.error = error.response?.data?.message ?? 'Prediction failed. Click Predict today to retry.';
+                if (!active()) break;
+                section.error = messageFor(error);
+                section.status = 'Failed';
             }
             await checkpoint();
         }
-    } catch (error) {
-        if (!request.signal.aborted) predictionError.value = error.response?.data?.message ?? 'Could not load today’s games. Try again.';
     } finally {
-        if (predictionRequest === request && predictionDate.value && predictionMember.value?.id === member.id) {
-            for (const row of predictionRows.value) {
-                if (['Waiting', 'Predicting'].includes(row.status)) row.status = 'Stopped';
+        if (active()) {
+            for (const section of pending) {
+                if (['Waiting', 'Predicting'].includes(section.status)) section.status = 'Stopped';
+                for (const row of section.rows) {
+                    if (['Waiting', 'Predicting'].includes(row.status)) row.status = 'Stopped';
+                }
             }
             await checkpoint();
             await refreshSaves();
-        }
-        if (predictionRequest === request) {
             predictionRequest = null;
             predicting.value = false;
         }
     }
 };
+const predictToday = member => predictMembers([member]);
+const predictStackToday = () => predictMembers(props.stack.members);
 watch(() => JSON.stringify(props.stack), () => {
-    cancelPredictions();
-    predictionMember.value = null;
-    predictionRows.value = [];
+    stopRequested.value = true;
+    // Keep the current request occupied until it finishes, but clear obsolete UI.
+    predictionSections.value = [];
 });
-onBeforeUnmount(() => { cancelPredictions(); predictionRequest = null; });
+onBeforeUnmount(() => { predictionRequest?.abort(); predictionRequest = null; });
 const saveStack = () => action.transform(() => ({ name: name.value, production_model_run_id: productionModelRunId.value || null })).patch(`${baseUrl}/stacks/${props.stack.id}`);
 const addEngine = () => action.transform(() => ({ engine_id: engineId.value })).post(`${baseUrl}/stacks/${props.stack.id}/members`);
 const removeMember = member => action.delete(`${baseUrl}/stacks/${props.stack.id}/members/${member.id}`);
@@ -210,7 +238,7 @@ const reorder = (from, to) => {
 <template>
     <Head :title="stack.name" />
     <div class="mx-auto max-w-5xl space-y-6 px-4 py-8 sm:px-6">
-        <header class="flex flex-wrap items-end justify-between gap-4 border-b border-gray-200 pb-5"><div><Link :href="`${baseUrl}?tab=stacks`" class="text-sm font-medium text-indigo-700">SAT Engines / Stacks</Link><h1 class="mt-2 text-2xl font-semibold text-gray-950">{{ stack.name }}<span v-if="stack.is_default" class="ml-2 text-base font-normal text-gray-500">(default)</span></h1><p class="mt-1 text-sm text-gray-600">Every Engine participates in the explicit priority order below.</p></div><div class="flex gap-2"><button v-if="!stack.is_default" type="button" :disabled="!stack.members.length || action.processing" class="rounded-lg border border-indigo-200 px-3 py-2 text-sm font-medium text-indigo-700 transition-colors duration-150 hover:bg-indigo-50 disabled:opacity-50 motion-reduce:transition-none" @click="makeDefault">Make default</button><button type="button" :disabled="action.processing" class="rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-red-700 transition-colors duration-150 hover:bg-red-50 disabled:opacity-50 motion-reduce:transition-none" @click="deleteStack">Delete stack</button></div></header>
+        <header class="flex flex-wrap items-end justify-between gap-4 border-b border-gray-200 pb-5"><div><Link :href="`${baseUrl}?tab=stacks`" class="text-sm font-medium text-indigo-700">SAT Engines / Stacks</Link><h1 class="mt-2 text-2xl font-semibold text-gray-950">{{ stack.name }}<span v-if="stack.is_default" class="ml-2 text-base font-normal text-gray-500">(default)</span></h1><p class="mt-1 text-sm text-gray-600">Every Engine participates in the explicit priority order below.</p></div><div class="flex gap-2"><button v-if="!stack.is_default" type="button" :disabled="!stack.members.length || action.processing" class="rounded-lg border border-indigo-200 px-3 py-2 text-sm font-medium text-indigo-700 transition-colors duration-150 hover:bg-indigo-50 disabled:opacity-50 motion-reduce:transition-none" @click="makeDefault">Make default</button><button type="button" :disabled="busy || !stack.members.length" class="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white transition-colors duration-150 hover:bg-indigo-700 disabled:opacity-50 motion-reduce:transition-none" @click="predictStackToday">Predict today</button><button type="button" :disabled="busy" class="rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-red-700 transition-colors duration-150 hover:bg-red-50 disabled:opacity-50 motion-reduce:transition-none" @click="deleteStack">Delete stack</button></div></header>
         <p v-for="(error, key) in action.errors" :key="key" role="alert" class="text-sm text-red-700">{{ error }}</p>
         <section class="rounded-xl border border-gray-200 bg-white p-5 shadow-sm"><form class="flex flex-wrap items-end gap-3" @submit.prevent="saveStack"><label class="min-w-64 flex-1 text-sm font-medium text-gray-800">Stack name<input v-model="name" required maxlength="160" class="mt-1 w-full rounded-lg border-gray-300" /></label><label class="min-w-64 flex-1 text-sm font-medium text-gray-800">Production SAT Model<select v-model="productionModelRunId" class="mt-1 w-full rounded-lg border-gray-300"><option value="">Each Engine's own model</option><option v-for="model in models.filter(model => model.status === 'complete')" :key="model.id" :value="model.id">{{ model.name }}</option></select><span class="mt-1 block text-xs font-normal text-gray-500">Overrides every member only while this stack makes predictions.</span></label><button :disabled="action.processing" class="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 transition-colors duration-150 hover:bg-gray-50 disabled:opacity-50 motion-reduce:transition-none">Save stack</button></form></section>
         <section class="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm"><table class="w-full text-left text-sm"><thead class="border-b border-gray-200 bg-gray-50 text-xs font-medium uppercase tracking-wide text-gray-500"><tr><th class="px-4 py-3">Priority</th><th class="px-4 py-3">Engine</th><th class="px-4 py-3">Effective model</th><th class="px-4 py-3 text-right">Test record</th><th class="px-4 py-3 text-right">Win %</th><th class="px-4 py-3 text-right">Coverage</th><th class="px-4 py-3 text-right">Added record</th><th class="px-4 py-3 text-right">Stack impact</th><th class="px-4 py-3"><span class="sr-only">Actions</span></th></tr></thead><tbody><tr v-for="(member, index) in stack.members" :key="member.id" class="border-b border-gray-100 last:border-0"><td class="px-4 py-3 font-medium tabular-nums text-gray-500">{{ index + 1 }}</td><td class="px-4 py-3 font-medium text-gray-900">{{ member.engine.name }}</td><td class="px-4 py-3 text-gray-600">{{ effectiveModelName(member.engine.model_run_id) }}</td><td class="px-4 py-3 text-right tabular-nums">{{ member.engine.discovery_metrics ? `${member.engine.discovery_metrics.wins}–${member.engine.discovery_metrics.losses}` : '—' }}</td><td class="px-4 py-3 text-right tabular-nums">{{ member.engine.discovery_win_pct == null ? '—' : `${Number(member.engine.discovery_win_pct).toFixed(1)}%` }}</td><td class="px-4 py-3 text-right tabular-nums">{{ member.engine.discovery_coverage_pct == null ? '—' : `${Number(member.engine.discovery_coverage_pct).toFixed(1)}%` }}</td><td class="px-4 py-3 text-right tabular-nums">{{ analysis?.candidates[index] ? `${analysis.candidates[index].stack_wins}–${analysis.candidates[index].stack_losses}` : '—' }}</td><td class="px-4 py-3 text-right tabular-nums">{{ analysis?.candidates[index] ? `${Number(analysis.candidates[index].stack_win_pct).toFixed(1)}% / ${Number(analysis.candidates[index].stack_coverage_pct).toFixed(1)}%` : '—' }}</td><td class="px-4 py-3"><div class="flex justify-end gap-2"><button type="button" :disabled="predicting || action.processing" class="whitespace-nowrap rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white transition-colors duration-150 hover:bg-indigo-700 focus-visible:outline-2 focus-visible:outline-indigo-600 disabled:opacity-50 motion-reduce:transition-none" @click="predictToday(member)">Predict today</button><button type="button" :disabled="index === 0 || action.processing" class="rounded border border-gray-300 px-2 py-1 text-xs disabled:opacity-40" aria-label="Move earlier" @click="reorder(index, index - 1)">↑</button><button type="button" :disabled="index === stack.members.length - 1 || action.processing" class="rounded border border-gray-300 px-2 py-1 text-xs disabled:opacity-40" aria-label="Move later" @click="reorder(index, index + 1)">↓</button><button type="button" :disabled="action.processing" class="text-sm text-red-700 underline" @click="removeMember(member)">Remove</button></div></td></tr></tbody></table><p v-if="!stack.members.length" class="px-5 py-10 text-center text-sm text-gray-500">This stack has no Engines.</p></section>
@@ -234,7 +262,7 @@ const reorder = (from, to) => {
                 <button type="button" class="text-gray-600 underline" @click="deletePending = false">Cancel</button>
             </div>
             <p v-if="!loadingSaves && !saves.length" class="mt-3 text-sm text-gray-500">No saved predictions yet. Choose Predict today on an Engine to begin.</p>
-            <form v-if="predictionMember && predictionDate" class="mt-4 flex flex-wrap items-end gap-3" @submit.prevent="saveNamed">
+            <form v-if="predictionSections.length" class="mt-4 flex flex-wrap items-end gap-3" @submit.prevent="saveNamed">
                 <label class="min-w-56 flex-1 text-sm font-medium text-gray-700">Save current results as
                     <input v-model="saveName" required maxlength="120" class="mt-1 w-full rounded-lg border-gray-300" placeholder="Name this snapshot" />
                 </label>
@@ -242,27 +270,36 @@ const reorder = (from, to) => {
             </form>
             <p v-if="saveError" role="alert" class="mt-3 text-sm text-red-700">{{ saveError }}</p>
             <p v-if="saveStatus" role="status" aria-live="polite" class="mt-3 text-sm text-gray-600">{{ saveStatus }}</p>
+            <button v-if="predicting" type="button" :disabled="stopRequested" class="mt-3 rounded-lg border border-gray-300 px-3 py-2 text-sm disabled:opacity-50" @click="cancelPredictions">{{ stopRequested ? 'Finishing current request…' : 'Stop remaining predictions' }}</button>
         </section>
-        <section v-if="predictionMember" class="rounded-xl border border-gray-200 bg-white shadow-sm" aria-labelledby="predictions-title" :aria-busy="predicting">
-            <div class="flex flex-wrap items-center justify-between gap-3 p-5">
-                <div><h2 id="predictions-title" class="text-lg font-semibold">Predict today · {{ predictionMember.engine.name }}</h2>
-                    <p class="mt-1 text-sm text-gray-600">{{ predictionDate }} · America/Toronto · Production model</p>
-                    <p class="mt-2 inline-flex rounded-lg bg-indigo-50 px-3 py-1.5 text-sm font-semibold tabular-nums text-indigo-800">Engine qualifying confidence: {{ predictionMember.engine.settings?.confidence_min ?? '—' }}%–{{ effectiveConfidenceMax }}% (inclusive)<span v-if="predictionMember.engine.settings?.diagnostic_confidence_upper_tolerance" class="ml-1 font-normal">· includes +1 upper tolerance</span></p>
-                    <p class="mt-2 text-sm font-semibold tabular-nums text-indigo-800">Required spread: &gt; {{ predictionMember.engine.settings?.gap ?? '—' }} goals · No upper limit</p>
+        <section v-for="section in predictionSections" :key="section.member.engine.id" class="rounded-xl border border-gray-200 bg-white shadow-sm" :aria-labelledby="`predictions-title-${section.member.engine.id}`" :aria-busy="section.status === 'Predicting'">
+            <h2 :id="`predictions-title-${section.member.engine.id}`">
+                <button type="button" class="flex w-full items-center justify-between gap-3 rounded-xl p-5 text-left transition-colors duration-150 hover:bg-gray-50 focus-visible:outline-2 focus-visible:outline-indigo-600 motion-reduce:transition-none"
+                    :aria-expanded="section.open" :aria-controls="`predictions-panel-${section.member.engine.id}`" @click="section.open = !section.open">
+                    <span class="text-lg font-semibold">{{ section.member.engine.name }}<span class="ml-2 text-sm font-normal text-gray-500">{{ section.status }} · {{ section.rows.filter(row => row.status === 'Calculated').length }}/{{ section.rows.length }} calculated</span></span>
+                    <span aria-hidden="true" class="transition-transform duration-300 ease-out motion-reduce:transition-none" :class="section.open ? 'rotate-180' : ''">⌄</span>
+                </button>
+            </h2>
+            <div :id="`predictions-panel-${section.member.engine.id}`" :inert="!section.open" :aria-hidden="!section.open" class="grid transition-[grid-template-rows,opacity] duration-300 ease-out motion-reduce:transition-none" :class="section.open ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'">
+            <div class="min-h-0 overflow-hidden">
+            <div class="p-5 pt-0">
+                <div>
+                    <p class="mt-1 text-sm text-gray-600">{{ section.date ?? 'Waiting for games' }} · America/Toronto · Production model</p>
+                    <p class="mt-2 inline-flex rounded-lg bg-indigo-50 px-3 py-1.5 text-sm font-semibold tabular-nums text-indigo-800">Engine qualifying confidence: {{ section.member.engine.settings?.confidence_min ?? '—' }}%–{{ effectiveConfidenceMax(section) }}% (inclusive)<span v-if="section.member.engine.settings?.diagnostic_confidence_upper_tolerance" class="ml-1 font-normal">· includes +1 upper tolerance</span></p>
+                    <p class="mt-2 text-sm font-semibold tabular-nums text-indigo-800">Required spread: &gt; {{ section.member.engine.settings?.gap ?? '—' }} goals · No upper limit</p>
                     <p v-if="restoredName" class="mt-2 text-sm text-gray-600">Saved snapshot: {{ restoredName }} · {{ capturedStack?.name }} · Historical results, not recalculated</p>
                     <p class="mt-1 text-xs text-gray-500">Production determines qualification and outcome. Saved snapshots retain the rules used when captured. Scores are away–home; spread is the absolute goal difference.</p></div>
-                <button v-if="predicting" type="button" class="rounded-lg border border-gray-300 px-3 py-2 text-sm" @click="cancelPredictions">Stop remaining games</button>
             </div>
-            <p v-if="predictionError" role="alert" class="px-5 pb-4 text-sm text-red-700">{{ predictionError }}</p>
-            <p role="status" aria-live="polite" class="px-5 pb-4 text-sm text-gray-500">{{ predicting ? 'Calculating one game at a time…' : 'Request stopped or finished.' }}</p>
+            <p v-if="section.error" role="alert" class="px-5 pb-4 text-sm text-red-700">{{ section.error }}</p>
+            <p role="status" aria-live="polite" class="px-5 pb-4 text-sm text-gray-500">{{ section.status === 'Predicting' ? 'Calculating one game at a time…' : section.status }}</p>
             <div class="overflow-x-auto">
                 <table class="w-full text-left text-sm tabular-nums">
                     <thead class="border-y border-gray-200 bg-gray-50"><tr>
-                        <th v-for="[key, label] in predictionColumns" :key="key" scope="col" :aria-sort="predictionSort.key === key ? (predictionSort.direction === 1 ? 'ascending' : 'descending') : 'none'">
-                            <button type="button" class="whitespace-nowrap px-4 py-3 font-medium text-gray-600" @click="sortPredictions(key)">{{ label }} ↕</button>
+                        <th v-for="[key, label] in predictionColumns" :key="key" scope="col" :aria-sort="section.sort.key === key ? (section.sort.direction === 1 ? 'ascending' : 'descending') : 'none'">
+                            <button type="button" class="whitespace-nowrap px-4 py-3 font-medium text-gray-600" @click="sortPredictions(section, key)">{{ label }} ↕</button>
                         </th><th scope="col" class="px-4 py-3">Status</th>
                     </tr></thead>
-                    <tbody><tr v-for="row in sortedPredictions" :key="row.key" class="border-b border-gray-100" :class="row.source === 'test' ? 'bg-gray-50' : ''">
+                    <tbody><tr v-for="row in sortedPredictions(section)" :key="row.key" class="border-b border-gray-100" :class="row.source === 'test' ? 'bg-gray-50' : ''">
                         <th scope="row" class="whitespace-nowrap px-4 py-3 font-medium">{{ row.game }}</th>
                         <td class="whitespace-nowrap px-4 py-3">{{ row.model }}<span class="block text-xs text-gray-500">{{ row.modelName }}</span></td>
                         <td class="whitespace-nowrap px-4 py-3">{{ row.score ?? '—' }}</td>
@@ -276,8 +313,9 @@ const reorder = (from, to) => {
                     </tr></tbody>
                 </table>
                 <p class="p-5 text-xs text-gray-500">Skater and goalie confidence are the two-team averages before weighting. Internal confidence = rounded (70% skater + 30% goalie).</p>
-                <p v-if="!predicting && !predictionError && !predictionRows.length" class="p-5 text-sm text-gray-500">No games scheduled today.</p>
+                <p v-if="section.status === 'Calculated' && !section.error && !section.rows.length" class="p-5 text-sm text-gray-500">No games scheduled today.</p>
             </div>
+            </div></div>
         </section>
     </div>
 </template>

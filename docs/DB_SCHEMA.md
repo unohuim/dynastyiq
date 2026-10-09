@@ -8,6 +8,8 @@ Migration: `2026_10_08_000001_create_admin_engine_game_predictions.php`.
 snapshot JSON and timestamps. Owner/name and owner/autosave-slot pairs are unique.
 User deletion cascades. Engine and stack identities are captured inside JSON, not
 foreign keys, so deleting a definition does not delete saved diagnostic results.
+Snapshot JSON supports legacy version 1 single-engine results and version 2
+multi-engine accordion workspaces. This JSON-format change requires no migration.
 
 ## NHL next-game evaluations
 

@@ -2,7 +2,8 @@
 
 ## Admin engine game prediction snapshots
 
-- Snapshot `version`: `1`.
+- Snapshot `version`: `1` (legacy single Engine), `2` (multi-Engine accordion workspace).
+- Version 2 section `status`: `Waiting`, `Predicting`, `Calculated`, `Failed`, `Stopped`.
 - `autosave_slot`: `1`, `2`, `3`, `4`; null denotes a named copy.
 - Snapshot row `source`: `production`, `test`.
 - Snapshot row `status`: `Waiting`, `Predicting`, `Calculated`, `Unavailable`, `Failed`, `Stopped`.
