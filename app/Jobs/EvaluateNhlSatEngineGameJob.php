@@ -68,10 +68,16 @@ class EvaluateNhlSatEngineGameJob implements ShouldQueue
             DB::table('nhl_sat_engine_results')->insert($row);
             $run->predictions_completed++;
             $run->status = (int) $run->predictions_completed === (int) $run->prediction_count ? 'ranking' : 'running';
+            if ($run->status === 'ranking' && ($run->definition['automatic_search']['strategy'] ?? null) === 'qualification_first_v1'
+                && $run->definition['automatic_search']['stage'] === 0) {
+                $definition = $run->definition;
+                $definition['automatic_search']['stage'] = 1;
+                $run->definition = $definition;
+            }
             $run->save();
             if ($this->gameIndex + 1 < $run->game_count) {
                 self::dispatch($run->id, $this->splitIndex, $this->gameIndex + 1, $run->work_generation)->afterCommit();
-            } elseif (($run->definition['automatic_search']['strategy'] ?? null) === 'coarse_to_fine_v1') {
+            } elseif (in_array($run->definition['automatic_search']['strategy'] ?? null, ['coarse_to_fine_v1', 'qualification_first_v1'], true)) {
                 $search = $run->definition['automatic_search'];
                 $next = $this->splitIndex + $search['lanes'];
                 if ($next < $search['stage_first_split'] + $search['stage_split_count']) {

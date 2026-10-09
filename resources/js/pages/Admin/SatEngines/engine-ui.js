@@ -4,6 +4,7 @@ export function discoveryDefaults() {
     return {
         kind: 'discovery', name: '', engine_id: null, model_run_id: '',
         desired_win_pct: 60, min_coverage_pct: 40,
+        constraints: { offense: '', defense: '', confidence_min: '', confidence_max: '', gap: '', gap_operator: '>' },
         scope: { mode: 'season', selection: 'first', start_date: '', end_date: '', count: 5, teams: [], game_ids: [] },
     };
 }
@@ -29,7 +30,11 @@ export function qualified(result, settings) {
         && (!settings.team_abbrev || result.game?.[settings.venue] === settings.team_abbrev)
         && Number(result.confidence) >= Number(settings.confidence_min)
         && Number(result.confidence) <= Number(settings.confidence_max)
-        && Number(result.gap) > Number(settings.gap);
+        && (settings.gap_operator === '<' ? Number(result.gap) < Number(settings.gap) : Number(result.gap) > Number(settings.gap));
+}
+
+export function gapLabel(settings) {
+    return `${settings.gap_operator ?? '>'} ${number(settings.gap, 6)}${settings.gap_unit === 'percent' ? '%' : ' goals'}`;
 }
 
 export function number(value, decimals = 0) {

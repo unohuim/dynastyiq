@@ -1123,7 +1123,12 @@ Every successful response includes a top-level `pick_qualified` boolean.
 It is `true` only when a production prediction is available and an Engine in the
 Default stack qualifies the game using its Production Model's internal confidence
 against the Engine's inclusive
-confidence range and unrounded score gap.
+confidence range and saved spread rule. Legacy Engines compare an absolute goal
+difference; Engines from new discoveries compare percentage spread:
+`100 × abs(home goals − away goals) / (home goals + away goals)`, at six-decimal
+precision. The saved rule may require strictly greater or strictly less than its
+threshold. Equality never qualifies. No API field names change; `goal_differential`
+still reports goals, not a percentage.
 Either an away or home lead qualifies. Exact ties and confidence outside that
 range return `false`; when no Engine in the Default stack qualifies, the response
 also has `pick_qualified: false` and `inputs.engine_id: null`. Its broader matchup

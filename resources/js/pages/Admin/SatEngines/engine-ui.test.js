@@ -1,7 +1,7 @@
 /* @vitest-environment jsdom */
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createApp, h, nextTick, reactive } from 'vue';
-import { active, coverageShortfall, discoveryDefaults, number, qualified, runPayload } from './engine-ui';
+import { active, coverageShortfall, discoveryDefaults, number, qualified, runPayload, gapLabel } from './engine-ui';
 import Index from './Index.vue';
 import Workspace from './Workspace.vue';
 import Run from './Run.vue';
@@ -70,6 +70,44 @@ it('creates independent discovery scope for each page without manual search sett
 });
 it('turns empty dates into nullable request values', () => {
     expect(runPayload(discoveryDefaults(settings)).scope.start_date).toBeNull();
+});
+it('submits independent optional constraints including a zero and strict less-than spread', async () => {
+    const root = mount(Workspace, workspace());
+    const inputFor = label => [...root.querySelectorAll('label')].find(node => node.textContent.trim() === label)?.querySelector('input');
+    for (const [label, value] of [['Offense %', '0'], ['Minimum confidence %', '74'], ['Spread %', '5']]) {
+        const input = inputFor(label);
+        input.value = value;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    const comparison = [...root.querySelectorAll('select')].find(node => [...node.options].some(option => option.value === '<'));
+    comparison.value = '<'; comparison.dispatchEvent(new Event('change', { bubbles: true }));
+    await nextTick();
+    root.querySelector('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    expect(transport.post).toHaveBeenCalledWith('/admin/nhl-sat-engines/runs', expect.objectContaining({
+        constraints: { offense: 0, defense: '', confidence_min: 74, confidence_max: '', gap: 5, gap_operator: '<' },
+    }));
+});
+
+it('keeps percentage direction and units visible and equality excluded', () => {
+    const bounded = { ...settings, gap: 5, gap_unit: 'percent', gap_operator: '<' };
+    expect(gapLabel(bounded)).toBe('< 5%');
+    expect(gapLabel(settings)).toBe('> 0 goals');
+    expect(qualified({ status: 'complete', correct: true, confidence: 68, gap: 4 }, bounded)).toBe(true);
+    expect(qualified({ status: 'complete', correct: true, confidence: 68, gap: 5 }, bounded)).toBe(false);
+    const root = mount(SettingsFields, { settings: bounded });
+    expect(root.textContent).toContain('Spread < (%)');
+    expect([...root.querySelectorAll('input')].at(-1).max).toBe('100');
+});
+
+it('explains the constrained discovery stages and saved bounds', () => {
+    const props = report();
+    props.run.definition.automatic_search = { strategy: 'qualification_first_v1', stage: 1 };
+    props.run.definition.constraints = { confidence_min: 74, confidence_max: 80, gap: 5, gap_operator: '<' };
+    const root = mount(Run, props);
+    expect(root.textContent).toContain('100% offense / 50% defense');
+    expect(root.textContent).toContain('74–80%');
+    expect(root.textContent).toContain('Spread: < 5%');
+    expect(root.textContent).not.toContain('0–10 goals');
 });
 it('parses explicit game IDs from commas and whitespace', () => {
     const data = discoveryDefaults(settings); data.scope.mode = 'selected';

@@ -35,6 +35,17 @@
 - Run `definition.automatic_search.strategy`: `coarse_to_fine_v1` uses a broad independent
   weight search and two bounded refinements. `stage` is 0 (broad), 1 (five-point refinement),
   or 2 (one-point refinement). Absent/null preserves legacy manual weight/gap behavior.
+- New discoveries use `qualification_first_v1`: stage 0 predicts the fixed starting pair,
+  stage 1 ranks its confidence/spread candidates, and stage 2 varies unspecified weights.
+  `weight_stage` is -1 before weight search, then 0, 1, 2 for broad, five-point and one-point passes.
+- Run `definition.constraints` stores optional `offense`, `defense`, `confidence_min`,
+  `confidence_max`, `gap` and `gap_operator`. Null/absent numeric values are unrestricted;
+  zero is an explicit constraint. Confidence bounds independently constrain searched intervals.
+- Run `definition.gap_unit` and settings `gap_unit`: `goals` or `percent`; absent means `goals`.
+  New discoveries use `percent`: absolute predicted goal difference / combined predicted goals * 100,
+  stored at six decimal places; a zero combined score yields zero.
+- Settings `gap_operator`: `>` or `<`; absent means `>`. Equality never qualifies.
+  A supplied discovery spread is a fixed whole percentage; blank searches greater-than thresholds.
 - Run `definition.confidence_search`: `automatic` searches all confidence intervals for discovery;
   `configured` uses the saved engine interval. An absent marker denotes legacy explicit-range search.
 - Run `status`: `queued`, `running`, `ranking`, `paused`, `complete`, `failed`, `cancelled`.
@@ -46,7 +57,7 @@
   `random` (sample without replacement). Applies to `games` and `days`; other modes
   normalize to `first`. Random runs store a server-generated `selection_seed` and selected IDs.
 - Settings keys: `offense`, `defense` (independent percentages), `confidence_min`,
-  `confidence_max` (inclusive game-confidence bounds), `gap` (strictly exceeded absolute goal difference).
+  `confidence_max` (inclusive game-confidence bounds), `gap` (threshold in `gap_unit`, compared using `gap_operator`).
 - `scope.teams`: an empty array means the entire league; otherwise match either team's abbreviation.
 
 
@@ -103,7 +114,7 @@ Storage: `nhl_lineup_observations.raw_evidence.ocr[].status` and local post audi
 - `fantrax`: Fantrax import, league-sync, and draft-sync work.
 - `lineups`: Time-sensitive anticipated NHL lineup work.
 
-Horizon assigns six workers to `default`, two workers to `fantrax`, and two workers to `lineups`.
+Horizon assigns twelve workers to `default`, two workers to `fantrax`, and one worker to `lineups`, as governed by `docs/architecture/application/LaravelApplicationShell.yaml`.
 
 ## API Clients
 

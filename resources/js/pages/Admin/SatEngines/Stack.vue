@@ -2,7 +2,7 @@
 import { Head, Link, useForm } from '@inertiajs/vue3';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import axios from 'axios';
-import { baseUrl } from './engine-ui';
+import { baseUrl, gapLabel } from './engine-ui';
 
 const props = defineProps({ stack: Object, engines: Array, models: Array, analysis: { type: Object, default: null } });
 const name = ref(props.stack.name);
@@ -171,7 +171,7 @@ const predictMembers = async members => {
                         row.goalie = result.goalie_confidence;
                         row.modelName = result.model_name ?? `Model #${result.model_run_id}`;
                         row.presentation = prediction?.confidence_score ?? null;
-                        row.spread = prediction ? Math.abs(Number(prediction.goal_differential)) : null;
+                        row.spread = result.qualification_spread ?? (prediction ? Math.abs(Number(prediction.goal_differential)) : null);
                         row.score = prediction ? `${prediction.predicted_score.away} – ${prediction.predicted_score.home}` : null;
                         row.qualified = result.prediction_available ? result.pick_qualified : null;
                         row.error = result.reason ?? null;
@@ -282,7 +282,7 @@ const reorder = (from, to) => {
                     <p class="mt-1 text-sm text-gray-600">{{ section.date ?? 'Waiting for games' }} · America/Toronto · Production model</p>
                     <p class="mt-2 inline-flex rounded-lg bg-indigo-50 px-3 py-1.5 text-sm font-semibold tabular-nums text-indigo-800">Defined confidence range: {{ section.member.engine.settings?.confidence_min ?? '—' }}%–{{ section.member.engine.settings?.confidence_max ?? '—' }}%</p>
                     <p v-if="section.member.engine.settings?.diagnostic_confidence_upper_tolerance" class="mt-1 text-xs text-gray-500">Qualification allows +1 percentage point above the defined upper limit (maximum 100%).</p>
-                    <p class="mt-2 text-sm font-semibold tabular-nums text-indigo-800">Required spread: &gt; {{ section.member.engine.settings?.gap ?? '—' }} goals · No upper limit</p>
+                    <p class="mt-2 text-sm font-semibold tabular-nums text-indigo-800">Required spread: {{ gapLabel(section.member.engine.settings ?? { gap: null }) }}</p>
                     <p v-if="restoredName" class="mt-2 text-sm text-gray-600">Saved snapshot: {{ restoredName }} · {{ capturedStack?.name }} · Historical results, not recalculated</p>
                     <p class="mt-1 text-xs text-gray-500">Production determines qualification and outcome. Saved snapshots retain the rules used when captured. Scores are away–home; spread is the absolute goal difference.</p></div>
             </div>
@@ -299,7 +299,7 @@ const reorder = (from, to) => {
                         <th scope="row" class="whitespace-nowrap px-4 py-3 font-medium">{{ row.game }}</th>
                         <td class="whitespace-nowrap px-4 py-3">{{ row.model }}<span class="block text-xs text-gray-500">{{ row.modelName }}</span></td>
                         <td class="whitespace-nowrap px-4 py-3">{{ row.score ?? '—' }}</td>
-                        <td class="px-4 py-3">{{ row.spread == null ? '—' : row.spread.toFixed(4) }}</td>
+                        <td class="px-4 py-3">{{ row.spread == null ? '—' : row.spread.toFixed(4) + (section.member.engine.settings?.gap_unit === 'percent' ? '%' : '') }}</td>
                         <td class="px-4 py-3">{{ row.skater == null ? '—' : Number(row.skater).toFixed(2) + '%' }}</td>
                         <td class="px-4 py-3">{{ row.goalie == null ? '—' : Number(row.goalie).toFixed(2) + '%' }}</td>
                         <td class="px-4 py-3">{{ row.internal == null ? '—' : row.internal + '%' }}</td>

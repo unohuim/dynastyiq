@@ -56,7 +56,11 @@ administrative records; they have no tenant or organization ownership.
   confidence-search mode. Scope includes first/last/random selection and, for
   random runs, a server-generated selection seed; the resolved game IDs remain
   the worker's authoritative sample. `automatic_search` records strategy, current stage,
-  stage split bounds and queue lanes. New automatic-discovery counters track evaluated
+  stage split bounds and queue lanes. New definitions also snapshot optional `constraints`,
+  the result `gap_unit`, and the weight-search pass within the final stage. Candidate and
+  Engine settings preserve spread units and comparison direction; see `docs/ENUMS.md`.
+  These additions use existing JSON columns and require no schema migration.
+  New automatic-discovery counters track evaluated
   weight pairs; each can persist multiple retained gap/confidence candidates. Totals grow
   atomically when refinement appends work. Legacy runs count weight/gap searches.
   Engine deletion nulls the reference; model deletion is restricted.

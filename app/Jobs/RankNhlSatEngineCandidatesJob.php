@@ -59,7 +59,7 @@ class RankNhlSatEngineCandidatesJob implements ShouldQueue
         $computed = [];
         foreach ($rows as $candidate) {
             $settings = json_decode($candidate->settings, true, 512, JSON_THROW_ON_ERROR);
-            if (($run->definition['automatic_search']['strategy'] ?? null) === 'coarse_to_fine_v1') {
+            if (in_array($run->definition['automatic_search']['strategy'] ?? null, ['coarse_to_fine_v1', 'qualification_first_v1'], true)) {
                 $computed[$candidate->id] = $evaluator->discoverQualifications($run->id, $candidate->split_index, $settings, $run->game_count);
             } else {
                 $computed[$candidate->id] = $automatic

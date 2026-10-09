@@ -1,11 +1,12 @@
 <script setup>
-defineProps({ settings: { type: Object, required: true } });
+import { computed } from 'vue';
+const props = defineProps({ settings: { type: Object, required: true } });
 const emit = defineEmits(['update:settings']);
-const fields = [
+const fields = computed(() => [
     ['offense', 'Offense %', 200, 1], ['defense', 'Matching defense %', 200, 1],
     ['confidence_min', 'Confidence minimum', 100, 1], ['confidence_max', 'Confidence maximum', 100, 1],
-    ['gap', 'Score gap greater than', 10, 0.000001],
-];
+    ['gap', `Spread ${props.settings.gap_operator ?? '>'} (${props.settings.gap_unit === 'percent' ? '%' : 'goals'})`, props.settings.gap_unit === 'percent' ? 100 : 10, 0.000001],
+]);
 </script>
 
 <template>

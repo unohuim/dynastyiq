@@ -73,6 +73,7 @@ class NhlGamePredictionPayload
             'goalie_confidence' => data_get($result, '_confidence_components.goalie'),
             'model_run_id' => data_get($result, 'inputs.sat_model_run_id'),
             'qualification_model_run_id' => data_get($result, 'inputs.qualification_model_run_id'),
+            'qualification_spread' => $result['_qualification_spread'] ?? null,
             'prediction' => $result['prediction'] ?? null,
             'reason' => $result['reason'] ?? null,
         ];
@@ -397,7 +398,10 @@ class NhlGamePredictionPayload
                 && $prediction['confidence_score'] <= ($defaultEngine === null
                     ? self::PICK_CONFIDENCE_MAX
                     : min(100, (float) ($defaultEngine->settings['confidence_max'] ?? self::PICK_CONFIDENCE_MAX) + 1))
-                && abs($homeGoals - $awayGoals) > (float) ($defaultEngine?->settings['gap'] ?? 0),
+                && abs($homeGoals - $awayGoals) > 0
+                && app(NhlSatEngineSettings::class)->gapQualifies(
+                    app(NhlSatEngineSettings::class)->scoreGap($awayGoals, $homeGoals, $defaultEngine?->settings['gap_unit'] ?? 'goals'),
+                    $defaultEngine?->settings ?? ['gap' => 0]),
             'game' => $this->gamePayload($game),
             'inputs' => [
                 'engine_id' => $defaultEngine?->id,
@@ -449,6 +453,8 @@ class NhlGamePredictionPayload
         ];
 
         if (($overrides['_include_confidence_components'] ?? false) === true) {
+            $response['_qualification_spread'] = app(NhlSatEngineSettings::class)->scoreGap(
+                $awayGoals, $homeGoals, $defaultEngine?->settings['gap_unit'] ?? 'goals');
             $resultSkaterConfidence = ($this->weightedSkaterConfidence($awaySide)
                 + $this->weightedSkaterConfidence($homeSide)) / 2 * 100;
             $resultGoalieConfidence = (max(0.0, min(100.0, (float) ($awayGoalie['confidence_score'] ?? 50)))

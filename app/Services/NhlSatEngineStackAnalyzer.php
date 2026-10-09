@@ -116,7 +116,8 @@ final class NhlSatEngineStackAnalyzer
                 $gameId = (int) $result->nhl_game_id;
                 $eligible[$gameId] = true;
                 if ($result->correct !== null && (int) $result->confidence >= $candidate['settings']['confidence_min']
-                    && (int) $result->confidence <= $candidate['settings']['confidence_max'] && (float) $result->gap > (float) $candidate['settings']['gap']) {
+                    && (int) $result->confidence <= $candidate['settings']['confidence_max']
+                    && app(NhlSatEngineSettings::class)->gapQualifies((float) $result->gap, $candidate['settings'])) {
                     $picks[$gameId] = (bool) $result->correct;
                 }
             }
@@ -137,6 +138,8 @@ final class NhlSatEngineStackAnalyzer
             (string) $candidate['settings']['confidence_min'],
             (string) $candidate['settings']['confidence_max'],
             (string) $candidate['settings']['gap'],
+            $candidate['settings']['gap_unit'] ?? 'goals',
+            $candidate['settings']['gap_operator'] ?? '>',
         ]);
     }
 

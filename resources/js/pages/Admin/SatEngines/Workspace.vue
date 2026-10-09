@@ -51,7 +51,20 @@ const start = () => evaluation.transform(data => runPayload(data, gameIdsText.va
             <fieldset><legend class="text-sm font-medium">Team — none selected means entire league</legend><div class="mt-2 flex max-h-40 flex-wrap gap-3 overflow-y-auto"><label v-for="team in teams" :key="team" class="flex items-center gap-2 text-sm"><input type="checkbox" :checked="evaluation.scope.teams[0] === team" class="rounded border-gray-300" @change="evaluation.scope.teams = evaluation.scope.teams[0] === team ? [] : [team]" />{{ team }}</label></div></fieldset>
             <p class="text-sm text-gray-500">A selected team creates separate home and away candidates. First, Last and Random select from games matching your season, dates and team. Game-day selection includes every matching game on each selected date. Random samples are saved for the run so every split uses the same games. If fewer games or days are available than requested, all matching ones are used.</p>
             <div class="grid gap-4 sm:grid-cols-2"><label class="text-sm">Desired win %<input v-model.number="evaluation.desired_win_pct" type="number" min="0" max="100" step="0.1" required class="mt-1 w-full rounded border-gray-300" /></label><label class="text-sm">Minimum game coverage %<input v-model.number="evaluation.min_coverage_pct" type="number" min="0.1" max="100" step="0.1" required class="mt-1 w-full rounded border-gray-300" /></label></div>
-            <p v-if="evaluation.kind === 'discovery'" class="text-sm text-gray-600">Discovery searches automatically, then refines promising offense/defense splits. Confidence ranges and score gaps are evaluated from the resulting predictions. Use candidate filters to narrow the stored discovery results. You can save discovered settings to an engine.</p>
+            <fieldset v-if="evaluation.kind === 'discovery'" class="space-y-4 rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                <legend class="px-2 text-sm font-semibold text-gray-900">Optional discovery constraints</legend>
+                <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                    <label v-for="[key, label, max] in [['offense', 'Offense %', 200], ['defense', 'Defense %', 200], ['confidence_min', 'Minimum confidence %', 100], ['confidence_max', 'Maximum confidence %', 100]]" :key="key" class="text-sm font-medium text-gray-700">
+                        {{ label }}<input v-model="evaluation.constraints[key]" type="number" min="0" :max="max" step="1" placeholder="Unrestricted" class="mt-1 w-full rounded-lg border-gray-300" />
+                    </label>
+                </div>
+                <div class="grid gap-4 sm:grid-cols-2">
+                    <label class="text-sm font-medium text-gray-700">Spread comparison<select v-model="evaluation.constraints.gap_operator" class="mt-1 w-full rounded-lg border-gray-300"><option value=">">Greater than (&gt;)</option><option value="<">Less than (&lt;)</option></select></label>
+                    <label class="text-sm font-medium text-gray-700">Spread %<input v-model="evaluation.constraints.gap" type="number" min="0" max="100" step="1" placeholder="Search automatically" class="mt-1 w-full rounded-lg border-gray-300" /></label>
+                </div>
+                <p class="text-sm text-gray-600">Stages 1–2 use 100% offense / 50% defense unless you enter replacements. Stage 3 varies only blank weights. Confidence ranges may narrow but never exceed your bounds. Enter 5 for 5% spread; blank searches greater-than thresholds automatically.</p>
+                <p class="text-xs text-gray-500">Spread % = absolute predicted score difference ÷ combined predicted goals × 100. Fixed offense, defense and spread values are never varied.</p>
+            </fieldset>
             <p v-for="(error, key) in evaluation.errors" :key="key" role="alert" class="text-sm text-red-700">{{ error }}</p>
             <button :disabled="evaluation.processing || !model?.target_season_id || model?.status !== 'complete'" class="rounded bg-gray-900 px-4 py-2 text-sm text-white disabled:opacity-50">{{ evaluation.processing ? 'Starting…' : evaluation.kind === 'build' ? 'Test engine' : 'Discover settings' }}</button>
         </form>

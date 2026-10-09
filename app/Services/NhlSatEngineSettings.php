@@ -24,7 +24,9 @@ class NhlSatEngineSettings
             'defense' => 'required|numeric|between:0,200',
             'confidence_min' => 'required|integer|between:0,100',
             'confidence_max' => 'required|integer|between:0,100|gte:confidence_min',
-            'gap' => 'required|numeric|between:0,10',
+            'gap' => 'required|numeric|between:0,' . (($input['gap_unit'] ?? 'goals') === 'percent' ? '100' : '10'),
+            'gap_unit' => 'sometimes|in:goals,percent',
+            'gap_operator' => 'sometimes|in:>,<',
         ])->validate();
     }
 
@@ -32,7 +34,65 @@ class NhlSatEngineSettings
     public function qualifies(int $confidence, float $gap, array $settings): bool
     {
         return $confidence >= $settings['confidence_min'] && $confidence <= $settings['confidence_max']
-            && $gap > (float) $settings['gap'];
+            && $this->gapQualifies($gap, $settings);
+    }
+
+    /** Compare in the settings' stored units; absent metadata preserves legacy engines. */
+    public function gapQualifies(float $gap, array $settings): bool
+    {
+        return ($settings['gap_operator'] ?? '>') === '<'
+            ? $gap < (float) $settings['gap'] : $gap > (float) $settings['gap'];
+    }
+
+    /** Normalize score separation without changing the predicted winner or score. */
+    public function scoreGap(float $away, float $home, string $unit = 'goals'): float
+    {
+        if ($unit !== 'percent') {
+            return abs($home - $away);
+        }
+
+        return $away + $home > 0 ? round(100 * abs($home - $away) / ($away + $home), 6) : 0.0;
+    }
+
+    /** Validate independent optional discovery bounds, preserving explicit zero values. */
+    public function discoveryConstraints(array $input): array
+    {
+        $input = array_map(fn ($value) => $value === '' ? null : $value, $input);
+
+        return Validator::make($input, [
+            'offense' => 'nullable|integer|between:0,200',
+            'defense' => 'nullable|integer|between:0,200',
+            'confidence_min' => 'nullable|integer|between:0,100',
+            'confidence_max' => ['nullable', 'integer', 'between:0,100',
+                ...(isset($input['confidence_min']) ? ['gte:confidence_min'] : [])],
+            'gap' => 'nullable|integer|between:0,100',
+            'gap_operator' => 'sometimes|in:>,<',
+        ])->validate();
+    }
+
+    /** Fixed starting pair; only stage three varies unspecified weights. */
+    public function constrainedCandidates(array $constraints, int $weightStage = -1, array $centers = [], array $evaluated = []): array
+    {
+        $rows = $weightStage < 0
+            ? [['offense' => $constraints['offense'] ?? 100, 'defense' => $constraints['defense'] ?? 50]]
+            : $this->automaticCandidates($weightStage, $centers);
+        $seen = array_fill_keys(array_map(fn ($row) => $row['offense'] . ':' . $row['defense'], $evaluated), true);
+        $result = [];
+        foreach ($rows as $row) {
+            $row['offense'] = $constraints['offense'] ?? $row['offense'];
+            $row['defense'] = $constraints['defense'] ?? $row['defense'];
+            $key = $row['offense'] . ':' . $row['defense'];
+            if (isset($seen[$key])) {
+                continue;
+            }
+            $seen[$key] = true;
+            $result[] = [...$row, 'confidence_min' => $constraints['confidence_min'] ?? 0,
+                'confidence_max' => $constraints['confidence_max'] ?? 100,
+                'gap' => $constraints['gap'] ?? 0, 'gap_unit' => 'percent',
+                'gap_operator' => isset($constraints['gap']) ? ($constraints['gap_operator'] ?? '>') : '>'];
+        }
+
+        return $result;
     }
 
     /** Server-owned broad search, followed by two bounded refinements of distinct promising splits.

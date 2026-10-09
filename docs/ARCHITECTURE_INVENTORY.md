@@ -915,6 +915,8 @@ $token = PlatformTeamRosterShareLink::newPlainToken();
 
 ### NHL SAT Engines
 
+New discoveries use optional fixed weights, independent confidence bounds and percentage-spread constraints. Confidence/spread search precedes variable weight search; existing runs retain legacy semantics. See `docs/architecture/stats/NhlSatEngines.yaml`.
+
 **Purpose:** Save prediction settings and run model-dependent historical build/discovery evaluations.
 
 **Location:** `app/Services/NhlSatEngineEvaluator.php`, `app/Services/NhlSatEngineSettings.php`,

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Jobs\EvaluateNhlSatEngineGameJob;
+use App\Jobs\RankNhlSatEngineCandidatesJob;
 use App\Models\NhlModelRun;
 use App\Models\NhlSatEngine;
 use App\Models\NhlSatEngineRun;
@@ -96,8 +97,10 @@ class NhlSatEngineEvaluator
             || ! DB::table('nhl_sat_model_entity_toi_projections')->where('model_run_id', $model->id)->where('profile_type', 'skater_offense')->where('game_type', 2)->where('projected_toi_per_game_seconds', '>', 0)->exists()) {
             throw ValidationException::withMessages(['model_run_id' => 'This model is missing goal evaluation, offensive rates, or TOI outputs.']);
         }
+        $constraints = $input['kind'] === 'discovery'
+            ? $this->settings->discoveryConstraints($input['constraints'] ?? []) : [];
         $candidates = $input['kind'] === 'build'
-            ? [$this->settings->validate($engine->settings)] : $this->settings->automaticCandidates();
+            ? [$this->settings->validate($engine->settings)] : $this->settings->constrainedCandidates($constraints);
         $splits = [];
         foreach ($candidates as &$candidate) {
             $key = $candidate['offense'] . ':' . $candidate['defense'];
@@ -108,7 +111,7 @@ class NhlSatEngineEvaluator
         }
         unset($candidate);
 
-        return DB::transaction(function () use ($input, $engine, $model, $games, $candidates, $splits): NhlSatEngineRun {
+        return DB::transaction(function () use ($input, $engine, $model, $games, $candidates, $splits, $constraints): NhlSatEngineRun {
             $run = NhlSatEngineRun::query()->create([
                 'engine_id' => $engine?->id, 'model_run_id' => $model->id,
                 'kind' => $input['kind'], 'status' => 'queued',
@@ -120,8 +123,10 @@ class NhlSatEngineEvaluator
                     'scope' => $input['scope'], 'game_ids' => $games, 'splits' => array_values($splits),
                     'desired_win_pct' => $input['desired_win_pct'], 'min_coverage_pct' => $input['min_coverage_pct'],
                     'search' => null,
+                    'constraints' => $constraints,
+                    'gap_unit' => $candidates[0]['gap_unit'] ?? 'goals',
                     'automatic_search' => $input['kind'] === 'discovery' ? [
-                        'strategy' => 'coarse_to_fine_v1', 'stage' => 0,
+                        'strategy' => 'qualification_first_v1', 'stage' => 0, 'weight_stage' => -1,
                         'stage_first_split' => 0, 'stage_split_count' => count($splits), 'lanes' => 4,
                     ] : null,
                     'confidence_search' => $input['kind'] === 'discovery' ? 'automatic' : 'configured',
@@ -148,7 +153,9 @@ class NhlSatEngineEvaluator
     public function advanceDiscovery(NhlSatEngineRun $run): bool
     {
         $search = $run->definition['automatic_search'] ?? null;
-        if (($search['strategy'] ?? null) !== 'coarse_to_fine_v1' || $search['stage'] >= 2) {
+        $constrained = ($search['strategy'] ?? null) === 'qualification_first_v1';
+        if ((! $constrained && (($search['strategy'] ?? null) !== 'coarse_to_fine_v1' || $search['stage'] >= 2))
+            || ($constrained && $search['weight_stage'] >= 2)) {
             return false;
         }
         $centers = $indices = [];
@@ -166,7 +173,9 @@ class NhlSatEngineEvaluator
             $centers[] = json_decode($best->settings, true, 512, JSON_THROW_ON_ERROR);
         }
         $definition = $run->definition;
-        $candidates = $this->settings->automaticCandidates($search['stage'] + 1, $centers, $definition['splits']);
+        $candidates = $constrained
+            ? $this->settings->constrainedCandidates($definition['constraints'] ?? [], $search['weight_stage'] + 1, $centers, $definition['splits'])
+            : $this->settings->automaticCandidates($search['stage'] + 1, $centers, $definition['splits']);
         if ($candidates === []) {
             return false;
         }
@@ -181,7 +190,8 @@ class NhlSatEngineEvaluator
             }
             DB::table('nhl_sat_engine_candidates')->insert($rows);
         }
-        $definition['automatic_search'] = [...$search, 'stage' => $search['stage'] + 1,
+        $definition['automatic_search'] = [...$search, 'stage' => $constrained ? 2 : $search['stage'] + 1,
+            ...($constrained ? ['weight_stage' => $search['weight_stage'] + 1] : []),
             'stage_first_split' => $first, 'stage_split_count' => count($candidates)];
         $run->definition = $definition;
         $run->prediction_count += count($candidates) * $run->game_count;
@@ -262,6 +272,15 @@ class NhlSatEngineEvaluator
      */
     public function discoverQualifications(int $runId, int $splitIndex, array $settings, int $selected): array
     {
+        if (($settings['gap_unit'] ?? 'goals') === 'percent') {
+            $run = NhlSatEngineRun::query()->findOrFail($runId);
+            $constraints = $run->definition['constraints'] ?? [];
+            if (isset($constraints['gap'])) {
+                return $this->discoverConfidence($runId, $splitIndex, $settings, $selected);
+            }
+        } else {
+            $settings = [...$settings, 'confidence_min' => 0, 'confidence_max' => 100];
+        }
         return collect($this->teamVenueSettings($runId, $settings))->flatMap(
             fn (array $variant): array => $this->discoverQualificationsForSettings($runId, $splitIndex, $variant, $selected)
         )->all();
@@ -270,11 +289,12 @@ class NhlSatEngineEvaluator
     /** Search qualification settings for one league-wide or team-venue candidate. */
     private function discoverQualificationsForSettings(int $runId, int $splitIndex, array $settings, int $selected): array
     {
-        $settings = [...$settings, 'gap' => 0, 'confidence_min' => 0, 'confidence_max' => 100];
+        $settings = [...$settings, 'gap' => 0,
+            'confidence_min' => $settings['confidence_min'] ?? 0, 'confidence_max' => $settings['confidence_max'] ?? 100];
         $base = $this->metrics($runId, $splitIndex, $settings, $selected);
         $games = $this->resultQuery($runId, $splitIndex, $settings)
             ->where('status', 'complete')->whereNotNull('correct')->where('gap', '>', 0)
-            ->whereBetween('confidence', [0, 100])->limit(3001)->get(['confidence', 'gap', 'correct']);
+            ->whereBetween('confidence', [$settings['confidence_min'], $settings['confidence_max']])->limit(3001)->get(['confidence', 'gap', 'correct']);
         if ($games->count() > 3000) {
             throw new \RuntimeException('Automatic discovery exceeded its game bound.');
         }
@@ -285,7 +305,7 @@ class NhlSatEngineEvaluator
             $groups[$confidence]['picks']++;
             $groups[$confidence]['wins'] += (int) $game->correct;
             $tick = (int) round((float) $game->gap * 1000000);
-            if ($tick <= 10000000) {
+            if ($tick <= (($settings['gap_unit'] ?? 'goals') === 'percent' ? 100000000 : 10000000)) {
                 $events[$tick][] = $game;
             }
         }
@@ -373,7 +393,9 @@ class NhlSatEngineEvaluator
         $difference = (float) $home['total_goalie_adjusted_xgf_per_game'] - (float) $away['total_goalie_adjusted_xgf_per_game'];
 
         return [...$row, 'status' => 'complete',
-            'confidence' => $payload['prediction']['confidence_score'], 'gap' => abs($difference),
+            'confidence' => $payload['prediction']['confidence_score'],
+            'gap' => $this->settings->scoreGap((float) $away['total_goalie_adjusted_xgf_per_game'],
+                (float) $home['total_goalie_adjusted_xgf_per_game'], $run->definition['gap_unit'] ?? 'goals'),
             'correct' => $difference == 0.0 ? null : ($difference > 0) === ($game->home_team_score > $game->away_team_score),
             'pred_sat' => $away['adjusted_xsat_per_game'] + $home['adjusted_xsat_per_game'],
             'pred_sog' => $away['adjusted_xsog_per_game'] + $home['adjusted_xsog_per_game'],
@@ -399,7 +421,7 @@ class NhlSatEngineEvaluator
         $totals = (clone $query)->selectRaw('COUNT(*) AS eligible, SUM(pred_sat) AS pred_sat, SUM(pred_sog) AS pred_sog, SUM(pred_goals) AS pred_goals,
             SUM(actual_sat) AS actual_sat, SUM(actual_sog) AS actual_sog, SUM(actual_goals) AS actual_goals')->first();
         $picks = (clone $query)->whereBetween('confidence', [$settings['confidence_min'], $settings['confidence_max']])
-            ->where('gap', '>', $settings['gap'])->whereNotNull('correct');
+            ->where('gap', $settings['gap_operator'] ?? '>', $settings['gap'])->whereNotNull('correct');
         $count = (clone $picks)->count();
         $wins = (clone $picks)->where('correct', true)->count();
         $allCount = (clone $query)->whereNotNull('correct')->count();
@@ -419,6 +441,9 @@ class NhlSatEngineEvaluator
      */
     public function discoverConfidence(int $runId, int $splitIndex, array $settings, int $selected): array
     {
+        if (($settings['gap_unit'] ?? 'goals') !== 'percent') {
+            $settings = [...$settings, 'confidence_min' => 0, 'confidence_max' => 100];
+        }
         return collect($this->teamVenueSettings($runId, $settings))->flatMap(
             fn (array $variant): array => $this->discoverConfidenceForSettings($runId, $splitIndex, $variant, $selected)
         )->all();
@@ -427,11 +452,12 @@ class NhlSatEngineEvaluator
     /** Search confidence settings for one league-wide or team-venue candidate. */
     private function discoverConfidenceForSettings(int $runId, int $splitIndex, array $settings, int $selected): array
     {
-        $settings = [...$settings, 'confidence_min' => 0, 'confidence_max' => 100];
+        $settings = [...$settings, 'confidence_min' => $settings['confidence_min'] ?? 0,
+            'confidence_max' => $settings['confidence_max'] ?? 100];
         $base = $this->metrics($runId, $splitIndex, $settings, $selected);
         $groups = $this->resultQuery($runId, $splitIndex, $settings)
-            ->where('status', 'complete')->whereNotNull('correct')->where('gap', '>', $settings['gap'])
-            ->whereBetween('confidence', [0, 100])->groupBy('confidence')->orderBy('confidence')
+            ->where('status', 'complete')->whereNotNull('correct')->where('gap', $settings['gap_operator'] ?? '>', $settings['gap'])
+            ->whereBetween('confidence', [$settings['confidence_min'], $settings['confidence_max']])->groupBy('confidence')->orderBy('confidence')
             ->selectRaw('confidence, COUNT(*) AS picks, SUM(CASE WHEN correct THEN 1 ELSE 0 END) AS wins')
             ->get()->map(fn ($row): array => ['confidence' => (int) $row->confidence,
                 'picks' => (int) $row->picks, 'wins' => (int) $row->wins])->all();

@@ -421,18 +421,173 @@ it('rejects incomplete rate and TOI builds before queuing games', function (): v
     Bus::assertNothingDispatched();
 });
 
-it('starts automatic discovery from model scope and targets with four bounded lanes', function (): void {
+it('persists optional constraints from a request and exposes them on the run page', function (): void {
+    $constraints = ['offense' => 0, 'defense' => 75, 'confidence_min' => 74, 'confidence_max' => 80, 'gap' => 5, 'gap_operator' => '<'];
+    $this->actingAs($this->admin)->post('/admin/nhl-sat-engines/runs', [
+        ...$this->input, 'kind' => 'discovery', 'engine_id' => null, 'constraints' => $constraints,
+    ])->assertRedirect();
+    $run = NhlSatEngineRun::query()->firstOrFail();
+    expect($run->definition['constraints'])->toBe($constraints)->and($run->definition['gap_unit'])->toBe('percent');
+    $candidate = json_decode(DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->value('settings'), true);
+    expect($candidate)->toMatchArray([...$constraints, 'gap_unit' => 'percent']);
+    $this->get('/admin/nhl-sat-engines/runs/' . $run->id)->assertInertia(fn (Assert $page) => $page
+        ->where('run.definition.constraints', $constraints)->where('run.definition.gap_unit', 'percent'));
+});
+
+it('rejects invalid discovery constraints before dispatch', function (array $constraints): void {
+    $this->actingAs($this->admin)->postJson('/admin/nhl-sat-engines/runs', [
+        ...$this->input, 'kind' => 'discovery', 'constraints' => $constraints,
+    ])->assertUnprocessable();
+    $this->assertDatabaseCount('nhl_sat_engine_runs', 0);
+    Bus::assertNothingDispatched();
+})->with([
+    [['offense' => 201]], [['defense' => -1]], [['confidence_min' => 81, 'confidence_max' => 80]],
+    [['gap' => 101]], [['gap' => 5.5]], [['gap_operator' => '>=']],
+]);
+
+it('keeps one-sided confidence limits and explicit zero weights', function (array $constraints, int $minimum, int $maximum): void {
+    $service = app(NhlSatEngineSettings::class);
+    $rows = $service->constrainedCandidates($service->discoveryConstraints($constraints));
+    expect($rows[0]['confidence_min'])->toBe($minimum)->and($rows[0]['confidence_max'])->toBe($maximum);
+    expect($rows[0]['offense'])->toBe($constraints['offense'] ?? 100);
+})->with([
+    [['confidence_min' => 74, 'confidence_max' => ''], 74, 100],
+    [['confidence_max' => 80, 'offense' => 0], 0, 80],
+    [['confidence_min' => '', 'confidence_max' => ''], 0, 100],
+]);
+
+it('varies only unspecified weights during stage three and never repeats a pair', function (): void {
+    $service = app(NhlSatEngineSettings::class);
+    $initial = $service->constrainedCandidates(['offense' => 113]);
+    $coarse = $service->constrainedCandidates(['offense' => 113], 0, [], $initial);
+    expect($coarse)->toHaveCount(8)->and(array_unique(array_column($coarse, 'offense')))->toBe([113]);
+    $fine = $service->constrainedCandidates(['offense' => 113], 1, [['offense' => 113, 'defense' => 50]], [...$initial, ...$coarse]);
+    expect(array_unique(array_column($fine, 'offense')))->toBe([113]);
+    expect($service->constrainedCandidates(['offense' => 113, 'defense' => 50], 0, [], $initial))->toBe([]);
+});
+
+it('uses scale-independent percentage spreads while preserving legacy goal gaps', function (): void {
+    $service = app(NhlSatEngineSettings::class);
+    expect($service->scoreGap(2, 3, 'percent'))->toBe(20.0)
+        ->and($service->scoreGap(4, 6, 'percent'))->toBe(20.0)
+        ->and($service->scoreGap(0, 0, 'percent'))->toBe(0.0)
+        ->and($service->scoreGap(2, 3))->toBe(1.0);
+    expect($service->gapQualifies(5, ['gap' => 5, 'gap_operator' => '<']))->toBeFalse()
+        ->and($service->gapQualifies(4, ['gap' => 5, 'gap_operator' => '<']))->toBeTrue()
+        ->and($service->gapQualifies(6, ['gap' => 5]))->toBeTrue();
+});
+
+it('keeps fixed percentage spread and bounded confidence during ranking', function (string $operator): void {
+    $constraints = ['offense' => 100, 'defense' => 50, 'confidence_min' => 74, 'confidence_max' => 80,
+        'gap' => 5, 'gap_operator' => $operator];
+    $run = app(NhlSatEngineEvaluator::class)->start([...$this->input, 'kind' => 'discovery', 'constraints' => $constraints], $this->engine);
+    $settings = json_decode(DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->value('settings'), true);
+    foreach ([[73, 4], [74, 4], [75, 5], [80, 6], [81, 6]] as $index => [$confidence, $gap]) {
+        DB::table('nhl_sat_engine_results')->insert(($this->result)($run, $index + 1, compact('confidence', 'gap')));
+    }
+    $evaluator = app(NhlSatEngineEvaluator::class);
+    $rows = $evaluator->discoverQualifications($run->id, 0, $settings, 5);
+    foreach ($rows as $row) {
+        expect($row['settings']['confidence_min'])->toBeGreaterThanOrEqual(74);
+        expect($row['settings']['confidence_max'])->toBeLessThanOrEqual(80);
+        expect($row['settings']['gap'])->toBe(5)->and($row['settings']['gap_operator'])->toBe($operator);
+        expect($row['metrics']['picks'])->toBe(1);
+        expect($evaluator->metrics($run->id, 0, $row['settings'], 5)['picks'])->toBe(1);
+    }
+})->with(['>', '<']);
+
+it('searches automatic percentage thresholds above ten without escaping confidence bounds', function (): void {
+    $run = app(NhlSatEngineEvaluator::class)->start([...$this->input, 'kind' => 'discovery',
+        'constraints' => ['confidence_min' => 74, 'confidence_max' => 80]], $this->engine);
+    $settings = json_decode(DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->value('settings'), true);
+    DB::table('nhl_sat_engine_results')->insert([
+        ($this->result)($run, 1, ['confidence' => 75, 'gap' => 25, 'correct' => false]),
+        ($this->result)($run, 2, ['confidence' => 75, 'gap' => 35]),
+        ($this->result)($run, 3, ['confidence' => 73, 'gap' => 50]),
+    ]);
+    $rows = app(NhlSatEngineEvaluator::class)->discoverQualifications($run->id, 0, $settings, 3);
+    $best = collect($rows)->first(fn ($row) => $row['metrics']['picks'] === 1);
+    expect($best['settings']['gap'])->toEqual(25)->and($best['settings']['gap_unit'])->toBe('percent')
+        ->and($best['settings']['confidence_min'])->toBe(75)->and($best['metrics']['wins'])->toBe(1);
+});
+
+it('enters the qualification stage before scheduling any variable weight predictions', function (): void {
+    $run = app(NhlSatEngineEvaluator::class)->start([...$this->input, 'kind' => 'discovery',
+        'scope' => [...$this->scope, 'mode' => 'games', 'count' => 1]], $this->engine);
+    Bus::fake();
+    $evaluator = Mockery::mock(NhlSatEngineEvaluator::class);
+    $evaluator->shouldReceive('assertModelUnchanged')->once();
+    $evaluator->shouldReceive('predict')->once()->andReturn(($this->result)($run, 2025020001));
+    (new EvaluateNhlSatEngineGameJob($run->id, 0, 0, 1))->handle($evaluator);
+    expect($run->fresh()->status)->toBe('ranking')->and($run->fresh()->definition['automatic_search']['stage'])->toBe(1);
+    Bus::assertNotDispatched(EvaluateNhlSatEngineGameJob::class);
+    Bus::assertDispatchedTimes(RankNhlSatEngineCandidatesJob::class, 1);
+});
+
+it('starts stage three after ranking and preserves fixed weights and confidence bounds', function (): void {
+    $run = app(NhlSatEngineEvaluator::class)->start([...$this->input, 'kind' => 'discovery',
+        'constraints' => ['offense' => 113, 'confidence_min' => 74]], $this->engine);
+    $run->update(['status' => 'ranking', 'predictions_completed' => 3]);
+    foreach ($run->definition['game_ids'] as $id) {
+        DB::table('nhl_sat_engine_results')->insert(($this->result)($run, $id, ['confidence' => 75]));
+    }
+    Bus::fake();
+    $job = new RankNhlSatEngineCandidatesJob($run->id, 0, 1);
+    $job->handle(app(NhlSatEngineEvaluator::class));
+    $updated = $run->fresh();
+    expect($updated->definition['automatic_search']['stage'])->toBe(2)
+        ->and($updated->definition['automatic_search']['weight_stage'])->toBe(0)
+        ->and($updated->definition['splits'])->toHaveCount(9);
+    foreach (DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->get() as $candidate) {
+        $settings = json_decode($candidate->settings, true);
+        expect($settings['offense'])->toBe(113)->and($settings['confidence_min'])->toBeGreaterThanOrEqual(74);
+    }
+    $job->handle(app(NhlSatEngineEvaluator::class));
+    expect($run->fresh()->candidate_count)->toBe($updated->candidate_count);
+    Bus::assertDispatchedTimes(EvaluateNhlSatEngineGameJob::class, 4);
+});
+
+it('finishes after qualification ranking when both weights are fixed', function (): void {
+    $run = app(NhlSatEngineEvaluator::class)->start([...$this->input, 'kind' => 'discovery',
+        'constraints' => ['offense' => 100, 'defense' => 50]], $this->engine);
+    $run->update(['status' => 'ranking', 'predictions_completed' => 3]);
+    foreach ($run->definition['game_ids'] as $id) {
+        DB::table('nhl_sat_engine_results')->insert(($this->result)($run, $id));
+    }
+    Bus::fake();
+    (new RankNhlSatEngineCandidatesJob($run->id, 0, 1))->handle(app(NhlSatEngineEvaluator::class));
+    expect($run->fresh()->status)->toBe('complete')->and($run->fresh()->prediction_count)->toBe(3);
+    Bus::assertNotDispatched(EvaluateNhlSatEngineGameJob::class);
+});
+
+it('preserves percentage direction when adopting and editing a discovered engine', function (): void {
+    $run = app(NhlSatEngineEvaluator::class)->start([...$this->input, 'kind' => 'discovery',
+        'constraints' => ['gap' => 25, 'gap_operator' => '<']], $this->engine);
+    $candidate = DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->first();
+    DB::table('nhl_sat_engine_candidates')->where('id', $candidate->id)->update(['metrics' => '{}']);
+    $this->actingAs($this->admin)->post('/admin/nhl-sat-engines/runs/' . $run->id . '/candidates/' . $candidate->id . '/apply', [
+        'name' => 'Percentage candidate', 'model_run_id' => $this->model->id, 'test_model_run_id' => $this->model->id,
+    ])->assertRedirect();
+    $engine = NhlSatEngine::query()->where('name', 'Percentage candidate')->firstOrFail();
+    $this->put('/admin/nhl-sat-engines/' . $engine->id, [...$this->definition, 'name' => $engine->name,
+        'settings' => $engine->settings])->assertRedirect();
+    $this->get('/admin/nhl-sat-engines/' . $engine->id)->assertInertia(fn (Assert $page) => $page
+        ->where('engine.settings.gap_unit', 'percent')->where('engine.settings.gap_operator', '<')->where('engine.settings.gap', 25));
+});
+
+it('starts discovery with only the fixed starting pair before searching weights', function (): void {
     $this->actingAs($this->admin)->post('/admin/nhl-sat-engines/runs', [
         ...$this->input, 'kind' => 'discovery', 'engine_id' => null,
     ])->assertRedirect();
     $run = NhlSatEngineRun::query()->firstOrFail();
-    expect($run->prediction_count)->toBe(243)->and($run->candidate_count)->toBe(81)
-        ->and($run->definition['automatic_search']['strategy'])->toBe('coarse_to_fine_v1')
+    expect($run->prediction_count)->toBe(3)->and($run->candidate_count)->toBe(1)
+        ->and($run->definition['splits'][0])->toBe(['index' => 0, 'offense' => 100, 'defense' => 50])
+        ->and($run->definition['automatic_search']['strategy'])->toBe('qualification_first_v1')
         ->and($run->definition['search'])->toBeNull();
-    $this->assertDatabaseCount('nhl_sat_engine_candidates', 81);
-    Bus::assertDispatchedTimes(EvaluateNhlSatEngineGameJob::class, 4);
+    $this->assertDatabaseCount('nhl_sat_engine_candidates', 1);
+    Bus::assertDispatchedTimes(EvaluateNhlSatEngineGameJob::class, 1);
     $this->get('/admin/nhl-sat-engines/runs/' . $run->id)->assertInertia(fn (Assert $page) => $page
-        ->where('run.definition.automatic_search.stage', 0)->where('run.candidate_count', 81));
+        ->where('run.definition.automatic_search.stage', 0)->where('run.candidate_count', 1));
 });
 
 it('persists a calculated game and enqueues only the next game in its pair', function (): void {
@@ -1008,8 +1163,8 @@ it('ignores supplied discovery ranges instead of restricting automatic search', 
         'kind' => 'discovery', 'search' => ['offense' => ['min' => 88, 'max' => 88, 'step' => 1]],
     ])->assertRedirect();
     $run = NhlSatEngineRun::query()->firstOrFail();
-    expect($run->definition['splits'])->toHaveCount(81)
-        ->and(collect($run->definition['splits'])->pluck('offense')->unique()->count())->toBe(9);
+    expect($run->definition['splits'])->toHaveCount(1)
+        ->and($run->definition['splits'][0]['offense'])->toBe(100);
 });
 
 it('searches independent full-domain weights and refines without repeating evaluated splits', function (): void {
@@ -1132,6 +1287,10 @@ it('discovers separate home and away candidates for one selected team', function
 it('advances a bounded lane to its next split only after the last game', function (): void {
     $run = app(NhlSatEngineEvaluator::class)->start([...$this->input, 'kind' => 'discovery',
         'scope' => [...$this->scope, 'mode' => 'games', 'count' => 1]], $this->engine);
+    // A persisted legacy discovery retains its original lane scheduling.
+    $run->update(['prediction_count' => 81, 'definition' => [...$run->definition,
+        'automatic_search' => ['strategy' => 'coarse_to_fine_v1', 'stage' => 0,
+            'stage_first_split' => 0, 'stage_split_count' => 81, 'lanes' => 4]]]);
     Bus::fake();
     $evaluator = Mockery::mock(NhlSatEngineEvaluator::class);
     $evaluator->shouldReceive('assertModelUnchanged')->once();
