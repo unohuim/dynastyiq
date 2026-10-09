@@ -414,6 +414,8 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                     Route::post('/runs/{run}/candidates/{candidate}/apply', 'apply')->whereNumber('run')->whereNumber('candidate')->name('runs.apply');
                     Route::post('/runs/{run}/stacks', 'createStack')->whereNumber('run')->name('runs.stacks.store');
                     Route::get('/stacks/{stack}', 'showStack')->whereNumber('stack')->name('stacks.show');
+                    Route::get('/stacks/{stack}/predictions/today', 'stackPredictionGames')->whereNumber('stack')->name('stacks.stack-predictions.today');
+                    Route::post('/stacks/{stack}/predictions/{game}', 'predictStackGame')->whereNumber('stack')->whereNumber('game')->name('stacks.stack-predictions.game');
                     Route::get('/stacks/{stack}/members/{member}/predictions/today', 'predictionGames')->whereNumber('stack')->whereNumber('member')->name('stacks.predictions.today');
                     Route::post('/stacks/{stack}/members/{member}/predictions/{game}', 'predictGame')->whereNumber('stack')->whereNumber('member')->whereNumber('game')->name('stacks.predictions.game');
                     Route::patch('/stacks/{stack}', 'updateStack')->whereNumber('stack')->name('stacks.update');

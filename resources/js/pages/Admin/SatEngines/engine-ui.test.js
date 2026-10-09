@@ -6,6 +6,10 @@ import Index from './Index.vue';
 import Workspace from './Workspace.vue';
 import Run from './Run.vue';
 import SettingsFields from './SettingsFields.vue';
+import Stack from './Stack.vue';
+
+const http = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), delete: vi.fn() }));
+vi.mock('axios', () => ({ default: http }));
 
 const transport = vi.hoisted(() => ({ post: vi.fn(), put: vi.fn(), patch: vi.fn(), delete: vi.fn(), get: vi.fn(), reload: vi.fn() }));
 const page = vi.hoisted(() => ({ url: '/admin/nhl-sat-engines' }));
@@ -67,6 +71,76 @@ it('creates independent discovery scope for each page without manual search sett
     const first = discoveryDefaults(); first.scope.teams.push('TOR');
     expect(discoveryDefaults().scope.teams).toEqual([]);
     expect(first).not.toHaveProperty('search');
+});
+
+const flushStack = async () => {
+    for (let index = 0; index < 60; index++) await Promise.resolve();
+    await nextTick();
+};
+const stackWorkspace = () => ({
+    stack: { id: 9, name: 'Selected stack', production_model_run_id: 1, members: [1, 2].map(id => ({
+        id, engine_id: id, priority: id, engine: { id, name: `Engine ${id}`, model_run_id: 1, settings },
+    })) }, engines: [], models,
+});
+const prepareStackRequests = (predict = async () => ({ data: {
+    prediction_available: true, pick_qualified: true, result_engine_id: 1, engine_id: 1, model_run_id: 1,
+    internal_confidence: 80, skater_confidence: 90, goalie_confidence: 50, qualification_spread: 0.5,
+    prediction: { predicted_score: { away: 3, home: 3.5 }, confidence_score: 92 },
+} })) => {
+    vi.stubGlobal('crypto', { randomUUID: () => '11111111-1111-4111-8111-111111111111' });
+    http.get.mockImplementation(async url => ({ data: url.endsWith('/today')
+        ? { date: '2026-10-01', games: [
+            { nhl_game_id: 101, away_team_abbrev: 'NYR', home_team_abbrev: 'WSH' },
+            { nhl_game_id: 102, away_team_abbrev: 'ANA', home_team_abbrev: 'WPG' },
+        ] } : { saves: [] } }));
+    http.post.mockImplementation(async (url, body) => {
+        if (url.endsWith('/autosave')) return { data: { id: 1, name: 'autosave-1' } };
+        if (url === '/admin/admin-engine-game-predictions') return { data: {} };
+        return predict(url, body);
+    });
+};
+
+it('uses one stack request per game and saves results only under the selected engine', async () => {
+    prepareStackRequests();
+    const root = mount(Stack, stackWorkspace());
+    root.querySelector('header button.bg-indigo-600').click();
+    await flushStack();
+    const calls = http.post.mock.calls.filter(([url]) => url.includes('/predictions/'));
+    expect(calls.map(([url]) => url)).toEqual([
+        '/admin/nhl-sat-engines/stacks/9/predictions/101', '/admin/nhl-sat-engines/stacks/9/predictions/102',
+    ]);
+    const saved = http.post.mock.calls.filter(([url]) => url === '/admin/admin-engine-game-predictions').at(-1)[1].snapshot;
+    expect(saved.sections[0].rows).toHaveLength(2);
+    expect(saved.sections[1].rows).toHaveLength(0);
+    expect(saved.sections[0].rows[0]).toMatchObject({ internal: 80, presentation: 92, qualified: true });
+    expect(root.textContent).toContain('No game results assigned to this Engine.');
+});
+
+it('waits for the current stack request and honours stop without starting the next game', async () => {
+    let resolvePrediction;
+    prepareStackRequests(() => new Promise(resolve => { resolvePrediction = resolve; }));
+    const root = mount(Stack, stackWorkspace());
+    root.querySelector('header button.bg-indigo-600').click();
+    await flushStack();
+    expect(http.post.mock.calls.filter(([url]) => url.includes('/predictions/'))).toHaveLength(1);
+    [...root.querySelectorAll('button')].find(button => button.textContent === 'Stop remaining predictions').click();
+    resolvePrediction({ data: { prediction_available: false, pick_qualified: false, result_engine_id: 1, reason: 'Unavailable' } });
+    await flushStack();
+    expect(http.post.mock.calls.filter(([url]) => url.includes('/predictions/'))).toHaveLength(1);
+    const saved = http.post.mock.calls.filter(([url]) => url === '/admin/admin-engine-game-predictions').at(-1)[1].snapshot;
+    expect(saved.sections[0].rows[1].status).toBe('Stopped');
+    expect(saved.sections[0].rows[0].qualified).toBeNull();
+});
+
+it('keeps an individual engine action on the independent member endpoint', async () => {
+    prepareStackRequests();
+    const root = mount(Stack, stackWorkspace());
+    [...root.querySelectorAll('tbody button')].find(button => button.textContent === 'Predict today').click();
+    await flushStack();
+    expect(http.post.mock.calls.filter(([url]) => url.includes('/predictions/')).map(([url]) => url)).toEqual([
+        '/admin/nhl-sat-engines/stacks/9/members/1/predictions/101',
+        '/admin/nhl-sat-engines/stacks/9/members/1/predictions/102',
+    ]);
 });
 it('turns empty dates into nullable request values', () => {
     expect(runPayload(discoveryDefaults(settings)).scope.start_date).toBeNull();

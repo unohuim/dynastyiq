@@ -36,6 +36,13 @@ identify the same effective Production Model for ordinary stack predictions.
 The admin Test/Train comparison evaluates its own model against the same Engine
 thresholds, but does not gate the Production result or require winner agreement.
 
+The admin stack-level **Predict today** action uses the same priority delegation
+as ordinary predictions, but explicitly evaluates the stack being viewed—even if
+it is not the default. It stops at the first qualifying Engine for each game and
+preserves the ordinary no-pick fallback when none qualifies. Individual Engine
+buttons remain independent diagnostics. Both confidences are shown only in the
+admin results; partner payloads continue to expose presentation confidence only.
+
 
 ## Prediction roster player identifiers
 

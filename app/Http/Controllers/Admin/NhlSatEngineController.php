@@ -29,6 +29,13 @@ class NhlSatEngineController extends Controller
     public function predictionGames(NhlSatEngineStack $stack, NhlSatEngineStackMember $member): \Illuminate\Http\JsonResponse
     {
         abort_unless((int) $member->stack_id === (int) $stack->id, 404);
+
+        return $this->stackPredictionGames($stack);
+    }
+
+    /** List the selected stack's game day without evaluating any engines. */
+    public function stackPredictionGames(NhlSatEngineStack $stack): \Illuminate\Http\JsonResponse
+    {
         $date = now('America/Toronto')->toDateString();
 
         return response()->json([
@@ -38,7 +45,23 @@ class NhlSatEngineController extends Controller
         ])->header('Cache-Control', 'no-store');
     }
 
-    /** Predict one game with the selected member's production or test model. */
+    /** Predict today's game through the explicitly selected stack's ordinary delegation. */
+    public function predictStackGame(
+        NhlSatEngineStack $stack,
+        int $game,
+        \App\Services\NhlGamePredictionPayload $payload
+    ): \Illuminate\Http\JsonResponse {
+        abort_unless(DB::table('nhl_games')->where('nhl_game_id', $game)
+            ->where('game_date', now('America/Toronto')->toDateString())->exists(), 404);
+        $result = $payload->previewStack($game, $stack);
+
+        return response()->json([
+            ...$result,
+            'model_name' => NhlModelRun::query()->whereKey($result['model_run_id'])->value('name'),
+        ])->header('Cache-Control', 'no-store');
+    }
+
+    /** Predict one game independently with the selected member's production or test model. */
     public function predictGame(
         Request $request,
         NhlSatEngineStack $stack,

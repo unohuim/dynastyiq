@@ -108,7 +108,7 @@ const newSection = member => ({
         model_run_id: member.engine.model_run_id, test_model_run_id: member.engine.test_model_run_id } },
     date: null, rows: [], sort: { key: 'game', direction: 1 }, open: true, error: '', status: 'Waiting',
 });
-const predictMembers = async members => {
+const predictMembers = async (members, stackMode = false) => {
     if (busy.value || !members.length) return;
     const request = new AbortController();
     predictionRequest = request;
@@ -143,7 +143,64 @@ const predictMembers = async members => {
     };
     try {
         await checkpoint();
-        for (const section of pending) {
+        if (stackMode) {
+            const endpoint = `${baseUrl}/stacks/${stackContext.id}/predictions`;
+            try {
+                const { data } = await axios.get(`${endpoint}/today`, { signal: request.signal });
+                if (!active()) return;
+                for (const section of pending) {
+                    section.date = data.date;
+                    section.status = 'Predicting';
+                }
+                // Keep pending/error rows visible, then move each completed result to its engine.
+                pending[0].rows = data.games.map(game => ({ id: game.nhl_game_id,
+                    key: `${game.nhl_game_id}-production`, source: 'production', model: 'Production',
+                    modelName: null, game: `${game.away_team_abbrev} @ ${game.home_team_abbrev}`, status: 'Waiting',
+                    score: null, spread: null, skater: null, goalie: null, internal: null, presentation: null, qualified: null, error: null }));
+                await checkpoint();
+                for (const row of [...pending[0].rows]) {
+                    if (!active() || stopRequested.value) break;
+                    row.status = 'Predicting';
+                    try {
+                        const { data: result } = await axios.post(`${endpoint}/${row.id}`, {}, { signal: request.signal });
+                        if (!active()) break;
+                        const target = pending.find(section => Number(section.member.engine.id) === Number(result.result_engine_id)) ?? pending[0];
+                        const prediction = result.prediction;
+                        row.status = result.prediction_available ? 'Calculated' : 'Unavailable';
+                        row.internal = result.internal_confidence;
+                        row.skater = result.skater_confidence;
+                        row.goalie = result.goalie_confidence;
+                        row.modelName = result.model_name ?? `Model #${result.model_run_id}`;
+                        row.presentation = prediction?.confidence_score ?? null;
+                        row.spread = result.qualification_spread;
+                        row.score = prediction ? `${prediction.predicted_score.away} – ${prediction.predicted_score.home}` : null;
+                        row.qualified = result.prediction_available ? result.pick_qualified : null;
+                        row.error = result.reason ?? (result.prediction_available && !result.pick_qualified
+                            ? 'No Engine qualified. Showing the normal stack fallback prediction.' : null);
+                        if (target !== pending[0]) {
+                            pending[0].rows = pending[0].rows.filter(item => item.id !== row.id);
+                            target.rows.push(row);
+                        }
+                    } catch (error) {
+                        if (!active()) break;
+                        row.status = 'Failed';
+                        row.error = messageFor(error);
+                    }
+                    await checkpoint();
+                }
+                for (const section of pending) {
+                    section.status = stopRequested.value ? 'Stopped'
+                        : section.rows.some(row => row.status === 'Failed') ? 'Failed' : 'Calculated';
+                }
+            } catch (error) {
+                if (active()) {
+                    for (const section of pending) {
+                        section.error = messageFor(error);
+                        section.status = 'Failed';
+                    }
+                }
+            }
+        } else for (const section of pending) {
             if (!active() || stopRequested.value) break;
             section.status = 'Predicting';
             const endpoint = `${baseUrl}/stacks/${stackContext.id}/members/${section.member.id}/predictions`;
@@ -207,7 +264,7 @@ const predictMembers = async members => {
     }
 };
 const predictToday = member => predictMembers([member]);
-const predictStackToday = () => predictMembers(props.stack.members);
+const predictStackToday = () => predictMembers(props.stack.members, true);
 watch(() => JSON.stringify(props.stack), () => {
     stopRequested.value = true;
     // Keep the current request occupied until it finishes, but clear obsolete UI.
@@ -309,7 +366,7 @@ const reorder = (from, to) => {
                     </tr></tbody>
                 </table>
                 <p class="p-5 text-xs text-gray-500">Skater and goalie confidence are the two-team averages before weighting. Internal confidence = rounded (70% skater + 30% goalie).</p>
-                <p v-if="section.status === 'Calculated' && !section.error && !section.rows.length" class="p-5 text-sm text-gray-500">No games scheduled today.</p>
+                <p v-if="section.status === 'Calculated' && !section.error && !section.rows.length" class="p-5 text-sm text-gray-500">No game results assigned to this Engine.</p>
             </div>
             </div></div>
         </section>

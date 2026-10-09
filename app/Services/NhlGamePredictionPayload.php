@@ -79,6 +79,66 @@ class NhlGamePredictionPayload
         ];
     }
 
+    /** Run the ordinary delegation rules for an explicitly selected admin stack.
+     * @return array<string,mixed>
+     */
+    public function previewStack(int $gameId, NhlSatEngineStack $stack): array
+    {
+        $stack->load('members.engine');
+        if ($stack->members->isEmpty()) {
+            throw ValidationException::withMessages(['stack' => 'Add an Engine before predicting this stack.']);
+        }
+        $result = app(NhlPredictionInputContext::class)->run(
+            fn (): array => $this->evaluateStack($gameId, $stack, ['_include_confidence_components' => true])
+        );
+
+        return [
+            'prediction_available' => $result['prediction_available'] ?? false,
+            'pick_qualified' => $result['pick_qualified'] ?? false,
+            'engine_id' => data_get($result, 'inputs.engine_id'),
+            'result_engine_id' => $result['_result_engine_id'] ?? data_get($result, 'inputs.engine_id'),
+            'internal_confidence' => $result['_internal_confidence'] ?? null,
+            'skater_confidence' => data_get($result, '_confidence_components.skater'),
+            'goalie_confidence' => data_get($result, '_confidence_components.goalie'),
+            'qualification_spread' => $result['_qualification_spread'] ?? null,
+            'model_run_id' => data_get($result, 'inputs.sat_model_run_id'),
+            'prediction' => $result['prediction'] ?? null,
+            'reason' => $result['reason'] ?? null,
+        ];
+    }
+
+    /** Shared priority delegation for both ordinary predictions and admin stack previews.
+     * @param array<string,mixed> $overrides
+     * @return array<string,mixed>|null
+     */
+    private function evaluateStack(int $gameId, NhlSatEngineStack $stack, array $overrides): ?array
+    {
+        $fallback = null;
+        $fallbackEngine = null;
+        foreach ($stack->members->values() as $member) {
+            $engine = $member->engine;
+            $candidate = $this->evaluateEngine($gameId, $engine, $stack->production_model_run_id, $overrides);
+            $fallback ??= $candidate;
+            $fallbackEngine ??= $engine;
+            if (! $candidate['pick_qualified']) {
+                continue;
+            }
+            $candidate = $this->withPresentationConfidence($candidate, $engine, true);
+            $candidate['inputs']['stack_id'] = $stack->id;
+
+            return $candidate;
+        }
+        if ($fallback === null) {
+            return null;
+        }
+        $fallback['pick_qualified'] = false;
+        $fallback['inputs']['engine_id'] = null;
+        $fallback['inputs']['stack_id'] = $stack->id;
+        $fallback = $this->withPresentationConfidence($fallback, $fallbackEngine, false);
+
+        return $this->withUnqualifiedPresentationPenalty($fallback);
+    }
+
     /**
      * Use the selected model for both qualification and outcome with unchanged Engine thresholds.
      *
@@ -115,32 +175,9 @@ class NhlGamePredictionPayload
         if (! isset($overrides['_stack_engine_id']) && ! array_key_exists('sat_model_run_id', $overrides) && Schema::hasTable('nhl_sat_engine_stacks')) {
             $stack = NhlSatEngineStack::query()->where('is_default', true)->with('members.engine')->first();
             if ($stack !== null) {
-                $fallback = null;
-                $fallbackEngine = null;
-                foreach ($stack->members->values() as $member) {
-                    $engine = $member->engine;
-                    $candidate = $this->evaluateEngine($nhlGameId, $engine, $stack->production_model_run_id, $overrides);
-                    $fallback ??= $candidate;
-                    $fallbackEngine ??= $engine;
-
-                    if (! $candidate['pick_qualified']) {
-                        continue;
-                    }
-                    $candidate = $this->withPresentationConfidence($candidate, $engine, true);
-                    $candidate['inputs']['stack_id'] = $stack->id;
-
-                    return $candidate;
-                }
-                if ($fallback !== null) {
-                    // A member declining the game only delegates to the next member.
-                    // This branch is reached only after the entire stack declined it.
-                    $fallback['pick_qualified'] = false;
-                    $fallback['inputs']['engine_id'] = null;
-                    $fallback['inputs']['stack_id'] = $stack->id;
-                    $presentationEngine = $fallbackEngine ?? $stack->members->first()->engine;
-                    $fallback = $this->withPresentationConfidence($fallback, $presentationEngine, false);
-
-                    return $this->withUnqualifiedPresentationPenalty($fallback);
+                $result = $this->evaluateStack($nhlGameId, $stack, $overrides);
+                if ($result !== null) {
+                    return $result;
                 }
             }
         }
@@ -504,6 +541,10 @@ class NhlGamePredictionPayload
      */
     private function withPresentationConfidence(array $payload, NhlSatEngine $engine, bool $qualified): array
     {
+        if (isset($payload['_confidence_components'])) {
+            $payload['_internal_confidence'] = data_get($payload, 'prediction.confidence_score');
+            $payload['_result_engine_id'] = $engine->id;
+        }
         $confidence = $this->presentationConfidence((float) data_get($payload, 'prediction.confidence_score', 0), $engine, $qualified);
         data_set($payload, 'prediction.confidence_score', $confidence);
 

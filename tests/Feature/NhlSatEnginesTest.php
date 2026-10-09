@@ -88,6 +88,7 @@ it('blocks guests on every engine endpoint', function (string $verb, string $pat
     $this->json($verb, '/admin/nhl-sat-engines' . $path)->assertUnauthorized();
     Bus::assertNothingDispatched();
 })->with([
+    ['GET', '/stacks/1/predictions/today'], ['POST', '/stacks/1/predictions/2025020001'],
     ['GET', ''], ['POST', ''], ['GET', '/discover'], ['GET', '/1'], ['PUT', '/1'], ['DELETE', '/1'],
     ['POST', '/runs'], ['GET', '/runs/1'], ['POST', '/runs/1/pause'], ['POST', '/runs/1/resume'], ['POST', '/runs/1/cancel'], ['POST', '/runs/1/candidates/1/apply'], ['POST', '/runs/1/stacks'], ['GET', '/stacks/1'], ['PATCH', '/stacks/1'], ['POST', '/stacks/1/members'], ['PUT', '/stacks/1/members/order'], ['DELETE', '/stacks/1/members/1'], ['DELETE', '/stacks/1'], ['POST', '/stacks/1/default'],
 ]);
@@ -96,9 +97,108 @@ it('blocks ordinary users on every engine endpoint', function (string $verb, str
     $this->actingAs(User::factory()->create())->json($verb, '/admin/nhl-sat-engines' . $path)->assertForbidden();
     Bus::assertNothingDispatched();
 })->with([
+    ['GET', '/stacks/1/predictions/today'], ['POST', '/stacks/1/predictions/2025020001'],
     ['GET', ''], ['POST', ''], ['GET', '/discover'], ['GET', '/1'], ['PUT', '/1'], ['DELETE', '/1'],
     ['POST', '/runs'], ['GET', '/runs/1'], ['POST', '/runs/1/pause'], ['POST', '/runs/1/resume'], ['POST', '/runs/1/cancel'], ['POST', '/runs/1/candidates/1/apply'], ['POST', '/runs/1/stacks'], ['GET', '/stacks/1'], ['PATCH', '/stacks/1'], ['POST', '/stacks/1/members'], ['PUT', '/stacks/1/members/order'], ['DELETE', '/stacks/1/members/1'], ['DELETE', '/stacks/1'], ['POST', '/stacks/1/default'],
 ]);
+
+it('previews the selected non-default stack through the shared delegation and stops at the first pick', function (int $winner): void {
+    $stack = NhlSatEngineStack::query()->create(['name' => 'Selected', 'production_model_run_id' => $this->model->id]);
+    $engines = [];
+    foreach (range(1, 3) as $priority) {
+        $engine = (new NhlSatEngine())->saveDefinition([...$this->definition, 'name' => 'Priority ' . $priority]);
+        $stack->members()->create(['engine_id' => $engine->id, 'priority' => $priority]);
+        $engines[] = $engine;
+    }
+    $payload = Mockery::mock(\App\Services\NhlGamePredictionPayload::class)->makePartial();
+    foreach ($engines as $index => $engine) {
+        if ($index >= $winner) {
+            $payload->shouldNotReceive('build')->withArgs(fn ($game, $overrides) => $overrides['_stack_engine_id'] === $engine->id);
+            continue;
+        }
+        $payload->shouldReceive('build')->once()->ordered()->withArgs(fn ($game, $overrides) =>
+            $game === 2025020001 && $overrides['_stack_engine_id'] === $engine->id
+            && $overrides['sat_model_run_id'] === $this->model->id)
+            ->andReturn(['prediction_available' => true, 'pick_qualified' => $index + 1 === $winner,
+                'inputs' => ['engine_id' => $engine->id, 'sat_model_run_id' => $this->model->id],
+                'prediction' => ['confidence_score' => 80], '_confidence_components' => ['skater' => 90, 'goalie' => 50],
+                '_qualification_spread' => 5]);
+    }
+    $result = $payload->previewStack(2025020001, $stack);
+    expect($result['engine_id'])->toBe($engines[$winner - 1]->id)->and($result['pick_qualified'])->toBeTrue()
+        ->and($result['internal_confidence'])->toBe(80)->and($result['skater_confidence'])->toBe(90)
+        ->and($stack->fresh()->is_default)->toBeFalse();
+    Bus::assertNothingDispatched();
+})->with([1, 2, 3]);
+
+it('returns the same selected prediction in the ordinary path and stack preview without leaking internal confidence', function (): void {
+    $stack = NhlSatEngineStack::query()->create(['name' => 'Default', 'is_default' => true]);
+    $stack->members()->create(['engine_id' => $this->engine->id, 'priority' => 1]);
+    $payload = Mockery::mock(\App\Services\NhlGamePredictionPayload::class)->makePartial();
+    $payload->shouldReceive('build')->twice()->andReturnUsing(function ($game, $overrides): array {
+        $row = ['prediction_available' => true, 'pick_qualified' => true,
+            'inputs' => ['engine_id' => $this->engine->id, 'sat_model_run_id' => $this->model->id],
+            'prediction' => ['confidence_score' => 80, 'winner' => 'TOR', 'predicted_score' => ['away' => 3, 'home' => 2]],
+            'market_probabilities' => [['confidence_score' => 80]]];
+        if ($overrides['_include_confidence_components'] ?? false) {
+            $row['_confidence_components'] = ['skater' => 90, 'goalie' => 50];
+        }
+
+        return $row;
+    });
+    $ordinary = (new ReflectionMethod(\App\Services\NhlGamePredictionPayload::class, 'buildPrediction'))
+        ->invoke($payload, 2025020001, []);
+    $preview = $payload->previewStack(2025020001, $stack);
+    expect($preview['prediction'])->toBe($ordinary['prediction'])
+        ->and($preview['engine_id'])->toBe($ordinary['inputs']['engine_id'])
+        ->and($preview['internal_confidence'])->toBe(80)
+        ->and($ordinary)->not->toHaveKey('_internal_confidence')->not->toHaveKey('_result_engine_id');
+});
+
+it('retains the ordinary no-pick fallback and penalizes presentation only after all members decline', function (): void {
+    $stack = NhlSatEngineStack::query()->create(['name' => 'Fallback']);
+    $stack->members()->create(['engine_id' => $this->engine->id, 'priority' => 1]);
+    $second = (new NhlSatEngine())->saveDefinition([...$this->definition, 'name' => 'Second']);
+    $stack->members()->create(['engine_id' => $second->id, 'priority' => 2]);
+    $payload = Mockery::mock(\App\Services\NhlGamePredictionPayload::class)->makePartial();
+    foreach ([$this->engine, $second] as $engine) {
+        $payload->shouldReceive('build')->once()->ordered()->withArgs(fn ($game, $overrides) =>
+            $overrides['_stack_engine_id'] === $engine->id && $overrides['sat_model_run_id'] === $engine->model_run_id)
+            ->andReturn(['prediction_available' => true, 'pick_qualified' => false,
+                'inputs' => ['engine_id' => $engine->id, 'sat_model_run_id' => $engine->model_run_id],
+                'prediction' => ['confidence_score' => 80], '_confidence_components' => ['skater' => 90, 'goalie' => 50]]);
+    }
+    $result = $payload->previewStack(2025020001, $stack);
+    expect($result['pick_qualified'])->toBeFalse()->and($result['engine_id'])->toBeNull()
+        ->and($result['result_engine_id'])->toBe($this->engine->id)
+        ->and($result['internal_confidence'])->toBe(80)->and($result['prediction']['confidence_score'])->toEqual(60);
+});
+
+it('lists todays games and invokes only the selected stack preview without changing defaults', function (): void {
+    $this->travelTo(\Illuminate\Support\Carbon::parse('2025-10-07 12:00:00 America/Toronto'));
+    $stack = NhlSatEngineStack::query()->create(['name' => 'Non-default']);
+    $stack->members()->create(['engine_id' => $this->engine->id, 'priority' => 1]);
+    $this->mock(\App\Services\NhlGamePredictionPayload::class)->shouldReceive('previewStack')->once()
+        ->withArgs(fn ($id, $selected) => $id === 2025020001 && $selected->id === $stack->id)
+        ->andReturn(['prediction_available' => true, 'pick_qualified' => true, 'model_run_id' => $this->model->id,
+            'engine_id' => $this->engine->id, 'internal_confidence' => 80, 'prediction' => ['confidence_score' => 92]]);
+    $url = '/admin/nhl-sat-engines/stacks/' . $stack->id . '/predictions';
+    $this->actingAs($this->admin)->getJson($url . '/today')->assertOk()->assertJsonCount(2, 'games');
+    $this->postJson($url . '/2025020001')->assertOk()->assertJsonPath('engine_id', $this->engine->id)
+        ->assertJsonPath('internal_confidence', 80)->assertJsonPath('prediction.confidence_score', 92)
+        ->assertHeader('Cache-Control', 'no-store, private');
+    $this->postJson($url . '/2025020003')->assertNotFound();
+    expect($stack->fresh()->is_default)->toBeFalse();
+    Bus::assertNothingDispatched();
+});
+
+it('rejects a stack preview without members instead of substituting the default stack', function (): void {
+    $this->travelTo(\Illuminate\Support\Carbon::parse('2025-10-07 12:00:00 America/Toronto'));
+    $stack = NhlSatEngineStack::query()->create(['name' => 'Empty']);
+    $this->actingAs($this->admin)->postJson('/admin/nhl-sat-engines/stacks/' . $stack->id . '/predictions/2025020001')
+        ->assertUnprocessable()->assertJsonValidationErrors('stack');
+    Bus::assertNothingDispatched();
+});
 
 it('creates an engine without dispatching work and reads it through Inertia', function (): void {
     $this->actingAs($this->admin)->post('/admin/nhl-sat-engines', [...$this->definition, 'name' => 'Created'])->assertRedirect();
