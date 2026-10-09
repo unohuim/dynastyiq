@@ -46,6 +46,7 @@ class BuildNhlSatModelEntityRateProjectionForEntityJob implements ShouldQueue
         public string $profileType,
         public string $entityKey
     ) {
+        $this->onQueue('projections');
         $this->afterCommit = true;
     }
 

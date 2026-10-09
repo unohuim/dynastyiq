@@ -41,6 +41,7 @@ class LoadNhlSatModelProfileBatchJob implements ShouldQueue
     ) {
         $this->partition = $partition;
         $this->after = $after;
+        $this->onQueue('projections');
         $this->afterCommit = true;
     }
 

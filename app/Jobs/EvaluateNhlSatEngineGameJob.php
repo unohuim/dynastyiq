@@ -29,6 +29,7 @@ class EvaluateNhlSatEngineGameJob implements ShouldQueue
         public ?int $workGeneration = null,
     )
     {
+        $this->onQueue('projections');
         $this->afterCommit = true;
     }
 

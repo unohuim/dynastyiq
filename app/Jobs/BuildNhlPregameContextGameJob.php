@@ -29,6 +29,7 @@ class BuildNhlPregameContextGameJob implements ShouldQueue
 
     public function __construct(public int $runId, public int $gameId)
     {
+        $this->onQueue('projections');
         $this->afterCommit = true;
     }
 

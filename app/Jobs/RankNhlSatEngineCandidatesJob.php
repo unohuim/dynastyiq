@@ -23,6 +23,7 @@ class RankNhlSatEngineCandidatesJob implements ShouldQueue
     /** Resume ranking after a stable candidate ID. */
     public function __construct(public int $runId, public int $afterId, public ?int $workGeneration = null)
     {
+        $this->onQueue('projections');
         $this->afterCommit = true;
     }
 

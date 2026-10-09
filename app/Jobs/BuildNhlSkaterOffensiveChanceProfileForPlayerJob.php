@@ -46,6 +46,7 @@ class BuildNhlSkaterOffensiveChanceProfileForPlayerJob implements ShouldQueue
         public int $sogModelId,
         public int $playerId
     ) {
+        $this->onQueue('projections');
         $this->afterCommit = true;
     }
 

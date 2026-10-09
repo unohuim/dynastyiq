@@ -54,6 +54,7 @@ class BuildNhlSatModelEntityProfilesJob implements ShouldQueue, ShouldBeUnique
         public ?string $predictionBuildId = null,
         public array $profileTypes = ['skater_offense']
     ) {
+        $this->onQueue('projections');
         $this->afterCommit = true;
     }
 
@@ -122,6 +123,7 @@ class BuildNhlSatModelEntityProfilesJob implements ShouldQueue, ShouldBeUnique
                 profileTypes: $this->profileTypes
             )])
                 ->name('NHL SAT model profiles ' . $this->modelRunId)
+                ->onQueue('projections')
                 ->allowFailures()
                 ->finally(static function (Batch $batch) use ($modelRunId, $predictionBuildId): void {
                     try {

@@ -48,6 +48,7 @@ class BuildNhlStaffSatProfileForStaffJob implements ShouldQueue
         public string $role,
         public string $teamContext
     ) {
+        $this->onQueue('projections');
         $this->afterCommit = true;
     }
 

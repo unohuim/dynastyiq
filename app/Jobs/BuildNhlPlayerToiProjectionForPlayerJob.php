@@ -45,6 +45,7 @@ class BuildNhlPlayerToiProjectionForPlayerJob implements ShouldQueue
         public string $version,
         public int $playerId
     ) {
+        $this->onQueue('projections');
         $this->afterCommit = true;
     }
 

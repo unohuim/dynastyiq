@@ -192,7 +192,7 @@ php artisan api-client:create partner-app --scope=nhl-reference:read --scope=nhl
 
 **Purpose:**
 Provide the primary authenticated and public web application using Laravel, Jetstream/Fortify, Blade, Alpine, staged Inertia/Vue pages, Tailwind, Livewire, queues, and Vite.
-Horizon isolates nine `default` workers, one `fantrax` worker, and one time-sensitive `lineups` worker in every environment.
+Horizon isolates twelve `projections` workers for model builds and evaluations, five `default` workers for ordinary work, two `fantrax` workers, and one time-sensitive `lineups` worker per instance. Model coordinators and child batches use `projections`; existing queued work drains on its original queue.
 Dashboard authorization is owned by `app/Providers/HorizonServiceProvider.php` and restricted to the dedicated production host behind Nginx Basic Authentication. See `docs/architecture/application/LaravelApplicationShell.yaml` and `docs/operations/horizon-dashboard.md`.
 
 **When to Use:**

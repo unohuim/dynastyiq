@@ -29,6 +29,7 @@ class EvaluateNhlNextGameJob implements ShouldQueue
     public function __construct(public int $evaluationId, ?string $workToken = null)
     {
         $this->workToken = $workToken;
+        $this->onQueue('projections');
         $this->afterCommit = true;
     }
 

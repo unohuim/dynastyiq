@@ -43,6 +43,7 @@ class BuildNhlSkaterOffensiveChanceProfilesJob implements ShouldQueue, ShouldBeU
         public string $sourceSeasonId,
         public int $gameType
     ) {
+        $this->onQueue('projections');
         $this->afterCommit = true;
     }
 
@@ -100,6 +101,7 @@ class BuildNhlSkaterOffensiveChanceProfilesJob implements ShouldQueue, ShouldBeU
         }
 
         Bus::batch($jobs)
+            ->onQueue('projections')
             ->name('NHL skater offensive chance profiles ' . $this->sourceSeasonId)
             ->allowFailures()
             ->dispatch();

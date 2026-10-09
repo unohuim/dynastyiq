@@ -70,6 +70,7 @@ class BuildNhlSatModelEntityProfileForEntityJob implements ShouldQueue
         $this->predictionBuildId = $predictionBuildId;
         $this->receiptPage = $receiptPage;
         $this->receiptIndex = $receiptIndex;
+        $this->onQueue('projections');
         $this->afterCommit = true;
     }
 

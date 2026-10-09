@@ -7954,16 +7954,19 @@ it('does not dispatch disabled admin import schedules', function () {
     Bus::assertNothingBatched();
 });
 
-it('allocates dedicated Horizon workers to default Fantrax and lineup queues', function () {
+it('allocates twenty dedicated Horizon workers across projections default Fantrax and lineups', function () {
     expect(config('horizon.defaults.supervisor-default.queue'))->toBe(['default'])
-        ->and(config('horizon.defaults.supervisor-default.minProcesses'))->toBe(6)
-        ->and(config('horizon.defaults.supervisor-default.maxProcesses'))->toBe(6)
+        ->and(config('horizon.defaults.supervisor-default.minProcesses'))->toBe(5)
+        ->and(config('horizon.defaults.supervisor-default.maxProcesses'))->toBe(5)
+        ->and(config('horizon.defaults.supervisor-projections.queue'))->toBe(['projections'])
+        ->and(config('horizon.defaults.supervisor-projections.minProcesses'))->toBe(12)
+        ->and(config('horizon.defaults.supervisor-projections.maxProcesses'))->toBe(12)
         ->and(config('horizon.defaults.supervisor-fantrax.queue'))->toBe(['fantrax'])
         ->and(config('horizon.defaults.supervisor-fantrax.minProcesses'))->toBe(2)
         ->and(config('horizon.defaults.supervisor-fantrax.maxProcesses'))->toBe(2)
         ->and(config('horizon.defaults.supervisor-lineups.queue'))->toBe(['lineups'])
-        ->and(config('horizon.defaults.supervisor-lineups.minProcesses'))->toBe(2)
-        ->and(config('horizon.defaults.supervisor-lineups.maxProcesses'))->toBe(2);
+        ->and(config('horizon.defaults.supervisor-lineups.minProcesses'))->toBe(1)
+        ->and(config('horizon.defaults.supervisor-lineups.maxProcesses'))->toBe(1);
 });
 
 it('routes provider admin import batches to their dedicated queues', function () {

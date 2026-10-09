@@ -43,6 +43,7 @@ class BuildNhlOfficialSatProfilesJob implements ShouldQueue, ShouldBeUnique
         public string $sourceSeasonId,
         public int $gameType
     ) {
+        $this->onQueue('projections');
         $this->afterCommit = true;
     }
 
@@ -101,6 +102,7 @@ class BuildNhlOfficialSatProfilesJob implements ShouldQueue, ShouldBeUnique
         }
 
         Bus::batch($jobs)
+            ->onQueue('projections')
             ->name('NHL official SAT profiles ' . $this->sourceSeasonId)
             ->allowFailures()
             ->dispatch();

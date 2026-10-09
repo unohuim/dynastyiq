@@ -43,6 +43,7 @@ class BackfillNhlExpectedGoalsJob implements ShouldQueue
         public string $predictionTarget = NhlExpectedGoalsBackfiller::TARGET_GOAL,
         public ?int $modelRunId = null
     ) {
+        $this->onQueue('projections');
         $this->afterCommit = true;
     }
 

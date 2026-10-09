@@ -45,6 +45,7 @@ class BuildNhlSatModelEntityToiProjectionsJob implements ShouldQueue, ShouldBeUn
 
     public function __construct(public int $modelRunId, public ?string $predictionBuildId = null)
     {
+        $this->onQueue('projections');
         $this->afterCommit = true;
     }
 
@@ -108,6 +109,7 @@ class BuildNhlSatModelEntityToiProjectionsJob implements ShouldQueue, ShouldBeUn
         $predictionBuildId = $this->predictionBuildId;
 
         Bus::batch($jobs)
+            ->onQueue('projections')
             ->name('NHL SAT model TOI projections ' . $this->modelRunId)
             ->allowFailures()
             ->finally(function (Batch $batch) use ($modelRunId, $predictionBuildId): void {

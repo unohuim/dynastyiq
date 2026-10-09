@@ -39,6 +39,7 @@ class BuildNhlSatModelEntityRateComparisonsJob implements ShouldQueue
 
     public function __construct(public int $modelRunId)
     {
+        $this->onQueue('projections');
         $this->afterCommit = true;
     }
 
@@ -101,6 +102,7 @@ class BuildNhlSatModelEntityRateComparisonsJob implements ShouldQueue
         $modelRunId = $this->modelRunId;
 
         Bus::batch($jobs)
+            ->onQueue('projections')
             ->name('NHL SAT model /60 comparisons ' . $this->modelRunId)
             ->allowFailures()
             ->finally(function (Batch $batch) use ($modelRunId): void {

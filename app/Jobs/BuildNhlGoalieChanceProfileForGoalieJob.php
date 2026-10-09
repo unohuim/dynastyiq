@@ -46,6 +46,7 @@ class BuildNhlGoalieChanceProfileForGoalieJob implements ShouldQueue
         public int $sogModelId,
         public int $goaliePlayerId
     ) {
+        $this->onQueue('projections');
         $this->afterCommit = true;
     }
 

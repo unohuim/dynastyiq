@@ -47,6 +47,7 @@ class BuildNhlGoalieProjectionsJob implements ShouldQueue, ShouldBeUnique
         public string $version,
         public ?int $satModelId = null
     ) {
+        $this->onQueue('projections');
         $this->afterCommit = true;
     }
 
@@ -122,6 +123,7 @@ class BuildNhlGoalieProjectionsJob implements ShouldQueue, ShouldBeUnique
         }
 
         Bus::batch($jobs)
+            ->onQueue('projections')
             ->name('NHL goalie projections ' . $this->version)
             ->dispatch();
 

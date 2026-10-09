@@ -47,6 +47,7 @@ class BuildNhlOfficialSatProfileForOfficialJob implements ShouldQueue
         public int $officialId,
         public string $role
     ) {
+        $this->onQueue('projections');
         $this->afterCommit = true;
     }
 

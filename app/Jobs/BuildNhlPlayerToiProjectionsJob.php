@@ -44,6 +44,7 @@ class BuildNhlPlayerToiProjectionsJob implements ShouldQueue, ShouldBeUnique
         public string $targetSeasonId,
         public string $version
     ) {
+        $this->onQueue('projections');
         $this->afterCommit = true;
     }
 
@@ -100,6 +101,7 @@ class BuildNhlPlayerToiProjectionsJob implements ShouldQueue, ShouldBeUnique
         }
 
         Bus::batch($jobs)
+            ->onQueue('projections')
             ->name('NHL player TOI projections ' . $this->version)
             ->allowFailures()
             ->dispatch();

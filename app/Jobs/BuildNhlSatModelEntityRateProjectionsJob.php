@@ -52,6 +52,7 @@ class BuildNhlSatModelEntityRateProjectionsJob implements ShouldQueue, ShouldBeU
         public array $profileTypes = ['skater_offense']
     )
     {
+        $this->onQueue('projections');
         $this->afterCommit = true;
     }
 
@@ -115,6 +116,7 @@ class BuildNhlSatModelEntityRateProjectionsJob implements ShouldQueue, ShouldBeU
         $predictionBuildId = $this->predictionBuildId;
 
         Bus::batch($jobs)
+            ->onQueue('projections')
             ->name('NHL SAT model /60 projections ' . $this->modelRunId)
             ->allowFailures()
             ->finally(function (Batch $batch) use ($modelRunId, $predictionBuildId): void {
