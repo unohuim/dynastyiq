@@ -486,13 +486,13 @@ class NhlGamePredictionPayload
         $adjustedInternalConfidence = min(100.0, $internalConfidence + 5.0);
 
         if ($engine->discovery_win_pct === null || $engine->discovery_coverage_pct === null) {
-            return round(min(95.0, max(70.0, $adjustedInternalConfidence + 12.0)), 4);
+            return round(min(95.0, max(70.0, $adjustedInternalConfidence + 7.0)), 4);
         }
         $weight = pow(max(0.0, min(100.0, (float) $engine->discovery_coverage_pct)) / 100, 1 / 5);
         $blendedConfidence = $adjustedInternalConfidence * (1 - $weight)
             + (float) $engine->discovery_win_pct * $weight;
 
-        return round(min(95.0, max(70.0, $blendedConfidence + 12.0)), 4);
+        return round(min(95.0, max(70.0, $blendedConfidence + 7.0)), 4);
     }
 
     /**

@@ -1,5 +1,12 @@
 # Architecture Inventory
 
+Private admin engine game prediction snapshots preserve diagnostic workspaces
+with four rotating autosaves and fifty named copies per user. Controller/model:
+`AdminEngineGamePredictionController`, `AdminEngineGamePrediction`; UI: SAT stack
+detail. Interface: `/admin/admin-engine-game-predictions`. Example: restore a named
+Production/Test comparison without recalculating. Authority:
+`docs/architecture/admin/AdminEngineGamePredictions.yaml`.
+
 Game prediction builds reuse copied input snapshots across stack engines and clear
 them after each outer build. Different models and input arguments remain isolated;
 engine simulations and qualification are not cached. Authority:

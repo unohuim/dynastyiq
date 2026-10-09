@@ -1,0 +1,29 @@
+name: Admin Engine Game Predictions
+type: Private Diagnostic Snapshot Store
+location:
+  - app/Models/AdminEngineGamePrediction.php
+  - app/Http/Controllers/Admin/AdminEngineGamePredictionController.php
+  - resources/js/pages/Admin/SatEngines/Stack.vue
+purpose: Retain bounded private copies of an admin's current prediction workspace without recalculating or affecting live forecasts.
+when_to_use:
+  - Autosaving partial or completed Predict today results.
+  - Naming and restoring diagnostic comparisons across sessions.
+when_not_to_use:
+  - Partner predictions or canonical simulation evidence.
+  - Shared admin or tenant storage.
+rules:
+  - Access inherits SAT admin page authorization. Every read and mutation is additionally scoped to the authenticated user, including super admins. These are global application user-owned records, not tenant-owned data.
+  - Each owner has at most four rotating autosaves and fifty named saves. User-row locking serializes reservation, creation and deletion. Names are unique per owner; named copies cannot be updated through the autosave interface.
+  - Autosaves retain the latest partial workspace per run. Starting another run reserves an unused slot or replaces the least recently updated slot. A session token prevents a displaced tab from writing into its replacement. Named saves are never automatically overwritten or evicted.
+  - Snapshots are bounded to 128 display rows and 256 KiB. They retain displayed model results, engine settings, stack context, date and sort state. Browser snapshots are diagnostic copies, not trusted prediction inputs.
+  - Restoring never triggers model evaluation, provider requests, queues, or live definition changes. Deleted engines or stacks do not remove saved copies. Account deletion removes its private saves.
+  - Predict today displays the captured Test confidence bounds and strict minimum absolute spread with no upper limit. Stored results retain their original presentation confidence after later formula changes.
+public_interface:
+  - GET /admin/admin-engine-game-predictions
+  - POST /admin/admin-engine-game-predictions
+  - POST /admin/admin-engine-game-predictions/autosave
+  - GET /admin/admin-engine-game-predictions/{save}
+  - DELETE /admin/admin-engine-game-predictions/{save}
+example_usage: |
+  Predict today checkpoints autosave-1; Save named copy preserves a private comparison
+  that can later be restored without recomputing the games.

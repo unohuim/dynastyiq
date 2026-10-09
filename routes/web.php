@@ -394,6 +394,14 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                 Route::get('/nhl-shot-attempts/factor-values', [\App\Http\Controllers\Admin\NhlShotAttemptController::class, 'factorValues'])
                     ->name('admin.nhl-shot-attempts.factor-values');
                 Route::redirect('/nhl-model-runs', '/admin/nhl-sat-models');
+                Route::prefix('admin-engine-game-predictions')->name('admin.engine-game-predictions.')
+                    ->controller(\App\Http\Controllers\Admin\AdminEngineGamePredictionController::class)->group(function () {
+                        Route::get('/', 'index')->name('index');
+                        Route::post('/', 'store')->name('store');
+                        Route::post('/autosave', 'autosave')->name('autosave');
+                        Route::get('/{save}', 'show')->whereNumber('save')->name('show');
+                        Route::delete('/{save}', 'destroy')->whereNumber('save')->name('destroy');
+                    });
                 Route::prefix('nhl-sat-engines')->name('admin.nhl-sat-engines.')->controller(\App\Http\Controllers\Admin\NhlSatEngineController::class)->group(function () {
                     Route::get('/', 'index')->name('index');
                     Route::post('/', 'store')->name('store');

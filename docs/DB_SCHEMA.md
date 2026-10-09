@@ -1,5 +1,14 @@
 # Database Schema Inventory (DB_SCHEMA)
 
+## Private admin engine prediction saves
+
+Migration: `2026_10_08_000001_create_admin_engine_game_predictions.php`.
+`admin_engine_game_predictions` is global application storage scoped privately by
+`user_id`, not tenant data. It stores a name, nullable autosave slot/session token,
+snapshot JSON and timestamps. Owner/name and owner/autosave-slot pairs are unique.
+User deletion cascades. Engine and stack identities are captured inside JSON, not
+foreign keys, so deleting a definition does not delete saved diagnostic results.
+
 ## NHL next-game evaluations
 
 Migration: `2026_10_07_000002_create_nhl_next_game_evaluations.php`.

@@ -128,7 +128,7 @@ final class NhlGamePredictionResponseCache
     {
         ksort($input);
 
-        return 'nhl:game-prediction:test-qualified-v1:' . $gameId . ':' . hash('sha256', json_encode($input, JSON_THROW_ON_ERROR));
+        return 'nhl:game-prediction:test-qualified-boost7-v2:' . $gameId . ':' . hash('sha256', json_encode($input, JSON_THROW_ON_ERROR));
     }
 
     /** @param array<string,mixed> $input */

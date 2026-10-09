@@ -1,5 +1,14 @@
 # ENUMS - Canonical Enum Authority
 
+## Admin engine game prediction snapshots
+
+- Snapshot `version`: `1`.
+- `autosave_slot`: `1`, `2`, `3`, `4`; null denotes a named copy.
+- Snapshot row `source`: `production`, `test`.
+- Snapshot row `status`: `Waiting`, `Predicting`, `Calculated`, `Unavailable`, `Failed`, `Stopped`.
+- Snapshot sort `direction`: `1` ascending, `-1` descending.
+- Snapshot sort `key`: `game`, `model`, `score`, `spread`, `skater`, `goalie`, `internal`, `presentation`, `qualified`.
+
 ## NHL next-game evaluation
 
 - Run `status`: `queued`, `preparing`, `running`, `completed`, `failed`.
