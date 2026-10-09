@@ -26,11 +26,6 @@ const capturedStack = ref(null);
 const restoredName = ref('');
 const busy = computed(() => predicting.value || saving.value || action.processing);
 const copy = value => JSON.parse(JSON.stringify(value));
-const effectiveConfidenceMax = section => {
-    const settings = section.member.engine.settings;
-    if (settings?.confidence_max == null) return '—';
-    return Math.min(100, Number(settings.confidence_max) + Number(settings.diagnostic_confidence_upper_tolerance ?? 0));
-};
 const messageFor = error => Object.values(error.response?.data?.errors ?? {}).flat()[0]
     ?? error.response?.data?.message ?? 'Request failed. Your results are still on this page.';
 const refreshSaves = async () => {
@@ -285,7 +280,8 @@ const reorder = (from, to) => {
             <div class="p-5 pt-0">
                 <div>
                     <p class="mt-1 text-sm text-gray-600">{{ section.date ?? 'Waiting for games' }} · America/Toronto · Production model</p>
-                    <p class="mt-2 inline-flex rounded-lg bg-indigo-50 px-3 py-1.5 text-sm font-semibold tabular-nums text-indigo-800">Engine qualifying confidence: {{ section.member.engine.settings?.confidence_min ?? '—' }}%–{{ effectiveConfidenceMax(section) }}% (inclusive)<span v-if="section.member.engine.settings?.diagnostic_confidence_upper_tolerance" class="ml-1 font-normal">· includes +1 upper tolerance</span></p>
+                    <p class="mt-2 inline-flex rounded-lg bg-indigo-50 px-3 py-1.5 text-sm font-semibold tabular-nums text-indigo-800">Defined confidence range: {{ section.member.engine.settings?.confidence_min ?? '—' }}%–{{ section.member.engine.settings?.confidence_max ?? '—' }}%</p>
+                    <p v-if="section.member.engine.settings?.diagnostic_confidence_upper_tolerance" class="mt-1 text-xs text-gray-500">Qualification allows +1 percentage point above the defined upper limit (maximum 100%).</p>
                     <p class="mt-2 text-sm font-semibold tabular-nums text-indigo-800">Required spread: &gt; {{ section.member.engine.settings?.gap ?? '—' }} goals · No upper limit</p>
                     <p v-if="restoredName" class="mt-2 text-sm text-gray-600">Saved snapshot: {{ restoredName }} · {{ capturedStack?.name }} · Historical results, not recalculated</p>
                     <p class="mt-1 text-xs text-gray-500">Production determines qualification and outcome. Saved snapshots retain the rules used when captured. Scores are away–home; spread is the absolute goal difference.</p></div>
