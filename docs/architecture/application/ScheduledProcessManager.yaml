@@ -6,6 +6,8 @@ location:
   - app/Console/Commands/DispatchScheduledProcessesCommand.php
   - app/Http/Controllers/Admin/ScheduledProcessController.php
   - routes/console.php
+  - resources/js/pages/Admin/Dashboard.vue
+  - resources/js/admin/admin-hub.js
 purpose: Centralize due-process decisions in persisted settings while migrating existing scheduler entries incrementally.
 when_to_use:
   - Managing automatic NHL game discovery timing and scope.

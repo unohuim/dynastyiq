@@ -52,7 +52,7 @@ export default function adminHub(options = {}) {
     return {
         activeTab: initialTab,
         discoverySchedule: {
-            open: false, loading: false, saving: false, loaded: false, error: '', enabled: false,
+            open: false, loading: false, saving: false, loaded: false, error: '', success: '', enabled: false,
             start_time: '03:50', frequency_hours: 24, days_back: 3,
         },
         importItems: hydrateImportSchedules(options.imports),
@@ -318,6 +318,7 @@ export default function adminHub(options = {}) {
             if (!state.loaded || state.saving) return;
             state.saving = true;
             state.error = '';
+            state.success = '';
             const body = toggle ? { enabled: !state.enabled } : {
                 start_time: state.start_time, frequency_hours: Number(state.frequency_hours), days_back: Number(state.days_back),
             };
@@ -334,7 +335,8 @@ export default function adminHub(options = {}) {
                 if (!toggle) {
                     Object.assign(state, { start_time: data.start_time, frequency_hours: data.frequency_hours, days_back: data.settings.days_back });
                 }
-                this.$dispatch?.('toast', { message: 'Discovery settings saved.', type: 'success' });
+                state.success = 'Discovery settings saved.';
+                this.$dispatch?.('toast', { message: state.success, type: 'success' });
             } catch (error) {
                 state.error = error.message || 'Unable to save discovery settings.';
             } finally {

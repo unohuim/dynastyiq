@@ -2,7 +2,6 @@ name: Slide-Over Drawer
 type: Reusable Blade UI Component
 location:
   - resources/views/components/ui/slide-over.blade.php
-  - resources/views/admin/operational.blade.php
 purpose: Provide a canonical right-side slide-over shell with consistent Tailwind transition timing, overlay behavior, and accessibility attributes.
 when_to_use:
   - Long create or configuration forms that should open in a right-side panel.

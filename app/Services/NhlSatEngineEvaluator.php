@@ -130,7 +130,7 @@ class NhlSatEngineEvaluator
                     'automatic_search' => $input['kind'] === 'discovery' ? [
                         'strategy' => 'qualification_first_v1', 'stage' => 0, 'weight_stage' => -1,
                         'stage_first_split' => 0, 'stage_split_count' => count($splits), 'lanes' => self::DISCOVERY_LANES,
-                        'work_scheduling' => 'game_lanes_v1',
+                        'work_scheduling' => 'stage_games_v1',
                     ] : null,
                     'confidence_search' => $input['kind'] === 'discovery' ? 'automatic' : 'configured',
                 ],
@@ -219,7 +219,7 @@ class NhlSatEngineEvaluator
             $legacyPause = $run->paused_status === null;
             if (isset($run->definition['automatic_search'])) {
                 $definition = $run->definition;
-                $definition['automatic_search']['work_scheduling'] = 'game_lanes_v1';
+                $definition['automatic_search']['work_scheduling'] = 'stage_games_v1';
                 $definition['automatic_search']['lanes'] = self::DISCOVERY_LANES;
                 $run->definition = $definition;
             }
@@ -241,8 +241,8 @@ class NhlSatEngineEvaluator
         });
     }
 
-    /** @return list<array{0:int,1:int}> */
-    private function resumeEvaluationJobs(NhlSatEngineRun $run): array
+    /** @return iterable<array{0:int,1:int}> */
+    private function resumeEvaluationJobs(NhlSatEngineRun $run): iterable
     {
         $splits = $run->definition['splits'] ?? [];
         $gameIds = $run->definition['game_ids'] ?? [];
@@ -250,6 +250,22 @@ class NhlSatEngineEvaluator
             return [];
         }
         $search = $run->definition['automatic_search'] ?? null;
+        if (($search['work_scheduling'] ?? null) === 'stage_games_v1') {
+            // Every game is independently runnable; Horizon owns execution concurrency.
+            return (function () use ($run, $search, $gameIds): \Generator {
+                $first = (int) $search['stage_first_split'];
+                $end = $first + (int) $search['stage_split_count'];
+                for ($split = $first; $split < $end; $split++) {
+                    $completed = DB::table('nhl_sat_engine_results')->where('run_id', $run->id)
+                        ->where('split_index', $split)->pluck('nhl_game_id')->flip();
+                    foreach ($gameIds as $game => $id) {
+                        if (! $completed->has($id)) {
+                            yield [$split, $game];
+                        }
+                    }
+                }
+            })();
+        }
         if (($search['work_scheduling'] ?? null) === 'game_lanes_v1') {
             $first = (int) $search['stage_first_split'];
             $total = (int) $search['stage_split_count'] * count($gameIds);
@@ -302,7 +318,7 @@ class NhlSatEngineEvaluator
     public function dispatchRankingJobs(NhlSatEngineRun $run): void
     {
         $search = $run->definition['automatic_search'] ?? [];
-        if (($search['work_scheduling'] ?? null) !== 'game_lanes_v1') {
+        if (! in_array($search['work_scheduling'] ?? null, ['game_lanes_v1', 'stage_games_v1'], true)) {
             RankNhlSatEngineCandidatesJob::dispatch($run->id, 0, $run->work_generation)->afterCommit();
 
             return;

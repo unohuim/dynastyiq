@@ -126,10 +126,12 @@ Horizon assigns twelve workers to `projections`, five workers to `default`, two 
 - `scheduled_processes.settings.days_back`: positive integer prior calendar-date count;
   excludes today, defaults to 3, currently accepts 1–31.
 - `frequency_hours`: integer 1–168, default 24. Timezone is fixed to `America/Toronto`.
-- `NhlSatEngineRun.definition.automatic_search.work_scheduling`: `game_lanes_v1`
-  assigns independent game/split coordinates to bounded lanes and ranks independent
-  splits concurrently. Missing value retains legacy split-based chaining until
-  a safe pause/resume upgrades the run. It does not change prediction math.
+- `NhlSatEngineRun.definition.automatic_search.work_scheduling`: `stage_games_v1`
+  queues every missing game/split coordinate in the current stage immediately;
+  Horizon controls execution concurrency. `game_lanes_v1` retains legacy fixed
+  game chains; missing values retain legacy split chains. Pause/resume upgrades
+  scheduling without changing prediction math or committed results. Ranking
+  remains bounded to independent split lanes.
 
 ## API Clients
 

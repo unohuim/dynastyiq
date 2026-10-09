@@ -16,6 +16,11 @@ once per minute. The old direct discovery and processing schedules are removed.
 
 ## Game Import Pipeline
 
+The active page is `/admin?tab=game-imports`, rendered by
+`resources/js/pages/Admin/Dashboard.vue`. Its gear and recycle controls use the
+shared page-local `adminHub` settings methods. The unused Blade dashboard and
+operational partial were removed; Git history retains them for recovery.
+
 The recycling toggle controls automatic discovery only (green on, grey off). The
 gear opens persisted settings: start time in Toronto, frequency in hours (24), and
 days back (3). Three means yesterday and the two days before; today is excluded.
@@ -37,8 +42,10 @@ job tooling for operator recovery; no watchdog or automatic replay is introduced
 
 ## SAT Engine discovery concurrency
 
-New discovery uses up to sixteen independent game jobs even for a single weight
-pair. Each successful result launches only its lane's next missing coordinate.
+New discovery queues all game jobs in the current stage immediately after commit.
+For one pair and 25 games, all 25 jobs are available without predecessor dependencies;
+Horizon workers limit simultaneous execution. Later stages are not queued early.
+Large stages therefore create larger queue backlogs, not more workers.
 The last committed game opens ranking. Ranking uses up to sixteen independent
 split lanes and opens the next search stage only after all candidates finish.
 A stage with only one ranking split still has one ranking job.
@@ -78,7 +85,14 @@ disabled states, inline errors, success notification, existing slide-over motion
 overlay/Escape close, and no new global state. Browser interaction remains unverified.
 
 Test declaration counts (not execution results): `ScheduledProcessesTest.php` 23,
-`NhlSatEnginesTest.php` 115, `admin-hub.test.js` 83. Dataset-expanded cases are not
+`NhlSatEnginesTest.php` 115, `admin-hub.test.js` 85. Dataset-expanded cases are not
 included in those counts. PHP and JavaScript syntax checks and `git diff --check`
 passed. Automated suites and migrations were not run; execution remains with the
 administrator under repository policy.
+
+The Vue-page correction adds template-compilation/control-binding and drawer
+accessibility/feedback checks to the existing frontend suite. Settings state and
+save/error behavior retain their existing six checks; endpoint authorization and
+database behavior are unchanged. No additional migration is required for this
+UI correction. The original scheduled-process migration is still required if it
+has not already been applied.

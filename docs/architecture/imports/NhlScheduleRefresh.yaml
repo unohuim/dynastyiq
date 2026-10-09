@@ -5,7 +5,7 @@ location:
   - app/Console/Commands/ImportNhlScheduleCommand.php
   - app/Jobs/RefreshNhlScheduleDateJob.php
   - app/Http/Controllers/Admin/NhlGameImportController.php
-  - resources/views/admin/operational.blade.php
+  - resources/js/pages/Admin/Dashboard.vue
   - resources/js/admin/admin-hub.js
   - database/migrations/2025_03_18_145954_create_nhl_games_table.php
 purpose: Refresh future NHL schedule metadata in nhl_games for scheduled-game prediction workflows without seeding or running the full NHL game import pipeline.

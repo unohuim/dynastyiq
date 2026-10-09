@@ -2,7 +2,6 @@ name: Date Field
 type: Reusable Blade UI Component
 location:
   - resources/views/components/ui/date-field.blade.php
-  - resources/views/admin/operational.blade.php
 purpose: Provide a native browser date input with a full-field click target that opens the calendar picker where supported.
 when_to_use:
   - Blade forms that need a single native date input.

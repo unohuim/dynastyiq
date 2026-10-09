@@ -1793,7 +1793,7 @@ php artisan nhl:discover --date=2026-01-15
 - `app/Console/Commands/ImportNhlScheduleCommand.php`
 - `app/Jobs/RefreshNhlScheduleDateJob.php`
 - `app/Http/Controllers/Admin/NhlGameImportController.php`
-- `resources/views/admin/operational.blade.php`
+- `resources/js/pages/Admin/Dashboard.vue`
 - `resources/js/admin/admin-hub.js`
 - `database/migrations/2025_03_18_145954_create_nhl_games_table.php`
 
@@ -3139,7 +3139,7 @@ Route::post('/player-triage/identities/{identity}/link', [PlayerTriageController
 - `app/Jobs/SeasonSumJob.php`
 - `app/Models/NhlGameImportRun.php`
 - `app/Events/NhlGameImportStatusUpdated.php`
-- `resources/views/admin/operational.blade.php`
+- `resources/js/pages/Admin/Dashboard.vue`
 - `resources/js/admin/admin-hub.js`
 - `docs/architecture/admin/AdminNhlGameImports.yaml`
 

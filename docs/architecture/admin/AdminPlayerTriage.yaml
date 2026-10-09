@@ -2,7 +2,7 @@ name: Admin Player Triage
 type: Admin Workflow Pattern
 location:
   - app/Http/Controllers/Admin/PlayerTriageController.php
-  - resources/views/admin/operational.blade.php
+  - resources/js/pages/Admin/Dashboard.vue
   - app/Models/Player.php
   - app/Models/PlayerExternalIdentity.php
   - resources/views/admin/player-triage.blade.php

@@ -1,6 +1,37 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { parse, compileTemplate } from '@vue/compiler-sfc';
 
 describe('game discovery schedule settings', () => {
+    it('renders the schedule controls in the active Vue dashboard rather than a legacy view', () => {
+        const source = readFileSync(new URL('../pages/Admin/Dashboard.vue', import.meta.url), 'utf8');
+        const { descriptor, errors } = parse(source);
+        expect(errors).toEqual([]);
+        const template = descriptor.template.content;
+        const compiled = compileTemplate({ source: template, filename: 'Dashboard.vue', id: 'admin-dashboard' });
+        expect(compiled.errors).toEqual([]);
+        expect(template).toContain('aria-label="Game discovery settings"');
+        expect(template).toContain('@click="showDiscoverySchedule()"');
+        expect(template).toContain('@click="saveDiscoverySchedule(true)"');
+        expect(template).toContain(':aria-pressed="discoverySchedule.enabled');
+        expect(template).toContain('@submit.prevent="saveDiscoverySchedule()"');
+        for (const field of ['start_time', 'frequency_hours', 'days_back']) {
+            expect(template).toContain(`v-model="discoverySchedule.${field}"`);
+        }
+    });
+
+    it('provides an accessible Vue drawer with independent motion and visible feedback', () => {
+        const source = readFileSync(new URL('../pages/Admin/Dashboard.vue', import.meta.url), 'utf8');
+        expect(source).toContain('id="discovery-schedule-panel"');
+        expect(source).toContain('aria-labelledby="discovery-schedule-title"');
+        expect(source).toContain('@keydown.esc.stop.prevent="closeDiscoverySchedule()"');
+        expect(source).toContain('@keydown.tab="trapDiscoveryScheduleFocus($event)"');
+        expect(source).toContain('transition-opacity duration-300 motion-reduce:transition-none');
+        expect(source).toContain('transition-transform duration-500 ease-out motion-reduce:transition-none');
+        expect(source).toContain('v-text="discoverySchedule.error"');
+        expect(source).toContain('v-text="discoverySchedule.success"');
+    });
+
     beforeEach(() => {
         vi.restoreAllMocks();
         global.fetch = vi.fn();

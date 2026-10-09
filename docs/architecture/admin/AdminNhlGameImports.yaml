@@ -17,7 +17,7 @@ location:
   - app/Models/NhlGameImportRun.php
   - app/Events/NhlGameImportStatusUpdated.php
   - database/migrations/2026_06_29_030000_create_nhl_game_import_runs_table.php
-  - resources/views/admin/operational.blade.php
+  - resources/js/pages/Admin/Dashboard.vue
   - resources/js/admin/admin-hub.js
 purpose: Let super admins dispatch and monitor NHL game discovery, processing, duplicate play-by-play repair, and season stat rollup jobs from the admin control panel without shelling out to Artisan commands.
 when_to_use:

@@ -77,7 +77,9 @@ class EvaluateNhlSatEngineGameJob implements ShouldQueue
             }
             $run->save();
             $search = $run->definition['automatic_search'] ?? [];
-            if (($search['work_scheduling'] ?? null) === 'game_lanes_v1') {
+            if (($search['work_scheduling'] ?? null) === 'stage_games_v1') {
+                // All current-stage games were queued at stage start. Do not chain duplicates.
+            } elseif (($search['work_scheduling'] ?? null) === 'game_lanes_v1') {
                 $first = (int) $search['stage_first_split'];
                 $offset = ($this->splitIndex - $first) * $run->game_count + $this->gameIndex + $search['lanes'];
                 // A resumed legacy run can have completed coordinates later in this lane.
