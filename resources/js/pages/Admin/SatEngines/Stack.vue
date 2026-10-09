@@ -151,40 +151,55 @@ const predictMembers = async (members, stackMode = false) => {
                 for (const section of pending) {
                     section.date = data.date;
                     section.status = 'Predicting';
+                    section.rows = data.games.map(game => ({ id: game.nhl_game_id,
+                        key: `${game.nhl_game_id}-production`, source: 'production', model: 'Production',
+                        modelName: null, game: `${game.away_team_abbrev} @ ${game.home_team_abbrev}`, status: 'Waiting',
+                        score: null, spread: null, skater: null, goalie: null, internal: null, presentation: null,
+                        qualified: null, error: null, pickedBy: null }));
                 }
-                // Keep pending/error rows visible, then move each completed result to its engine.
-                pending[0].rows = data.games.map(game => ({ id: game.nhl_game_id,
-                    key: `${game.nhl_game_id}-production`, source: 'production', model: 'Production',
-                    modelName: null, game: `${game.away_team_abbrev} @ ${game.home_team_abbrev}`, status: 'Waiting',
-                    score: null, spread: null, skater: null, goalie: null, internal: null, presentation: null, qualified: null, error: null }));
                 await checkpoint();
-                for (const row of [...pending[0].rows]) {
+                for (const game of data.games) {
                     if (!active() || stopRequested.value) break;
-                    row.status = 'Predicting';
+                    const rows = pending.map(section => section.rows.find(row => row.id === game.nhl_game_id));
+                    for (const row of rows) row.status = 'Predicting';
                     try {
-                        const { data: result } = await axios.post(`${endpoint}/${row.id}`, {}, { signal: request.signal });
+                        const { data: result } = await axios.post(`${endpoint}/${game.nhl_game_id}`, {}, { signal: request.signal });
                         if (!active()) break;
-                        const target = pending.find(section => Number(section.member.engine.id) === Number(result.result_engine_id)) ?? pending[0];
-                        const prediction = result.prediction;
-                        row.status = result.prediction_available ? 'Calculated' : 'Unavailable';
-                        row.internal = result.internal_confidence;
-                        row.skater = result.skater_confidence;
-                        row.goalie = result.goalie_confidence;
-                        row.modelName = result.model_name ?? `Model #${result.model_run_id}`;
-                        row.presentation = prediction?.confidence_score ?? null;
-                        row.spread = result.qualification_spread;
-                        row.score = prediction ? `${prediction.predicted_score.away} – ${prediction.predicted_score.home}` : null;
-                        row.qualified = result.prediction_available ? result.pick_qualified : null;
-                        row.error = result.reason ?? (result.prediction_available && !result.pick_qualified
-                            ? 'No Engine qualified. Showing the normal stack fallback prediction.' : null);
-                        if (target !== pending[0]) {
-                            pending[0].rows = pending[0].rows.filter(item => item.id !== row.id);
-                            target.rows.push(row);
+                        const attempts = result.attempts ?? [];
+                        const winner = attempts.find(attempt => attempt.prediction_available && attempt.pick_qualified);
+                        const winnerIndex = pending.findIndex(section => Number(section.member.engine.id) === Number(winner?.engine_id));
+                        for (const [index, section] of pending.entries()) {
+                            const row = rows[index];
+                            const attempt = attempts.find(item => Number(item.engine_id) === Number(section.member.engine.id));
+                            if (!attempt) {
+                                if (winner && winnerIndex >= 0 && index > winnerIndex) {
+                                    row.status = 'Skipped';
+                                    row.pickedBy = winner.engine_name;
+                                } else {
+                                    row.status = 'Unavailable';
+                                    row.error = 'No Engine attempt was returned for this game.';
+                                }
+                                continue;
+                            }
+                            const prediction = attempt.prediction;
+                            row.status = attempt.prediction_available ? 'Calculated' : 'Unavailable';
+                            row.internal = attempt.internal_confidence;
+                            row.skater = attempt.skater_confidence;
+                            row.goalie = attempt.goalie_confidence;
+                            row.modelName = props.models.find(model => Number(model.id) === Number(attempt.model_run_id))?.name
+                                ?? `Model #${attempt.model_run_id}`;
+                            row.presentation = prediction?.confidence_score ?? null;
+                            row.spread = attempt.qualification_spread;
+                            row.score = prediction ? `${prediction.predicted_score.away} – ${prediction.predicted_score.home}` : null;
+                            row.qualified = attempt.prediction_available ? attempt.pick_qualified : null;
+                            row.error = attempt.reason ?? null;
                         }
                     } catch (error) {
                         if (!active()) break;
-                        row.status = 'Failed';
-                        row.error = messageFor(error);
+                        for (const row of rows) {
+                            row.status = 'Failed';
+                            row.error = messageFor(error);
+                        }
                     }
                     await checkpoint();
                 }
@@ -341,7 +356,7 @@ const reorder = (from, to) => {
                     <p v-if="section.member.engine.settings?.diagnostic_confidence_upper_tolerance" class="mt-1 text-xs text-gray-500">Qualification allows +1 percentage point above the defined upper limit (maximum 100%).</p>
                     <p class="mt-2 text-sm font-semibold tabular-nums text-indigo-800">Required spread: {{ gapLabel(section.member.engine.settings ?? { gap: null }) }}</p>
                     <p v-if="restoredName" class="mt-2 text-sm text-gray-600">Saved snapshot: {{ restoredName }} · {{ capturedStack?.name }} · Historical results, not recalculated</p>
-                    <p class="mt-1 text-xs text-gray-500">Production determines qualification and outcome. Saved snapshots retain the rules used when captured. Scores are away–home; spread is the absolute goal difference.</p></div>
+                    <p class="mt-1 text-xs text-gray-500">Production determines qualification and outcome. Saved snapshots retain the rules used when captured. Scores are away–home; spread uses this Engine's saved units. Games picked earlier show that Engine's name without another prediction.</p></div>
             </div>
             <p v-if="section.error" role="alert" class="px-5 pb-4 text-sm text-red-700">{{ section.error }}</p>
             <p role="status" aria-live="polite" class="px-5 pb-4 text-sm text-gray-500">{{ section.status === 'Predicting' ? 'Calculating one game at a time…' : section.status }}</p>
@@ -354,6 +369,8 @@ const reorder = (from, to) => {
                     </tr></thead>
                     <tbody><tr v-for="row in sortedPredictions(section)" :key="row.key" class="border-b border-gray-100" :class="row.source === 'test' ? 'bg-gray-50' : ''">
                         <th scope="row" class="whitespace-nowrap px-4 py-3 font-medium">{{ row.game }}</th>
+                        <td v-if="row.status === 'Skipped'" colspan="9" class="px-4 py-3 text-sm font-medium text-indigo-700">Picked by {{ row.pickedBy }}</td>
+                        <template v-else>
                         <td class="whitespace-nowrap px-4 py-3">{{ row.model }}<span class="block text-xs text-gray-500">{{ row.modelName }}</span></td>
                         <td class="whitespace-nowrap px-4 py-3">{{ row.score ?? '—' }}</td>
                         <td class="px-4 py-3">{{ row.spread == null ? '—' : row.spread.toFixed(4) + (section.member.engine.settings?.gap_unit === 'percent' ? '%' : '') }}</td>
@@ -363,6 +380,7 @@ const reorder = (from, to) => {
                         <td class="px-4 py-3">{{ row.presentation == null ? '—' : Number(row.presentation).toFixed(1) + '%' }}</td>
                         <td class="px-4 py-3 font-medium">{{ row.qualified == null ? '—' : row.qualified ? 'Yes' : 'No' }}</td>
                         <td class="max-w-xs px-4 py-3 text-xs text-gray-600">{{ row.status }}<span v-if="row.error" class="mt-1 block text-red-700">{{ row.error }}</span></td>
+                        </template>
                     </tr></tbody>
                 </table>
                 <p class="p-5 text-xs text-gray-500">Skater and goalie confidence are the two-team averages before weighting. Internal confidence = rounded (70% skater + 30% goalie).</p>

@@ -86,6 +86,9 @@ const prepareStackRequests = (predict = async () => ({ data: {
     prediction_available: true, pick_qualified: true, result_engine_id: 1, engine_id: 1, model_run_id: 1,
     internal_confidence: 80, skater_confidence: 90, goalie_confidence: 50, qualification_spread: 0.5,
     prediction: { predicted_score: { away: 3, home: 3.5 }, confidence_score: 92 },
+    attempts: [{ engine_id: 1, engine_name: 'Engine 1', model_run_id: 1, prediction_available: true, pick_qualified: true,
+        internal_confidence: 80, skater_confidence: 90, goalie_confidence: 50, qualification_spread: 0.5,
+        prediction: { predicted_score: { away: 3, home: 3.5 }, confidence_score: 92 } }],
 } })) => {
     vi.stubGlobal('crypto', { randomUUID: () => '11111111-1111-4111-8111-111111111111' });
     http.get.mockImplementation(async url => ({ data: url.endsWith('/today')
@@ -100,7 +103,7 @@ const prepareStackRequests = (predict = async () => ({ data: {
     });
 };
 
-it('uses one stack request per game and saves results only under the selected engine', async () => {
+it('shows every game and saves skipped names without making later engine requests', async () => {
     prepareStackRequests();
     const root = mount(Stack, stackWorkspace());
     root.querySelector('header button.bg-indigo-600').click();
@@ -111,9 +114,57 @@ it('uses one stack request per game and saves results only under the selected en
     ]);
     const saved = http.post.mock.calls.filter(([url]) => url === '/admin/admin-engine-game-predictions').at(-1)[1].snapshot;
     expect(saved.sections[0].rows).toHaveLength(2);
-    expect(saved.sections[1].rows).toHaveLength(0);
+    expect(saved.sections[1].rows).toHaveLength(2);
     expect(saved.sections[0].rows[0]).toMatchObject({ internal: 80, presentation: 92, qualified: true });
-    expect(root.textContent).toContain('No game results assigned to this Engine.');
+    expect(saved.sections[1].rows[0]).toMatchObject({ status: 'Skipped', pickedBy: 'Engine 1', internal: null, qualified: null });
+    expect(root.textContent).toContain('Picked by Engine 1');
+    expect([...root.querySelectorAll('tbody th')].filter(cell => cell.textContent === 'NYR @ WSH')).toHaveLength(2);
+});
+
+it('shows actual rejected attempts and skips only engines after the first pick', async () => {
+    prepareStackRequests(async url => {
+        const picked = url.endsWith('/101');
+        return { data: { attempts: (picked ? [1, 2] : [1, 2, 3]).map(id => ({
+            engine_id: id, engine_name: `Engine ${id}`, model_run_id: 1, prediction_available: true,
+            pick_qualified: picked && id === 2, internal_confidence: 70 + id, skater_confidence: 90,
+            goalie_confidence: 40, qualification_spread: id,
+            prediction: { predicted_score: { away: id, home: 4 }, confidence_score: picked && id === 2 ? 84 : 51 },
+        })) } };
+    });
+    const props = stackWorkspace();
+    props.stack.members.push({ id: 3, engine_id: 3, priority: 3, engine: { id: 3, name: 'Engine 3', model_run_id: 1, settings } });
+    const root = mount(Stack, props);
+    root.querySelector('header button.bg-indigo-600').click();
+    await flushStack();
+    const saved = http.post.mock.calls.filter(([url]) => url === '/admin/admin-engine-game-predictions').at(-1)[1].snapshot;
+    expect(saved.sections.every(section => section.rows.length === 2)).toBe(true);
+    expect(saved.sections[0].rows[0]).toMatchObject({ status: 'Calculated', internal: 71, qualified: false });
+    expect(saved.sections[1].rows[0]).toMatchObject({ status: 'Calculated', internal: 72, presentation: 84, qualified: true });
+    expect(saved.sections[2].rows[0]).toMatchObject({ status: 'Skipped', pickedBy: 'Engine 2', score: null });
+    expect(saved.sections.every(section => section.rows[1].status === 'Calculated' && section.rows[1].qualified === false)).toBe(true);
+    expect(root.textContent).toContain('Picked by Engine 2');
+    expect(http.post.mock.calls.filter(([url]) => url.includes('/predictions/'))).toHaveLength(2);
+});
+
+it('restores picked-by rows without triggering predictions', async () => {
+    prepareStackRequests();
+    const props = stackWorkspace();
+    http.get.mockImplementation(async url => ({ data: url.endsWith('/13') ? {
+        name: 'Saved stack', snapshot: { version: 2, stack: { id: 9, name: 'Selected stack' }, sections: [{
+            member: props.stack.members[1], date: '2026-10-01', sort: { key: 'game', direction: 1 },
+            open: true, status: 'Calculated', error: null, rows: [{ id: 101, key: '101-production', source: 'production',
+                game: 'NYR @ WSH', status: 'Skipped', pickedBy: 'Engine 1' }],
+        }] },
+    } : { saves: [{ id: 13, name: 'Saved stack' }] } }));
+    const root = mount(Stack, props);
+    await flushStack();
+    const select = root.querySelector('option[value="13"]').parentElement;
+    select.value = '13'; select.dispatchEvent(new Event('change', { bubbles: true }));
+    await nextTick();
+    [...root.querySelectorAll('button')].find(button => button.textContent === 'Restore').click();
+    await flushStack();
+    expect(root.textContent).toContain('Picked by Engine 1');
+    expect(http.post).not.toHaveBeenCalled();
 });
 
 it('waits for the current stack request and honours stop without starting the next game', async () => {

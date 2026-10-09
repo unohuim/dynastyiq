@@ -6,7 +6,9 @@
 - Version 2 section `status`: `Waiting`, `Predicting`, `Calculated`, `Failed`, `Stopped`.
 - `autosave_slot`: `1`, `2`, `3`, `4`; null denotes a named copy.
 - Snapshot row `source`: `production`, `test`.
-- Snapshot row `status`: `Waiting`, `Predicting`, `Calculated`, `Unavailable`, `Failed`, `Stopped`.
+- Snapshot row `status`: `Waiting`, `Predicting`, `Calculated`, `Unavailable`, `Failed`, `Stopped`, `Skipped`.
+- Snapshot row `pickedBy`: optional captured Engine name; required and nonempty for `Skipped` rows.
+  A skipped row means an earlier Engine picked the game; it is not another prediction or a rejected pick.
 - Snapshot sort `direction`: `1` ascending, `-1` descending.
 - Snapshot sort `key`: `game`, `model`, `score`, `spread`, `skater`, `goalie`, `internal`, `presentation`, `qualified`.
 

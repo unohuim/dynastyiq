@@ -128,6 +128,14 @@ it('previews the selected non-default stack through the shared delegation and st
     expect($result['engine_id'])->toBe($engines[$winner - 1]->id)->and($result['pick_qualified'])->toBeTrue()
         ->and($result['internal_confidence'])->toBe(80)->and($result['skater_confidence'])->toBe(90)
         ->and($stack->fresh()->is_default)->toBeFalse();
+    expect($result['attempts'])->toHaveCount($winner);
+    foreach ($result['attempts'] as $index => $attempt) {
+        expect($attempt['engine_id'])->toBe($engines[$index]->id)
+            ->and($attempt['engine_name'])->toBe('Priority ' . ($index + 1))
+            ->and($attempt['internal_confidence'])->toBe(80)
+            ->and($attempt['pick_qualified'])->toBe($index + 1 === $winner)
+            ->and($attempt['prediction']['confidence_score'])->toEqual($index + 1 === $winner ? 92 : 80);
+    }
     Bus::assertNothingDispatched();
 })->with([1, 2, 3]);
 
@@ -152,7 +160,8 @@ it('returns the same selected prediction in the ordinary path and stack preview 
     expect($preview['prediction'])->toBe($ordinary['prediction'])
         ->and($preview['engine_id'])->toBe($ordinary['inputs']['engine_id'])
         ->and($preview['internal_confidence'])->toBe(80)
-        ->and($ordinary)->not->toHaveKey('_internal_confidence')->not->toHaveKey('_result_engine_id');
+        ->and($ordinary)->not->toHaveKey('_internal_confidence')->not->toHaveKey('_result_engine_id')
+        ->not->toHaveKey('_engine_attempts');
 });
 
 it('retains the ordinary no-pick fallback and penalizes presentation only after all members decline', function (): void {
@@ -172,6 +181,40 @@ it('retains the ordinary no-pick fallback and penalizes presentation only after 
     expect($result['pick_qualified'])->toBeFalse()->and($result['engine_id'])->toBeNull()
         ->and($result['result_engine_id'])->toBe($this->engine->id)
         ->and($result['internal_confidence'])->toBe(80)->and($result['prediction']['confidence_score'])->toEqual(60);
+    expect($result['attempts'])->toHaveCount(2);
+    foreach ($result['attempts'] as $attempt) {
+        expect($attempt['pick_qualified'])->toBeFalse()->and($attempt['internal_confidence'])->toBe(80)
+            ->and($attempt['prediction']['confidence_score'])->toEqual(60);
+    }
+});
+
+it('persists and restores skipped engine names privately without recalculating predictions', function (): void {
+    $snapshot = ['version' => 2, 'stack' => ['id' => 1, 'name' => 'Captured', 'production_model_run_id' => null],
+        'sections' => [[
+            'member' => ['id' => 1, 'engine' => ['id' => $this->engine->id, 'name' => 'Second', 'settings' => $this->settings,
+                'model_run_id' => $this->model->id, 'test_model_run_id' => $this->model->id]],
+            'date' => '2026-10-01', 'open' => true, 'error' => null, 'status' => 'Calculated',
+            'sort' => ['key' => 'game', 'direction' => 1],
+            'rows' => [['id' => 2025020001, 'key' => '2025020001-production', 'source' => 'production', 'model' => 'Production',
+                'modelName' => null, 'game' => 'NYR @ WSH', 'status' => 'Skipped', 'pickedBy' => 'Foundation',
+                'score' => null, 'spread' => null, 'skater' => null, 'goalie' => null, 'internal' => null,
+                'presentation' => null, 'qualified' => null, 'error' => null]],
+        ]]];
+    $url = '/admin/admin-engine-game-predictions';
+    $invalid = $snapshot;
+    $invalid['sections'][0]['rows'][0]['pickedBy'] = null;
+    $this->actingAs($this->admin)->postJson($url, ['name' => 'Invalid', 'snapshot' => $invalid])->assertUnprocessable();
+    $saved = $this->postJson($url, ['name' => 'Named capture', 'snapshot' => $snapshot])->assertOk();
+    $id = $saved->json('id');
+    $this->assertDatabaseHas('admin_engine_game_predictions', ['id' => $id, 'user_id' => $this->admin->id]);
+    $this->getJson($url . '/' . $id)->assertOk()
+        ->assertJsonPath('snapshot.sections.0.rows.0.status', 'Skipped')
+        ->assertJsonPath('snapshot.sections.0.rows.0.pickedBy', 'Foundation')
+        ->assertJsonPath('snapshot.sections.0.rows.0.internal', null);
+    $other = User::factory()->create();
+    $other->roles()->attach(Role::query()->where('slug', 'super-admin')->value('id'), ['organization_id' => null]);
+    $this->actingAs($other)->getJson($url . '/' . $id)->assertNotFound();
+    Bus::assertNothingDispatched();
 });
 
 it('lists todays games and invokes only the selected stack preview without changing defaults', function (): void {

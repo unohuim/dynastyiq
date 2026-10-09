@@ -42,6 +42,10 @@ it is not the default. It stops at the first qualifying Engine for each game and
 preserves the ordinary no-pick fallback when none qualifies. Individual Engine
 buttons remain independent diagnostics. Both confidences are shown only in the
 admin results; partner payloads continue to expose presentation confidence only.
+Each admin Engine accordion lists all games: actual attempts show that Engine's
+results, and engines after a pick show “Picked by [Engine name]” instead of
+predicting again. The admin response includes compact attempt diagnostics captured
+during that same traversal. These diagnostics are not included in partner responses.
 
 
 ## Prediction roster player identifiers

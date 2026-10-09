@@ -916,6 +916,7 @@ $token = PlatformTeamRosterShareLink::newPlainToken();
 ### NHL SAT Engines
 
 Stack-level Predict today shares ordinary priority delegation for the explicitly viewed stack. Individual Engine actions remain independent diagnostics; see `docs/architecture/stats/NhlSatEngineStacks.yaml`.
+Every Engine accordion lists all games, showing actual attempts or the earlier picking Engine's name without recalculation.
 
 New discoveries use optional fixed weights, independent confidence bounds and percentage-spread constraints. Confidence/spread search precedes variable weight search; existing runs retain legacy semantics. See `docs/architecture/stats/NhlSatEngines.yaml`.
 

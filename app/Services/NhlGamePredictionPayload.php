@@ -89,7 +89,9 @@ class NhlGamePredictionPayload
             throw ValidationException::withMessages(['stack' => 'Add an Engine before predicting this stack.']);
         }
         $result = app(NhlPredictionInputContext::class)->run(
-            fn (): array => $this->evaluateStack($gameId, $stack, ['_include_confidence_components' => true])
+            fn (): array => $this->evaluateStack($gameId, $stack, [
+                '_include_confidence_components' => true, '_include_stack_attempts' => true,
+            ])
         );
 
         return [
@@ -97,6 +99,7 @@ class NhlGamePredictionPayload
             'pick_qualified' => $result['pick_qualified'] ?? false,
             'engine_id' => data_get($result, 'inputs.engine_id'),
             'result_engine_id' => $result['_result_engine_id'] ?? data_get($result, 'inputs.engine_id'),
+            'attempts' => $result['_engine_attempts'] ?? [],
             'internal_confidence' => $result['_internal_confidence'] ?? null,
             'skater_confidence' => data_get($result, '_confidence_components.skater'),
             'goalie_confidence' => data_get($result, '_confidence_components.goalie'),
@@ -115,9 +118,14 @@ class NhlGamePredictionPayload
     {
         $fallback = null;
         $fallbackEngine = null;
+        $captureAttempts = ($overrides['_include_stack_attempts'] ?? false) === true;
+        $attempts = [];
         foreach ($stack->members->values() as $member) {
             $engine = $member->engine;
             $candidate = $this->evaluateEngine($gameId, $engine, $stack->production_model_run_id, $overrides);
+            if ($captureAttempts) {
+                $attempts[] = $this->stackAttempt($candidate, $engine);
+            }
             $fallback ??= $candidate;
             $fallbackEngine ??= $engine;
             if (! $candidate['pick_qualified']) {
@@ -125,6 +133,9 @@ class NhlGamePredictionPayload
             }
             $candidate = $this->withPresentationConfidence($candidate, $engine, true);
             $candidate['inputs']['stack_id'] = $stack->id;
+            if ($captureAttempts) {
+                $candidate['_engine_attempts'] = $attempts;
+            }
 
             return $candidate;
         }
@@ -135,8 +146,40 @@ class NhlGamePredictionPayload
         $fallback['inputs']['engine_id'] = null;
         $fallback['inputs']['stack_id'] = $stack->id;
         $fallback = $this->withPresentationConfidence($fallback, $fallbackEngine, false);
+        if ($captureAttempts) {
+            // Only a whole-stack rejection applies the outward penalty, once per displayed result.
+            $fallback['_engine_attempts'] = array_map(fn (array $attempt): array => $attempt['prediction_available']
+                ? $this->withUnqualifiedPresentationPenalty($attempt) : $attempt, $attempts);
+        }
 
         return $this->withUnqualifiedPresentationPenalty($fallback);
+    }
+
+    /** Capture only admin diagnostic fields from an actual attempt, never simulate it again.
+     * @param array<string,mixed> $candidate
+     * @return array<string,mixed>
+     */
+    private function stackAttempt(array $candidate, NhlSatEngine $engine): array
+    {
+        $available = (bool) ($candidate['prediction_available'] ?? false);
+        $prediction = $candidate['prediction'] ?? null;
+        $internal = data_get($candidate, 'prediction.confidence_score');
+        if ($available && $prediction !== null) {
+            $prediction['confidence_score'] = $this->presentationConfidence(
+                (float) $internal, $engine, (bool) $candidate['pick_qualified']);
+        }
+
+        return [
+            'engine_id' => $engine->id, 'engine_name' => $engine->name,
+            'model_run_id' => data_get($candidate, 'inputs.sat_model_run_id'),
+            'prediction_available' => $available,
+            'pick_qualified' => $available ? (bool) $candidate['pick_qualified'] : null,
+            'internal_confidence' => $internal,
+            'skater_confidence' => data_get($candidate, '_confidence_components.skater'),
+            'goalie_confidence' => data_get($candidate, '_confidence_components.goalie'),
+            'qualification_spread' => $candidate['_qualification_spread'] ?? null,
+            'prediction' => $prediction, 'reason' => $candidate['reason'] ?? null,
+        ];
     }
 
     /**

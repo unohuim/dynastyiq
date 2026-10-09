@@ -52,14 +52,15 @@ class AdminEngineGamePredictionController extends Controller
             'snapshot.member.engine.test_model_run_id' => ['nullable', 'integer'],
             'snapshot.date' => ['required', 'date_format:Y-m-d'],
             'snapshot.rows' => ['present', 'array', 'max:128'],
-            'snapshot.rows.*' => ['required', 'array:id,key,source,model,modelName,game,status,score,spread,skater,goalie,internal,presentation,qualified,error'],
+            'snapshot.rows.*' => ['required', 'array:id,key,source,model,modelName,game,status,score,spread,skater,goalie,internal,presentation,qualified,error,pickedBy'],
             'snapshot.rows.*.id' => ['required', 'integer'],
             'snapshot.rows.*.key' => ['required', 'string', 'max:80', 'distinct'],
             'snapshot.rows.*.source' => ['required', 'in:production,test'],
             'snapshot.rows.*.model' => ['required', 'string', 'max:40'],
             'snapshot.rows.*.modelName' => ['nullable', 'string', 'max:255'],
             'snapshot.rows.*.game' => ['required', 'string', 'max:80'],
-            'snapshot.rows.*.status' => ['required', 'in:Waiting,Predicting,Calculated,Unavailable,Failed,Stopped'],
+            'snapshot.rows.*.status' => ['required', 'in:Waiting,Predicting,Calculated,Unavailable,Failed,Stopped,Skipped'],
+            'snapshot.rows.*.pickedBy' => ['nullable', 'string', 'max:255'],
             'snapshot.rows.*.score' => ['nullable', 'string', 'max:80'],
             'snapshot.rows.*.spread' => ['nullable', 'numeric'],
             'snapshot.rows.*.skater' => ['nullable', 'numeric', 'between:0,100'],
@@ -91,6 +92,14 @@ class AdminEngineGamePredictionController extends Controller
             $rules['snapshot.sections.*.member.engine.id'][] = 'distinct';
         }
         $input = $request->validate($rules);
+        $sections = $input['snapshot']['sections'] ?? [['rows' => $input['snapshot']['rows'] ?? []]];
+        foreach ($sections as $section) {
+            foreach ($section['rows'] as $row) {
+                if ($row['status'] === 'Skipped' && trim((string) ($row['pickedBy'] ?? '')) === '') {
+                    throw ValidationException::withMessages(['snapshot' => 'Skipped games must name the Engine that picked them.']);
+                }
+            }
+        }
         if (strlen(json_encode($input['snapshot'], JSON_THROW_ON_ERROR)) > 262144) {
             throw ValidationException::withMessages(['snapshot' => 'Save is too large (maximum 256 KiB).']);
         }

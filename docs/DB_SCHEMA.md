@@ -9,7 +9,9 @@ snapshot JSON and timestamps. Owner/name and owner/autosave-slot pairs are uniqu
 User deletion cascades. Engine and stack identities are captured inside JSON, not
 foreign keys, so deleting a definition does not delete saved diagnostic results.
 Snapshot JSON supports legacy version 1 single-engine results and version 2
-multi-engine accordion workspaces. This JSON-format change requires no migration.
+multi-engine accordion workspaces. Rows may capture the earlier picking Engine's
+name in optional `pickedBy` metadata; canonical row statuses are in `docs/ENUMS.md`.
+These JSON-format additions require no migration.
 
 ## NHL next-game evaluations
 
