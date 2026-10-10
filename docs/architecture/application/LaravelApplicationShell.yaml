@@ -27,7 +27,7 @@ rules:
   - Horizon authorization is separate from Discord OAuth and must not alter main-application authentication, queue processing, or worker configuration.
   - Horizon must isolate model builds, profiles, projections, comparisons, SAT Engine discovery/ranking, next-game evaluations, and historical pregame-context builds on the projections queue. Coordinators, loaders, continuations, and child batches must retain that queue; NHL schedule discovery and ordinary import/fact-building pipelines remain on default.
   - Time-sensitive anticipated-lineup work and live prediction cache refreshes remain on lineups; Fantrax provider work remains on fantrax; unrelated work remains on default.
-  - Horizon worker allocation is twelve fixed projections workers, five fixed default workers, two fixed Fantrax workers, and one fixed lineup worker in every environment, totaling twenty per Horizon instance rather than a cross-server limit.
+  - Horizon worker allocation is twenty-five fixed projections workers, five fixed default workers, five fixed Fantrax workers, and two fixed lineup workers in every environment, totaling thirty-seven per Horizon instance rather than a cross-server limit.
   - Queue routing changes do not relocate previously serialized jobs or existing batches. Default workers must remain available to drain them; existing batch options remain authoritative for their child additions.
 public_interface:
   - Laravel route definitions

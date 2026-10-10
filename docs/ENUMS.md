@@ -117,7 +117,7 @@ Storage: `nhl_lineup_observations.raw_evidence.ocr[].status` and local post audi
 - `fantrax`: Fantrax import, league-sync, and draft-sync work.
 - `lineups`: Time-sensitive anticipated NHL lineup work and live game-prediction cache refreshes.
 
-Horizon assigns twelve workers to `projections`, five workers to `default`, two workers to `fantrax`, and one worker to `lineups` (twenty total per Horizon instance), as governed by `docs/architecture/application/LaravelApplicationShell.yaml`.
+Horizon assigns twenty-five workers to `projections`, five workers to `default`, five workers to `fantrax`, and two workers to `lineups` (thirty-seven total per Horizon instance), as governed by `docs/architecture/application/LaravelApplicationShell.yaml`.
 
 ## Scheduled process keys and discovery work scheduling
 
