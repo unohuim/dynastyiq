@@ -218,6 +218,7 @@
                             @csrf
                             <button type="submit" @disabled($pregameActive) class="block w-full px-3 py-2 text-left text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950 disabled:cursor-not-allowed disabled:opacity-60" role="menuitem">Build Pregame</button>
                         </form>
+                        <a href="{{ route('admin.nhl-sat-models.context.effects') }}" class="block px-3 py-2 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950" role="menuitem">View Pregame Impacts</a>
                     </div>
                 </div>
                 <div class="relative" x-data="{ compareOpen: false }" @mouseenter="compareOpen = true" @mouseleave="compareOpen = false">

@@ -1699,7 +1699,8 @@ Model actions expose **Analysis > Build Pregame**, using the model's Train and o
 **Public interface:** `GET /admin/nhl-sat-models/context/effects` groups actual next-game EV outcomes by pregame-only context factors and compares each group to its selected-season baseline.
 
 **Public Interface:**
-- `admin.nhl-sat-models.context`
+- `admin.nhl-sat-models.context.build`
+- `admin.nhl-sat-models.context.effects` (View Pregame Impacts; All seasons by default)
 - `nhl_pregame_context_runs`
 - `nhl_pregame_context_run_games`
 - `nhl_team_game_pregame_contexts`

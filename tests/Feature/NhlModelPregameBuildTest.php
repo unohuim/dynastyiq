@@ -48,7 +48,8 @@ it('queues model seasons and exposes progress without changing the model', funct
     $this->getJson(route('admin.nhl-sat-models.context.progress', $this->model))
         ->assertOk()->assertJsonPath('progress_html', $response->json('progress_html'));
     $this->get(route('admin.nhl-sat-models.index'))->assertOk()
-        ->assertSee('Build Pregame')->assertSee('Analysis')->assertSee('Building');
+        ->assertSee('Build Pregame')->assertSee('Analysis')->assertSee('Building')
+        ->assertSee('View Pregame Impacts')->assertSee(route('admin.nhl-sat-models.context.effects'));
 });
 
 it('supports models with Train seasons and no Test season', function (): void {
@@ -115,6 +116,7 @@ it('denies dashboard actions to guests', function (string $method, string $route
 })->with([
     ['postJson', 'admin.nhl-sat-models.context.build'],
     ['getJson', 'admin.nhl-sat-models.context.progress'],
+    ['getJson', 'admin.nhl-sat-models.context.effects'],
 ]);
 
 it('denies dashboard actions to non super admins', function (string $method, string $route): void {
@@ -123,4 +125,57 @@ it('denies dashboard actions to non super admins', function (string $method, str
 })->with([
     ['postJson', 'admin.nhl-sat-models.context.build'],
     ['getJson', 'admin.nhl-sat-models.context.progress'],
+    ['getJson', 'admin.nhl-sat-models.context.effects'],
 ]);
+
+it('combines all seasons by default and respects an explicit season', function (?string $season, int $samples, float $average): void {
+    $player = \App\Models\Player::create([
+        'nhl_id' => 8470001, 'first_name' => 'Test', 'last_name' => 'Skater',
+        'full_name' => 'Test Skater', 'position' => 'C', 'pos_type' => 'F',
+    ]);
+    foreach (['20242025', '20252026'] as $index => $seasonId) {
+        $gameId = 2024020001 + $index * 1000000;
+        $date = ((int) substr($seasonId, 0, 4)) . '-10-10';
+        \Illuminate\Support\Facades\DB::table('nhl_games')->insert([
+            'nhl_game_id' => $gameId, 'season_id' => $seasonId, 'game_type' => 2,
+            'game_date' => $date, 'game_dow' => 'Fri', 'game_month' => 'Oct',
+        ]);
+        \Illuminate\Support\Facades\DB::table('nhl_player_game_pregame_contexts')->insert([
+            'nhl_game_id' => $gameId, 'nhl_player_id' => 8470001,
+            'nhl_team_id' => 1, 'opponent_team_id' => 2, 'game_date' => $date,
+            'source_cutoff_at' => $date . ' 19:00:00', 'venue' => 'home',
+            'participant_source' => 'boxscore', 'metrics' => '{}',
+            'context_version' => \App\Services\NhlPregameContextBuilder::VERSION,
+        ]);
+        \Illuminate\Support\Facades\DB::table('nhl_player_game_strength_summaries')->insert([
+            'nhl_game_id' => $gameId, 'player_id' => $player->id,
+            'nhl_player_id' => 8470001, 'strength' => 'EV', 'toi' => 600,
+            'satf' => 10 * ($index + 1),
+        ]);
+    }
+    $params = $season === null ? [] : ['season_id' => $season];
+    $this->actingAs($this->admin)->get(route('admin.nhl-sat-models.context.effects', $params))
+        ->assertOk()->assertViewHas('selectedSeasonId', $season ?? 'all')
+        ->assertViewHas('baseline', fn (array $baseline): bool => $baseline['sample_size'] === $samples && $baseline['actual_average'] === $average)
+        ->assertSee('All')->assertSee('season_id=' . ($season ?? 'all'));
+    Bus::assertNothingDispatched();
+})->with([
+    'default All' => [null, 2, 90.0],
+    'explicit All' => ['all', 2, 90.0],
+    'single season' => ['20242025', 1, 60.0],
+]);
+
+it('shows an empty All selection and rejects unknown seasons', function (): void {
+    $this->actingAs($this->admin)->get(route('admin.nhl-sat-models.context.effects'))
+        ->assertOk()->assertViewHas('selectedSeasonId', 'all')
+        ->assertViewHas('baseline', ['sample_size' => 0, 'actual_average' => null]);
+    $this->getJson(route('admin.nhl-sat-models.context.effects', ['season_id' => 'invalid']))->assertUnprocessable();
+});
+
+it('removes the standalone context routes without removing model builds', function (): void {
+    expect(\Illuminate\Support\Facades\Route::has('admin.nhl-sat-models.context'))->toBeFalse()
+        ->and(\Illuminate\Support\Facades\Route::has('admin.nhl-sat-models.context.store'))->toBeFalse()
+        ->and(\Illuminate\Support\Facades\Route::has('admin.nhl-sat-models.context.build'))->toBeTrue();
+    $this->actingAs($this->admin)->get('/admin/nhl-sat-models/context')->assertNotFound();
+    $this->postJson('/admin/nhl-sat-models/context')->assertNotFound();
+});

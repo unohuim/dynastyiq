@@ -10,7 +10,6 @@ location:
   - app/Services/NhlPregameContextBuilder.php
   - app/Services/NhlPregameContextOrchestrator.php
   - database/migrations/2026_10_06_000001_create_nhl_pregame_context_tables.php
-  - resources/views/admin/nhl-sat-models/context.blade.php
   - resources/views/admin/nhl-sat-models/context-effects.blade.php
 purpose: Preserve what was knowable before each historical NHL game so context factors can be evaluated against static predictions without changing live prediction behavior.
 when_to_use:
@@ -23,7 +22,9 @@ when_not_to_use:
 rules:
   - SAT model actions expose Analysis > Build Pregame first. This queues the existing context backfill for the model's distinct Train seasons plus its optional Test season, ignoring client-supplied season overrides. It does not train models or change context calculations.
   - Model-initiated context runs retain model_run_id in existing run options. Context snapshots remain shared, versioned upserts; model association does not duplicate snapshots or mutate model training status, timestamps, or outputs.
-  - Manual and model-triggered context builds share serialized admission and reject active runs overlapping any selected season. Existing bounded, date-ordered dispatch remains unchanged.
+  - Model-triggered context builds use serialized admission and reject active runs overlapping any selected season. Existing bounded, date-ordered dispatch remains unchanged.
+  - Analysis > View Pregame Impacts opens the context/effects page. Its season filter defaults to All, pooling eligible player-game evidence across available seasons; selecting a season limits both groups and their baseline to that season. Sorting preserves the selection.
+  - The standalone context page and its manual-backfill GET/POST routes are removed; context building starts from model actions. Stored context and run history are preserved.
   - The model status cell shows Building and context game counts while queued or running, then Pregame completed or Pregame failed. Page-local polling reads active progress every five seconds without full-page reloads or queue dispatch; training status remains independent.
   - Every snapshot uses only completed regular-season games strictly before the target game's scheduled start time; target-game outcomes and later games are forbidden inputs.
   - Player snapshots record the completed-game participant only for historical evidence and label that source explicitly; future prediction use requires independently selected pregame rosters.
@@ -41,14 +42,12 @@ rules:
 public_interface:
   - POST /admin/nhl-sat-models/{run}/context/build
   - GET /admin/nhl-sat-models/{run}/context/progress
-  - GET /admin/nhl-sat-models/context
-  - POST /admin/nhl-sat-models/context
   - GET /admin/nhl-sat-models/context/effects
   - nhl_pregame_context_runs
   - nhl_pregame_context_run_games
   - nhl_team_game_pregame_contexts
   - nhl_player_game_pregame_contexts
 example_usage: |
-  Select 20232024, 20242025, and 20252026 in Admin > NHL SAT Models > Context.
+  Choose Analysis > Build Pregame on a SAT model to use its Train and Test seasons.
   The run creates durable game work rows, processes the oldest date in bounded pages,
   and stores each player's pregame EV/PP/PK context without changing predictions.

@@ -21,13 +21,12 @@
                     <div class="flex items-center gap-2 text-xs font-medium text-gray-500">
                         <a href="{{ route('admin.nhl-sat-models.index') }}" class="transition-colors hover:text-gray-950">SAT Models</a>
                         <span>/</span>
-                        <a href="{{ route('admin.nhl-sat-models.context') }}" class="transition-colors hover:text-gray-950">Context</a>
-                        <span>/</span><span>Effects</span>
+                        <span>Pregame Impacts</span>
                     </div>
-                    <h1 class="mt-2 text-2xl font-semibold tracking-tight text-gray-950">Context effects</h1>
+                    <h1 class="mt-2 text-2xl font-semibold tracking-tight text-gray-950">Pregame Impacts</h1>
                     <p class="mt-1 max-w-3xl text-sm text-gray-600">Compare actual next-game EV results across groups created only from evidence available before each game. This is analysis, not a prediction adjustment.</p>
                 </div>
-                <a href="{{ route('admin.nhl-sat-models.context') }}" class="inline-flex min-h-10 items-center rounded-md border border-gray-300 bg-white px-3 text-sm font-semibold text-gray-700 shadow-sm transition-colors hover:bg-gray-50">Context builds</a>
+                <a href="{{ route('admin.nhl-sat-models.index') }}" class="inline-flex min-h-10 items-center rounded-md border border-gray-300 bg-white px-3 text-sm font-semibold text-gray-700 shadow-sm transition-colors hover:bg-gray-50">SAT Models</a>
             </div>
 
             <section class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
@@ -35,6 +34,7 @@
                     <label class="block">
                         <span class="mb-1 block text-xs font-semibold text-gray-700">Season</span>
                         <select name="season_id" class="min-h-10 rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            <option value="all" @selected($selectedSeasonId === 'all')>All</option>
                             @foreach($seasonIds as $seasonId)
                                 <option value="{{ $seasonId }}" @selected($selectedSeasonId === $seasonId)>{{ $seasonId }}</option>
                             @endforeach

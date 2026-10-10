@@ -35,38 +35,6 @@ class NhlPregameContextController extends Controller
         'sat_trend' => 'SAT /60 trend (last 10 vs season)',
     ];
 
-    public function index(): View
-    {
-        $seasons = DB::table('nhl_games')->where('game_type', 2)->whereIn('game_state', ['OFF', 'FINAL'])
-            ->select('season_id')
-            ->selectRaw('COUNT(*) as completed_games')
-            ->selectRaw('(SELECT COUNT(*) FROM nhl_game_summaries summaries INNER JOIN nhl_games source_games ON source_games.nhl_game_id = summaries.nhl_game_id WHERE source_games.season_id = nhl_games.season_id) as player_summary_count')
-            ->groupBy('season_id')->orderByDesc('season_id')->get();
-
-        return view('admin.nhl-sat-models.context', [
-            'runs' => NhlPregameContextRun::query()->latest()->limit(12)->get(),
-            'seasons' => $seasons,
-        ]);
-    }
-
-    public function store(Request $request): RedirectResponse|JsonResponse
-    {
-        $seasonIds = DB::table('nhl_games')->where('game_type', 2)->whereIn('game_state', ['OFF', 'FINAL'])
-            ->distinct()->pluck('season_id')->map(fn (mixed $id): string => (string) $id)->all();
-        $input = $request->validate([
-            'season_ids' => ['required', 'array', 'min:1'],
-            'season_ids.*' => ['required', Rule::in($seasonIds)],
-        ]);
-        $selected = collect($input['season_ids'])->map(fn (mixed $id): string => (string) $id)->unique()->sort()->values()->all();
-        $run = $this->queueBackfill($request, $selected);
-
-        if ($request->expectsJson()) {
-            return response()->json(['message' => 'Queued bounded pregame-context backfill.', 'run' => $run], 202);
-        }
-
-        return redirect()->route('admin.nhl-sat-models.context')->with('status', 'Queued bounded pregame-context backfill.');
-    }
-
     /** Build the model's Train and optional Test seasons using the existing context pipeline. */
     public function buildForModel(Request $request, NhlModelRun $run): RedirectResponse|JsonResponse
     {
@@ -111,7 +79,7 @@ class NhlPregameContextController extends Controller
     }
 
     /**
-     * Share admission and bounded dispatch between manual backfills and model actions.
+     * Serialize admission and retain bounded dispatch for model context builds.
      *
      * @param array<int, string> $seasons
      */
@@ -166,14 +134,14 @@ class NhlPregameContextController extends Controller
             ->all();
 
         $input = $request->validate([
-            'season_id' => ['nullable', Rule::in($seasonIds)],
+            'season_id' => ['nullable', Rule::in(['all', ...$seasonIds])],
             'metric' => ['nullable', Rule::in(array_keys(self::ANALYSIS_METRICS))],
             'factor' => ['nullable', Rule::in(array_keys(self::ANALYSIS_FACTORS))],
             'sort' => ['nullable', Rule::in(['group', 'sample_size', 'actual_average', 'delta_from_baseline'])],
             'direction' => ['nullable', Rule::in(['asc', 'desc'])],
         ]);
 
-        $seasonId = (string) ($input['season_id'] ?? $seasonIds[0] ?? '');
+        $seasonId = (string) ($input['season_id'] ?? 'all');
         $metric = (string) ($input['metric'] ?? 'ev_corsi_for_per_60');
         $factor = (string) ($input['factor'] ?? 'venue');
         $sort = (string) ($input['sort'] ?? 'sample_size');
@@ -221,7 +189,7 @@ class NhlPregameContextController extends Controller
             })
             ->leftJoin('nhl_team_game_pregame_contexts as teams', 'teams.id', '=', 'contexts.team_context_id')
             ->where('contexts.context_version', \App\Services\NhlPregameContextBuilder::VERSION)
-            ->where('games.season_id', $seasonId)
+            ->when($seasonId !== 'all', fn ($query) => $query->where('games.season_id', $seasonId))
             ->select([
                 'contexts.venue',
                 'contexts.metrics',
