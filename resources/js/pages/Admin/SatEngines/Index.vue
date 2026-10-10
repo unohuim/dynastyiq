@@ -1,12 +1,16 @@
 <script setup>
 import { Head, Link, router, useForm, usePage } from '@inertiajs/vue3';
-import { ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import SettingsFields from './SettingsFields.vue';
 import Pagination from './Pagination.vue';
-import { baseUrl, gapLabel } from './engine-ui';
+import { active, baseUrl, gapLabel, number } from './engine-ui';
 
 const props = defineProps({ engines: Object, runs: Object, stacks: Object, models: Array, defaults: Object, engineSearch: String });
-const activeTab = usePage().url.includes('tab=stacks') ? 'stacks' : usePage().url.includes('tab=discoveries') ? 'discoveries' : 'engines';
+const page = usePage();
+const activeTab = computed(() => {
+    const tab = new URLSearchParams(page.url.split('?')[1] ?? '').get('tab');
+    return ['stacks', 'discoveries'].includes(tab) ? tab : 'engines';
+});
 const createdStackId = new URLSearchParams(usePage().url.split('?')[1] ?? '').get('created_stack');
 const form = useForm({ name: '', test_model_run_id: props.models[0]?.id ?? '', model_run_id: props.models[0]?.id ?? '', settings: { ...props.defaults }, notes: '' });
 const defaultSelection = useForm({});
@@ -14,6 +18,21 @@ const drawerOpen = ref(false);
 const engineSearch = ref(props.engineSearch ?? '');
 const search = () => router.get(baseUrl, { engine_search: engineSearch.value || undefined }, { preserveState: true, preserveScroll: true });
 const closeDrawer = () => { if (!form.processing) drawerOpen.value = false; };
+
+let progressTimer;
+let disposed = false;
+const scheduleProgress = () => {
+    if (!disposed) progressTimer = setTimeout(refreshProgress, 5000);
+};
+const refreshProgress = () => {
+    if (document.hidden || activeTab.value !== 'discoveries' || !props.runs.data.some(run => active(run.status))) {
+        scheduleProgress();
+        return;
+    }
+    router.reload({ only: ['runs'], preserveScroll: true, onFinish: scheduleProgress });
+};
+onMounted(scheduleProgress);
+onBeforeUnmount(() => { disposed = true; clearTimeout(progressTimer); });
 </script>
 
 <template>
@@ -43,7 +62,7 @@ const closeDrawer = () => { if (!form.processing) drawerOpen.value = false; };
         </template>
         <section v-else-if="activeTab === 'discoveries'" class="space-y-4">
             <div class="flex items-end justify-between gap-4"><div><h2 class="text-lg font-semibold text-gray-900">Discovery history</h2><p class="mt-1 text-sm text-gray-600">Saved historical evaluations remain available after completion.</p></div><Link :href="`${baseUrl}/discover`" class="rounded border border-gray-300 px-3 py-2 text-sm text-gray-800 transition-colors duration-150 hover:bg-gray-50 motion-reduce:transition-none">New discovery</Link></div>
-            <div class="overflow-x-auto"><table class="w-full text-left text-sm"><thead><tr class="border-b border-gray-200 text-xs font-medium uppercase tracking-wide text-gray-500"><th class="p-3">Run</th><th class="p-3">Type</th><th class="p-3">Model</th><th class="p-3">Scope</th><th class="p-3 text-right">Games</th><th class="p-3">Status</th><th class="p-3">Started</th><th class="p-3"><span class="sr-only">Actions</span></th></tr></thead><tbody><tr v-for="run in runs.data" :key="run.id" class="border-b border-gray-100"><td class="p-3 font-medium">{{ run.definition?.name ?? `#${run.id}` }}</td><td class="p-3 capitalize">{{ run.kind }}</td><td class="p-3">{{ run.definition?.model_name ?? run.model_run_id }}</td><td class="p-3">{{ run.definition?.scope?.mode ?? '—' }}</td><td class="p-3 text-right tabular-nums">{{ run.game_count }}</td><td class="p-3"><span class="rounded-full bg-gray-100 px-2 py-1 text-xs font-medium text-gray-700">{{ run.status }}</span></td><td class="p-3 text-gray-600">{{ run.created_at }}</td><td class="p-3 text-right"><Link :href="`${baseUrl}/runs/${run.id}`" class="text-indigo-700 underline">View results</Link></td></tr></tbody></table><p v-if="!runs.data.length" class="py-10 text-center text-sm text-gray-500">No discovery or test runs have been saved yet.</p></div>
+            <div class="overflow-x-auto"><table class="w-full text-left text-sm"><thead><tr class="border-b border-gray-200 text-xs font-medium uppercase tracking-wide text-gray-500"><th class="p-3">Run</th><th class="p-3">Type</th><th class="p-3">Model</th><th class="p-3">Scope</th><th class="p-3 text-right">Games</th><th class="p-3">Status</th><th class="p-3">Progress</th><th class="p-3">Started</th><th class="p-3"><span class="sr-only">Actions</span></th></tr></thead><tbody><tr v-for="run in runs.data" :key="run.id" class="border-b border-gray-100"><td class="p-3 font-medium">{{ run.definition?.name ?? `#${run.id}` }}</td><td class="p-3 capitalize">{{ run.kind }}</td><td class="p-3">{{ run.definition?.model_name ?? run.model_run_id }}</td><td class="p-3">{{ run.definition?.scope?.mode ?? '—' }}</td><td class="p-3 text-right tabular-nums">{{ run.game_count }}</td><td class="p-3"><span class="rounded-full bg-gray-100 px-2 py-1 text-xs font-medium text-gray-700">{{ run.status }}</span></td><td class="p-3 text-xs tabular-nums text-gray-600"><div class="whitespace-nowrap">Predictions {{ number(run.predictions_completed ?? 0) }} / {{ number(run.prediction_count ?? 0) }}</div><div class="mt-1 whitespace-nowrap">{{ run.definition?.automatic_search ? 'Splits evaluated' : run.definition?.confidence_search === 'automatic' ? 'Weight/gap searches' : 'Candidates' }} {{ number(run.candidates_completed ?? 0) }} / {{ number(run.candidate_count ?? 0) }}</div></td><td class="p-3 text-gray-600">{{ run.created_at }}</td><td class="p-3 text-right"><Link :href="`${baseUrl}/runs/${run.id}`" class="text-indigo-700 underline">View results</Link></td></tr></tbody></table><p v-if="!runs.data.length" class="py-10 text-center text-sm text-gray-500">No discovery or test runs have been saved yet.</p></div>
             <Pagination :links="runs.links" />
         </section>
         <section v-else class="space-y-5"><div><h2 class="text-lg font-semibold text-gray-950">Saved stacks</h2><p class="mt-1 text-sm text-gray-600">Open a stack to manage its Engines and priority.</p></div><p v-if="createdStackId" role="status" class="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">Stack saved. Its Engines are now available independently.</p><p v-for="(error, key) in defaultSelection.errors" :key="key" role="alert" class="text-sm text-red-700">{{ error }}</p><div class="overflow-x-auto rounded-xl border border-gray-200 bg-white"><table class="w-full text-left text-sm"><thead class="border-b border-gray-200 bg-gray-50 text-xs font-medium uppercase tracking-wide text-gray-500"><tr><th class="px-4 py-3">Stack</th><th class="px-4 py-3">Production model</th><th class="px-4 py-3 text-right">Engines</th><th class="px-4 py-3">Created</th><th class="px-4 py-3"><span class="sr-only">Actions</span></th></tr></thead><tbody><tr v-for="stack in stacks.data" :key="stack.id" class="border-b border-gray-100 last:border-0"><td class="px-4 py-4 font-medium text-gray-950">{{ stack.name }}<span v-if="stack.is_default" class="ml-1 font-normal text-gray-500">(default)</span></td><td class="px-4 py-4 text-gray-600">{{ stack.production_model?.name ?? 'Each Engine' }}</td><td class="px-4 py-4 text-right tabular-nums text-gray-700">{{ stack.members_count }}</td><td class="px-4 py-4 text-gray-600">{{ stack.created_at }}</td><td class="px-4 py-4 text-right"><button v-if="!stack.is_default && stack.members_count" type="button" :disabled="defaultSelection.processing" class="mr-3 text-sm font-medium text-indigo-700 underline disabled:opacity-50" @click="defaultSelection.post(`${baseUrl}/stacks/${stack.id}/default`)">Make default</button><Link :href="`${baseUrl}/stacks/${stack.id}`" class="font-medium text-indigo-700 underline">View stack</Link></td></tr></tbody></table><p v-if="!stacks.data.length" class="px-5 py-10 text-center text-sm text-gray-500">No saved stacks yet. Create one from a discovery recommendation.</p></div><Pagination :links="stacks.links" /></section>
