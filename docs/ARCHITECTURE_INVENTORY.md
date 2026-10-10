@@ -930,12 +930,14 @@ Every Engine accordion lists all games, showing actual attempts or the earlier p
 
 New discoveries use optional fixed weights, independent confidence bounds and percentage-spread constraints. Confidence/spread search precedes variable weight search; existing runs retain legacy semantics. See `docs/architecture/stats/NhlSatEngines.yaml`.
 
+Discovery submission queues one background dispatcher; durable pages of 100 feed Horizon without holding the web request open. Dispatch retries preserve the cursor and saved results; exhausted retries pause with a Resume action.
+
 **Purpose:** Save prediction settings and run model-dependent historical build/discovery evaluations.
 
 **Location:** `app/Services/NhlSatEngineEvaluator.php`, `app/Services/NhlSatEngineSettings.php`,
 `app/Models/NhlSatEngine.php`, `app/Models/NhlSatEngineCandidate.php`, `app/Models/NhlSatEngineRun.php`,
 `app/Http/Controllers/Admin/NhlSatEngineController.php`,
-`app/Jobs/EvaluateNhlSatEngineGameJob.php`, `app/Jobs/RankNhlSatEngineCandidatesJob.php`,
+`app/Jobs/EvaluateNhlSatEngineGameJob.php`, `app/Jobs/DispatchNhlSatEngineGamesJob.php`, `app/Jobs/RankNhlSatEngineCandidatesJob.php`,
 and `resources/js/pages/Admin/SatEngines/`.
 
 **Interface:** `/admin/nhl-sat-engines` for CRUD and engine builds; `/discover` for

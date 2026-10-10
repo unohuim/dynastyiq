@@ -12,12 +12,16 @@ Each Horizon instance starts thirty-seven workers:
 Model jobs set their own queue; model batches also explicitly select `projections`
 so batched children and later loader additions stay on that queue. Existing
 progress checkpoints, overlap locks, dispatch pacing, and retries are unchanged.
-New SAT Engine discovery runs queue every game in their current stage immediately;
+New SAT Engine discovery requests queue one background dispatcher. It submits
+current-stage games in resumable pages of 100 without waiting for game completion;
 there is no fixed-chain dependency between games. Horizon's available projections
 workers control simultaneous execution. Ranking still runs across up to sixteen
 independent pairs (one lane when only one pair exists). Pause and resume an older
 automatic run to upgrade scheduling without discarding results. Worker configuration
-is unchanged; later stages wait for the current stage to finish.
+is unchanged; later stages wait for the current stage to finish. Dispatch failures
+retry from the saved cursor; exhausted retries pause the run with an error. Resume
+preserves saved results and queues only missing coordinates. After deploying this
+change, Pause then Resume an already-stalled running discovery to start its dispatcher.
 Interactive synchronous predictions are not converted to background jobs.
 
 ## Deploying the change

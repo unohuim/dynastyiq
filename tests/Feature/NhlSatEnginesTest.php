@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Jobs\EvaluateNhlSatEngineGameJob;
+use App\Jobs\DispatchNhlSatEngineGamesJob;
 use App\Jobs\RankNhlSatEngineCandidatesJob;
 use App\Models\NhlModelRun;
 use App\Models\NhlSatEngine;
@@ -17,6 +18,7 @@ use App\Services\NhlSatModelPredictionService;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Validation\ValidationException;
 use Inertia\Testing\AssertableInertia as Assert;
 
@@ -690,7 +692,8 @@ it('starts stage three after ranking and preserves fixed weights and confidence 
     }
     $job->handle(app(NhlSatEngineEvaluator::class));
     expect($run->fresh()->candidate_count)->toBe($updated->candidate_count);
-    Bus::assertDispatchedTimes(EvaluateNhlSatEngineGameJob::class, 24);
+    Bus::assertDispatchedTimes(DispatchNhlSatEngineGamesJob::class, 1);
+    Bus::assertNotDispatched(EvaluateNhlSatEngineGameJob::class);
 });
 
 it('finishes after qualification ranking when both weights are fixed', function (): void {
@@ -732,22 +735,27 @@ it('starts discovery with only the fixed starting pair before searching weights'
         ->and($run->definition['automatic_search']['lanes'])->toBe(16)
         ->and($run->definition['search'])->toBeNull();
     $this->assertDatabaseCount('nhl_sat_engine_candidates', 1);
-    Bus::assertDispatchedTimes(EvaluateNhlSatEngineGameJob::class, 3);
+    Bus::assertDispatchedTimes(DispatchNhlSatEngineGamesJob::class, 1);
+    Bus::assertNotDispatched(EvaluateNhlSatEngineGameJob::class);
     $this->get('/admin/nhl-sat-engines/runs/' . $run->id)->assertInertia(fn (Assert $page) => $page
         ->where('run.definition.automatic_search.stage', 0)->where('run.candidate_count', 1));
 });
 
-it('queues all twenty-five discovery games immediately without waiting for completion', function (): void {
+it('queues discovery games in the background without waiting for game completion', function (): void {
     foreach (range(10, 31) as $index) {
         ($this->seedGame)(2025020000 + $index, '2025-10-10');
     }
     $run = app(NhlSatEngineEvaluator::class)->start([...$this->input, 'kind' => 'discovery'], $this->engine);
     expect($run->game_count)->toBe(25);
     expect($run->definition['automatic_search']['work_scheduling'])->toBe('stage_games_v1');
-    Bus::assertDispatchedTimes(EvaluateNhlSatEngineGameJob::class, 25);
+    Bus::assertDispatchedTimes(DispatchNhlSatEngineGamesJob::class, 1);
+    Bus::assertNotDispatched(EvaluateNhlSatEngineGameJob::class);
+    Queue::fake();
+    (new DispatchNhlSatEngineGamesJob($run->id, 1, $run->definition['evaluation_dispatch']['token']))->handle();
+    Queue::assertPushed(EvaluateNhlSatEngineGameJob::class, 25);
     foreach (range(0, 24) as $game) {
-        Bus::assertDispatched(EvaluateNhlSatEngineGameJob::class, fn ($job) => $job->splitIndex === 0
-            && $job->gameIndex === $game && $job->queue === 'projections' && $job->afterCommit === true);
+        Queue::assertPushed(EvaluateNhlSatEngineGameJob::class, fn ($job) => $job->splitIndex === 0
+            && $job->gameIndex === $game && $job->queue === 'projections');
     }
 });
 
@@ -782,9 +790,82 @@ it('resumes discovery by queueing missing games without losing completed results
     $run->update(['definition' => $definition, 'predictions_completed' => 1, 'status' => 'paused', 'paused_status' => 'running', 'work_generation' => 2]);
     Bus::fake();
     app(NhlSatEngineEvaluator::class)->resume($run);
-    Bus::assertDispatchedTimes(EvaluateNhlSatEngineGameJob::class, 2);
+    Bus::assertDispatchedTimes(DispatchNhlSatEngineGamesJob::class, 1);
+    Queue::fake();
+    (new DispatchNhlSatEngineGamesJob($run->id, 2, $run->fresh()->definition['evaluation_dispatch']['token']))->handle();
+    Queue::assertPushed(EvaluateNhlSatEngineGameJob::class, 2);
     expect($run->fresh()->definition['automatic_search']['lanes'])->toBe(16)
         ->and($run->fresh()->definition['automatic_search']['work_scheduling'])->toBe('stage_games_v1');
+    $this->assertDatabaseCount('nhl_sat_engine_results', 1);
+});
+
+it('checkpoints background dispatch in pages and resumes without a browser request', function (): void {
+    $run = app(NhlSatEngineEvaluator::class)->start([...$this->input, 'kind' => 'discovery'], $this->engine);
+    $definition = $run->definition;
+    $definition['game_ids'] = range(2025020001, 2025020150);
+    $run->update(['definition' => $definition, 'game_count' => 150, 'prediction_count' => 150]);
+    Bus::fake();
+    Queue::fake();
+    $job = new DispatchNhlSatEngineGamesJob($run->id, 1, $definition['evaluation_dispatch']['token']);
+    $job->handle();
+    Queue::assertPushed(EvaluateNhlSatEngineGameJob::class, 100);
+    Bus::assertDispatchedTimes(DispatchNhlSatEngineGamesJob::class, 1);
+    expect($run->fresh()->definition['evaluation_dispatch']['next_offset'])->toBe(100)
+        ->and($run->fresh()->definition['evaluation_dispatch']['complete'])->toBeFalse();
+    $job->handle();
+    Queue::assertPushed(EvaluateNhlSatEngineGameJob::class, 150);
+    expect($run->fresh()->definition['evaluation_dispatch']['complete'])->toBeTrue();
+    $job->handle();
+    Queue::assertPushed(EvaluateNhlSatEngineGameJob::class, 150);
+});
+
+it('does not advance the dispatch cursor when a queue push fails partway', function (): void {
+    $run = app(NhlSatEngineEvaluator::class)->start([...$this->input, 'kind' => 'discovery'], $this->engine);
+    $job = new DispatchNhlSatEngineGamesJob($run->id, 1, $run->definition['evaluation_dispatch']['token']);
+    $connection = Mockery::mock(\Illuminate\Contracts\Queue\Queue::class);
+    Queue::shouldReceive('connection')->andReturn($connection);
+    $connection->shouldReceive('push')->once()->ordered()->andReturn('first-job');
+    $connection->shouldReceive('push')->once()->ordered()->andThrow(new \RuntimeException('Redis unavailable'));
+    expect(fn () => $job->handle())->toThrow(\RuntimeException::class, 'Redis unavailable');
+    expect($run->fresh()->definition['evaluation_dispatch']['next_offset'])->toBe(0);
+    Queue::fake();
+    $job->handle();
+    Queue::assertPushed(EvaluateNhlSatEngineGameJob::class, 3);
+    expect($run->fresh()->definition['evaluation_dispatch']['complete'])->toBeTrue();
+});
+
+it('ignores inactive stale generation and replaced stage dispatchers', function (string $condition): void {
+    $run = app(NhlSatEngineEvaluator::class)->start([...$this->input, 'kind' => 'discovery'], $this->engine);
+    $job = new DispatchNhlSatEngineGamesJob($run->id, 1, $run->definition['evaluation_dispatch']['token']);
+    if ($condition === 'generation') {
+        $run->update(['work_generation' => 2]);
+    } elseif ($condition === 'stage') {
+        $definition = $run->definition;
+        $definition['evaluation_dispatch']['token'] = 'replacement';
+        $run->update(['definition' => $definition]);
+    } else {
+        $run->update(['status' => $condition]);
+    }
+    Queue::fake();
+    $job->handle();
+    $job->failed(new \RuntimeException('Late failure'));
+    Queue::assertNothingPushed();
+    expect($run->fresh()->definition['evaluation_dispatch']['next_offset'])->toBe(0);
+})->with(['paused', 'cancelled', 'failed', 'complete', 'ranking', 'generation', 'stage']);
+
+it('pauses exhausted dispatch with a resumable error while retaining saved results', function (): void {
+    $run = app(NhlSatEngineEvaluator::class)->start([...$this->input, 'kind' => 'discovery'], $this->engine);
+    DB::table('nhl_sat_engine_results')->insert(($this->result)($run, 2025020001));
+    $run->update(['predictions_completed' => 1]);
+    $job = new DispatchNhlSatEngineGamesJob($run->id, 1, $run->definition['evaluation_dispatch']['token']);
+    $job->failed(new \RuntimeException('Redis unavailable'));
+    expect($run->fresh()->status)->toBe('paused')
+        ->and($run->fresh()->error)->toContain('Resume')
+        ->and($run->fresh()->work_generation)->toBe(2);
+    Bus::fake();
+    app(NhlSatEngineEvaluator::class)->resume($run->fresh());
+    expect($run->fresh()->error)->toBeNull()->and($run->fresh()->predictions_completed)->toBe(1);
+    Bus::assertDispatchedTimes(DispatchNhlSatEngineGamesJob::class, 1);
     $this->assertDatabaseCount('nhl_sat_engine_results', 1);
 });
 
@@ -1549,9 +1630,15 @@ it('queues every game in the current weight-search stage without chaining', func
 
     expect($run->fresh()->definition['automatic_search']['lanes'])->toBe(16);
     $total = $run->fresh()->definition['automatic_search']['stage_split_count'] * 3;
-    Bus::assertDispatchedTimes(EvaluateNhlSatEngineGameJob::class, $total);
+    Bus::assertDispatchedTimes(DispatchNhlSatEngineGamesJob::class, 1);
+    Queue::fake();
+    $dispatcher = new DispatchNhlSatEngineGamesJob($run->id, 1, $run->fresh()->definition['evaluation_dispatch']['token']);
+    do {
+        $dispatcher->handle();
+    } while (! $run->fresh()->definition['evaluation_dispatch']['complete']);
+    Queue::assertPushed(EvaluateNhlSatEngineGameJob::class, $total);
     foreach (range(0, $total - 1) as $offset) {
-        Bus::assertDispatched(EvaluateNhlSatEngineGameJob::class, fn ($job) =>
+        Queue::assertPushed(EvaluateNhlSatEngineGameJob::class, fn ($job) =>
             $job->splitIndex === 1 + intdiv($offset, 3) && $job->gameIndex === $offset % 3 && $job->queue === 'projections');
     }
 });

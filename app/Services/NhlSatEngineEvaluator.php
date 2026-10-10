@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Jobs\EvaluateNhlSatEngineGameJob;
+use App\Jobs\DispatchNhlSatEngineGamesJob;
 use App\Jobs\RankNhlSatEngineCandidatesJob;
 use App\Models\NhlModelRun;
 use App\Models\NhlSatEngine;
@@ -142,9 +143,7 @@ class NhlSatEngineEvaluator
                     'created_at' => now(), 'updated_at' => now(),
                 ], $chunk));
             }
-            foreach ($this->resumeEvaluationJobs($run) as [$splitIndex, $gameIndex]) {
-                EvaluateNhlSatEngineGameJob::dispatch($run->id, $splitIndex, $gameIndex, $run->work_generation)->afterCommit();
-            }
+            $this->queueEvaluationJobs($run);
 
             return $run;
         });
@@ -201,9 +200,7 @@ class NhlSatEngineEvaluator
         $run->candidate_count += count($candidates);
         $run->status = 'queued';
         $run->save();
-        foreach ($this->resumeEvaluationJobs($run) as [$splitIndex, $gameIndex]) {
-            EvaluateNhlSatEngineGameJob::dispatch($run->id, $splitIndex, $gameIndex, $run->work_generation)->afterCommit();
-        }
+        $this->queueEvaluationJobs($run);
 
         return true;
     }
@@ -228,6 +225,7 @@ class NhlSatEngineEvaluator
             $run->update([
                 'status' => $phase,
                 'paused_status' => null,
+                'error' => null,
                 'work_generation' => $legacyPause ? $run->work_generation + 1 : $run->work_generation,
             ]);
             if ($phase === 'ranking') {
@@ -235,10 +233,27 @@ class NhlSatEngineEvaluator
 
                 return;
             }
-            foreach ($this->resumeEvaluationJobs($run) as [$splitIndex, $gameIndex]) {
-                EvaluateNhlSatEngineGameJob::dispatch($run->id, $splitIndex, $gameIndex, $run->work_generation)->afterCommit();
-            }
+            $this->queueEvaluationJobs($run);
         });
+    }
+
+    /** Queue one background dispatcher for discovery, retaining configured-build scheduling. */
+    private function queueEvaluationJobs(NhlSatEngineRun $run): void
+    {
+        if (($run->definition['automatic_search']['work_scheduling'] ?? null) === 'stage_games_v1') {
+            $definition = $run->definition;
+            $token = (string) Str::uuid();
+            $definition['evaluation_dispatch'] = ['token' => $token, 'next_offset' => 0, 'complete' => false];
+            $run->definition = $definition;
+            $run->save();
+            DispatchNhlSatEngineGamesJob::dispatch($run->id, (int) $run->work_generation, $token)->afterCommit();
+
+            return;
+        }
+
+        foreach ($this->resumeEvaluationJobs($run) as [$splitIndex, $gameIndex]) {
+            EvaluateNhlSatEngineGameJob::dispatch($run->id, $splitIndex, $gameIndex, $run->work_generation)->afterCommit();
+        }
     }
 
     /** @return iterable<array{0:int,1:int}> */

@@ -78,6 +78,7 @@ it('routes each model coordinator child and continuation to projections', functi
     App\Jobs\BuildNhlStaffSatProfilesJob::class,
     App\Jobs\EvaluateNhlNextGameJob::class,
     App\Jobs\EvaluateNhlSatEngineGameJob::class,
+    App\Jobs\DispatchNhlSatEngineGamesJob::class,
     App\Jobs\LoadNhlPregameContextRunJob::class,
     App\Jobs\LoadNhlSatModelProfileBatchJob::class,
     App\Jobs\PrepareNhlPregameContextRunJob::class,
@@ -111,8 +112,8 @@ it('keeps ordinary jobs and provider jobs out of projections', function () {
         ->and((new ImportNhlAnticipatedLineupTeamJob(1, 'TOR', 10))->queue)->toBe('lineups');
 });
 
-it('allocates twenty fixed workers across four isolated queues', function () {
-    $allocation = ['projections' => 12, 'default' => 5, 'fantrax' => 2, 'lineups' => 1];
+it('allocates thirty seven fixed workers across four isolated queues', function () {
+    $allocation = ['projections' => 25, 'default' => 5, 'fantrax' => 5, 'lineups' => 2];
 
     foreach ($allocation as $queue => $workers) {
         $supervisor = config('horizon.defaults.supervisor-'.$queue);
@@ -123,7 +124,7 @@ it('allocates twenty fixed workers across four isolated queues', function () {
             ->and(config('horizon.environments.*'))->toHaveKey('supervisor-'.$queue);
     }
 
-    expect(array_sum(array_column(config('horizon.defaults'), 'maxProcesses')))->toBe(20);
+    expect(array_sum(array_column(config('horizon.defaults'), 'maxProcesses')))->toBe(37);
 });
 
 it('keeps heavy job timeouts below their reservation expiry', function () {
