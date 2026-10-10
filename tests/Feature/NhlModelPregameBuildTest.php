@@ -144,7 +144,10 @@ it('combines all seasons by default and respects an explicit season', function (
             'nhl_game_id' => $gameId, 'nhl_player_id' => 8470001,
             'nhl_team_id' => 1, 'opponent_team_id' => 2, 'game_date' => $date,
             'source_cutoff_at' => $date . ' 19:00:00', 'venue' => 'home',
-            'participant_source' => 'boxscore', 'metrics' => '{}',
+            'participant_source' => 'boxscore', 'metrics' => json_encode([
+                'all' => ['last_10' => ['sat_per_60' => 30], 'season_to_date' => ['sat_per_60' => 10]],
+                'strength' => ['EV' => ['last_10' => ['sat_per_60' => 6], 'season_to_date' => ['sat_per_60' => 6]]],
+            ], JSON_THROW_ON_ERROR),
             'context_version' => \App\Services\NhlPregameContextBuilder::VERSION,
         ]);
         \Illuminate\Support\Facades\DB::table('nhl_player_game_strength_summaries')->insert([
@@ -158,6 +161,8 @@ it('combines all seasons by default and respects an explicit season', function (
         ->assertOk()->assertViewHas('selectedSeasonId', $season ?? 'all')
         ->assertViewHas('baseline', fn (array $baseline): bool => $baseline['sample_size'] === $samples && $baseline['actual_average'] === $average)
         ->assertSee('All')->assertSee('season_id=' . ($season ?? 'all'));
+    $this->get(route('admin.nhl-sat-models.context.effects', [...$params, 'factor' => 'sat_trend']))
+        ->assertOk()->assertViewHas('rows', fn ($rows): bool => $rows->count() === 1 && $rows->first()['group'] === 'Within 0.5');
     Bus::assertNothingDispatched();
 })->with([
     'default All' => [null, 2, 90.0],
@@ -178,4 +183,46 @@ it('removes the standalone context routes without removing model builds', functi
         ->and(\Illuminate\Support\Facades\Route::has('admin.nhl-sat-models.context.build'))->toBeTrue();
     $this->actingAs($this->admin)->get('/admin/nhl-sat-models/context')->assertNotFound();
     $this->postJson('/admin/nhl-sat-models/context')->assertNotFound();
+});
+
+it('enables pregame inspection only for completed model builds with saved evidence', function (string $status, bool $saveData, bool $currentVersion, bool $enabled): void {
+    $this->actingAs($this->admin)->postJson(route('admin.nhl-sat-models.context.build', $this->model))->assertAccepted();
+    $build = NhlPregameContextRun::query()->sole();
+    $build->update(['status' => $status]);
+    if ($saveData) {
+        \Illuminate\Support\Facades\DB::table('nhl_player_game_pregame_contexts')->insert([
+            'run_id' => $build->id, 'nhl_game_id' => 2025020001,
+            'nhl_player_id' => 8470001, 'nhl_team_id' => 1, 'opponent_team_id' => 2,
+            'game_date' => '2025-10-10', 'source_cutoff_at' => '2025-10-10 19:00:00',
+            'venue' => 'home', 'participant_source' => 'boxscore', 'metrics' => '{}',
+            'context_version' => $currentVersion ? \App\Services\NhlPregameContextBuilder::VERSION : 'old-version',
+        ]);
+    }
+    expect($build->canViewImpacts())->toBe($enabled);
+    $html = $this->getJson(route('admin.nhl-sat-models.context.progress', $this->model))
+        ->assertOk()->json('progress_html');
+    expect($html)->toContain('data-pregame-viewable="' . ($enabled ? '1' : '0') . '"');
+    $page = $this->get(route('admin.nhl-sat-models.index'))->assertOk()->getContent();
+    expect($page)->toContain('data-pregame-viewable="' . ($enabled ? '1' : '0') . '"');
+})->with([
+    'completed with current data' => ['completed', true, true, true],
+    'completed without data' => ['completed', false, true, false],
+    'completed with stale data' => ['completed', true, false, false],
+    'queued' => ['queued', true, true, false],
+    'running' => ['running', true, true, false],
+    'failed' => ['failed', true, true, false],
+]);
+
+it('does not enable a model menu from unrelated or manual builds', function (): void {
+    NhlPregameContextRun::query()->create([
+        'action' => 'backfill', 'status' => 'completed',
+        'season_ids' => ['20252026'], 'options' => ['model_run_id' => $this->model->id + 1],
+    ]);
+    NhlPregameContextRun::query()->create([
+        'action' => 'backfill', 'status' => 'completed', 'season_ids' => ['20252026'],
+    ]);
+    expect(NhlPregameContextRun::latestForModel($this->model->id))->toBeNull();
+    $html = $this->actingAs($this->admin)->getJson(route('admin.nhl-sat-models.context.progress', $this->model))
+        ->assertOk()->json('progress_html');
+    expect($html)->toContain('data-pregame-viewable="0"');
 });

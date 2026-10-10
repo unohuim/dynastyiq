@@ -150,9 +150,29 @@ class NhlPregameContextBuilder
         $history = DB::table('nhl_game_summaries as summaries')
             ->join('nhl_games as games', 'games.nhl_game_id', '=', 'summaries.nhl_game_id')
             ->where('summaries.nhl_player_id', $playerId)
+            ->where('summaries.toi', '>', 0)
             ->where('games.game_type', 2)->whereIn('games.game_state', ['OFF', 'FINAL'])
             ->where('games.start_time_utc', '<', $cutoff)->orderByDesc('games.start_time_utc')->orderByDesc('games.nhl_game_id')
-            ->get(['summaries.*', 'games.season_id', 'games.home_team_id', 'games.away_team_id', 'games.start_time_utc']);
+            ->select(['summaries.*', 'games.season_id', 'games.home_team_id', 'games.away_team_id', 'games.start_time_utc'])
+            ->selectRaw('EXISTS (SELECT 1 FROM nhl_shot_attempts_facts facts WHERE facts.nhl_game_id = summaries.nhl_game_id AND facts.is_shot_attempt = true) as has_shot_facts')
+            ->get();
+
+        $gameIds = $history->pluck('nhl_game_id')->all();
+        $exposure = DB::table('nhl_player_game_strength_summaries')
+            ->where('nhl_player_id', $playerId)->whereIn('nhl_game_id', $gameIds)
+            ->get()->groupBy('nhl_game_id');
+        // Raw strength preserves EV/PP/PK when descriptive buckets say empty-net or penalty-shot.
+        $strengthExpression = "CASE WHEN UPPER(strength) IN ('EV', 'PP', 'PK') THEN UPPER(strength) ELSE UPPER(strength_bucket) END";
+        $attempts = DB::table('nhl_shot_attempts_facts')
+            ->where('shooter_player_id', $playerId)->whereIn('nhl_game_id', $gameIds)
+            ->where('is_shot_attempt', true)
+            ->where(fn ($query) => $query->whereNull('period_type')->orWhere('period_type', '<>', 'SO'))
+            ->select('nhl_game_id')
+            ->selectRaw("{$strengthExpression} as strength, COUNT(*) as sat")
+            ->selectRaw('SUM(CASE WHEN is_shot_on_goal THEN 1 ELSE 0 END) as sog')
+            ->selectRaw('SUM(CASE WHEN is_goal THEN 1 ELSE 0 END) as goals')
+            ->groupBy('nhl_game_id')->groupByRaw($strengthExpression)
+            ->get()->groupBy('nhl_game_id');
 
         $isOpponent = fn (object $row): bool => ((int) $row->home_team_id === (int) $row->nhl_team_id ? (int) $row->away_team_id : (int) $row->home_team_id) === $opponentId;
         $isVenue = fn (object $row): bool => $venue === 'home' ? (int) $row->home_team_id === (int) $row->nhl_team_id : (int) $row->away_team_id === (int) $row->nhl_team_id;
@@ -166,7 +186,10 @@ class NhlPregameContextBuilder
                 'venue_season_to_date' => $this->summaryMetrics($history->filter(fn (object $row): bool => (string) $row->season_id === $seasonId)->filter($isVenue)),
                 'opponent_last_10' => $this->summaryMetrics($history->filter($isOpponent)->take(10)),
             ],
-            'strength' => collect(['EV', 'PP', 'PK'])->mapWithKeys(fn (string $strength): array => [$strength => $this->strengthMetrics($playerId, $teamId, $opponentId, $venue, $cutoff, $seasonId, $strength)])->all(),
+            'individual_strength_version' => 1,
+            'strength' => collect(['EV', 'PP', 'PK'])->mapWithKeys(fn (string $strength): array => [
+                $strength => $this->strengthMetrics($history, $exposure, $attempts, $opponentId, $venue, $seasonId, $strength),
+            ])->all(),
         ];
     }
 
@@ -190,25 +213,64 @@ class NhlPregameContextBuilder
     }
 
     /** @return array<string,array<string,int|float|null>> */
-    private function strengthMetrics(int $playerId, int $teamId, int $opponentId, string $venue, CarbonInterface $cutoff, string $seasonId, string $strength): array
+    private function strengthMetrics(Collection $history, Collection $exposure, Collection $attempts, int $opponentId, string $venue, string $seasonId, string $strength): array
     {
-        $history = DB::table('nhl_player_game_strength_summaries as summaries')
-            ->join('nhl_games as games', 'games.nhl_game_id', '=', 'summaries.nhl_game_id')
-            ->where('summaries.nhl_player_id', $playerId)->where('summaries.strength', $strength)
-            ->where('games.game_type', 2)->whereIn('games.game_state', ['OFF', 'FINAL'])
-            ->where('games.start_time_utc', '<', $cutoff)->orderByDesc('games.start_time_utc')->orderByDesc('games.nhl_game_id')
-            ->get(['summaries.*', 'games.season_id', 'games.home_team_id', 'games.away_team_id']);
-        $isOpponent = fn (object $row): bool => ((int) $row->home_team_id === (int) $row->team_id ? (int) $row->away_team_id : (int) $row->home_team_id) === $opponentId;
-        $isVenue = fn (object $row): bool => $venue === 'home' ? (int) $row->home_team_id === (int) $row->team_id : (int) $row->away_team_id === (int) $row->team_id;
+        // Choose appearances first: a game with no PP/PK time still belongs in L5/L10/L20.
+        $history = $history->map(function (object $appearance) use ($exposure, $attempts, $strength): object {
+            $strengthRows = $exposure->get($appearance->nhl_game_id, collect());
+            $strengthRow = $strengthRows->firstWhere('strength', $strength);
+            $facts = $attempts->get($appearance->nhl_game_id, collect());
+            $counts = $facts->firstWhere('strength', $strength);
+            $toi = (int) ($strengthRow->toi ?? 0);
+            $available = (bool) $appearance->has_shot_facts && $strengthRows->isNotEmpty()
+                && ! $facts->contains(fn (object $fact): bool => ! in_array($fact->strength, ['EV', 'PP', 'PK'], true))
+                && ($toi > 0 || (int) ($counts->sat ?? 0) === 0);
+
+            return (object) [
+                'nhl_team_id' => $appearance->nhl_team_id,
+                'home_team_id' => $appearance->home_team_id,
+                'away_team_id' => $appearance->away_team_id,
+                'season_id' => $appearance->season_id,
+                'exposure' => $strengthRow,
+                'available' => $available,
+                'toi' => $toi,
+                'sat' => (int) ($counts->sat ?? 0),
+                'sog' => (int) ($counts->sog ?? 0),
+                'goals' => (int) ($counts->goals ?? 0),
+            ];
+        });
+        $isOpponent = fn (object $row): bool => ((int) $row->home_team_id === (int) $row->nhl_team_id ? (int) $row->away_team_id : (int) $row->home_team_id) === $opponentId;
+        $isVenue = fn (object $row): bool => $venue === 'home' ? (int) $row->home_team_id === (int) $row->nhl_team_id : (int) $row->away_team_id === (int) $row->nhl_team_id;
 
         return [
-            'last_5' => $this->onIceMetrics($history->take(5)),
-            'last_10' => $this->onIceMetrics($history->take(10)),
-            'last_20' => $this->onIceMetrics($history->take(20)),
-            'season_to_date' => $this->onIceMetrics($history->filter(fn (object $row): bool => (string) $row->season_id === $seasonId)),
-            'venue_season_to_date' => $this->onIceMetrics($history->filter(fn (object $row): bool => (string) $row->season_id === $seasonId)->filter($isVenue)),
-            'opponent_last_10' => $this->onIceMetrics($history->filter($isOpponent)->take(10)),
+            'last_5' => $this->strengthWindowMetrics($history->take(5)),
+            'last_10' => $this->strengthWindowMetrics($history->take(10)),
+            'last_20' => $this->strengthWindowMetrics($history->take(20)),
+            'season_to_date' => $this->strengthWindowMetrics($history->filter(fn (object $row): bool => (string) $row->season_id === $seasonId)),
+            'venue_season_to_date' => $this->strengthWindowMetrics($history->filter(fn (object $row): bool => (string) $row->season_id === $seasonId)->filter($isVenue)),
+            'opponent_last_10' => $this->strengthWindowMetrics($history->filter($isOpponent)->take(10)),
         ];
+    }
+
+    /** Combine individual counts with matching strength exposure, never on-ice shot totals. */
+    private function strengthWindowMetrics(Collection $rows): array
+    {
+        $missing = $rows->where('available', false)->count();
+        $available = $rows->isNotEmpty() && $missing === 0;
+        $toi = $rows->sum('toi');
+        $sat = $available ? (int) $rows->sum('sat') : null;
+        $sog = $available ? (int) $rows->sum('sog') : null;
+        $goals = $available ? (int) $rows->sum('goals') : null;
+
+        return array_merge($this->onIceMetrics($rows->pluck('exposure')->filter()), [
+            'games' => $rows->count(),
+            'individual_missing_games' => $missing,
+            'sat' => $sat, 'sog' => $sog, 'goals' => $goals,
+            'sat_per_60' => $available && $toi > 0 ? round($sat * 3600 / $toi, 4) : null,
+            'sog_per_60' => $available && $toi > 0 ? round($sog * 3600 / $toi, 4) : null,
+            'goals_per_60' => $available && $toi > 0 ? round($goals * 3600 / $toi, 4) : null,
+            'shooting_pct' => $sog > 0 ? round(100 * $goals / $sog, 4) : null,
+        ]);
     }
 
     /** @return array<string,int|float|null> */

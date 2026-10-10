@@ -11,6 +11,8 @@ describe('model pregame progress', () => {
             <div data-pregame-progress></div>
             <span data-model-training-status>Complete</span>
             <form data-sat-model-pregame-build-form><button type="submit">Build Pregame</button></form>
+            <a data-pregame-view-link class="hidden" href="/effects">View Pregame Impacts</a>
+            <span data-pregame-view-disabled aria-disabled="true">View Pregame Impacts</span>
         </td></tr></tbody></table>`;
     });
 
@@ -45,6 +47,25 @@ describe('model pregame progress', () => {
         updatePregameProgress(row, '<div data-pregame-active="1">Building</div>');
         expect(row.querySelector('form')).toBe(form);
         expect(() => updatePregameProgress(null, '')).not.toThrow();
+    });
+
+    it('enables inspection when saved data becomes available and disables it during a rebuild', () => {
+        const row = document.querySelector('tr');
+        const link = row.querySelector('[data-pregame-view-link]');
+        const disabled = row.querySelector('[data-pregame-view-disabled]');
+        updatePregameProgress(row, '<div data-pregame-active="0" data-pregame-viewable="1">Pregame completed</div>');
+        expect(link.classList.contains('hidden')).toBe(false);
+        expect(disabled.classList.contains('hidden')).toBe(true);
+        updatePregameProgress(row, '<div data-pregame-active="1" data-pregame-viewable="0">Building</div>');
+        expect(link.classList.contains('hidden')).toBe(true);
+        expect(disabled.classList.contains('hidden')).toBe(false);
+    });
+
+    it('keeps inspection disabled when completion has no saved data', () => {
+        const row = document.querySelector('tr');
+        updatePregameProgress(row, '<div data-pregame-active="0" data-pregame-viewable="0">Pregame completed</div>');
+        expect(row.querySelector('[data-pregame-view-link]').classList.contains('hidden')).toBe(true);
+        expect(row.querySelector('[data-pregame-view-disabled]').classList.contains('hidden')).toBe(false);
     });
 
     it('polls active progress and stops requesting after completion', async () => {

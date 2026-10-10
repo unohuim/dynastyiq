@@ -150,6 +150,9 @@ export const updatePregameProgress = (row, html) => {
     row.querySelector('[data-model-training-status]')?.classList.toggle('hidden', active);
     const button = row.querySelector('[data-sat-model-pregame-build-form] button[type="submit"]');
     if (button) button.disabled = active;
+    const viewable = Boolean(progress.querySelector('[data-pregame-viewable="1"]'));
+    row.querySelector('[data-pregame-view-link]')?.classList.toggle('hidden', !viewable);
+    row.querySelector('[data-pregame-view-disabled]')?.classList.toggle('hidden', viewable);
 };
 
 /** Poll active builds serially, without jobs or full model-page reloads. */

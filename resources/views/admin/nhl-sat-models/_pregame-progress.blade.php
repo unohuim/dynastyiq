@@ -1,8 +1,9 @@
 @php
     $pregameActive = in_array($pregameBuild?->status, ['queued', 'running'], true);
     $pregameFailed = $pregameBuild?->status === 'failed';
+    $canViewPregame = $canViewPregame ?? ($pregameBuild?->canViewImpacts() ?? false);
 @endphp
-<div data-pregame-active="{{ $pregameActive ? '1' : '0' }}" role="status" aria-live="polite">
+<div data-pregame-active="{{ $pregameActive ? '1' : '0' }}" data-pregame-viewable="{{ $canViewPregame ? '1' : '0' }}" role="status" aria-live="polite">
     @if($pregameBuild)
         <span @class([
             'inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset',

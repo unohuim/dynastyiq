@@ -32,7 +32,7 @@ class NhlPregameContextController extends Controller
         'venue' => 'Venue',
         'rest' => 'Days of rest',
         'workload' => 'Schedule workload',
-        'sat_trend' => 'SAT /60 trend (last 10 vs season)',
+        'sat_trend' => 'EV SAT /60 trend (last 10 vs season)',
     ];
 
     /** Build the model's Train and optional Test seasons using the existing context pipeline. */
@@ -278,8 +278,8 @@ class NhlPregameContextController extends Controller
     /** @param array<string,mixed> $metrics */
     private function satTrendGroup(array $metrics): ?string
     {
-        $lastTen = data_get($metrics, 'all.last_10.sat_per_60');
-        $season = data_get($metrics, 'all.season_to_date.sat_per_60');
+        $lastTen = data_get($metrics, 'strength.EV.last_10.sat_per_60');
+        $season = data_get($metrics, 'strength.EV.season_to_date.sat_per_60');
         if (! is_numeric($lastTen) || ! is_numeric($season)) {
             return null;
         }

@@ -35,6 +35,17 @@ class NhlPregameContextRun extends Model
         return static::query()->where('options->model_run_id', $modelId)->orderByDesc('id')->first();
     }
 
+    /** Allow inspection only after a model-menu build has saved current context evidence. */
+    public function canViewImpacts(): bool
+    {
+        return $this->status === self::STATUS_COMPLETED
+            && isset($this->options['model_run_id'])
+            && \Illuminate\Support\Facades\DB::table('nhl_player_game_pregame_contexts')
+                ->where('run_id', $this->id)
+                ->where('context_version', \App\Services\NhlPregameContextBuilder::VERSION)
+                ->exists();
+    }
+
     public function creator(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');
