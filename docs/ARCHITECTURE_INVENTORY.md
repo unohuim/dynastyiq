@@ -931,6 +931,8 @@ Every Engine accordion lists all games, showing actual attempts or the earlier p
 New discoveries use optional fixed weights, independent confidence bounds and percentage-spread constraints. Confidence/spread search precedes variable weight search; existing runs retain legacy semantics. See `docs/architecture/stats/NhlSatEngines.yaml`.
 
 Discovery submission queues one background dispatcher; durable pages of 100 feed Horizon without holding the web request open. Dispatch retries preserve the cursor and saved results; exhausted retries pause with a Resume action.
+Evaluation and ranking retries restore interrupted downstream handoffs even after results were committed, retaining the worker connection and existing stage cursor without recounting saved work. See the canonical engine architecture for recovery boundaries.
+Paged discoveries publish each completed weight pair's candidates on its finishing worker while other pairs are still evaluating; stage advancement still waits for all predictions and rankings.
 
 **Purpose:** Save prediction settings and run model-dependent historical build/discovery evaluations.
 

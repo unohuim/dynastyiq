@@ -15,14 +15,32 @@ progress checkpoints, overlap locks, dispatch pacing, and retries are unchanged.
 New SAT Engine discovery requests queue one background dispatcher. It submits
 current-stage games in resumable pages of 100 without waiting for game completion;
 there is no fixed-chain dependency between games. Horizon's available projections
-workers control simultaneous execution. Ranking still runs across up to sixteen
-independent pairs (one lane when only one pair exists). Pause and resume an older
+workers control simultaneous execution. Each completed pair publishes candidates
+on its finishing worker, outside the progress lock, using the same evaluation-job
+timeout and memory budget. It does not queue that publication behind the remaining
+game predictions. The final stage barrier ranks any pending pairs across up to
+sixteen lanes (one lane when only one pair exists). Pause and resume an older
 automatic run to upgrade scheduling without discarding results. Worker configuration
 is unchanged; later stages wait for the current stage to finish. Dispatch failures
 retry from the saved cursor; exhausted retries pause the run with an error. Resume
 preserves saved results and queues only missing coordinates. After deploying this
 change, Pause then Resume an already-stalled running discovery to start its dispatcher.
 Interactive synchronous predictions are not converted to background jobs.
+
+Discovery retries also repair interrupted evaluation-to-ranking, ranking-lane,
+and ranking-to-next-stage handoffs. Saved work is not recomputed or counted twice.
+A retry keeps the original worker connection and restores the existing dispatch
+cursor rather than starting the stage again. Exhausted ranking retries now record
+failure even if the prior attempt already committed the next stage. This is
+retry-driven recovery, not a scheduled watchdog: if the queue message itself is
+lost, an active stalled run still needs Pause then Resume. Existing stalled runs
+are not automatically restarted by deploying this patch.
+
+Focused handoff regression coverage (run manually):
+
+```sh
+php artisan test tests/Feature/NhlSatEnginesTest.php
+```
 
 ## Deploying the change
 

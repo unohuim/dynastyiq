@@ -43,14 +43,20 @@ class EvaluateNhlSatEngineGameJob implements ShouldQueue
     public function handle(NhlSatEngineEvaluator $evaluator): void
     {
         $run = NhlSatEngineRun::query()->find($this->runId);
-        if ($run === null || ! in_array($run->status, ['queued', 'running'], true)
-            || ! $this->matchesGeneration($run)) {
+        if ($run === null || ! $run->active() || ! $this->matchesGeneration($run)) {
+            return;
+        }
+        if ($run->status === 'ranking') {
+            $this->restoreHandoff($evaluator);
+
             return;
         }
         $gameId = $run->definition['game_ids'][$this->gameIndex];
         $resultQuery = DB::table('nhl_sat_engine_results')->where('run_id', $run->id)
             ->where('split_index', $this->splitIndex)->where('nhl_game_id', $gameId);
         if ($resultQuery->exists()) {
+            $this->restoreHandoff($evaluator);
+
             return;
         }
         $row = $evaluator->predict($run, $this->splitIndex, $gameId);
@@ -103,9 +109,47 @@ class EvaluateNhlSatEngineGameJob implements ShouldQueue
                 }
             }
             if ($run->status === 'ranking') {
-                $evaluator->dispatchRankingJobs($run);
+                $evaluator->dispatchRankingJobs($run, $this->job?->getConnectionName() ?? $this->connection);
             }
         });
+        $this->publishCompletedSplit($evaluator);
+    }
+
+    /** A saved result is idempotent work, not proof that the next job reached the queue. */
+    private function restoreHandoff(NhlSatEngineEvaluator $evaluator): void
+    {
+        DB::transaction(function () use ($evaluator): void {
+            $run = NhlSatEngineRun::query()->whereKey($this->runId)->lock('for no key update')->first();
+            if ($run === null || ! $run->active() || ! $this->matchesGeneration($run)) {
+                return;
+            }
+
+            $connection = $this->job?->getConnectionName() ?? $this->connection;
+            if ($run->status === 'ranking') {
+                $evaluator->dispatchRankingJobs($run, $connection);
+            } elseif (($run->definition['automatic_search']['work_scheduling'] ?? null) === 'stage_games_v1') {
+                $evaluator->restoreEvaluationDispatch($run, $connection);
+            }
+        });
+        $this->publishCompletedSplit($evaluator);
+    }
+
+    /** Publish a finished pair on this worker, outside the progress lock and ahead of the queue backlog. */
+    private function publishCompletedSplit(NhlSatEngineEvaluator $evaluator): void
+    {
+        $run = NhlSatEngineRun::query()->find($this->runId);
+        if ($run === null || $run->status !== 'running' || ! $this->matchesGeneration($run)
+            || ($run->definition['automatic_search']['work_scheduling'] ?? null) !== 'stage_games_v1'
+            || ! DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)
+                ->where('split_index', $this->splitIndex)->whereNull('metrics')->exists()
+            || DB::table('nhl_sat_engine_results')->where('run_id', $run->id)
+                ->where('split_index', $this->splitIndex)->count() !== (int) $run->game_count) {
+            return;
+        }
+
+        (new RankNhlSatEngineCandidatesJob($run->id, 0, (int) $run->work_generation, $this->splitIndex))
+            ->onConnection($this->job?->getConnectionName() ?? $this->connection)
+            ->handle($evaluator);
     }
 
     /** Keep diagnostics bounded and never overwrite terminal runs. */

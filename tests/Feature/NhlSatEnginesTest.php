@@ -79,6 +79,21 @@ beforeEach(function (): void {
         'pred_sat' => 100, 'pred_sog' => 50, 'pred_goals' => 5,
         'actual_sat' => 110, 'actual_sog' => 55, 'actual_goals' => 6, ...$extra,
     ];
+    $this->streamingRun = function (): NhlSatEngineRun {
+        $run = app(NhlSatEngineEvaluator::class)->start([...$this->input, 'kind' => 'discovery'], $this->engine);
+        $definition = $run->definition;
+        $definition['splits'][] = ['index' => 1, 'offense' => 125, 'defense' => 50];
+        $definition['automatic_search'] = [...$definition['automatic_search'],
+            'stage' => 2, 'weight_stage' => 2, 'stage_split_count' => 2];
+        $run->update(['definition' => $definition, 'candidate_count' => 2, 'prediction_count' => 6]);
+        DB::table('nhl_sat_engine_candidates')->insert([
+            'run_id' => $run->id, 'split_index' => 1,
+            'settings' => json_encode([...$this->settings, 'offense' => 125, 'defense' => 50]),
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        return $run;
+    };
 });
 
 afterEach(function (): void {
@@ -869,7 +884,7 @@ it('pauses exhausted dispatch with a resumable error while retaining saved resul
     $this->assertDatabaseCount('nhl_sat_engine_results', 1);
 });
 
-it('opens ranking exactly once after out-of-order game completion reaches the barrier', function (): void {
+it('opens ranking at the barrier and restores its handoff on duplicate delivery without recounting games', function (): void {
     $run = app(NhlSatEngineEvaluator::class)->start([...$this->input, 'kind' => 'discovery'], $this->engine);
     Bus::fake();
     $evaluator = Mockery::mock(NhlSatEngineEvaluator::class, [app(NhlSatEngineSettings::class)])->makePartial();
@@ -881,9 +896,201 @@ it('opens ranking exactly once after out-of-order game completion reaches the ba
     Bus::assertNotDispatched(RankNhlSatEngineCandidatesJob::class);
     $last = new EvaluateNhlSatEngineGameJob($run->id, 0, 1, 1);
     $last->handle($evaluator);
+    Bus::assertDispatchedTimes(RankNhlSatEngineCandidatesJob::class, 1);
+    Bus::fake();
+    $last->onConnection('database');
+    $workerJob = Mockery::mock(\Illuminate\Contracts\Queue\Job::class);
+    $workerJob->shouldReceive('getConnectionName')->andReturn('redis');
+    $last->setJob($workerJob);
     $last->handle($evaluator);
     Bus::assertDispatchedTimes(RankNhlSatEngineCandidatesJob::class, 1);
+    Bus::assertDispatched(RankNhlSatEngineCandidatesJob::class, fn ($job) =>
+        $job->connection === 'redis' && $job->queue === 'projections');
+    $this->assertDatabaseCount('nhl_sat_engine_results', 3);
     expect($run->fresh()->status)->toBe('ranking')->and($run->fresh()->predictions_completed)->toBe(3);
+});
+
+it('restores a committed ranking lane successor without rewriting metrics or counters', function (): void {
+    $run = app(NhlSatEngineEvaluator::class)->start([...$this->input, 'kind' => 'discovery'], $this->engine);
+    $definition = $run->definition;
+    $definition['automatic_search']['stage_split_count'] = 3;
+    $definition['automatic_search']['lanes'] = 1;
+    $run->update(['definition' => $definition, 'status' => 'ranking',
+        'prediction_count' => 9, 'predictions_completed' => 9, 'candidate_count' => 3, 'candidates_completed' => 1]);
+    $candidate = (array) DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->first();
+    unset($candidate['id']);
+    foreach ([1, 2] as $split) {
+        DB::table('nhl_sat_engine_candidates')->insert([...$candidate, 'split_index' => $split]);
+    }
+    foreach ([0, 1, 2] as $split) {
+        foreach ($run->definition['game_ids'] as $id) {
+            DB::table('nhl_sat_engine_results')->insert(($this->result)($run, $id, ['split_index' => $split]));
+        }
+    }
+    // The prior attempt saved split zero, but its successor never reached the queue.
+    DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->where('split_index', 0)
+        ->update(['metrics' => '{"picks":3}']);
+    $before = DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->orderBy('id')->get()->toJson();
+    Bus::fake();
+    (new RankNhlSatEngineCandidatesJob($run->id, 0, 1, 0))->onConnection('redis')
+        ->handle(app(NhlSatEngineEvaluator::class));
+
+    Bus::assertDispatchedTimes(RankNhlSatEngineCandidatesJob::class, 1);
+    Bus::assertDispatched(RankNhlSatEngineCandidatesJob::class, fn ($job) =>
+        $job->splitIndex === 1 && $job->connection === 'redis' && $job->queue === 'projections');
+    expect($run->fresh()->candidates_completed)->toBe(1)
+        ->and(DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->orderBy('id')->get()->toJson())->toBe($before);
+});
+
+it('restores the committed next stage dispatcher without appending the stage twice or resetting its cursor', function (): void {
+    $this->actingAs($this->admin)->post('/admin/nhl-sat-engines/runs', [...$this->input, 'kind' => 'discovery'])->assertRedirect();
+    $run = NhlSatEngineRun::query()->firstOrFail();
+    $run->update(['status' => 'ranking', 'predictions_completed' => 3]);
+    foreach ($run->definition['game_ids'] as $id) {
+        DB::table('nhl_sat_engine_results')->insert(($this->result)($run, $id, ['confidence' => 75]));
+    }
+    $job = (new RankNhlSatEngineCandidatesJob($run->id, 0, 1, 0))->onConnection('redis');
+    $job->handle(app(NhlSatEngineEvaluator::class));
+    $run->refresh();
+    expect($run->status)->toBe('queued');
+    $definition = $run->definition;
+    $definition['evaluation_dispatch']['next_offset'] = 100;
+    $run->update(['definition' => $definition]);
+    $before = $run->getAttributes();
+    $candidateCount = DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->count();
+    Bus::fake();
+    // Replay after the result transaction committed and delivery was interrupted.
+    $job->handle(app(NhlSatEngineEvaluator::class));
+
+    Bus::assertDispatchedTimes(DispatchNhlSatEngineGamesJob::class, 1);
+    Bus::assertDispatched(DispatchNhlSatEngineGamesJob::class, fn ($next) =>
+        $next->dispatchToken === $definition['evaluation_dispatch']['token'] && $next->connection === 'redis');
+    expect($run->fresh()->getAttributes())->toBe($before)
+        ->and(DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->count())->toBe($candidateCount);
+    $this->get('/admin/nhl-sat-engines/runs/' . $run->id)->assertInertia(fn (Assert $page) => $page
+        ->component('Admin/SatEngines/Run')->where('run.status', 'queued')->where('run.predictions_completed', 3));
+});
+
+it('restores incomplete dispatch from a saved game retry but leaves a fully dispatched stage alone', function (bool $complete): void {
+    $run = app(NhlSatEngineEvaluator::class)->start([...$this->input, 'kind' => 'discovery'], $this->engine);
+    DB::table('nhl_sat_engine_results')->insert(($this->result)($run, 2025020001));
+    $definition = $run->definition;
+    $definition['evaluation_dispatch']['next_offset'] = $complete ? 3 : 1;
+    $definition['evaluation_dispatch']['complete'] = $complete;
+    $run->update(['definition' => $definition, 'predictions_completed' => 1, 'status' => 'running']);
+    $evaluator = Mockery::mock(NhlSatEngineEvaluator::class, [app(NhlSatEngineSettings::class)])->makePartial();
+    $evaluator->shouldNotReceive('predict');
+    Bus::fake();
+    (new EvaluateNhlSatEngineGameJob($run->id, 0, 0, 1))->onConnection('redis')->handle($evaluator);
+
+    Bus::assertDispatchedTimes(DispatchNhlSatEngineGamesJob::class, $complete ? 0 : 1);
+    if (! $complete) {
+        Bus::assertDispatched(DispatchNhlSatEngineGamesJob::class, fn ($job) => $job->connection === 'redis');
+    }
+    expect($run->fresh()->definition)->toBe($definition)->and($run->fresh()->predictions_completed)->toBe(1);
+    $this->assertDatabaseCount('nhl_sat_engine_results', 1);
+})->with([false, true]);
+
+it('never restores handoffs for inactive or invalidated evaluation and ranking deliveries', function (string $condition): void {
+    $run = app(NhlSatEngineEvaluator::class)->start([...$this->input, 'kind' => 'discovery'], $this->engine);
+    DB::table('nhl_sat_engine_results')->insert(($this->result)($run, 2025020001));
+    $run->update($condition === 'generation' ? ['work_generation' => 2] : ['status' => $condition]);
+    $before = $run->getAttributes();
+    Bus::fake();
+    (new EvaluateNhlSatEngineGameJob($run->id, 0, 0, 1))->handle(app(NhlSatEngineEvaluator::class));
+    (new RankNhlSatEngineCandidatesJob($run->id, 0, 1, 0))->handle(app(NhlSatEngineEvaluator::class));
+    (new RankNhlSatEngineCandidatesJob($run->id, 0, 1, 0))->failed(new \RuntimeException('Late failure'));
+
+    Bus::assertNothingDispatched();
+    expect($run->fresh()->getAttributes())->toBe($before);
+})->with(['paused', 'cancelled', 'failed', 'complete', 'generation']);
+
+it('ignores a prior stage ranking lane once the newer stage is ranking', function (): void {
+    $run = app(NhlSatEngineEvaluator::class)->start([...$this->input, 'kind' => 'discovery'], $this->engine);
+    $definition = $run->definition;
+    $definition['automatic_search']['stage_first_split'] = 1;
+    $run->update(['definition' => $definition, 'status' => 'ranking']);
+    $before = $run->getAttributes();
+    Bus::fake();
+    (new RankNhlSatEngineCandidatesJob($run->id, 0, 1, 0))->handle(app(NhlSatEngineEvaluator::class));
+
+    Bus::assertNothingDispatched();
+    expect($run->fresh()->getAttributes())->toBe($before);
+});
+
+it('reports exhausted ranking handoff retries even after the next stage was committed', function (): void {
+    $run = app(NhlSatEngineEvaluator::class)->start([...$this->input, 'kind' => 'discovery'], $this->engine);
+    $job = new RankNhlSatEngineCandidatesJob($run->id, 0, 1, 0);
+    Bus::fake();
+    $job->failed(new \RuntimeException('Queue unavailable after stage commit'));
+
+    expect($run->fresh()->status)->toBe('failed')->and($run->fresh()->error)->not->toBeNull();
+    Bus::assertNothingDispatched();
+});
+
+it('publishes a finished combination before other combinations and waits for all work before completion', function (): void {
+    $run = ($this->streamingRun)();
+    $evaluator = Mockery::mock(NhlSatEngineEvaluator::class, [app(NhlSatEngineSettings::class)])->makePartial();
+    $evaluator->shouldReceive('predict')->times(6)->andReturnUsing(fn ($snapshot, $split, $id) =>
+        ($this->result)($run, $id, ['split_index' => $split, 'confidence' => 75]));
+    Bus::fake();
+    foreach ([2, 0] as $game) {
+        (new EvaluateNhlSatEngineGameJob($run->id, 0, $game, 1))->handle($evaluator);
+    }
+    // An early ranking delivery must not publish a partial game sample.
+    (new RankNhlSatEngineCandidatesJob($run->id, 0, 1, 0))->handle($evaluator);
+    expect($run->fresh()->candidates_completed)->toBe(0);
+    $last = new EvaluateNhlSatEngineGameJob($run->id, 0, 1, 1);
+    $last->handle($evaluator);
+    expect($run->fresh()->status)->toBe('running')->and($run->fresh()->predictions_completed)->toBe(3)
+        ->and($run->fresh()->candidates_completed)->toBe(1);
+    expect(DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->where('split_index', 0)
+        ->whereNotNull('metrics')->exists())->toBeTrue();
+    expect(DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->where('split_index', 1)
+        ->whereNull('metrics')->exists())->toBeTrue();
+    Bus::assertNotDispatched(RankNhlSatEngineCandidatesJob::class);
+    $count = DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->count();
+    $last->handle($evaluator);
+    expect($run->fresh()->candidates_completed)->toBe(1)
+        ->and(DB::table('nhl_sat_engine_candidates')->where('run_id', $run->id)->count())->toBe($count);
+    $this->actingAs($this->admin)->get('/admin/nhl-sat-engines/runs/' . $run->id)->assertInertia(fn (Assert $page) => $page
+        ->component('Admin/SatEngines/Run')->where('run.status', 'running')->where('run.candidates_completed', 1));
+
+    foreach ([0, 1, 2] as $game) {
+        (new EvaluateNhlSatEngineGameJob($run->id, 1, $game, 1))->handle($evaluator);
+    }
+    Bus::assertDispatched(RankNhlSatEngineCandidatesJob::class, fn ($job) => $job->splitIndex === 1);
+    (new RankNhlSatEngineCandidatesJob($run->id, 0, 1, 1))->handle($evaluator);
+    expect($run->fresh()->status)->toBe('complete')->and($run->fresh()->candidates_completed)->toBe(2)
+        ->and($run->fresh()->predictions_completed)->toBe(6);
+});
+
+it('publishes a completed combination on evaluation retry without recalculating its games', function (): void {
+    $run = ($this->streamingRun)();
+    foreach ($run->definition['game_ids'] as $id) {
+        DB::table('nhl_sat_engine_results')->insert(($this->result)($run, $id, ['confidence' => 75]));
+    }
+    $run->update(['status' => 'running', 'predictions_completed' => 3]);
+    $evaluator = Mockery::mock(NhlSatEngineEvaluator::class, [app(NhlSatEngineSettings::class)])->makePartial();
+    $evaluator->shouldNotReceive('predict');
+    (new EvaluateNhlSatEngineGameJob($run->id, 0, 2, 1))->handle($evaluator);
+
+    expect($run->fresh()->candidates_completed)->toBe(1)->and($run->fresh()->predictions_completed)->toBe(3)
+        ->and($run->fresh()->status)->toBe('running');
+    $this->assertDatabaseCount('nhl_sat_engine_results', 3);
+});
+
+it('does not fail an entire discovery because an early completed combination is excluded', function (): void {
+    $run = ($this->streamingRun)();
+    $evaluator = Mockery::mock(NhlSatEngineEvaluator::class, [app(NhlSatEngineSettings::class)])->makePartial();
+    $evaluator->shouldReceive('predict')->times(3)->andReturnUsing(fn ($snapshot, $split, $id) =>
+        ($this->result)($run, $id, ['status' => 'excluded', 'correct' => null]));
+    foreach ([0, 1, 2] as $game) {
+        (new EvaluateNhlSatEngineGameJob($run->id, 0, $game, 1))->handle($evaluator);
+    }
+
+    expect($run->fresh()->status)->toBe('running')->and($run->fresh()->error)->toBeNull()
+        ->and($run->fresh()->candidates_completed)->toBe(1);
 });
 
 it('fills independent ranking lanes while skipping completed splits', function (): void {

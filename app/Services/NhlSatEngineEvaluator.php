@@ -152,7 +152,7 @@ class NhlSatEngineEvaluator
     /** Refine three distinct promising splits under the caller's locked run transaction.
      * Each stage appends work; frozen games and existing results are never replaced.
      */
-    public function advanceDiscovery(NhlSatEngineRun $run): bool
+    public function advanceDiscovery(NhlSatEngineRun $run, ?string $connection = null): bool
     {
         $search = $run->definition['automatic_search'] ?? null;
         $constrained = ($search['strategy'] ?? null) === 'qualification_first_v1';
@@ -200,7 +200,7 @@ class NhlSatEngineEvaluator
         $run->candidate_count += count($candidates);
         $run->status = 'queued';
         $run->save();
-        $this->queueEvaluationJobs($run);
+        $this->queueEvaluationJobs($run, $connection);
 
         return true;
     }
@@ -238,7 +238,7 @@ class NhlSatEngineEvaluator
     }
 
     /** Queue one background dispatcher for discovery, retaining configured-build scheduling. */
-    private function queueEvaluationJobs(NhlSatEngineRun $run): void
+    private function queueEvaluationJobs(NhlSatEngineRun $run, ?string $connection = null): void
     {
         if (($run->definition['automatic_search']['work_scheduling'] ?? null) === 'stage_games_v1') {
             $definition = $run->definition;
@@ -246,14 +246,30 @@ class NhlSatEngineEvaluator
             $definition['evaluation_dispatch'] = ['token' => $token, 'next_offset' => 0, 'complete' => false];
             $run->definition = $definition;
             $run->save();
-            DispatchNhlSatEngineGamesJob::dispatch($run->id, (int) $run->work_generation, $token)->afterCommit();
+            DispatchNhlSatEngineGamesJob::dispatch($run->id, (int) $run->work_generation, $token)
+                ->onConnection($connection)->afterCommit();
 
             return;
         }
 
         foreach ($this->resumeEvaluationJobs($run) as [$splitIndex, $gameIndex]) {
-            EvaluateNhlSatEngineGameJob::dispatch($run->id, $splitIndex, $gameIndex, $run->work_generation)->afterCommit();
+            EvaluateNhlSatEngineGameJob::dispatch($run->id, $splitIndex, $gameIndex, $run->work_generation)
+                ->onConnection($connection)->afterCommit();
         }
+    }
+
+    /** Restore a committed stage handoff without resetting its cursor or token. Caller locks the run. */
+    public function restoreEvaluationDispatch(NhlSatEngineRun $run, ?string $connection = null): void
+    {
+        $dispatch = $run->definition['evaluation_dispatch'] ?? [];
+        if (! in_array($run->status, ['queued', 'running'], true)
+            || ($run->definition['automatic_search']['work_scheduling'] ?? null) !== 'stage_games_v1'
+            || empty($dispatch['token']) || ($dispatch['complete'] ?? false)) {
+            return;
+        }
+
+        DispatchNhlSatEngineGamesJob::dispatch($run->id, (int) $run->work_generation, $dispatch['token'])
+            ->onConnection($connection)->afterCommit();
     }
 
     /** @return iterable<array{0:int,1:int}> */
@@ -330,11 +346,12 @@ class NhlSatEngineEvaluator
     }
 
     /** Start one ranking chain per independent split lane, skipping committed work. */
-    public function dispatchRankingJobs(NhlSatEngineRun $run): void
+    public function dispatchRankingJobs(NhlSatEngineRun $run, ?string $connection = null): void
     {
         $search = $run->definition['automatic_search'] ?? [];
         if (! in_array($search['work_scheduling'] ?? null, ['game_lanes_v1', 'stage_games_v1'], true)) {
-            RankNhlSatEngineCandidatesJob::dispatch($run->id, 0, $run->work_generation)->afterCommit();
+            RankNhlSatEngineCandidatesJob::dispatch($run->id, 0, $run->work_generation)
+                ->onConnection($connection)->afterCommit();
 
             return;
         }
@@ -345,7 +362,8 @@ class NhlSatEngineEvaluator
         for ($lane = 0; $lane < min($search['lanes'], $search['stage_split_count']); $lane++) {
             for ($split = $first + $lane; $split < $end; $split += $search['lanes']) {
                 if ($pending->has($split)) {
-                    RankNhlSatEngineCandidatesJob::dispatch($run->id, 0, $run->work_generation, $split)->afterCommit();
+                    RankNhlSatEngineCandidatesJob::dispatch($run->id, 0, $run->work_generation, $split)
+                        ->onConnection($connection)->afterCommit();
                     break;
                 }
             }
