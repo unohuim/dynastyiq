@@ -87,7 +87,8 @@ These rules are mandatory for all new tests.
 
 - Blade remains valid for existing server-rendered pages
 - Alpine.js remains valid for lightweight interactivity on Blade pages
-- Inertia/Vue may be used for explicitly approved staged page migrations
+- New interactive pages and migrated application shells use Vue/Inertia, not Blade/Alpine or Livewire UI
+- Inertia pages use the shared Vue application layout and dedicated Inertia entry point; the Blade root is only an HTML/asset/mount document
 - Migrated Inertia pages receive backend-owned props and use Vue for browser state and rendering
 - No global JavaScript state unless explicitly approved
 - Prefer progressive enhancement over JavaScript-first solutions

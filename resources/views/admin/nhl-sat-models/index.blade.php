@@ -5,7 +5,7 @@
     @endphp
 
     <div
-        class="min-h-screen bg-gray-50 py-6"
+        class="min-h-screen bg-gray-50 py-4 pb-24 sm:py-6"
         x-data="{ createOpen: {{ $errors->any() ? 'true' : 'false' }} }"
         data-admin-sat-models
     >
@@ -24,7 +24,6 @@
                     <p class="mt-1 text-sm text-gray-600">Create SAT models and evaluate SOG danger from training seasons.</p>
                 </div>
                 <div class="flex flex-wrap items-center gap-2">
-                    <a href="{{ route('admin.nhl-sat-models.next-game') }}" class="inline-flex min-h-10 items-center justify-center rounded-md border border-gray-300 bg-white px-4 text-sm font-semibold text-gray-700 shadow-sm transition-colors hover:bg-gray-50">Next-game evaluation</a>
                     <a href="{{ route('admin.nhl-shot-attempts.index') }}" class="inline-flex min-h-10 items-center justify-center rounded-md border border-gray-300 bg-white px-4 text-sm font-semibold text-gray-700 shadow-sm transition-colors hover:bg-gray-50">
                         Shot Attempts
                     </a>
@@ -102,8 +101,8 @@
 
                 <div data-sat-model-table @class(['hidden' => ! $hasModels])>
                     <div class="overflow-visible">
-                        <table class="min-w-full divide-y divide-gray-200 text-left text-xs">
-                            <thead class="bg-gray-50 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+                        <table class="block w-full divide-y divide-gray-200 text-left text-sm lg:table lg:text-xs">
+                            <thead class="hidden bg-gray-50 text-[11px] font-semibold uppercase tracking-wide text-gray-500 lg:table-header-group">
                                 <tr>
                                     <th class="px-4 py-2.5">Name</th>
                                     <th class="px-4 py-2.5">Version</th>
@@ -115,7 +114,7 @@
                                     <th class="px-4 py-2.5 text-right">Actions</th>
                                 </tr>
                             </thead>
-                            <tbody class="divide-y divide-gray-100 bg-white" data-sat-model-rows>
+                            <tbody class="block divide-y divide-gray-100 bg-white lg:table-row-group" data-sat-model-rows>
                                 @foreach($runs as $run)
                                     @include('admin.nhl-sat-models._model-row', [
                                         'pregameBuild' => $pregameBuilds[$run->id] ?? null,
@@ -139,9 +138,9 @@
         </div>
 
         <x-ui.slide-over show="createOpen" close-action="createOpen = false" title-id="sat-model-create-title" max-width="max-w-xl">
-            <form method="POST" action="{{ route('admin.nhl-sat-models.store') }}" class="flex h-full w-full flex-col" data-sat-model-create-form>
+            <form method="POST" action="{{ route('admin.nhl-sat-models.store') }}" class="flex h-full max-h-[100dvh] min-h-0 w-full flex-col" data-sat-model-create-form>
                 @csrf
-                <div class="border-b border-gray-200 px-6 py-4">
+                <div class="shrink-0 border-b border-gray-200 px-6 py-4">
                     <div class="flex items-start justify-between gap-3">
                         <div>
                             <h2 id="sat-model-create-title" class="text-sm font-semibold text-gray-950">Create Model</h2>
@@ -155,7 +154,7 @@
                     </div>
                 </div>
 
-                <div class="flex-1 space-y-5 overflow-y-auto px-6 py-5">
+                <div class="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-6 py-5">
                     <div data-sat-model-form-errors class="hidden rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"></div>
 
                     <label class="block">
@@ -208,7 +207,7 @@
                     </label>
                 </div>
 
-                <div class="border-t border-gray-200 px-6 py-4">
+                <div class="shrink-0 border-t border-gray-200 px-6 pt-4 pb-[calc(1rem+env(safe-area-inset-bottom))]">
                     <div class="flex justify-end gap-2">
                         <button type="button" class="inline-flex min-h-10 items-center justify-center rounded-md border border-gray-300 bg-white px-4 text-sm font-semibold text-gray-700 shadow-sm transition-colors hover:bg-gray-50" @click="createOpen = false">
                             Cancel

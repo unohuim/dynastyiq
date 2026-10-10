@@ -18,26 +18,10 @@
             rel="stylesheet"
         />
 
-        @vite(['resources/css/app.css', 'resources/js/app.js'])
+        @vite(['resources/css/app.css', 'resources/js/inertia.js'])
         @inertiaHead
-
-        <script>
-            window.DIQ = { userId: {{ auth()->id() ?? 'null' }} };
-        </script>
     </head>
     <body class="font-sans antialiased">
-        <div class="min-h-screen bg-gray-100 pb-16 md:pb-0">
-            @if(request()->routeIs('admin.*'))
-                @include('nav.main')
-            @else
-                @include('nav.stats')
-            @endif
-
-            <main>
-                @inertia
-            </main>
-        </div>
-
-        @include('partials.toast-container')
+        @inertia
     </body>
 </html>

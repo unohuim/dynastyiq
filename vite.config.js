@@ -10,7 +10,7 @@ export default defineConfig({
     plugins: [
         vue(),
         laravel({
-            input: ['resources/css/app.css', 'resources/js/app.js', 'resources/js/pages/stats-page.js'],
+            input: ['resources/css/app.css', 'resources/js/app.js', 'resources/js/inertia.js', 'resources/js/pages/stats-page.js'],
             refresh: true,
         }),
     ],

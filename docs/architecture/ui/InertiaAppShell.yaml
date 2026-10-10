@@ -1,0 +1,37 @@
+name: Inertia Application Shell
+type: Shared Vue Layout
+location:
+  - app/Http/Middleware/HandleInertiaRequests.php
+  - resources/views/app.blade.php
+  - resources/js/inertia.js
+  - resources/js/layouts/AppLayout.vue
+  - resources/js/layouts/AccountPanel.vue
+  - resources/js/layouts/ShellDisclosure.vue
+  - resources/js/layouts/shell-realtime.js
+purpose: Keep navigation, account controls and notifications Vue-owned without loading legacy UI runtimes on Inertia pages.
+when_to_use:
+  - New Inertia pages and approved page migrations.
+  - Shared desktop/mobile navigation, account settings and toast feedback.
+when_not_to_use:
+  - Replacing layouts or scripts on unmigrated Blade pages.
+  - Changing provider authentication or backend authorization policy.
+rules:
+  - The Inertia root document contains metadata, asset loading and the mount only. It must not include interactive Blade navigation, Livewire components, Alpine state or executable inline bootstrap scripts.
+  - Inertia has a dedicated Vite entry point and shared Vue layout. Legacy app.js remains available only to legacy pages.
+  - Navigation eligibility and route URLs are backend-owned shared props. Existing admin access predicates, community navigation gates and FantasyIntegrationState readiness remain unchanged. Hiding a link is not authorization.
+  - Account controls call existing scoped endpoints. Provider credentials must never be included in shared props or prefilled from storage. CSRF protection and Discord OAuth remain unchanged.
+  - Links to unmigrated pages use document navigation, not Inertia requests expecting incompatible responses.
+  - Drawer, disclosure, toast and websocket state belong to the mounted shell. Timers, event listeners and subscriptions are disposed on unmount. Application code must not publish or rely on global clients or state. The Pusher library may expose its constructor; the shell owns its connection instance locally.
+  - Successful settings mutations refresh backend-owned shell props. Failed writes retain an actionable error and reconcile control values; buttons prevent simultaneous writes.
+  - User and organization broadcasts remain scoped to the authenticated user's channel and selected member organization. Guests do not subscribe to private channels.
+  - Toast feedback supports shared flash messages, component notification callbacks and the existing toast DOM event; shell toasts must not steal input focus.
+public_interface:
+  - Inertia shared shell props
+  - AppLayout default Inertia layout
+  - AccountPanel notify event
+  - ShellDisclosure label and default slot
+  - Component-injected notify callback and toast DOM event
+example_usage: |
+  Return Inertia::render('Admin/Evaluations/Index', $props).
+  The dedicated entry assigns AppLayout unless the page declares another layout.
+  Laravel remains responsible for each linked route and mutation's authorization.

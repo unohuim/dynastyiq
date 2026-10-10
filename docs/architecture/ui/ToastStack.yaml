@@ -4,6 +4,7 @@ location:
   - resources/js/components/toast-stack.js
   - resources/js/components/toast-stack.test.js
   - resources/views/partials/toast-container.blade.php
+  - resources/js/layouts/AppLayout.vue
 purpose: Provide non-blocking page feedback for success, warning, and error messages.
 when_to_use:
   - AJAX actions.
@@ -16,6 +17,7 @@ when_not_to_use:
   - Persistent status panels.
 rules:
   - Toasts are non-blocking feedback.
+  - Inertia pages use the Vue-owned stack in AppLayout; legacy pages retain the Alpine stack. Both accept toast DOM events, but Inertia must not create window.toast or load Alpine.
   - Toast containers must render above drawers, slide-overs, modals, dropdowns, and fixed app chrome.
   - Toast behavior must remain covered by component tests when modified.
   - New toast usage must follow docs/UI_DESIGN.md feedback rules.

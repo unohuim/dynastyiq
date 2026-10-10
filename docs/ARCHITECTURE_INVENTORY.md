@@ -1,5 +1,12 @@
 # Architecture Inventory
 
+Inertia pages use a dedicated `resources/js/inertia.js` entry and Vue `AppLayout`
+for navigation, account controls, mobile drawers and toast feedback. Safe shared
+shell props come from `HandleInertiaRequests`; account writes retain existing
+endpoints. The root Blade file is only an HTML/asset/mount document. Legacy page
+layouts and their Alpine bootstrap remain separate. Authority:
+`docs/architecture/ui/InertiaAppShell.yaml`.
+
 Private admin engine game prediction snapshots preserve diagnostic workspaces
 with four rotating autosaves and fifty named copies per user. Controller/model:
 `AdminEngineGamePredictionController`, `AdminEngineGamePrediction`; UI: SAT stack

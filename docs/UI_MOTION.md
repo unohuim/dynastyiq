@@ -85,7 +85,8 @@ Open state:
 
 ## Slide-Overs
 
-Right-side slide-overs should use `x-ui.slide-over`.
+Legacy Blade slide-overs use `x-ui.slide-over`. Vue/Inertia slide-overs use
+Vue-owned accessible dialog state, including focus trapping/restoration and Escape dismissal.
 
 The panel should move with `transition-transform`; the overlay should fade independently.
 Do not combine overlay and panel movement into one transition.

@@ -6,6 +6,7 @@ location:
   - app/Http/Controllers/
   - resources/views/
   - resources/js/app.js
+  - resources/js/inertia.js
   - app/Http/Middleware/HandleInertiaRequests.php
   - app/Providers/HorizonServiceProvider.php
 purpose: Provide the primary authenticated and public web application using Laravel, Jetstream/Fortify, Blade, Alpine, staged Inertia/Vue pages, Tailwind, Livewire, queues, and Vite.
@@ -17,8 +18,9 @@ when_not_to_use:
   - External scripts that should remain outside Laravel.
 rules:
   - Laravel routes own browser and API entrypoints.
-  - Blade views own server-rendered page shells.
-  - Inertia pages may own approved migrated browser page shells while controllers continue to own backend props.
+  - Blade views own unmigrated server-rendered page shells. The Inertia root Blade file is only an HTML document and mount point, not interactive UI.
+  - New interactive pages and migrated shells use Vue/Inertia. Their dedicated entry point must not load the legacy Alpine/Livewire application bootstrap. Controllers continue to own backend props.
+  - Shared Vue shell ownership and compatibility are defined in docs/architecture/ui/InertiaAppShell.yaml.
   - The public /games and /games/{nhlGameId} pages are Inertia/Vue-owned and must not reintroduce page Blade templates, Alpine state, or Livewire behavior.
   - Vite-managed JavaScript owns browser-side behavior.
   - Domain persistence and authorization stay in Laravel, not in the Discord bot runtime.

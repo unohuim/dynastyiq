@@ -33,17 +33,17 @@
     $canViewPregame = $pregameBuild?->canViewImpacts() ?? false;
 @endphp
 
-<tr data-sat-model-row="{{ $run->id }}" class="transition-colors hover:bg-gray-50/70">
-    <td class="min-w-56 px-4 py-3">
+<tr data-sat-model-row="{{ $run->id }}" class="relative grid min-w-0 grid-cols-2 transition-colors hover:bg-gray-50/70 lg:table-row">
+    <td class="col-span-2 min-w-0 px-4 py-3 pr-20 lg:min-w-56 lg:pr-4">
         <div class="font-medium text-gray-950">{{ $run->name }}</div>
         @if($run->notes)
             <div class="mt-1 max-w-xl truncate text-xs text-gray-500">{{ $run->notes }}</div>
         @endif
     </td>
-    <td class="whitespace-nowrap px-4 py-3 font-medium text-gray-700">{{ $run->model_version }}</td>
-    <td class="whitespace-nowrap px-4 py-3 text-gray-700">{{ $trainingSeasons !== '' ? $trainingSeasons : 'None' }}</td>
-    <td class="whitespace-nowrap px-4 py-3 text-gray-700">{{ $run->target_season_id ?? 'None' }}<span class="mt-1 block text-xs text-gray-500">Projection: {{ $run->projectionSeasonId() ?? 'None' }}</span></td>
-    <td class="whitespace-nowrap px-4 py-3">
+    <td class="min-w-0 break-words px-4 py-2 font-medium text-gray-700 lg:py-3"><span class="mb-1 block text-xs font-normal text-gray-500 lg:hidden">Version</span>{{ $run->model_version }}</td>
+    <td class="min-w-0 break-words px-4 py-2 text-gray-700 lg:py-3"><span class="mb-1 block text-xs text-gray-500 lg:hidden">Training seasons</span>{{ $trainingSeasons !== '' ? $trainingSeasons : 'None' }}</td>
+    <td class="min-w-0 px-4 py-2 text-gray-700 lg:py-3"><span class="mb-1 block text-xs text-gray-500 lg:hidden">Test season</span>{{ $run->target_season_id ?? 'None' }}<span class="mt-1 block text-xs text-gray-500">Projection: {{ $run->projectionSeasonId() ?? 'None' }}</span></td>
+    <td class="min-w-0 px-4 py-2 lg:py-3"><span class="mb-1 block text-xs text-gray-500 lg:hidden">Excluded</span>
         @if($totalSog !== null && (int) $totalSog > 0)
             <div class="font-medium text-gray-950">{{ number_format(((float) $excludedRate) * 100, 1) }}%</div>
             <div class="mt-1 text-xs text-gray-500">{{ number_format((int) $excludedSog) }} of {{ number_format((int) $totalSog) }}</div>
@@ -51,7 +51,7 @@
             <span class="text-gray-400">-</span>
         @endif
     </td>
-    <td class="whitespace-nowrap px-4 py-3">
+    <td class="min-w-0 break-words px-4 py-3"><span class="mb-1 block text-xs text-gray-500 lg:hidden">Status</span>
         <div data-pregame-progress data-progress-url="{{ route('admin.nhl-sat-models.context.progress', $run) }}">
             @include('admin.nhl-sat-models._pregame-progress', ['pregameBuild' => $pregameBuild])
         </div>
@@ -77,12 +77,12 @@
             <div class="mt-1 max-w-xs whitespace-normal text-xs text-red-700">Profiles failed · {{ $profileBuild['error'] ?? '' }}</div>
         @endif
     </td>
-    <td class="whitespace-nowrap px-4 py-3 text-gray-500">{{ $run->updated_at?->format('Y-m-d H:i') }}</td>
-    <td class="whitespace-nowrap px-4 py-3 text-right">
+    <td class="min-w-0 px-4 py-3 text-gray-500"><span class="mb-1 block text-xs lg:hidden">Updated</span>{{ $run->updated_at?->format('Y-m-d H:i') }}</td>
+    <td class="absolute right-0 top-0 px-4 py-3 text-right lg:static">
         <div class="relative inline-flex" x-data="{ open: false }" @keydown.escape.window="open = false" @click.outside="open = false">
             <button
                 type="button"
-                class="inline-flex size-8 items-center justify-center rounded-md border border-gray-300 bg-white text-gray-600 shadow-sm transition-colors hover:bg-gray-50 hover:text-gray-950"
+                class="inline-flex size-11 items-center justify-center rounded-md border border-gray-300 bg-white text-gray-600 shadow-sm transition-colors hover:bg-gray-50 hover:text-gray-950 lg:size-8"
                 @click="open = !open"
                 aria-haspopup="menu"
                 :aria-expanded="open.toString()"
@@ -102,9 +102,13 @@
                 x-transition:leave="transition duration-100 ease-in"
                 x-transition:leave-start="translate-y-0 opacity-100"
                 x-transition:leave-end="translate-y-1 opacity-0"
-                class="absolute right-0 top-9 z-30 w-40 rounded-md border border-gray-200 bg-white py-1 text-left shadow-lg"
+                class="fixed inset-x-3 top-4 z-[95] max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain rounded-lg border border-gray-200 bg-white py-2 pb-[calc(1rem+env(safe-area-inset-bottom))] text-left shadow-lg [&_a]:min-h-11 [&_button]:min-h-11 lg:absolute lg:inset-x-auto lg:right-0 lg:top-9 lg:z-30 lg:max-h-none lg:w-40 lg:overflow-visible lg:rounded-md lg:py-1 lg:[&_a]:min-h-0 lg:[&_button]:min-h-0"
                 role="menu"
             >
+                <div class="flex items-center justify-between gap-3 border-b border-gray-100 px-3 pb-2 lg:hidden">
+                    <span class="min-w-0 truncate text-sm font-semibold">{{ $run->name }}</span>
+                    <button type="button" class="shrink-0 rounded-md px-3 text-sm text-gray-600 hover:bg-gray-100" @click="open = false" aria-label="Close model actions">Close</button>
+                </div>
                 <a href="{{ route('admin.nhl-sat-models.buckets', ['run' => $run, 'target' => \App\Services\NhlExpectedGoalsBackfiller::TARGET_GOAL]) }}" class="block px-3 py-2 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950" role="menuitem">
                     View SOG
                 </a>
@@ -133,12 +137,12 @@
                         Build Predictions
                     </button>
                 </form>
-                <div class="relative" x-data="{ profilesOpen: false }" @mouseenter="profilesOpen = true" @mouseleave="profilesOpen = false">
+                <div class="relative" x-data="{ profilesOpen: false }" @mouseenter="if (window.matchMedia('(min-width: 1024px) and (hover: hover)').matches) profilesOpen = true" @mouseleave="if (window.matchMedia('(min-width: 1024px) and (hover: hover)').matches) profilesOpen = false">
                     <button type="button" class="flex w-full items-center justify-between px-3 py-2 text-left text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950" role="menuitem" :aria-expanded="profilesOpen.toString()" @click.stop="profilesOpen = !profilesOpen">
                         <span>Profiles</span>
                         <svg class="size-3" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M7.22 4.22a.75.75 0 0 1 1.06 0l5.25 5.25a.75.75 0 0 1 0 1.06L8.28 15.78a.75.75 0 0 1-1.06-1.06L11.94 10 7.22 5.28a.75.75 0 0 1 0-1.06Z" clip-rule="evenodd" /></svg>
                     </button>
-                    <div x-cloak x-show="profilesOpen" x-transition.opacity.duration.150ms class="absolute right-full top-0 z-40 mr-1 w-48 rounded-md border border-gray-200 bg-white py-1 shadow-lg" role="menu">
+                    <div x-cloak x-show="profilesOpen" x-transition.opacity.duration.150ms class="relative mx-3 border-l border-gray-200 bg-gray-50 py-1 motion-reduce:transition-none lg:absolute lg:right-full lg:top-0 lg:z-40 lg:ml-0 lg:mr-1 lg:w-48 lg:rounded-md lg:border lg:bg-white lg:shadow-lg" role="menu">
                         <a href="{{ route('admin.nhl-sat-models.profiles', $run) }}" class="block px-3 py-2 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950" role="menuitem">View Profiles</a>
                         <form method="POST" action="{{ route('admin.nhl-sat-models.profiles.build', $run) }}" data-sat-model-profile-build-form>
                             @csrf
@@ -152,12 +156,12 @@
                         </form>
                     </div>
                 </div>
-                <div class="relative" x-data="{ predictOpen: false }" @mouseenter="predictOpen = true" @mouseleave="predictOpen = false">
+                <div class="relative" x-data="{ predictOpen: false }" @mouseenter="if (window.matchMedia('(min-width: 1024px) and (hover: hover)').matches) predictOpen = true" @mouseleave="if (window.matchMedia('(min-width: 1024px) and (hover: hover)').matches) predictOpen = false">
                     <button type="button" class="flex w-full items-center justify-between px-3 py-2 text-left text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950" role="menuitem" :aria-expanded="predictOpen.toString()" @click.stop="predictOpen = !predictOpen">
                         <span>Predict</span>
                         <svg class="size-3" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M7.22 4.22a.75.75 0 0 1 1.06 0l5.25 5.25a.75.75 0 0 1 0 1.06L8.28 15.78a.75.75 0 0 1-1.06-1.06L11.94 10 7.22 5.28a.75.75 0 0 1 0-1.06Z" clip-rule="evenodd" /></svg>
                     </button>
-                    <div x-cloak x-show="predictOpen" x-transition.opacity.duration.150ms class="absolute right-full top-0 z-40 mr-1 w-52 rounded-md border border-gray-200 bg-white py-1 shadow-lg" role="menu">
+                    <div x-cloak x-show="predictOpen" x-transition.opacity.duration.150ms class="relative mx-3 border-l border-gray-200 bg-gray-50 py-1 motion-reduce:transition-none lg:absolute lg:right-full lg:top-0 lg:z-40 lg:ml-0 lg:mr-1 lg:w-52 lg:rounded-md lg:border lg:bg-white lg:shadow-lg" role="menu">
                 @if($canViewTrainingDrift)
                     <a href="{{ route('admin.nhl-sat-models.profiles.training-drift', $run) }}" class="block px-3 py-2 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950" role="menuitem">
                         Training Drift
@@ -209,26 +213,27 @@
                 @endif
                     </div>
                 </div>
-                <div class="relative" x-data="{ analysisOpen: false }" @mouseenter="analysisOpen = true" @mouseleave="analysisOpen = false" @keydown.escape.stop="analysisOpen = false">
+                <div class="relative" x-data="{ analysisOpen: false }" @mouseenter="if (window.matchMedia('(min-width: 1024px) and (hover: hover)').matches) analysisOpen = true" @mouseleave="if (window.matchMedia('(min-width: 1024px) and (hover: hover)').matches) analysisOpen = false" @keydown.escape.stop="analysisOpen = false">
                     <button type="button" class="flex w-full items-center justify-between px-3 py-2 text-left text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950" role="menuitem" aria-haspopup="menu" aria-controls="analysis-menu-{{ $run->id }}" :aria-expanded="analysisOpen.toString()" @click.stop="analysisOpen = !analysisOpen">
                         <span>Analysis</span>
                         <svg class="size-3 transition-transform duration-300 ease-out motion-reduce:transition-none" :class="{ 'rotate-90': analysisOpen }" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="m7 4 6 6-6 6V4Z" /></svg>
                     </button>
-                    <div id="analysis-menu-{{ $run->id }}" x-cloak x-show="analysisOpen" x-transition.opacity.duration.150ms class="absolute right-full top-0 z-40 mr-1 w-52 rounded-md border border-gray-200 bg-white py-1 shadow-lg motion-reduce:transition-none" role="menu">
+                    <div id="analysis-menu-{{ $run->id }}" x-cloak x-show="analysisOpen" x-transition.opacity.duration.150ms class="relative mx-3 border-l border-gray-200 bg-gray-50 py-1 motion-reduce:transition-none lg:absolute lg:right-full lg:top-0 lg:z-40 lg:ml-0 lg:mr-1 lg:w-52 lg:rounded-md lg:border lg:bg-white lg:shadow-lg" role="menu">
                         <form method="POST" action="{{ route('admin.nhl-sat-models.context.build', $run) }}" data-sat-model-pregame-build-form>
                             @csrf
                             <button type="submit" @disabled($pregameActive) class="block w-full px-3 py-2 text-left text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950 disabled:cursor-not-allowed disabled:opacity-60" role="menuitem">Build Pregame</button>
                         </form>
                         <a data-pregame-view-link href="{{ route('admin.nhl-sat-models.context.effects') }}" @class(['hidden' => ! $canViewPregame, 'block px-3 py-2 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950']) role="menuitem">View Pregame Impacts</a>
                         <span data-pregame-view-disabled @class(['hidden' => $canViewPregame, 'block cursor-not-allowed px-3 py-2 text-xs font-medium text-gray-300']) role="menuitem" aria-disabled="true">View Pregame Impacts</span>
+                        <a href="{{ route('admin.nhl-sat-models.next-game') }}" class="block px-3 py-2 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950" role="menuitem">Game Evaluations</a>
                     </div>
                 </div>
-                <div class="relative" x-data="{ compareOpen: false }" @mouseenter="compareOpen = true" @mouseleave="compareOpen = false">
+                <div class="relative" x-data="{ compareOpen: false }" @mouseenter="if (window.matchMedia('(min-width: 1024px) and (hover: hover)').matches) compareOpen = true" @mouseleave="if (window.matchMedia('(min-width: 1024px) and (hover: hover)').matches) compareOpen = false">
                     <button type="button" class="flex w-full items-center justify-between px-3 py-2 text-left text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950" role="menuitem" :aria-expanded="compareOpen.toString()" @click.stop="compareOpen = !compareOpen">
                         <span>Compare</span>
                         <svg class="size-3" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M7.22 4.22a.75.75 0 0 1 1.06 0l5.25 5.25a.75.75 0 0 1 0 1.06L8.28 15.78a.75.75 0 0 1-1.06-1.06L11.94 10 7.22 5.28a.75.75 0 0 1 0-1.06Z" clip-rule="evenodd" /></svg>
                     </button>
-                    <div x-cloak x-show="compareOpen" x-transition.opacity.duration.150ms class="absolute right-full top-0 z-40 mr-1 w-52 rounded-md border border-gray-200 bg-white py-1 shadow-lg" role="menu">
+                    <div x-cloak x-show="compareOpen" x-transition.opacity.duration.150ms class="relative mx-3 border-l border-gray-200 bg-gray-50 py-1 motion-reduce:transition-none lg:absolute lg:right-full lg:top-0 lg:z-40 lg:ml-0 lg:mr-1 lg:w-52 lg:rounded-md lg:border lg:bg-white lg:shadow-lg" role="menu">
                         @if($canBuildRateComparison)
                             <form method="POST" action="{{ route('admin.nhl-sat-models.rate-projections.compare.build', $run) }}" data-sat-model-rate-compare-build-form>
                                 @csrf

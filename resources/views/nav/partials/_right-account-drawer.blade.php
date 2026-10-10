@@ -1,7 +1,7 @@
 {{-- resources/views/partials/_right-account-drawer.blade.php --}}
 
 {{-- RIGHT ACCOUNT DRAWER (desktop+mobile) --}}
-<div class="fixed inset-0 z-[90] pointer-events-none">
+<div class="fixed inset-x-0 top-0 z-[90] h-[100dvh] pointer-events-none">
     {{-- overlay --}}
     <div x-show="accountOpen" x-transition.opacity.duration.250ms @click="accountOpen=false"
         class="absolute inset-0 bg-black/40 pointer-events-auto"></div>
@@ -36,7 +36,7 @@
             </button>
         </div>
 
-        <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-4 pb-[calc(1rem+env(safe-area-inset-bottom))]">
+        <div class="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain px-3 pt-4 pb-[calc(3rem+env(safe-area-inset-bottom))]">
             @php
                 $item = fn($href, $label, $icon, $active=false) => '
                 <a href="'.$href.'"

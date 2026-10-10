@@ -71,7 +71,7 @@ It should not feel:
 
 ### Global Layout
 
-- Use Laravel's default Blade layout patterns as the baseline.
+- New and migrated Inertia pages use the shared Vue application layout. Legacy Blade layouts remain for unmigrated pages.
 - Prefer white or light neutral backgrounds for authenticated application surfaces.
 - Use generous whitespace.
 - Avoid card-heavy dashboards unless the card model directly improves task completion.
@@ -120,6 +120,7 @@ Navigation eligibility is backend-owned. Client-side updates may patch stale loc
 
 ### Allowed
 
+- Vue/Inertia for new interactive pages and the shared application shell
 - Blade
 - Alpine.js
 - Native JavaScript
@@ -128,7 +129,7 @@ Navigation eligibility is backend-owned. Client-side updates may patch stale loc
 
 ### Disallowed Without Approval
 
-- SPA frameworks such as React or Vue
+- Other SPA frameworks such as React
 - Client-side routing
 - Global JavaScript state for page logic
 - Native CSS files for new UI
@@ -137,9 +138,11 @@ Navigation eligibility is backend-owned. Client-side updates may patch stale loc
 
 ### Page Module Contract
 
+- New Vue/Inertia pages use `resources/js/inertia.js` and `resources/js/layouts/AppLayout.vue`; their Blade root contains only document metadata, assets and the Inertia mount, never navigation or interactive UI.
+- The remaining Blade/Alpine page-module rules apply to maintenance of unmigrated pages, not new Vue/Inertia surfaces.
 - Blade templates must not include executable `<script>` tags.
 - Blade templates may include a single JSON payload script when needed.
-- New interactive pages should use page modules.
+- New interactive pages use Vue/Inertia; unmigrated pages retain their page modules.
 - During the staged migration, existing Alpine directives in Blade may remain.
 - Executable inline scripts in existing Blade files are legacy debt and should not be copied into new work.
 
@@ -157,7 +160,7 @@ Navigation eligibility is backend-owned. Client-side updates may patch stale loc
 ### Modals & Panels
 
 - Slide-overs are preferred for longer create/edit forms.
-- Reusable right-side slide-overs should use the `x-ui.slide-over` Blade component.
+- Vue slide-overs must provide focus trapping/restoration, Escape dismissal and separately animated panel/overlay transitions. Legacy Blade slide-overs use `x-ui.slide-over`.
 - Modals are appropriate for confirmations and short forms.
 - Never stack modals.
 - Forms must preserve entered values after validation errors.
@@ -454,7 +457,7 @@ This UI is not:
 The current implementation is in a staged migration state.
 
 - Existing Breeze, Jetstream, Livewire, Blade/Alpine, inline scripts, and legacy layouts may remain until intentionally migrated.
-- New or migrated interactive pages should follow the page-module contract.
+- New or migrated interactive pages use Vue/Inertia and the shared Vue shell; legacy page modules remain supported for unmigrated pages.
 - Existing deviations are tracked in `docs/ui_backlog.md`.
 - PRs should shrink the backlog when practical, but unrelated UI debt should not block unrelated work.
 
