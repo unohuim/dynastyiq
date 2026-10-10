@@ -8,19 +8,100 @@ use App\Http\Controllers\Controller;
 use App\Jobs\EvaluateNhlNextGameJob;
 use App\Models\NhlModelRun;
 use App\Models\NhlNextGameEvaluation;
+use App\Services\NhlEvaluationOutlookBuilder;
 use App\Services\NhlNextGameEvaluationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
+use Inertia\Inertia;
 use RuntimeException;
 
-/** Admin-only historical experiments, isolated from production predictions. */
+/** Admin evaluation containers and preserved historical experiments, isolated from live predictions. */
 class NhlNextGameEvaluationController extends Controller
 {
+    /** List named evaluations without calculating or loading game comparisons. */
+    public function index(Request $request, NhlEvaluationOutlookBuilder $builder)
+    {
+        if ($request->filled('evaluation')) {
+            $request->validate(['evaluation' => ['required', 'integer', 'exists:nhl_next_game_evaluations,id']]);
+            $selected = NhlNextGameEvaluation::findOrFail($request->integer('evaluation'));
+            if ($selected->version !== NhlNextGameEvaluation::OUTLOOK_VERSION) {
+                return $this->legacyIndex($request);
+            }
+        }
+        $filters = $request->validate([
+            'q' => ['nullable', 'string', 'max:100'],
+            'status' => ['nullable', Rule::in(['building', 'ready', 'failed', 'completed'])],
+            'sort' => ['nullable', Rule::in(['name', 'model', 'season_id', 'status', 'progress', 'updated_at'])],
+            'direction' => ['nullable', Rule::in(['asc', 'desc'])],
+            'page' => ['nullable', 'integer', 'min:1'],
+        ]);
+        $query = NhlNextGameEvaluation::query()->leftJoin('nhl_model_runs as model', 'model.id', '=', 'nhl_next_game_evaluations.model_run_id')
+            ->select('nhl_next_game_evaluations.*', 'model.name as model_name')
+            ->when($filters['q'] ?? null, fn ($query, $q) => $query->where(fn ($where) =>
+                $where->where('nhl_next_game_evaluations.name', 'ilike', '%' . $q . '%')->orWhere('model.name', 'ilike', '%' . $q . '%')))
+            ->when($filters['status'] ?? null, fn ($query, $status) => $status === 'building'
+                ? $query->whereIn('nhl_next_game_evaluations.status', NhlNextGameEvaluation::ACTIVE_STATUSES)
+                : $query->where('nhl_next_game_evaluations.status', $status));
+        $direction = $filters['direction'] ?? 'desc';
+        $sort = $filters['sort'] ?? 'updated_at';
+        if ($sort === 'progress') {
+            $query->orderByRaw("CASE WHEN version = 'next_game_outlook_v1' THEN
+                COALESCE((inputs->'_work'->>'players_completed')::numeric, 0) / NULLIF((inputs->'_work'->>'players_total')::numeric, 0)
+                ELSE (completed_games + excluded_games)::numeric / NULLIF(total_games, 0) END {$direction} NULLS LAST");
+        } else {
+            $query->orderBy($sort === 'model' ? 'model.name' : 'nhl_next_game_evaluations.' . $sort, $direction);
+        }
+        $evaluations = $query->orderByDesc('nhl_next_game_evaluations.id')->paginate(20)->withQueryString()
+            ->through(fn ($evaluation) => $this->row($evaluation));
+        if ($request->expectsJson() && ! $request->header('X-Inertia')) {
+            return response()->json(['evaluations' => $evaluations]);
+        }
+
+        return Inertia::render('Admin/Evaluations/Index', [
+            'evaluations' => $evaluations, 'filters' => $filters,
+            'models' => fn () => $this->models($builder),
+        ]);
+    }
+
+    /** Expose prerequisites as read-only choice metadata; POST repeats validation authoritatively. */
+    private function models(NhlEvaluationOutlookBuilder $builder): array
+    {
+        return NhlModelRun::query()->where('model_family', 'sat')->where('workflow_stage', 'training')
+            ->orderByDesc('id')->get()->map(function ($model) use ($builder): array {
+                $reason = null;
+                try {
+                    $builder->validateModel($model);
+                } catch (RuntimeException $exception) {
+                    $reason = $exception->getMessage();
+                }
+
+                return ['id' => $model->id, 'name' => $model->name ?? 'Model #' . $model->id,
+                    'training_seasons' => $model->train_season_ids ?? [], 'season_id' => $model->projectionSeasonId(),
+                    'available' => $reason === null, 'reason' => $reason];
+            })->all();
+    }
+
+    /** Safe index representation; never expose frozen player payloads in polling responses. */
+    private function row(NhlNextGameEvaluation $evaluation): array
+    {
+        $outlook = $evaluation->version === NhlNextGameEvaluation::OUTLOOK_VERSION;
+
+        return ['id' => $evaluation->id, 'name' => $evaluation->name ?? 'Evaluation #' . $evaluation->id,
+            'model_name' => $evaluation->model_name ?? 'Model #' . $evaluation->model_run_id,
+            'season_id' => $evaluation->season_id, 'status' => $evaluation->status,
+            'completed' => $outlook ? data_get($evaluation->inputs, '_work.players_completed', 0) : $evaluation->completed_games + $evaluation->excluded_games,
+            'total' => $outlook ? data_get($evaluation->inputs, '_work.players_total', 0) : $evaluation->total_games,
+            'unit' => $outlook ? 'players' : 'games', 'updated_at' => $evaluation->updated_at?->toISOString(),
+            'active' => in_array($evaluation->status, NhlNextGameEvaluation::ACTIVE_STATUSES, true),
+            'can_resume' => $evaluation->canResume(), 'error' => $evaluation->last_error,
+            'legacy_url' => $outlook ? null : route('admin.nhl-sat-models.next-game', ['evaluation' => $evaluation->id])];
+    }
+
     /** Render progress and like-for-like error summaries for the selected cohort. */
-    public function index(Request $request)
+    private function legacyIndex(Request $request)
     {
         $filters = $request->validate([
             'evaluation' => ['nullable', 'integer', 'exists:nhl_next_game_evaluations,id'],
@@ -43,7 +124,7 @@ class NhlNextGameEvaluationController extends Controller
                 'revision' => $evaluation ? $evaluation->completed_games . ':' . $evaluation->excluded_games : '0:0',
             ]);
         }
-        $runs = NhlNextGameEvaluation::query()->latest('id')->limit(30)->get(['id', 'season_id']);
+        $runs = NhlNextGameEvaluation::query()->where('version', NhlNextGameEvaluation::VERSION)->latest('id')->limit(30)->get(['id', 'season_id']);
         $evaluation = isset($filters['evaluation'])
             ? NhlNextGameEvaluation::findOrFail($filters['evaluation'])
             : NhlNextGameEvaluation::query()->latest('id')->first();
@@ -113,39 +194,59 @@ class NhlNextGameEvaluationController extends Controller
     }
 
     /** Create one durable run and dispatch only its coordinator. */
-    public function store(Request $request, NhlNextGameEvaluationService $service)
+    public function store(Request $request, NhlEvaluationOutlookBuilder $service)
     {
         $this->requireAsyncQueue();
-        $input = $request->validate(['model_run_id' => ['required', 'integer', 'exists:nhl_model_runs,id']]);
+        $input = $request->validate(['name' => ['required', 'string', 'max:160'],
+            'model_run_id' => ['required', 'integer', 'exists:nhl_model_runs,id']]);
         $evaluation = DB::transaction(function () use ($input, $request, $service) {
             $model = NhlModelRun::query()->lockForUpdate()->findOrFail($input['model_run_id']);
             try {
-                $service->validateModel($model, (string) $model->target_season_id);
+                $service->validateModel($model);
             } catch (RuntimeException $exception) {
                 throw ValidationException::withMessages(['model_run_id' => $exception->getMessage()]);
-            }
-            $existing = NhlNextGameEvaluation::query()->where('model_run_id', $model->id)
-                ->whereIn('status', NhlNextGameEvaluation::ACTIVE_STATUSES)->first();
-            if ($existing) {
-                return $existing;
             }
             $token = (string) Str::uuid();
             $evaluation = NhlNextGameEvaluation::create([
                 'model_run_id' => $model->id, 'created_by' => $request->user()->id,
-                'season_id' => $model->target_season_id, 'status' => 'queued',
-                'version' => NhlNextGameEvaluation::VERSION,
-                'inputs' => ['_work' => ['stage' => 'initialize', 'token' => $token]],
+                'name' => $input['name'], 'season_id' => $model->projectionSeasonId(), 'status' => 'building',
+                'version' => NhlNextGameEvaluation::OUTLOOK_VERSION,
+                'inputs' => ['training_seasons' => array_map('strval', $model->train_season_ids),
+                    'model_updated_at' => $model->updated_at->toISOString(),
+                    '_work' => ['stage' => 'initialize', 'token' => $token]],
             ]);
             EvaluateNhlNextGameJob::dispatch($evaluation->id, $token);
 
             return $evaluation;
         });
 
-        $url = route('admin.nhl-sat-models.next-game', ['evaluation' => $evaluation->id]);
+        $url = route('admin.nhl-sat-models.next-game');
 
         return $request->expectsJson()
-            ? response()->json(['url' => $url], 202)
+            ? response()->json(['url' => $url, 'id' => $evaluation->id], 202)
             : redirect()->to($url, 303);
+    }
+
+    /** Rename without changing the frozen model or initial estimates. */
+    public function update(Request $request, NhlNextGameEvaluation $evaluation)
+    {
+        $input = $request->validate(['name' => ['required', 'string', 'max:160']]);
+        $evaluation->update($input);
+
+        return response()->json(['message' => 'Evaluation renamed.']);
+    }
+
+    /** Delete only inactive evaluation-owned data; never remove model outputs. */
+    public function destroy(NhlNextGameEvaluation $evaluation)
+    {
+        DB::transaction(function () use ($evaluation): void {
+            $evaluation = NhlNextGameEvaluation::query()->lockForUpdate()->findOrFail($evaluation->id);
+            abort_if(in_array($evaluation->status, NhlNextGameEvaluation::ACTIVE_STATUSES, true), 409,
+                'This evaluation is still building. Wait until it finishes before deleting it.');
+            $evaluation->delete();
+        });
+
+        return response()->json(['message' => 'Evaluation deleted.']);
     }
 
     /** Resume failed or abandoned work without clearing successful games. */

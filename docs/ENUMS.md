@@ -14,12 +14,15 @@
 
 ## NHL next-game evaluation
 
-- Run `status`: `queued`, `preparing`, `running`, `completed`, `failed`.
-- Run `inputs._work.stage`: `initialize`, `baselines`, `games`, `evaluate`.
+- Run `status`: `queued`, `preparing`, `running`, `completed`, `failed`, `building`, `ready`.
+  New outlook preparation uses `building` then `ready`; legacy comparisons retain their lifecycle.
+- Run `inputs._work.stage`: `initialize`, `baselines`, `games`, `evaluate`, `outlook`.
   `_work.token` is an opaque rotating checkpoint token, not a queue job ID.
   `Stalled` is a UI label for active work with no recent activity, not a stored status.
 - Work `state`: `pending`, `completed`, `excluded`.
-- `version`: `next_game_buckets_v1`.
+- `version`: `next_game_buckets_v1` (legacy comparisons), `next_game_outlook_v1` (initial outlooks).
+- Outlook `period`: `q1`, `q2`, `q3`, `q4`, `season`. Initial revision is `1`.
+- Outlook provenance `method`: `model_projection_initial_v1`. Null metrics denote unavailable projections, not zero.
 - `strength`: `all`, `ev`, `pp`, `pk`.
 - `baseline_source`: `static_projection`, `training_history`, `unavailable`.
 - Method: `baseline`, `last_season`, `recent_5`, `recent_10`, `recent_20`,

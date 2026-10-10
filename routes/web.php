@@ -442,6 +442,10 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                     ->name('admin.nhl-sat-models.next-game.store');
                 Route::post('/nhl-sat-models/next-game/{evaluation}/resume', [\App\Http\Controllers\Admin\NhlNextGameEvaluationController::class, 'resume'])
                     ->whereNumber('evaluation')->name('admin.nhl-sat-models.next-game.resume');
+                Route::patch('/nhl-sat-models/next-game/{evaluation}', [\App\Http\Controllers\Admin\NhlNextGameEvaluationController::class, 'update'])
+                    ->whereNumber('evaluation')->name('admin.nhl-sat-models.next-game.update');
+                Route::delete('/nhl-sat-models/next-game/{evaluation}', [\App\Http\Controllers\Admin\NhlNextGameEvaluationController::class, 'destroy'])
+                    ->whereNumber('evaluation')->name('admin.nhl-sat-models.next-game.destroy');
                 Route::get('/nhl-sat-models/context/effects', [\App\Http\Controllers\Admin\NhlPregameContextController::class, 'effects'])
                     ->name('admin.nhl-sat-models.context.effects');
                 Route::post('/nhl-sat-models/{run}/context/build', [\App\Http\Controllers\Admin\NhlPregameContextController::class, 'buildForModel'])

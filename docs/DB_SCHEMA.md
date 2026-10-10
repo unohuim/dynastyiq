@@ -26,6 +26,17 @@ These JSON-format additions require no migration.
 
 ## NHL next-game evaluations
 
+Migration required for named initial outlooks:
+`2026_10_10_000002_add_initial_outlooks_to_nhl_evaluations.php`.
+Adds nullable `name` to existing evaluations (unnamed legacy rows display their ID).
+New evaluations inherit the model's projection season; no separate live/Test flag.
+`nhl_evaluation_player_outlooks` stores evaluation/player references, player name,
+explicit strength and period, revision, nullable decimal SAT/60 and TOI/game in seconds,
+provenance JSON and timestamps. Evaluation/player/strength/period/revision is unique.
+Evaluation deletion cascades; model projection rows are not modified. Initial quarter
+and season values are equal copies of the stored model outputs. Inputs JSON records
+model/source fingerprints and a player preparation cursor/counts.
+
 Migration: `2026_10_07_000002_create_nhl_next_game_evaluations.php`.
 Global admin experiment tables, separate from live prediction storage:
 

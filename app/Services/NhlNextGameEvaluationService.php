@@ -47,6 +47,11 @@ class NhlNextGameEvaluationService
     /** Advance one small checkpoint. The caller commits output and cursor together. */
     public function advance(NhlNextGameEvaluation $evaluation): void
     {
+        if ($evaluation->version === NhlNextGameEvaluation::OUTLOOK_VERSION) {
+            app(NhlEvaluationOutlookBuilder::class)->advance($evaluation);
+
+            return;
+        }
         $stage = data_get($evaluation->inputs, '_work.stage', 'initialize');
 
         match ($stage) {

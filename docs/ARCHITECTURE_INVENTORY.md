@@ -13,6 +13,10 @@ engine simulations and qualification are not cached. Authority:
 `docs/architecture/stats/NhlPredictionInputContext.yaml`.
 
 Admin SAT Models includes a chronological next-game shot-bucket evaluation.
+Its index manages named evaluation containers; new evaluations require saved
+SAT/60 and TOI projections and prepare strength-specific initial quarter/season
+outlooks through bounded player jobs, stopping at Ready without game simulation.
+Existing historical results remain accessible separately.
 Frozen baselines are compared with prior appearances by strength using durable,
 single-player checkpoints, paged game preparation, stale-job fencing, and lightweight
 progress polling. This does not change live predictions. Authority:

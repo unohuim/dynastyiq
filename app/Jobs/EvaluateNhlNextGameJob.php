@@ -48,7 +48,8 @@ class EvaluateNhlNextGameJob implements ShouldQueue
                 $inputs['_work']['stage'] ??= isset($inputs['baseline_frozen_at']) ? 'evaluate' : 'initialize';
                 $inputs['_work']['started_at'] = now()->toIso8601String();
                 $evaluation->update([
-                    'status' => $inputs['_work']['stage'] === 'evaluate' ? 'running' : 'preparing',
+                    'status' => $evaluation->version === NhlNextGameEvaluation::OUTLOOK_VERSION
+                        ? 'building' : ($inputs['_work']['stage'] === 'evaluate' ? 'running' : 'preparing'),
                     'inputs' => $inputs,
                     'last_error' => null,
                 ]);
@@ -72,11 +73,12 @@ class EvaluateNhlNextGameJob implements ShouldQueue
                 unset($inputs['_work']['started_at']);
                 $evaluation->update(['inputs' => $inputs, 'last_error' => null]);
 
-                return $evaluation->status === 'completed' ? null : $inputs['_work']['token'];
+                return in_array($evaluation->status, ['completed', 'ready'], true) ? null : $inputs['_work']['token'];
             });
             if ($nextToken !== null) {
                 // Rejoin the queue tail: no fan-out, and other work gets the worker back.
-                self::dispatch($this->evaluationId, $nextToken);
+                self::dispatch($this->evaluationId, $nextToken)
+                    ->onConnection($this->job?->getConnectionName() ?? $this->connection);
             }
         } catch (Throwable $exception) {
             if ($nextToken !== null) {

@@ -6,12 +6,13 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 
-/** Global, admin-owned historical experiment; never a live prediction source. */
+/** Admin evaluation container; legacy experiments and revisioned initial forecast outlooks. */
 class NhlNextGameEvaluation extends Model
 {
     public const VERSION = 'next_game_buckets_v1';
+    public const OUTLOOK_VERSION = 'next_game_outlook_v1';
 
-    public const ACTIVE_STATUSES = ['queued', 'preparing', 'running'];
+    public const ACTIVE_STATUSES = ['queued', 'preparing', 'running', 'building'];
 
     public const STALLED_SECONDS = 180;
 

@@ -1,22 +1,32 @@
-name: NHL Next Game Bucket Evaluation
-type: Chronological Historical Experiment
+name: NHL Next Game Evaluation
+type: Model Scoped Evaluation Container
 location:
   - app/Services/NhlNextGameEvaluationService.php
+  - app/Services/NhlEvaluationOutlookBuilder.php
   - app/Jobs/EvaluateNhlNextGameJob.php
   - app/Models/NhlNextGameEvaluation.php
   - app/Http/Controllers/Admin/NhlNextGameEvaluationController.php
   - resources/views/admin/nhl-sat-models/next-game.blade.php
   - resources/js/pages/nhl-next-game-evaluation.js
-purpose: Compare frozen offensive shot-bucket baselines with recent-appearance rates without changing live predictions.
+  - resources/js/pages/Admin/Evaluations/Index.vue
+purpose: Prepare named model-derived quarter and season outlooks while retaining historical bucket experiments, without changing live predictions.
 when_to_use:
   - Measuring next-game individual SAT bucket rates across a completed model test season.
   - Inspecting whether recent evidence improves the same player/game cohort over its baseline.
+  - Creating multiple independently named initial outlooks for a model's projection season.
 when_not_to_use:
   - Predicting roster participation, ice time, game winners, or goalie performance.
   - Applying context effects to production predictions or tuning formulas on test outcomes.
 rules:
   - Only administrators may create, resume, or read these global NHL experiments.
-  - The target season must match the training model's test season and follow every training season.
+  - New evaluations inherit Train seasons and projectionSeasonId from the model. A live model needs no Test season; historical evaluations use the model's Test season. The projection season must follow every Train season.
+  - Creation requires completed, persisted offensive SAT/60 and TOI projection builds. Historical profiles are not a substitute for missing projections. Model choices explain unmet prerequisites and POST validates again.
+  - Creating an evaluation immediately persists a named Building container and dispatches bounded work on projections. Multiple evaluations of one model are allowed. Initial preparation stops at Ready and never dispatches game simulations.
+  - Initial outlooks save one player per checkpoint, with explicit strength, period, revision and source provenance. Each quarter and the season initially share the existing model projection; no new predictive formula or quarter boundary assumption is introduced.
+  - Strength-specific SAT/60 and TOI/GP come from the saved rate projection splits. All-strength TOI comes from the standalone TOI projection. All-strength SAT can use the saved bucket projection sum when its split is unavailable. Missing strength-specific values remain null, never substituted from All or historical data. TOI is persisted in seconds per game.
+  - Preparation rejects changes to the selected model or projection source signatures. Source seasons must be within the frozen Train seasons. Evaluation preparation never reads Test outcomes.
+  - Rename changes only the name. Delete is blocked for active work; deleting inactive evaluations cascades only evaluation-owned data. Model projections remain untouched.
+  - The remaining historical comparison rules apply to preserved legacy bucket evaluations, not initial outlook preparation.
   - Training rates, projection rates, shot-bucket mapping, and model provenance are frozen before target games are evaluated.
   - Recent windows select prior completed regular-season appearances strictly before the target start, including zero-attempt appearances and the last training season when needed.
   - Target summaries select observed participants for evaluation only. Target ice time weights scoring errors but never determines forecast rates.
@@ -32,7 +42,7 @@ rules:
   - Games advance chronologically, one skater per job. Each job commits its output and cursor atomically and publishes only one successor at the queue tail. No run-sized job burst, artificial sleep between successors, or synchronous queue driver is permitted.
   - A database row lock serializes checkpoint writes. A rolling token rejects duplicate or obsolete deliveries and their failure callbacks, including legacy jobs after Resume. No cache lock may discard a valid successor during the previous job's completion.
   - Activity is committed before expensive work. Query and lock waits are bounded below the worker timeout, with finite retry/backoff and visible errors. Worker death or a lost successor is recoverable from the last committed checkpoint through Resume.
-  - Resume rotates the token and preserves baseline and player checkpoints, completed games, and exclusions. Duplicate active starts reuse the existing run; no queue-wide clearing or retry is required.
+  - Resume rotates the token and preserves committed preparation, baseline and player checkpoints, completed games, and exclusions. No queue-wide clearing or retry is required.
   - Partial player outputs are unpublished until their game completes. If required evidence excludes that game, only its tentative evaluation output is removed; source data and completed games are preserved.
   - Queue states and evaluation methods are canonical in docs/ENUMS.md. Schema is canonical in the evaluation migration.
   - Browser progress uses a lightweight status-only poll while active, pauses in hidden tabs, and displays preparation stage, committed checkpoint counts, last activity, errors, and a resume action for failed or stalled work. Full result aggregation occurs on explicit filter/read actions and once on completion, not every status poll.
@@ -40,7 +50,9 @@ public_interface:
   - GET /admin/nhl-sat-models/next-game
   - POST /admin/nhl-sat-models/next-game
   - POST /admin/nhl-sat-models/next-game/{evaluation}/resume
+  - PATCH /admin/nhl-sat-models/next-game/{evaluation}
+  - DELETE /admin/nhl-sat-models/next-game/{evaluation}
 example_usage: |
-  Open SAT Models > Next-game evaluation and select a training model.
-  Start its test-season experiment, compare methods separately by strength,
-  and inspect player bucket rates before considering a production change.
+  Open SAT Models > Next-game evaluation. Name an evaluation and select a
+  model with completed projections. Follow preparation on the index until Ready.
+  Historical evaluations retain their existing View results links.
