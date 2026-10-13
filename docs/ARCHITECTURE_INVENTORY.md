@@ -2496,6 +2496,9 @@ $state = app(FantasyIntegrationState::class)->forProvider($user, FantasyProvider
 
 ### Fantrax League Sync
 
+Pending background syncs coalesce by league through shared database-cache locks;
+draft polls coalesce without discarding distinct supplied draft payloads.
+
 **Name:** Fantrax League Sync
 **Type:** External Platform Sync Pattern
 **Location:**
@@ -3010,6 +3013,10 @@ event(new BotFantraxLinked($user));
 ## Admin & Imports
 
 ### Admin Import Registry
+
+Fantrax player imports share bounded admission and sequential chunks across all
+entrypoints. Inputs/checkpoints persist in import-run metadata rather than an
+expiring cache; only the persisted admin schedule triggers automatic player imports.
 
 **Name:** Admin Import Registry
 **Type:** Admin Service Pattern

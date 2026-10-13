@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace App\Jobs;
 
-use App\Events\ImportStreamEvent;
+use App\Services\AdminImports;
 use App\Models\ImportRun;
 use App\Services\ImportFantraxPlayers;
 use Illuminate\Bus\Batchable;
@@ -13,8 +13,6 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
-use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Str;
 use Throwable;
 
 class ImportFantraxPlayersJob implements ShouldQueue
@@ -37,20 +35,12 @@ class ImportFantraxPlayersJob implements ShouldQueue
      */
     public function handle(): void
     {
-        ImportStreamEvent::dispatch('fantrax', 'Importing Fantrax players', 'started');
-
         if ($this->importRunId !== null) {
-            $importer = new ImportFantraxPlayers();
-            $entries = $importer->fetchEntries();
-            $cacheKey = 'fantrax-import:entries:' . Str::uuid()->toString();
-            Cache::put($cacheKey, $entries, now()->addHour());
-
-            $this->importRun()?->setProgressTotal(count($entries), 'Fantrax player records');
-            ImportFantraxPlayersChunkJob::dispatch($cacheKey, 0, count($entries), $this->importRunId);
+            app(ImportFantraxPlayers::class)->prepare($this->importRunId);
             return;
         }
 
-        (new ImportFantraxPlayers())->import();
+        app(AdminImports::class)->dispatch('fantrax');
     }
 
     public function failed(Throwable $throwable): void

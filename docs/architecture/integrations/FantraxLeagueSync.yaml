@@ -37,6 +37,8 @@ when_not_to_use:
   - Patreon membership syncing.
 rules:
   - Fantrax import, league-sync, and draft-sync jobs must use the dedicated fantrax queue so provider backlogs cannot starve unrelated or time-sensitive work.
+  - Pending background league syncs are coalesced per league using shared database-cache uniqueness locks. The lock ends when processing starts so identity changes during processing can enqueue a follow-up; user-triggered syncs retain separate requesting-user scope for feedback.
+  - Pending draft polls are coalesced per league; supplied draft payloads also include payload identity so distinct updates are not discarded. Execution overlap locks outlive the configured Fantrax worker timeout and use delayed release on contention.
   - Fantrax-specific data must map into platform-neutral models when it powers app features.
   - Roster sync must preserve canonical player identity links through platform player IDs.
   - Roster sync must repair stale or missing fantrax_players mirrors from matched Fantrax player_external_identities before deciding current roster memberships.

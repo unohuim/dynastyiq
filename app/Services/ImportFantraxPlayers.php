@@ -6,40 +6,64 @@ namespace App\Services;
 
 use App\Events\ImportStreamEvent;
 use App\Events\PlayersAvailable;
-use App\Jobs\ImportFantraxPlayerJob;
+use App\Jobs\ImportFantraxPlayersChunkJob;
 use App\Models\FantraxPlayer;
+use App\Models\ImportRun;
 use App\Traits\HasAPITrait;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Fetches Fantrax player metadata and dispatches a per-player job.
+ * Fetches Fantrax player metadata for one durable, bounded import.
  */
 class ImportFantraxPlayers
 {
     use HasAPITrait;
 
     /**
-     * Fetch all Fantrax player entries and queue per-player imports.
+     * Route legacy callers through the same bounded import path.
      */
     public function import(?int $importRunId = null): void
     {
-        $entries = $this->fetchEntries();
-
         if ($importRunId !== null) {
-            $this->importChunk($entries, $importRunId);
+            $this->prepare($importRunId);
             return;
         }
 
-        foreach ($entries as $entry) {
-            try {
-                ImportFantraxPlayerJob::dispatch($entry);
-            } catch (\Throwable $e) {
-                Log::error('[Fantrax] Failed to dispatch ImportFantraxPlayerJob', [
-                    'entry_preview' => is_array($entry) ? array_intersect_key($entry, array_flip(['fantraxId', 'name', 'team', 'position'])) : $entry,
-                    'error'         => $e->getMessage(),
+        app(AdminImports::class)->dispatch('fantrax');
+    }
+
+    /** Persist input once; retries reuse the same snapshot and cursor. */
+    public function prepare(int $importRunId): void
+    {
+        $run = ImportRun::query()->findOrFail($importRunId);
+        if ($run->source !== 'fantrax' || $run->status !== 'working') {
+            return;
+        }
+
+        $entries = isset($run->meta['fantrax_players']) ? null : $this->fetchEntries();
+
+        DB::transaction(function () use ($importRunId, $entries): void {
+            $run = ImportRun::query()->lockForUpdate()->findOrFail($importRunId);
+            if ($run->status !== 'working') {
+                return;
+            }
+            $meta = $run->meta ?? [];
+            if (! isset($meta['fantrax_players'])) {
+                $meta['fantrax_players'] = ['entries' => $entries ?? [], 'offset' => 0];
+                $run->update([
+                    'meta' => $meta,
+                    'total_records' => count($entries ?? []),
+                    'progress_label' => 'Fantrax player records',
                 ]);
             }
-        }
+            ImportFantraxPlayersChunkJob::dispatch(
+                'persisted',
+                $meta['fantrax_players']['offset'],
+                count($meta['fantrax_players']['entries']),
+                $run->id,
+            )->afterCommit();
+        });
     }
 
     /**

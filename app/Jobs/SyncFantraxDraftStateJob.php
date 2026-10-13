@@ -7,12 +7,15 @@ namespace App\Jobs;
 use App\Models\PlatformLeague;
 use App\Services\SyncFantraxDraftState;
 use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Contracts\Queue\ShouldBeUniqueUntilProcessing;
+use Illuminate\Contracts\Cache\Repository;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\Middleware\WithoutOverlapping;
 use Illuminate\Queue\SerializesModels;
 
-final class SyncFantraxDraftStateJob implements ShouldQueue
+final class SyncFantraxDraftStateJob implements ShouldQueue, ShouldBeUniqueUntilProcessing
 {
     use Queueable;
     use InteractsWithQueue;
@@ -31,13 +34,28 @@ final class SyncFantraxDraftStateJob implements ShouldQueue
     {
         return [
             (new WithoutOverlapping('fantrax-draft-sync:' . $this->platformLeagueId))
-                ->expireAfter(300),
+                ->releaseAfter(30)
+                ->expireAfter(660),
         ];
     }
 
     public function backoff(): array
     {
         return [10, 60, 300];
+    }
+
+    /** Collapse repeated polls, but never discard a distinct supplied payload. */
+    public function uniqueId(): string
+    {
+        return $this->platformLeagueId . ':' . ($this->draftResults === null
+            ? 'poll'
+            : hash('sha256', serialize([$this->draftResults, $this->draftPickInfo])));
+    }
+
+    /** Share admission locks between the application and dedicated workers. */
+    public function uniqueVia(): Repository
+    {
+        return Cache::store('database');
     }
 
     public function tags(): array

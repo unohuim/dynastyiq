@@ -6,6 +6,7 @@ use App\Jobs\RunImportCommandJob;
 use App\Models\ImportRun;
 use Illuminate\Bus\Batch;
 use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\Cache;
 use Throwable;
 
 class AdminImports
@@ -125,6 +126,27 @@ class AdminImports
 
     /** @param array<string,mixed> $source */
     private function dispatchSource(array $source, string $mode): Batch
+    {
+        if ($source['key'] === 'fantrax') {
+            return Cache::store('database')->lock('fantrax-player-import-admission', 30)->block(5, function () use ($source, $mode): Batch {
+                $active = ImportRun::query()->where('source', 'fantrax')->where('status', 'working')->first();
+
+                if ($active !== null) {
+                    $batch = $active->batch_id ? Bus::findBatch($active->batch_id) : null;
+                    abort_if($batch === null, 409, 'A Fantrax player import is already working.');
+
+                    return $batch;
+                }
+
+                return $this->createImportBatch($source, $mode);
+            });
+        }
+
+        return $this->createImportBatch($source, $mode);
+    }
+
+    /** @param array<string,mixed> $source */
+    private function createImportBatch(array $source, string $mode): Batch
     {
 
         abort_unless(isset($source['command']), 409, 'This import source is not backed by an Artisan command.');

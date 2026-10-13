@@ -8,12 +8,15 @@ use App\Events\LeagueSyncStatusUpdated;
 use App\Models\PlatformLeague;
 use App\Services\SyncFantraxLeague;
 use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Contracts\Queue\ShouldBeUniqueUntilProcessing;
+use Illuminate\Contracts\Cache\Repository;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\Middleware\WithoutOverlapping;
 use Illuminate\Queue\SerializesModels;
 
-final class SyncFantraxLeagueJob implements ShouldQueue
+final class SyncFantraxLeagueJob implements ShouldQueue, ShouldBeUniqueUntilProcessing
 {
     use Queueable;
     use InteractsWithQueue;
@@ -34,13 +37,26 @@ final class SyncFantraxLeagueJob implements ShouldQueue
     {
         return [
             (new WithoutOverlapping('fantrax-sync:' . $this->platformLeagueId))
-                ->expireAfter(300),
+                ->releaseAfter(30)
+                ->expireAfter(660),
         ];
     }
 
     public function backoff(): array
     {
         return [10, 60, 300];
+    }
+
+    /** Coalesce pending background refreshes while preserving user feedback. */
+    public function uniqueId(): string
+    {
+        return $this->platformLeagueId . ':' . ($this->userId ?? 'background');
+    }
+
+    /** Share admission locks between the application and dedicated workers. */
+    public function uniqueVia(): Repository
+    {
+        return Cache::store('database');
     }
 
     public function tags(): array

@@ -29,6 +29,10 @@ rules:
   - The NHL Players Update DB action must dispatch bounded chunk jobs under one visible import run so multiple queue workers can process metadata refreshes concurrently while the UI reports aggregate progress.
   - NHL resolution imports may queue reconciliation work for existing canonical players with null NHL ids and should report the command dispatch sweep through import_runs.
   - Fantrax admin imports should process player records in bounded sequential chunk jobs so resolver work does not exceed queue worker timeouts.
+  - All Fantrax player import entrypoints use AdminImports admission and the same sequential chunk workflow. The persisted admin schedule is the sole automatic player-import schedule; no separate daily per-player job burst is allowed.
+  - Fantrax player admission uses a shared database-cache lock and reuses an existing working run's batch. A working run without an available batch blocks new admission rather than silently starting overlapping work.
+  - New Fantrax player imports retain their input snapshot and checkpoint in import_runs.meta until completion, without cache expiry. Player writes, progress, and checkpoint advancement commit together; duplicate chunk deliveries cannot repeat committed player writes. Failed runs retain their snapshot for diagnosis.
+  - Previously queued cache-backed chunks remain compatible, but missing old cache data cannot be reconstructed by deployment. Deployment does not purge existing queue entries or automatically restart failed runs.
   - Fantrax-backed admin import batches must use the fantrax queue, anticipated-lineup admin import batches must use the lineups queue, and other admin import batches must use the default queue.
   - Anticipated-lineup progress must include run-scoped X posts viewed and estimated spend directly in its records progress text; actual X billing remains provider authoritative.
   - Import-run estimated provider spend must persist in import_runs.estimated_cost_usd through terminal completion or failure; provider resource counts and applied rates remain supporting metadata.
