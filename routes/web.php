@@ -120,7 +120,7 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
         'verified',
     ])->group(function () {
 
-        Route::view('/dashboard', 'dashboard')->name('dashboard');
+        Route::redirect('/dashboard', '/games')->name('dashboard');
 
         Route::get('/admin', [\App\Http\Controllers\Admin\DashboardController::class, 'index'])
             ->middleware(['admin.super', 'admin.lifecycle'])
