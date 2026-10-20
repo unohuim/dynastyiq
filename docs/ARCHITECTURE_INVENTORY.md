@@ -192,9 +192,11 @@ php artisan api-client:create partner-app --scope=nhl-reference:read --scope=nhl
 ### Scheduled Process Manager
 
 Scheduled process timing is incrementally centralized in `ScheduledProcessManager`
-and `scheduled_processes`, starting with NHL game discovery. The existing Games
-Import Pipeline exposes its toggle and settings drawer; `GamesDiscovered` starts
-processing through the established orchestrator after commit. Canonical authority:
+and `scheduled_processes`, covering NHL game discovery and model-specific pregame
+context updates. The Games Import Pipeline and SAT Model rows expose their own
+toggle and settings drawer. Pregame updates create durable context runs and use the
+existing bounded orchestrator; `GamesDiscovered` starts game processing after commit.
+Canonical authority:
 `docs/architecture/application/ScheduledProcessManager.yaml` and
 `docs/architecture/imports/NhlDiscoveryPipeline.yaml`.
 
@@ -1710,6 +1712,8 @@ WHERE target_season_id = '20262027';
 **Purpose:** Preserve only the evidence known before each game so context factors can be tested without changing predictions.
 
 Model actions expose **Analysis > Build Pregame**, using the model's Train and optional Test seasons. The model row shows independent context progress without changing model training state.
+
+Evaluation Train and Train H/A strength windows retain complete appearances instead of rejecting the entire history for a missing game. Saved display context upgrades through the existing bounded enrichment workflow without replacing predictions.
 
 **Public interface:** `GET /admin/nhl-sat-models/context/effects` groups actual next-game EV outcomes by pregame-only context factors and compares each group to its selected-season baseline.
 

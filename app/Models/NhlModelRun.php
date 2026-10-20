@@ -60,6 +60,22 @@ class NhlModelRun extends Model
         return (string) $startYear . ($startYear + 1);
     }
 
+    /** Return this model's own Train and Test seasons for pregame context.
+     *
+     * @return array<int, string>
+     */
+    public function pregameContextSeasonIds(): array
+    {
+        return collect($this->train_season_ids ?? [])
+            ->push($this->target_season_id)
+            ->filter(fn (mixed $season): bool => $season !== null && $season !== '')
+            ->map(fn (mixed $season): string => (string) $season)
+            ->unique()
+            ->sort()
+            ->values()
+            ->all();
+    }
+
     /** Check that a queued stage still belongs to the active combined build. */
     public function acceptsPredictionStage(?string $buildId, string $stage): bool
     {

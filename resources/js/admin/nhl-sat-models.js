@@ -140,6 +140,94 @@ const request = async (form) => {
     return payload;
 };
 
+const requestJson = async (url, method, data) => {
+    const response = await fetch(url, {
+        method,
+        headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+            'X-CSRF-TOKEN': csrfToken(),
+        },
+        body: JSON.stringify(data),
+    });
+    const payload = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+        throw new Error(firstError(payload));
+    }
+
+    return payload;
+};
+
+const setPregameScheduleDrawer = (root, open) => {
+    const state = window.Alpine?.$data?.(root);
+    if (state && Object.prototype.hasOwnProperty.call(state, 'pregameScheduleOpen')) {
+        state.pregameScheduleOpen = open;
+    }
+};
+
+const formatScheduleDate = (value) => {
+    if (!value) return 'Not scheduled';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return 'Not scheduled';
+
+    return new Intl.DateTimeFormat(undefined, {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+        timeZone: 'America/Toronto',
+    }).format(date);
+};
+
+const showScheduleError = (form, message = '') => {
+    const error = form.querySelector('[data-pregame-schedule-error]');
+    if (!error) return;
+    error.textContent = message;
+    error.classList.toggle('hidden', !message);
+};
+
+const renderScheduleDetails = (form, payload) => {
+    const lastRun = form.querySelector('[data-pregame-schedule-last-run]');
+    const nextRun = form.querySelector('[data-pregame-schedule-next-run]');
+    const latestBuild = form.querySelector('[data-pregame-schedule-latest-build]');
+    const lastError = form.querySelector('[data-pregame-schedule-last-error]');
+    const included = form.querySelector('[data-pregame-schedule-included]');
+    const frequency = form.querySelector('[data-pregame-schedule-frequency]');
+    const time = form.querySelector('[data-pregame-schedule-time]');
+
+    if (included && payload.include_update_pregame !== undefined) included.checked = Boolean(payload.include_update_pregame);
+    if (frequency && payload.frequency_hours !== undefined) frequency.value = String(payload.frequency_hours);
+    if (time && payload.start_time !== undefined) time.value = payload.start_time;
+    if (lastRun && payload.last_dispatched_at !== undefined) lastRun.textContent = formatScheduleDate(payload.last_dispatched_at);
+    if (nextRun && payload.next_due_at !== undefined) nextRun.textContent = formatScheduleDate(payload.next_due_at);
+    if (latestBuild && payload.latest_build !== undefined) {
+        const build = payload.latest_build;
+        latestBuild.textContent = build
+            ? `${String(build.status).replaceAll('_', ' ')} · ${build.completed_games}/${build.total_games} games${build.failed_games ? ` · ${build.failed_games} failed` : ''}${build.blocked_games ? ` · ${build.blocked_games} blocked` : ''}`
+            : 'Not built';
+    }
+    if (lastError && payload.last_error !== undefined) {
+        lastError.textContent = payload.last_error || '';
+        lastError.classList.toggle('hidden', !payload.last_error);
+    }
+};
+
+const applyAutoSyncState = (row, enabled) => {
+    const button = row?.querySelector('[data-pregame-auto-sync-toggle]');
+    if (!button) return;
+    const isEnabled = Boolean(enabled);
+    button.setAttribute('aria-pressed', isEnabled ? 'true' : 'false');
+    button.setAttribute('aria-label', `${isEnabled ? 'Disable' : 'Enable'} automatic pregame updates for ${row.querySelector('[data-pregame-schedule-gear]')?.dataset.modelName ?? 'model'}`);
+    button.title = isEnabled ? 'Automatic pregame updates are on' : 'Automatic pregame updates are off';
+    button.classList.toggle('border-indigo-200', isEnabled);
+    button.classList.toggle('bg-indigo-50', isEnabled);
+    button.classList.toggle('text-indigo-700', isEnabled);
+    button.classList.toggle('hover:text-indigo-900', isEnabled);
+    button.classList.toggle('border-gray-300', !isEnabled);
+    button.classList.toggle('bg-white', !isEnabled);
+    button.classList.toggle('text-gray-500', !isEnabled);
+    button.classList.toggle('hover:text-gray-950', !isEnabled);
+};
+
 /** Update only context progress; preserve the model row and its open menus. */
 export const updatePregameProgress = (row, html) => {
     const progress = row?.querySelector('[data-pregame-progress]');
@@ -162,7 +250,9 @@ export const mountPregameProgress = (root) => {
     const poll = async () => {
         if (!document.hidden) {
             for (const progress of root.querySelectorAll('[data-pregame-progress]')) {
-                if (!progress.querySelector('[data-pregame-active="1"]')) continue;
+                const row = progress.closest('[data-sat-model-row]');
+                const autoSyncEnabled = row?.querySelector('[data-pregame-auto-sync-toggle]')?.getAttribute('aria-pressed') === 'true';
+                if (!progress.querySelector('[data-pregame-active="1"]') && !autoSyncEnabled) continue;
                 try {
                     const response = await fetch(progress.dataset.progressUrl, {
                         headers: { Accept: 'application/json' },
@@ -208,6 +298,71 @@ const mountSatModels = (root) => {
         } catch (error) {
             setSubmitting(form, false);
             showToast(error.message, 'error');
+        }
+    });
+
+    root.addEventListener('click', async (event) => {
+        const toggle = event.target.closest('[data-pregame-auto-sync-toggle]');
+        if (toggle) {
+            event.preventDefault();
+            const row = toggle.closest('[data-sat-model-row]');
+            const enabled = toggle.getAttribute('aria-pressed') !== 'true';
+            toggle.disabled = true;
+            try {
+                const payload = await requestJson(toggle.dataset.toggleUrl, 'PATCH', { enabled });
+                applyAutoSyncState(row, payload.enabled);
+                showToast(payload.message);
+            } catch (error) {
+                showToast(error.message, 'error');
+            } finally {
+                toggle.disabled = false;
+            }
+            return;
+        }
+
+        const gear = event.target.closest('[data-pregame-schedule-gear]');
+        if (!gear) return;
+        event.preventDefault();
+        const form = root.querySelector('[data-pregame-auto-sync-form]');
+        if (!form) return;
+        form.dataset.settingsUrl = gear.dataset.settingsUrl;
+        form.dataset.modelId = gear.closest('[data-sat-model-row]')?.dataset.satModelRow ?? '';
+        const modelLabel = form.querySelector('[data-pregame-schedule-model]');
+        if (modelLabel) modelLabel.textContent = gear.dataset.modelName ?? 'Model';
+        showScheduleError(form);
+        setPregameScheduleDrawer(root, true);
+        try {
+            const response = await fetch(form.dataset.settingsUrl, {
+                headers: { Accept: 'application/json' },
+                cache: 'no-store',
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(firstError(payload));
+            renderScheduleDetails(form, payload);
+        } catch (error) {
+            showScheduleError(form, error.message);
+        }
+    });
+
+    root.addEventListener('submit', async (event) => {
+        const form = event.target.closest('[data-pregame-auto-sync-form]');
+        if (!form) return;
+        event.preventDefault();
+        showScheduleError(form);
+        setSubmitting(form, true);
+        try {
+            const payload = await requestJson(form.dataset.settingsUrl, 'PUT', {
+                frequency_hours: Number(form.querySelector('[data-pregame-schedule-frequency]')?.value ?? 24),
+                start_time: form.querySelector('[data-pregame-schedule-time]')?.value ?? '03:50',
+                include_update_pregame: Boolean(form.querySelector('[data-pregame-schedule-included]')?.checked),
+            });
+            renderScheduleDetails(form, payload);
+            showToast(payload.message || 'Pregame auto-sync settings saved.');
+        } catch (error) {
+            showScheduleError(form, error.message);
+            showToast(error.message, 'error');
+        } finally {
+            setSubmitting(form, false);
         }
     });
 

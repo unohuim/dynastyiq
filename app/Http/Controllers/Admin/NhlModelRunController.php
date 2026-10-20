@@ -13,8 +13,10 @@ use App\Jobs\BuildNhlSatModelEntityToiProjectionsJob;
 use App\Models\NhlExpectedGoalsModel;
 use App\Models\NhlExpectedGoalsModelBucket;
 use App\Models\NhlModelRun;
+use App\Models\ScheduledProcess;
 use App\Services\NhlExpectedGoalsBackfiller;
 use App\Services\NhlSatModelEntityProfileBuilder;
+use App\Services\ScheduledProcessManager;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -52,6 +54,10 @@ class NhlModelRunController extends Controller
         }
 
         $runs = $query->paginate(25)->withQueryString();
+        $scheduleKeys = $runs->getCollection()->map(
+            fn (NhlModelRun $run): string => ScheduledProcessManager::pregameContextKey($run->id)
+        );
+        $pregameSchedulesByKey = ScheduledProcess::query()->whereIn('key', $scheduleKeys)->get()->keyBy('key');
 
         return view('admin.nhl-sat-models.index', [
             'filters' => [
@@ -67,6 +73,9 @@ class NhlModelRunController extends Controller
             'runs' => $runs,
             'pregameBuilds' => $runs->getCollection()->mapWithKeys(fn (NhlModelRun $run): array => [
                 $run->id => \App\Models\NhlPregameContextRun::latestForModel($run->id),
+            ]),
+            'pregameSchedules' => $runs->getCollection()->mapWithKeys(fn (NhlModelRun $run): array => [
+                $run->id => $pregameSchedulesByKey->get(ScheduledProcessManager::pregameContextKey($run->id)),
             ]),
         ]);
     }
@@ -4248,6 +4257,8 @@ SQL;
 
         return view('admin.nhl-sat-models._model-row', [
             'pregameBuild' => \App\Models\NhlPregameContextRun::latestForModel($run->id),
+            'pregameSchedule' => ScheduledProcess::query()
+                ->where('key', ScheduledProcessManager::pregameContextKey($run->id))->first(),
             'comparisonState' => $this->rateComparisonStateForRun($run),
             'genericBucketStabilityState' => $this->genericBucketStabilityStateForRun($run),
             'run' => $run,

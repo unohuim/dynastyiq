@@ -10,6 +10,11 @@ timestamps. The migration seeds enabled NHL game discovery at 03:50 Toronto,
 24 hours, three previous dates excluding today. No game-processing schedule row
 is needed: processing is triggered by discovery readiness. Existing provider
 import schedules and historical game-import runs are not rewritten.
+Model-specific pregame auto-sync uses additional allowlisted keys in this same
+table and stores task qualification in `settings.include_update_pregame`; no new
+schedule table or migration is required. Each scheduled run is recorded in
+`nhl_pregame_context_runs` and refreshes shared snapshot rows through their
+existing unique keys.
 
 ## Private admin engine prediction saves
 

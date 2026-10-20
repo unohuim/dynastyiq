@@ -448,6 +448,12 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                     ->whereNumber('evaluation')->name('admin.nhl-sat-models.next-game.destroy');
                 Route::get('/nhl-sat-models/context/effects', [\App\Http\Controllers\Admin\NhlPregameContextController::class, 'effects'])
                     ->name('admin.nhl-sat-models.context.effects');
+                Route::get('/nhl-sat-models/{run}/context/auto-sync', [\App\Http\Controllers\Admin\NhlPregameContextController::class, 'autoSyncSettings'])
+                    ->whereNumber('run')->name('admin.nhl-sat-models.context.auto-sync.show');
+                Route::put('/nhl-sat-models/{run}/context/auto-sync', [\App\Http\Controllers\Admin\NhlPregameContextController::class, 'updateAutoSyncSettings'])
+                    ->whereNumber('run')->name('admin.nhl-sat-models.context.auto-sync.update');
+                Route::patch('/nhl-sat-models/{run}/context/auto-sync', [\App\Http\Controllers\Admin\NhlPregameContextController::class, 'toggleAutoSync'])
+                    ->whereNumber('run')->name('admin.nhl-sat-models.context.auto-sync.toggle');
                 Route::post('/nhl-sat-models/{run}/context/build', [\App\Http\Controllers\Admin\NhlPregameContextController::class, 'buildForModel'])
                     ->whereNumber('run')->name('admin.nhl-sat-models.context.build');
                 Route::get('/nhl-sat-models/{run}/context/progress', [\App\Http\Controllers\Admin\NhlPregameContextController::class, 'modelProgress'])

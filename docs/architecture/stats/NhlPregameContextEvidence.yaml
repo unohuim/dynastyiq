@@ -11,17 +11,22 @@ location:
   - app/Services/NhlPregameContextOrchestrator.php
   - database/migrations/2026_10_06_000001_create_nhl_pregame_context_tables.php
   - resources/views/admin/nhl-sat-models/context-effects.blade.php
-purpose: Preserve what was knowable before each historical NHL game so context factors can be evaluated against static predictions without changing live prediction behavior.
+purpose: Preserve what was knowable before each NHL game as versioned evidence for retrospective analysis and the separately versioned custom game-prediction pathway.
 when_to_use:
   - Backfilling pregame schedule, travel, opponent, momentum, Corsi, PDO, IPP, shooting, and strength-split evidence.
   - Reviewing whether one context factor improves later-season next-game accuracy beyond a static baseline.
   - Comparing actual next-game EV outcomes across pregame context groups in Admin > NHL SAT Models > Context Effects.
+  - Supplying independent home-team, away-team, player, and goalie context snapshots to a custom prediction run that freezes its own inputs and outputs.
 when_not_to_use:
-  - Changing SAT /60 rates, Engine qualification, confidence, game simulation, or partner API output.
+  - Changing SAT /60 rates, existing Engine qualification, existing game simulation, or partner API output.
   - Replacing raw game summaries, strength summaries, shot facts, or play-by-play facts.
 rules:
   - SAT model actions expose Analysis > Build Pregame first. This queues the existing context backfill for the model's distinct Train seasons plus its optional Test season, ignoring client-supplied season overrides. It does not train models or change context calculations.
   - Model-initiated context runs retain model_run_id in existing run options. Context snapshots remain shared, versioned upserts; model association does not duplicate snapshots or mutate model training status, timestamps, or outputs.
+  - Each model's Build Pregame and scheduled Update Pregame use that model's own Train seasons plus its Test season. A newest model whose Test season is current continues to include that Test season; no model borrows another model's season selection.
+  - Each SAT model row has an independent auto-sync switch and settings drawer. The process key is `nhl-pregame-context-model-{model_run_id}`; its Update Pregame qualification, integer frequency hours, and America/Toronto start time are persisted in scheduled_processes.
+  - Scheduled Update Pregame creates a new durable context run with the model id and auto-sync trigger, then continues through the same bounded, date-ordered jobs as manual Build Pregame. A schedule that overlaps active context work remains due and retries on a later scheduler tick.
+  - Scheduled updates select completed games missing one or more current-version team/player snapshots, continuing after the latest complete context. The builder upserts selected game/team/player/context-version keys, filling new or partial evidence without duplication; manual Build Pregame remains the full rebuild path. Every run remains in context run history; custom game prediction records and model definitions are untouched.
   - Model-triggered context builds use serialized admission and reject active runs overlapping any selected season. Existing bounded, date-ordered dispatch remains unchanged.
   - Analysis > View Pregame Impacts opens the context/effects page. Its season filter defaults to All, pooling eligible player-game evidence across available seasons; selecting a season limits both groups and their baseline to that season. Sorting preserves the selection.
   - View Pregame Impacts is greyed out unless the latest context build initiated from that model's menu is completed and has persisted current-version player context rows. Queued, running, failed, absent, and empty builds cannot enable the link. Progress polling updates link availability without a page reload; the shared impacts endpoint remains read-only and super-admin protected.
@@ -29,7 +34,15 @@ rules:
   - The model status cell shows Building and context game counts while queued or running, then Pregame completed or Pregame failed. Page-local polling reads active progress every five seconds without full-page reloads or queue dispatch; training status remains independent.
   - Every snapshot uses only completed regular-season games strictly before the target game's scheduled start time; target-game outcomes and later games are forbidden inputs.
   - Player snapshots record the completed-game participant only for historical evidence and label that source explicitly; future prediction use requires independently selected pregame rosters.
+  - Team snapshots keep each team's own rates separate from its opponent's rates. Team metrics include Train-independent L5, L10, L20, LSeason, and season-to-date windows for goals, SAT/Corsi, SOG/SAT, shooting, saves, PDO, and win rate when the underlying game facts are complete. Head-to-head metrics use the same windows and stay in a separate opponent_metrics object.
+  - Schedule snapshots identify exact B2B, third-in-seven, fourth-in-seven, and B2B-fourth-in-seven classifications from the target date plus its preceding six calendar dates. They retain travel distance separately from days on the current road trip. Unknown venue or incomplete history remains null.
+  - Player snapshots preserve each player's own history and their history against the target opponent in separate objects. Opponent-player histories remain the other team's own player-context rows for the same target game; consumers must retain both lineups and must not replace opponent-player rates with the target player's opponent-only history.
+  - Shared context snapshots remain model-agnostic. A custom game-prediction run stores model-specific Train windows, both teams' player rows, and its exact pregame input snapshot in its own prediction tables so one model cannot overwrite another model's Train evidence.
+  - The custom prediction pathway may consume these snapshots only through its separately versioned, frozen run inputs. It does not alter existing SAT Engine or partner API predictions.
   - Player history follows the player across team changes. Opponent and home/away filters use the player's team on each historical summary, not the target game's team.
+  - The evaluation read helper can derive measured Train windows for explicitly supplied Train seasons and LSeason for the calendar season preceding the target. It shares the player strength/window calculations without writing shared snapshots. Model-specific Train selections are not persisted into shared model-agnostic context rows.
+  - Game Evaluation calls supply a frozen model-specific reliable bucket filter to the read helper. Individual SAT/SOG/goals use only level-one buckets with Train confidence >= 0.50, with exactly 0.50 retained, and exclude empty-net/shootout attempts. All selected-strength windows use the same retained keys and full exposure. Unclassified source strength remains detectable even when its count would be excluded. Shared context builds remain model-agnostic and unchanged; their unfiltered individual counts must not replace the model-filtered Game Evaluation evidence. See NhlNextGameEvaluation.yaml for refresh and persistence rules.
+  - Evaluation strength-specific Train and venue Train use only complete appearances. Counts, ice time, on-ice metrics, and games all use that same sample; usable_games records its size and individual_missing_games retains the excluded count. No usable games leaves individual rates unavailable. This exception does not change completeness requirements for recent windows, LSeason, or current-quarter evidence.
   - Rest and back-to-back classification use forward calendar-day differences between scheduled game dates. One day means a back-to-back with zero intervening rest days; absent prior history leaves rest unavailable.
   - Raw results remain in existing NHL fact tables. Context snapshots store compact derived metrics, sample counts, and ranks only.
   - Metrics are separated by All, EV, PP, and PK and preserve missing evidence as unavailable rather than manufacturing zero values.

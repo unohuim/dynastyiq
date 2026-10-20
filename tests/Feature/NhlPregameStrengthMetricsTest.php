@@ -3,6 +3,8 @@
 declare(strict_types=1);
 
 use App\Models\NhlPregameContextRun;
+use App\Models\NhlExpectedGoalsModel;
+use App\Models\NhlModelRun;
 use App\Services\NhlPregameContextBuilder;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Bus;
@@ -57,6 +59,33 @@ beforeEach(function (): void {
         return json_decode(DB::table('nhl_player_game_pregame_contexts')
             ->where('nhl_game_id', 2025020010)->where('nhl_player_id', 101)->value('metrics'), true);
     };
+    $this->reliableFilter = function (): array {
+        $run = NhlModelRun::create(['run_key' => 'reliable-context', 'name' => 'Train', 'model_family' => 'sat',
+            'workflow_stage' => 'training', 'model_version' => 'test', 'status' => 'complete',
+            'train_season_ids' => ['20242025'], 'target_season_id' => '20252026']);
+        $model = NhlExpectedGoalsModel::create(['model_run_id' => $run->id, 'name' => 'SAT',
+            'version' => 'reliable-context', 'prediction_target' => 'shot_on_goal',
+            'feature_config' => ['training_season_ids' => ['20242025'],
+                'fallback_levels' => [1 => ['shot_type_group'], 99 => ['baseline']]]]);
+        foreach (['wrist' => 1, 'slap' => 0.5, 'backhand' => 0.4999, 'unknown' => 0] as $type => $confidence) {
+            DB::table('nhl_expected_goals_model_buckets')->insert([
+                'expected_goals_model_id' => $model->id, 'bucket_key' => 'L01|shot_type_group='.$type,
+                'fallback_level' => 1, 'bucket_dimensions' => '{}', 'attempts' => 100, 'goals' => 10,
+                'raw_goal_rate' => 0.1, 'smoothed_goal_probability' => 0.1, 'confidence_score' => $confidence,
+            ]);
+        }
+        DB::table('nhl_sat_model_entity_profile_buckets')->insert([
+            'model_run_id' => $run->id, 'sat_expected_goals_model_id' => $model->id,
+            'source_season_ids' => '["20242025"]', 'profile_type' => 'skater_offense',
+            'entity_key' => 'skater_offense:101', 'matched_bucket_key' => 'L01|shot_type_group=wrist',
+            'fallback_level' => 1, 'bucket_dimensions' => '{}',
+        ]);
+
+        return app(NhlPregameContextBuilder::class)->evaluationBucketFilter($run->id, ['20242025']);
+    };
+    $this->evaluationMetrics = fn (array $filter): array => app(NhlPregameContextBuilder::class)->evaluationPlayerMetrics(
+        101, 10, 20, 'home', Carbon::parse('2025-10-20 19:00:00 UTC'), '20252026', ['20242025'], $filter
+    );
     ($this->game)(2025020010, '2025-10-20');
     ($this->game)(2025020001, '2025-10-10');
     ($this->exposure)(2025020001, 'EV', 600);
@@ -160,4 +189,108 @@ it('uses pooled strength ice time and historical venue and opponent identity', f
     expect($windows['last_5']['sat_per_60'])->toEqual(4)
         ->and($windows['venue_season_to_date']['sat'])->toBe(1)
         ->and($windows['opponent_last_10']['sat'])->toBe(1);
+});
+
+it('uses only complete Train games for counts exposure and games without relaxing recent windows', function (): void {
+    ($this->game)(2024020001, '2025-04-01', '20242025');
+    ($this->exposure)(2024020001, 'EV', 600);
+    ($this->fact)(2024020001, 'EV', true, true);
+    ($this->game)(2024020002, '2025-04-02', '20242025');
+    ($this->exposure)(2024020002, 'EV', 1800);
+    // No shot facts for the second game: its ice time must also be excluded.
+    $metrics = app(NhlPregameContextBuilder::class)->evaluationPlayerMetrics(
+        101, 10, 20, 'home', Carbon::parse('2025-10-20 19:00:00 UTC'), '20252026', ['20242025']
+    )['strength']['EV'];
+
+    foreach (['train', 'venue_train'] as $window) {
+        expect($metrics[$window])->toMatchArray([
+            'games' => 1, 'usable_games' => 1, 'individual_missing_games' => 1,
+            'toi_seconds' => 600, 'sat' => 1, 'sog' => 1, 'goals' => 1,
+            'sat_per_60' => 6, 'sog_per_60' => 6, 'goals_per_60' => 6,
+        ]);
+    }
+    expect($metrics['last_5']['sat_per_60'])->toBeNull();
+});
+
+it('leaves Train unavailable when no complete games exist', function (): void {
+    ($this->game)(2024020001, '2025-04-01', '20242025');
+    ($this->exposure)(2024020001, 'EV', 600);
+    $metrics = app(NhlPregameContextBuilder::class)->evaluationPlayerMetrics(
+        101, 10, 20, 'home', Carbon::parse('2025-10-20 19:00:00 UTC'), '20252026', ['20242025']
+    )['strength']['EV']['train'];
+
+    expect($metrics)->toMatchArray([
+        'games' => 0, 'usable_games' => 0, 'individual_missing_games' => 1,
+        'toi_seconds' => 0, 'sat' => null, 'sat_per_60' => null,
+    ]);
+});
+
+it('restricts LSeason H/A to prior-season appearances matching the target venue', function (): void {
+    ($this->game)(2024020001, '2025-04-01', '20242025', 10);
+    ($this->exposure)(2024020001, 'EV', 600);
+    ($this->fact)(2024020001, 'EV');
+    ($this->game)(2024020002, '2025-04-02', '20242025', 20);
+    ($this->exposure)(2024020002, 'EV', 1200);
+    ($this->fact)(2024020002, 'EV');
+    ($this->fact)(2025020001, 'EV');
+    foreach (['home' => 6, 'away' => 3] as $venue => $expected) {
+        $metrics = app(NhlPregameContextBuilder::class)->evaluationPlayerMetrics(
+            101, 10, 20, $venue, Carbon::parse('2025-10-20 19:00:00 UTC'), '20252026', ['20242025']
+        );
+        expect($metrics['strength']['EV']['venue_last_season']['games'])->toBe(1)
+            ->and($metrics['strength']['EV']['venue_last_season']['sat_per_60'])->toEqual($expected)
+            ->and($metrics['all']['venue_last_season']['games'])->toBe(1);
+    }
+});
+
+it('uses the same inclusive confidence cutoff for Train recent quarter and all-strength evaluation windows', function (): void {
+    $filter = ($this->reliableFilter)();
+    expect($filter['keys'])->toBe(['L01|shot_type_group=slap', 'L01|shot_type_group=wrist']);
+    ($this->game)(2024020001, '2025-04-01', '20242025');
+    ($this->exposure)(2024020001, 'EV', 600);
+    foreach ([2024020001, 2025020001] as $id) {
+        foreach (['wrist', 'slap', 'backhand', 'unknown', 'unmapped'] as $type) {
+            ($this->fact)($id, 'EV', true, true, ['shot_type_bucket' => $type]);
+        }
+        ($this->fact)($id, 'EV', true, true, ['shot_type_bucket' => 'wrist', 'is_empty_net' => true]);
+        ($this->fact)($id, 'EV', true, true, ['shot_type_bucket' => 'wrist', 'period_type' => 'SO']);
+    }
+    // Neither target outcomes nor later games can alter pregame windows.
+    ($this->fact)(2025020010, 'EV', true, true, ['shot_type_bucket' => 'wrist']);
+    $metrics = ($this->evaluationMetrics)($filter);
+    foreach (['train', 'venue_train', 'last_season', 'venue_last_season', 'last_5', 'last_10', 'last_20', 'opponent_last_10', 'q1_to_date'] as $key) {
+        expect($metrics['strength']['EV'][$key]['sat_per_60'])->toEqual(12);
+    }
+    expect($metrics['strength']['EV']['last_5']['toi_seconds'])->toBe(1200)
+        ->and($metrics['strength']['EV']['q1_to_date']['games'])->toBe(1)
+        ->and($metrics['strength']['EV']['train']['sog'])->toBe(2)
+        ->and($metrics['strength']['EV']['train']['goals'])->toBe(2)
+        ->and($metrics['all']['last_5']['sat_per_60'])->toEqual(6);
+});
+
+it('retains genuine zero appearances and missing-data checks after bucket exclusion without changing shared context', function (): void {
+    $filter = ($this->reliableFilter)();
+    ($this->fact)(2025020001, 'EV', true, false, ['shot_type_bucket' => 'backhand']);
+    $row = ($this->evaluationMetrics)($filter)['strength']['EV']['last_5'];
+    expect($row['sat_per_60'])->toEqual(0)->and($row['games'])->toBe(1)->and($row['toi_seconds'])->toBe(600)
+        ->and(($this->build)()['strength']['EV']['last_5']['sat_per_60'])->toEqual(6);
+    ($this->fact)(2025020001, 'unknown', false, false, ['shot_type_bucket' => 'backhand']);
+    expect(($this->evaluationMetrics)($filter)['strength']['EV']['last_5']['sat_per_60'])->toBeNull();
+    DB::table('nhl_shot_attempts_facts')->delete();
+    expect(($this->evaluationMetrics)($filter)['strength']['EV']['last_5']['sat_per_60'])->toBeNull();
+});
+
+it('keeps the frozen bucket set strength-specific and rejects a different Train source', function (): void {
+    $filter = ($this->reliableFilter)();
+    ($this->fact)(2025020001, 'EV', true, false, ['shot_type_bucket' => 'wrist']);
+    ($this->fact)(2025020001, 'PP', true, false, ['shot_type_bucket' => 'slap']);
+    ($this->fact)(2025020001, 'PK', true, false, ['shot_type_bucket' => 'backhand']);
+    DB::table('nhl_expected_goals_model_buckets')->where('expected_goals_model_id', $filter['sat_model_id'])->update(['confidence_score' => 0]);
+    $metrics = ($this->evaluationMetrics)($filter)['strength'];
+    expect($metrics['EV']['last_5']['sat_per_60'])->toEqual(6)
+        ->and($metrics['PP']['last_5']['sat_per_60'])->toEqual(30)
+        ->and($metrics['PK']['last_5']['sat_per_60'])->toEqual(0);
+    $model = NhlExpectedGoalsModel::findOrFail($filter['sat_model_id']);
+    expect(fn () => app(NhlPregameContextBuilder::class)->evaluationBucketFilter($model->model_run_id, ['20252026']))
+        ->toThrow(\RuntimeException::class, 'matching its frozen Train seasons');
 });

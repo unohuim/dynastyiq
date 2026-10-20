@@ -3,6 +3,12 @@ type: Persistent Scheduling Abstraction
 location:
   - app/Models/ScheduledProcess.php
   - app/Services/ScheduledProcessManager.php
+  - app/Services/NhlPregameContextOrchestrator.php
+  - app/Http/Controllers/Admin/NhlPregameContextController.php
+  - app/Http/Controllers/Admin/NhlModelRunController.php
+  - resources/views/admin/nhl-sat-models/_model-row.blade.php
+  - resources/views/admin/nhl-sat-models/index.blade.php
+  - resources/js/admin/nhl-sat-models.js
   - app/Console/Commands/DispatchScheduledProcessesCommand.php
   - app/Http/Controllers/Admin/ScheduledProcessController.php
   - routes/console.php
@@ -11,16 +17,21 @@ location:
 purpose: Centralize due-process decisions in persisted settings while migrating existing scheduler entries incrementally.
 when_to_use:
   - Managing automatic NHL game discovery timing and scope.
+  - Managing model-specific automatic pregame-context updates.
   - Migrating another scheduled process after explicit approval.
 when_not_to_use:
   - Replacing all existing provider-import schedules at once.
   - Performing heavy work inside the scheduler tick.
   - Accepting arbitrary command names or executable settings from HTTP.
 rules:
-  - scheduled_processes is global super-admin-managed operational data, not tenant data. Its initial allowlisted process is NHL game discovery; provider schedules remain in admin_import_schedules.
+  - scheduled_processes is global super-admin-managed operational data, not tenant data. Allowlisted processes include NHL game discovery and model-keyed pregame-context updates; provider schedules remain in admin_import_schedules.
   - Laravel calls the manager every minute; enabled state and due times are authoritative in the database. A dispatch lock and locked schedule row suppress overlapping ticks. Dispatch at most one occurrence per process per tick; missed intervals must not create catch-up bursts.
   - Discovery starts at the persisted America/Toronto wall-clock time with a default 24-hour frequency. Daily schedules preserve local time across DST; other frequencies advance from actual dispatch time. Initial schedules wait for today's start time; an already overdue next_due_at remains due.
   - Discovery defaults to the previous three calendar dates, excluding today. Start time, integer frequency hours, and integer days back are validated server-side; the enable toggle saves independently and immediately.
+  - A model-keyed pregame schedule uses `nhl-pregame-context-model-{model_run_id}` and may queue only that SAT model's own Train and Test seasons. `include_update_pregame` qualifies the task separately from the master enabled switch.
+  - Pregame schedules create ordinary durable context runs through the existing bounded orchestrator. Active overlapping season work delays dispatch without advancing the due time; each admitted run records its model and auto-sync trigger.
+  - Scheduled pregame refreshes queue only completed games missing team or participant snapshots for the selected context version. The builder upserts each selected snapshot key, filling missing or partial work without duplicating rows; manual Build Pregame remains the full rebuild path.
+  - Day-based frequencies preserve the configured local time across DST; sub-day intervals advance from actual dispatch time. Settings changes never dispatch work directly.
   - Active automatic discovery or processing for the same process suppresses a new automatic run. Dispatch failures retain bounded error evidence; no scheduler entry performs game imports synchronously.
   - Settings reads and writes reuse authenticated super-admin and lifecycle middleware. Saving settings must not dispatch work. The Games Import Pipeline header exposes the existing recycle icon toggle and a settings slide-over.
   - NHL game processing is event-driven through GamesDiscovered after all discovery dates commit. It is not a separately timed scheduled process. Existing slot, claim, stage and per-game locking safeguards remain owned by the NHL import orchestrator.
@@ -30,6 +41,9 @@ public_interface:
   - processes:dispatch-due
   - GET /admin/scheduled-processes/nhl-game-discovery
   - PUT /admin/scheduled-processes/nhl-game-discovery
+  - GET /admin/nhl-sat-models/{run}/context/auto-sync
+  - PUT /admin/nhl-sat-models/{run}/context/auto-sync
+  - PATCH /admin/nhl-sat-models/{run}/context/auto-sync
 example_usage: |
   Laravel's minute tick invokes processes:dispatch-due.
   An enabled due discovery queues yesterday through three days ago.

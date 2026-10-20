@@ -6,7 +6,7 @@
 
     <div
         class="min-h-screen bg-gray-50 py-4 pb-24 sm:py-6"
-        x-data="{ createOpen: {{ $errors->any() ? 'true' : 'false' }} }"
+        x-data="{ createOpen: {{ $errors->any() ? 'true' : 'false' }}, pregameScheduleOpen: false }"
         data-admin-sat-models
     >
         <div class="fixed inset-0 z-50 hidden items-center justify-center bg-gray-950/35 px-4 backdrop-blur-sm" data-sat-model-loading>
@@ -118,6 +118,7 @@
                                 @foreach($runs as $run)
                                     @include('admin.nhl-sat-models._model-row', [
                                         'pregameBuild' => $pregameBuilds[$run->id] ?? null,
+                                        'pregameSchedule' => $pregameSchedules[$run->id] ?? null,
                                         'comparisonState' => $comparisonStates[$run->id] ?? null,
                                         'genericBucketStabilityState' => $genericBucketStabilityStates[$run->id] ?? null,
                                         'run' => $run,
@@ -136,6 +137,69 @@
                 </div>
             </section>
         </div>
+
+        <x-ui.slide-over show="pregameScheduleOpen" close-action="pregameScheduleOpen = false" title-id="pregame-auto-sync-title" max-width="max-w-lg">
+            <form class="flex h-full max-h-[100dvh] min-h-0 w-full flex-col" data-pregame-auto-sync-form>
+                <div class="shrink-0 border-b border-gray-200 px-6 py-4">
+                    <div class="flex items-start justify-between gap-3">
+                        <div>
+                            <h2 id="pregame-auto-sync-title" class="text-sm font-semibold text-gray-950">Automatic Pregame Updates</h2>
+                            <p class="mt-1 text-xs text-gray-500" data-pregame-schedule-model></p>
+                        </div>
+                        <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900" @click="pregameScheduleOpen = false" aria-label="Close pregame auto-sync settings">
+                            <svg class="size-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" /></svg>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="min-h-0 flex-1 space-y-6 overflow-y-auto overscroll-contain px-6 py-5">
+                    <div data-pregame-schedule-error class="hidden rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700" role="alert"></div>
+                    <fieldset class="space-y-3">
+                        <legend class="text-sm font-semibold text-gray-900">Include in auto-sync</legend>
+                        <label class="flex min-h-12 items-center justify-between gap-4 rounded-md border border-gray-200 px-3 py-2">
+                            <span>
+                                <span class="block text-sm font-medium text-gray-800">Update Pregame</span>
+                                <span class="mt-0.5 block text-xs text-gray-500">Refresh this model’s Train and Test context data.</span>
+                            </span>
+                            <input type="checkbox" name="include_update_pregame" value="1" data-pregame-schedule-included class="size-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                        </label>
+                    </fieldset>
+
+                    <label class="block">
+                        <span class="text-sm font-medium text-gray-700">Frequency</span>
+                        <select name="frequency_hours" data-pregame-schedule-frequency class="mt-1 block min-h-11 w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            <option value="1">Every hour</option>
+                            <option value="3">Every 3 hours</option>
+                            <option value="6">Every 6 hours</option>
+                            <option value="12">Every 12 hours</option>
+                            <option value="24">Daily</option>
+                            <option value="48">Every 2 days</option>
+                            <option value="168">Weekly</option>
+                        </select>
+                    </label>
+
+                    <label class="block">
+                        <span class="text-sm font-medium text-gray-700">Time of day</span>
+                        <input type="time" name="start_time" data-pregame-schedule-time required class="mt-1 block min-h-11 w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                        <span class="mt-1 block text-xs text-gray-500">America/Toronto. Daily and longer intervals keep this local start time.</span>
+                    </label>
+
+                    <dl class="space-y-3 border-t border-gray-200 pt-4 text-sm">
+                        <div class="flex justify-between gap-4"><dt class="text-gray-500">Last automatic update</dt><dd class="text-right font-medium text-gray-800" data-pregame-schedule-last-run>Never</dd></div>
+                        <div class="flex justify-between gap-4"><dt class="text-gray-500">Next scheduled update</dt><dd class="text-right font-medium text-gray-800" data-pregame-schedule-next-run>Not scheduled</dd></div>
+                        <div><dt class="text-gray-500">Latest build</dt><dd class="mt-1 font-medium text-gray-800" data-pregame-schedule-latest-build>Not built</dd></div>
+                        <div data-pregame-schedule-last-error class="hidden text-red-700"></div>
+                    </dl>
+                </div>
+
+                <div class="shrink-0 border-t border-gray-200 px-6 pt-4 pb-[calc(1rem+env(safe-area-inset-bottom))]">
+                    <div class="flex justify-end gap-2">
+                        <button type="button" class="inline-flex min-h-10 items-center justify-center rounded-md border border-gray-300 bg-white px-4 text-sm font-semibold text-gray-700 shadow-sm transition-colors hover:bg-gray-50" @click="pregameScheduleOpen = false">Close</button>
+                        <button type="submit" class="inline-flex min-h-10 items-center justify-center rounded-md bg-gray-950 px-4 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-60">Save settings</button>
+                    </div>
+                </div>
+            </form>
+        </x-ui.slide-over>
 
         <x-ui.slide-over show="createOpen" close-action="createOpen = false" title-id="sat-model-create-title" max-width="max-w-xl">
             <form method="POST" action="{{ route('admin.nhl-sat-models.store') }}" class="flex h-full max-h-[100dvh] min-h-0 w-full flex-col" data-sat-model-create-form>

@@ -31,10 +31,12 @@
     $pregameBuild = $pregameBuild ?? null;
     $pregameActive = in_array($pregameBuild?->status, ['queued', 'running'], true);
     $canViewPregame = $pregameBuild?->canViewImpacts() ?? false;
+    $pregameSchedule = $pregameSchedule ?? null;
+    $pregameAutoSyncEnabled = (bool) ($pregameSchedule?->enabled ?? false);
 @endphp
 
 <tr data-sat-model-row="{{ $run->id }}" class="relative grid min-w-0 grid-cols-2 transition-colors hover:bg-gray-50/70 lg:table-row">
-    <td class="col-span-2 min-w-0 px-4 py-3 pr-20 lg:min-w-56 lg:pr-4">
+    <td class="col-span-2 min-w-0 px-4 py-3 pr-40 lg:min-w-56 lg:pr-4">
         <div class="font-medium text-gray-950">{{ $run->name }}</div>
         @if($run->notes)
             <div class="mt-1 max-w-xl truncate text-xs text-gray-500">{{ $run->notes }}</div>
@@ -79,7 +81,26 @@
     </td>
     <td class="min-w-0 px-4 py-3 text-gray-500"><span class="mb-1 block text-xs lg:hidden">Updated</span>{{ $run->updated_at?->format('Y-m-d H:i') }}</td>
     <td class="absolute right-0 top-0 px-4 py-3 text-right lg:static">
-        <div class="relative inline-flex" x-data="{ open: false }" @keydown.escape.window="open = false" @click.outside="open = false">
+        <div class="inline-flex items-center gap-1">
+            <button
+                type="button"
+                data-pregame-auto-sync-toggle
+                data-toggle-url="{{ route('admin.nhl-sat-models.context.auto-sync.toggle', $run) }}"
+                aria-pressed="{{ $pregameAutoSyncEnabled ? 'true' : 'false' }}"
+                aria-label="{{ $pregameAutoSyncEnabled ? 'Disable' : 'Enable' }} automatic pregame updates for {{ $run->name }}"
+                title="{{ $pregameAutoSyncEnabled ? 'Automatic pregame updates are on' : 'Automatic pregame updates are off' }}"
+                @class([
+                    'inline-flex size-11 items-center justify-center rounded-md border shadow-sm transition-colors hover:bg-gray-50 lg:size-8',
+                    'border-indigo-200 bg-indigo-50 text-indigo-700 hover:text-indigo-900' => $pregameAutoSyncEnabled,
+                    'border-gray-300 bg-white text-gray-500 hover:text-gray-950' => ! $pregameAutoSyncEnabled,
+                ])
+            >
+                <svg class="size-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                    <path fill-rule="evenodd" d="M15.312 11.424a5.5 5.5 0 0 1-9.201 2.05.75.75 0 0 0-1.06 1.06 7 7 0 0 0 11.71-2.61.75.75 0 0 0-1.449-.5ZM4.688 8.576a5.5 5.5 0 0 1 9.201-2.05.75.75 0 1 0 1.06-1.06 7 7 0 0 0-11.71 2.61.75.75 0 0 0 1.449.5Z" clip-rule="evenodd" />
+                    <path d="M15.25 3.75v3.5h-3.5a.75.75 0 0 1 0-1.5h1.69l-1.5-1.5a.75.75 0 1 1 1.06-1.06l1.5 1.5V3.75a.75.75 0 0 1 1.5 0ZM4.75 16.25v-3.5h3.5a.75.75 0 0 1 0 1.5H6.56l1.5 1.5A.75.75 0 1 1 7 16.81l-1.5-1.5v.94a.75.75 0 0 1-1.5 0Z" />
+                </svg>
+            </button>
+            <div class="relative inline-flex" x-data="{ open: false }" @keydown.escape.window="open = false" @click.outside="open = false">
             <button
                 type="button"
                 class="inline-flex size-11 items-center justify-center rounded-md border border-gray-300 bg-white text-gray-600 shadow-sm transition-colors hover:bg-gray-50 hover:text-gray-950 lg:size-8"
@@ -252,6 +273,20 @@
                     </div>
                 </div>
             </div>
+            </div>
+            <button
+                type="button"
+                data-pregame-schedule-gear
+                data-settings-url="{{ route('admin.nhl-sat-models.context.auto-sync.show', $run) }}"
+                data-model-name="{{ $run->name }}"
+                class="inline-flex size-11 items-center justify-center rounded-md border border-gray-300 bg-white text-gray-600 shadow-sm transition-colors hover:bg-gray-50 hover:text-gray-950 lg:size-8"
+                aria-label="Configure automatic pregame updates for {{ $run->name }}"
+                title="Configure automatic pregame updates"
+            >
+                <svg class="size-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                    <path fill-rule="evenodd" d="M7.84 1.804a1.75 1.75 0 0 1 4.32 0l.184.735c.196.08.385.174.566.28l.71-.29a1.75 1.75 0 0 1 3.057 1.77l-.49.592c.06.2.1.407.122.617l.67.45a1.75 1.75 0 0 1 0 2.884l-.67.45a5.8 5.8 0 0 1-.122.617l.49.593a1.75 1.75 0 0 1-3.057 1.769l-.71-.29a5.8 5.8 0 0 1-.566.28l-.184.735a1.75 1.75 0 0 1-4.32 0l-.184-.735a5.8 5.8 0 0 1-.566-.28l-.71.29a1.75 1.75 0 0 1-3.057-1.769l.49-.593a5.8 5.8 0 0 1-.122-.617l-.67-.45a1.75 1.75 0 0 1 0-2.884l.67-.45c.022-.21.062-.417.122-.617l-.49-.592A1.75 1.75 0 0 1 6.38 2.53l.71.29c.181-.106.37-.2.566-.28l.184-.735ZM10 12a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z" clip-rule="evenodd" />
+                </svg>
+            </button>
         </div>
     </td>
 </tr>

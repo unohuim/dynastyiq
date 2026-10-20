@@ -5,16 +5,16 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
-use App\Jobs\PrepareNhlPregameContextRunJob;
 use App\Models\NhlModelRun;
 use App\Models\NhlPregameContextRun;
+use App\Models\ScheduledProcess;
+use App\Services\NhlPregameContextOrchestrator;
+use App\Services\ScheduledProcessManager;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Validation\Rule;
-use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 
 /** Admin surface for durable, analysis-only pregame context builds. */
@@ -36,19 +36,10 @@ class NhlPregameContextController extends Controller
     ];
 
     /** Build the model's Train and optional Test seasons using the existing context pipeline. */
-    public function buildForModel(Request $request, NhlModelRun $run): RedirectResponse|JsonResponse
+    public function buildForModel(Request $request, NhlModelRun $run, NhlPregameContextOrchestrator $orchestrator): RedirectResponse|JsonResponse
     {
         $this->assertSatModel($run);
-        $seasons = collect($run->train_season_ids ?? [])
-            ->push($run->target_season_id)
-            ->filter(fn (mixed $season): bool => $season !== null && $season !== '')
-            ->map(fn (mixed $season): string => (string) $season)
-            ->unique()->sort()->values()->all();
-        if ($seasons === []) {
-            throw ValidationException::withMessages(['season_ids' => 'This model has no seasons to build.']);
-        }
-
-        $build = $this->queueBackfill($request, $seasons, $run->id);
+        $build = $orchestrator->queueModelBackfill($run, $request->user()?->id);
         if (! $request->expectsJson()) {
             return redirect()->route('admin.nhl-sat-models.index')->with('status', 'Queued Build Pregame.');
         }
@@ -71,55 +62,118 @@ class NhlPregameContextController extends Controller
         ])->header('Cache-Control', 'no-store');
     }
 
+    /** Read one model's automatic pregame-update settings and latest build status. */
+    public function autoSyncSettings(NhlModelRun $run): JsonResponse
+    {
+        $this->assertSatModel($run);
+        $process = ScheduledProcess::query()
+            ->where('key', ScheduledProcessManager::pregameContextKey($run->id))
+            ->first();
+        $latestBuild = NhlPregameContextRun::latestForModel($run->id);
+
+        return response()->json([
+            'enabled' => (bool) ($process?->enabled ?? false),
+            'frequency_hours' => (int) ($process?->frequency_hours ?? 24),
+            'start_time' => $process?->start_time ?? '03:50',
+            'timezone' => $process?->timezone ?? 'America/Toronto',
+            'include_update_pregame' => (bool) data_get($process?->settings, 'include_update_pregame', true),
+            'last_dispatched_at' => $process?->last_dispatched_at?->toIso8601String(),
+            'next_due_at' => $process?->next_due_at?->toIso8601String(),
+            'last_error' => $process?->last_error,
+            'latest_build' => $latestBuild === null ? null : [
+                'status' => $latestBuild->status,
+                'created_at' => $latestBuild->created_at?->toIso8601String(),
+                'total_games' => (int) $latestBuild->total_games,
+                'completed_games' => (int) $latestBuild->completed_games,
+                'blocked_games' => (int) $latestBuild->blocked_games,
+                'failed_games' => (int) $latestBuild->failed_games,
+                'last_error' => $latestBuild->last_error,
+            ],
+        ])->header('Cache-Control', 'no-store');
+    }
+
+    /** Save timing and task-qualification settings without dispatching a build. */
+    public function updateAutoSyncSettings(Request $request, NhlModelRun $run, ScheduledProcessManager $manager): JsonResponse
+    {
+        $this->assertSatModel($run);
+        $input = $request->validate([
+            'frequency_hours' => ['sometimes', 'required', 'integer', 'between:1,168'],
+            'start_time' => ['sometimes', 'required', 'date_format:H:i'],
+            'include_update_pregame' => ['sometimes', 'required', 'boolean'],
+        ]);
+        $key = ScheduledProcessManager::pregameContextKey($run->id);
+        $settings = DB::transaction(function () use ($input, $key, $manager): ScheduledProcess {
+            $process = ScheduledProcess::query()->firstOrCreate(
+                ['key' => $key],
+                ['enabled' => false, 'start_time' => '03:50', 'timezone' => 'America/Toronto',
+                    'frequency_hours' => 24, 'settings' => ['include_update_pregame' => true]],
+            );
+            $process = ScheduledProcess::query()->lockForUpdate()->findOrFail($process->id);
+            $attributes = array_intersect_key($input, array_flip(['start_time', 'frequency_hours']));
+            if (isset($input['include_update_pregame'])) {
+                $attributes['settings'] = array_merge($process->settings ?? [], [
+                    'include_update_pregame' => (bool) $input['include_update_pregame'],
+                ]);
+            }
+            $process->fill($attributes);
+            if ($process->isDirty(['start_time', 'frequency_hours'])) {
+                $process->next_due_at = $process->last_dispatched_at
+                    ? $manager->nextDue($process, $process->last_dispatched_at)
+                    : null;
+            }
+            $process->save();
+
+            return $process->fresh();
+        });
+
+        return response()->json([
+            'message' => 'Pregame auto-sync settings saved.',
+            'enabled' => (bool) $settings->enabled,
+            'frequency_hours' => (int) $settings->frequency_hours,
+            'start_time' => $settings->start_time,
+            'timezone' => $settings->timezone,
+            'include_update_pregame' => (bool) data_get($settings->settings, 'include_update_pregame', true),
+            'last_dispatched_at' => $settings->last_dispatched_at?->toIso8601String(),
+            'next_due_at' => $settings->next_due_at?->toIso8601String(),
+            'last_error' => $settings->last_error,
+        ]);
+    }
+
+    /** Toggle automatic updates immediately, without starting work in the request. */
+    public function toggleAutoSync(Request $request, NhlModelRun $run): JsonResponse
+    {
+        $this->assertSatModel($run);
+        $input = $request->validate(['enabled' => ['required', 'boolean']]);
+        $key = ScheduledProcessManager::pregameContextKey($run->id);
+        $process = DB::transaction(function () use ($input, $key): ScheduledProcess {
+            $process = ScheduledProcess::query()->firstOrCreate(
+                ['key' => $key],
+                ['enabled' => false, 'start_time' => '03:50', 'timezone' => 'America/Toronto',
+                    'frequency_hours' => 24, 'settings' => ['include_update_pregame' => true]],
+            );
+            $process = ScheduledProcess::query()->lockForUpdate()->findOrFail($process->id);
+            $wasEnabled = (bool) $process->enabled;
+            $process->enabled = (bool) $input['enabled'];
+            if (! $wasEnabled && $process->enabled) {
+                $process->next_due_at = null;
+            }
+            $process->save();
+
+            return $process->fresh();
+        });
+
+        return response()->json([
+            'message' => $process->enabled ? 'Pregame auto-sync enabled.' : 'Pregame auto-sync disabled.',
+            'enabled' => (bool) $process->enabled,
+            'next_due_at' => $process->next_due_at?->toIso8601String(),
+        ]);
+    }
+
     /** Restrict model actions to the SAT training registry. */
     private function assertSatModel(NhlModelRun $run): void
     {
         abort_unless($run->model_family === NhlModelRun::FAMILY_SAT
             && $run->workflow_stage === NhlModelRun::STAGE_TRAINING, 404);
-    }
-
-    /**
-     * Serialize admission and retain bounded dispatch for model context builds.
-     *
-     * @param array<int, string> $seasons
-     */
-    private function queueBackfill(Request $request, array $seasons, ?int $modelId = null): NhlPregameContextRun
-    {
-        $lock = Cache::lock('nhl-pregame-context-admission', 30);
-        if (! $lock->get()) {
-            throw ValidationException::withMessages(['season_ids' => 'Another context build is being queued. Please retry.']);
-        }
-
-        try {
-            return DB::transaction(function () use ($request, $seasons, $modelId): NhlPregameContextRun {
-                $active = NhlPregameContextRun::query()
-                    ->whereIn('status', [NhlPregameContextRun::STATUS_QUEUED, NhlPregameContextRun::STATUS_RUNNING])
-                    ->where(function ($query) use ($seasons): void {
-                        foreach ($seasons as $season) {
-                            $query->orWhereJsonContains('season_ids', $season);
-                        }
-                    })->exists();
-                if ($active) {
-                    throw ValidationException::withMessages(['season_ids' => 'A context build is already active for one of these seasons.']);
-                }
-
-                $build = NhlPregameContextRun::query()->create([
-                    'action' => NhlPregameContextRun::ACTION_BACKFILL,
-                    'status' => NhlPregameContextRun::STATUS_QUEUED,
-                    'season_ids' => $seasons,
-                    'created_by' => $request->user()?->id,
-                    'options' => array_filter([
-                        'context_version' => \App\Services\NhlPregameContextBuilder::VERSION,
-                        'model_run_id' => $modelId,
-                    ], fn (mixed $value): bool => $value !== null),
-                ]);
-                PrepareNhlPregameContextRunJob::dispatch($build->id);
-
-                return $build;
-            });
-        } finally {
-            $lock->release();
-        }
     }
 
     /** Display grouped, pregame-only context effects against actual EV game outcomes. */

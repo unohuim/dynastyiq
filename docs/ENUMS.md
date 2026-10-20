@@ -124,8 +124,11 @@ Horizon assigns twenty-five workers to `projections`, five workers to `default`,
 
 ## Scheduled process keys and discovery work scheduling
 
-- `scheduled_processes.key`: `nhl-game-discovery` is the initial supported process.
-  Other scheduler entries have not migrated. No user-supplied command is executable.
+- `scheduled_processes.key`: `nhl-game-discovery` and
+  `nhl-pregame-context-model-{model_run_id}` identify supported scheduled work.
+- `nhl_pregame_context_runs.options.trigger`: `auto_sync` identifies a scheduled
+  model pregame-context update.
+  Other scheduler entries have not migrated; no user-supplied command is executable.
 - `scheduled_processes.settings.days_back`: positive integer prior calendar-date count;
   excludes today, defaults to 3, currently accepts 1–31.
 - `frequency_hours`: integer 1–168, default 24. Timezone is fixed to `America/Toronto`.
