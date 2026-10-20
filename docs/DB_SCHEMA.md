@@ -4990,4 +4990,46 @@ Supporting observations for the current lineup's `forwards` and `defense` compon
 
 Provider-neutral API usage ledger containing operation, request id, token counts, tool-call count, timestamp, and scoped metadata. NHL lineup discovery records stored-source timeline reads as `nhl_lineup_source_timeline` for operational and cost visibility, including returned posts and the related admin import run id when one exists. Historical rows may retain the retired `nhl_lineup_discovery` generic-search operation.
 
+## Custom game predictions
+
+Migration required:
+`2026_10_19_000001_create_nhl_custom_game_prediction_tables.php`.
+This is the separate game-level prediction pathway; it does not reuse SAT engine,
+stack, or player-evaluation records.
+
+- `nhl_custom_game_prediction_runs` freezes the run name, algorithm version,
+  season, optional source model run, definition JSON, lifecycle status, progress
+  counts, creator and terminal error.
+- `nhl_custom_game_predictions` stores one game per run, the pregame cutoff and
+  both team-context references, predicted home/away/total goals, both win
+  probabilities, separate confidence and confidence-input JSON, recommendation,
+  and later final goals/winner comparison. Run/game is unique.
+- `nhl_custom_game_prediction_teams` stores one row per participating team with
+  venue, lineup and goalie identity, frozen own-team and opponent-team Train,
+  L5/L10/L20/LSeason inputs kept separately, EV/PP/PK goal
+  projections, SAT/SOG/shooting, PP opportunities/success, EV/PP/PK TOI, and
+  corresponding available actual team results including strength TOI. Prediction/team is unique.
+- `nhl_custom_game_prediction_player_inputs` stores one row per selected player
+  under that player's team prediction and links it to the opposing team's
+  prediction row. Its `inputs` JSON freezes the player's
+  individual Train/L5/L10/L20/LSeason metrics, opponent-facing metrics and
+  bucket evidence with source counts, exposure, source cutoff and missingness.
+  Separate `prediction` and `actual` JSON retain player bucket outputs and
+  measured results. Both lineups are stored, so opponent players' own histories
+  remain separate rows under the linked opposing team and are not confused with
+  a player's history against that opponent.
+- Shared `nhl_team_game_pregame_contexts` keeps each team's rolling metrics in
+  `metrics`, schedule evidence in `schedule_metrics`, and head-to-head windows in
+  `opponent_metrics`. Shared player rows keep self and opponent-only windows in
+  separate metric keys. Team L5/L10/L20/LSeason and head-to-head windows include
+  game counts and available goal, SAT/Corsi, SOG/SAT, shooting, save, PDO, and
+  win-rate measures. Schedule JSON distinguishes exact third/fourth-in-seven
+  and B2B-fourth-in-seven from travel distance and days on the current road trip.
+- Model-specific team/player Train evidence, for both sides and each player's
+  opponent-facing history, belongs to custom prediction input JSON, not shared
+  model-agnostic context rows. Missing source evidence remains null; it is never
+  silently recorded as zero.
+- Deleting a custom run cascades only through its prediction, team, and player
+  input rows. Shared NHL facts, pregame contexts, engines and evaluations remain.
+
 **End of DB_SCHEMA**

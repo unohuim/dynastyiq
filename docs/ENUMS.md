@@ -2813,7 +2813,25 @@ The optional `source` query parameter on `/lineups-test` and its game/lineup pay
 
 These values select the test-page data source only; they do not add canonical lineup evidence providers.
 
-**End of ENUMS**
+## Custom NHL game-prediction records
+
+`nhl_custom_game_prediction_runs.status` accepts `queued`, `running`, `complete`,
+and `failed`. A run is distinct from SAT engine, stack, and next-game evaluation
+statuses.
+
+`nhl_custom_game_predictions.status` accepts `pending`, `complete`, `excluded`,
+and `failed`.
+
+`nhl_custom_game_predictions.recommendation` stores either the selected NHL team
+abbreviation or `OT`. `OT` means the custom model did not identify a clear
+winner; it is not a tie result. `actual_winner` stores `home` or `away` after a
+final game.
+
+`nhl_custom_game_prediction_teams.venue` stores `home` or `away`.
+`player_role` stores `skater` or `goalie`.
+
+These values apply only to the custom game-prediction pathway and do not change
+existing engine or partner API contracts.
 
 ### Partner X post lookup usage
 

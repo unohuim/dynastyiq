@@ -1,0 +1,37 @@
+name: NHL Custom Game Prediction Evidence
+type: Isolated Game-Level Prediction Run And Immutable Outcome Record
+location:
+  - database/migrations/2026_10_19_000001_create_nhl_custom_game_prediction_tables.php
+  - database/migrations/2026_10_06_000001_create_nhl_pregame_context_tables.php
+  - app/Services/NhlPregameContextBuilder.php
+purpose: Persist a separately versioned NHL game prediction and its two-team, player, goalie, and pregame evidence without changing existing SAT engines or partner prediction paths.
+when_to_use:
+  - Saving a custom game-prediction run, its frozen configuration, per-game probabilities, and later actual outcomes.
+  - Retaining each team's projected EV, PP, and PK components and the player inputs used to build them.
+  - Comparing a player's own history with both opponent-team context and the opposing lineup's player histories.
+when_not_to_use:
+  - Replacing existing SAT engine, stack, player evaluation, or partner API prediction records.
+  - Treating postgame lineups, outcomes, or held-out data as pregame input evidence.
+rules:
+  - Every custom prediction run has its own algorithm version, season, frozen definition, source model reference, lifecycle status, and counts. Its rows never share run identity with SAT engine runs or player next-game evaluations.
+  - Each game record identifies both team pregame-context snapshots, a source cutoff, predicted team goals, total goals, both win probabilities, confidence and its inputs, recommendation, and later final goals and winner result.
+  - Each team record keeps home and away evidence separate and freezes that team's and its opponent's team-level Train, L5, L10, L20, and LSeason inputs separately. It stores that team's predicted EV/PP/PK goals, SAT, SOG, shooting, PP opportunities, PP success, and EV/PP/PK TOI alongside actual team results including actual strength TOI.
+  - Each selected lineup player has one input row under that player's own team prediction and a link to the opposing team's prediction. Its inputs JSON preserves the player's own Train, L5, L10, L20, and LSeason metrics and opponent-facing windows as distinct values, plus metric source, sample counts, exposure, cutoff, bucket evidence, and missingness. Separate prediction and actual JSON preserve player-bucket outputs and measured results.
+  - Store both teams' player-input rows for a game. Opponent-player history is read from the linked opposing team's player rows; never substitute one player's history against an opponent for the opposing players' own histories.
+  - Team context keeps each side's own team metrics and head-to-head metrics separately. Pregame context windows include L5, L10, L20, LSeason and season-to-date when supported. Model-specific team and player Train values, including opponent-side Train values, are frozen in custom prediction inputs and never written into shared model-agnostic context snapshots.
+  - Schedule context distinguishes venue, B2B, third-in-seven, fourth-in-seven, and B2B-fourth-in-seven. Days on the road and travel distance remain separate inputs. Unknown context remains unavailable, not zero.
+  - Confidence is saved with its calculation inputs and remains distinct from win probability. A recommendation of OT means the game did not meet the model's clear-winner threshold; it is not a tie outcome.
+  - Actual outcome fields are populated only after the game is final. Predictions and their frozen pregame inputs are not rewritten when comparisons are added.
+  - Foreign-key cascades are limited to custom run-owned prediction records. Deleting or changing a custom run cannot alter raw NHL facts, shared pregame snapshots, existing model runs, engines, or player evaluations.
+public_interface:
+  - nhl_custom_game_prediction_runs
+  - nhl_custom_game_predictions
+  - nhl_custom_game_prediction_teams
+  - nhl_custom_game_prediction_player_inputs
+  - nhl_team_game_pregame_contexts
+  - nhl_player_game_pregame_contexts
+example_usage: |
+  Save one custom run with its selected model and algorithm definition.
+  For each game, persist separate home and away context references and projections.
+  Save player inputs for both lineups, including each player's Train/L5/L10/L20/LSeason
+  and opponent-facing history. After final, append the actual scores and winner result.

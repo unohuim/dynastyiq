@@ -4040,4 +4040,26 @@ The parent import dispatches only today's game/team jobs (America/Toronto) witho
 
 NHL gamecenter boxscore rosters are checked only for game/teams without complete current lineup coverage; anticipated-lineup jobs use a dedicated one-worker `lineups` queue, and only paid X requests share the overlap lock so NHL checks may proceed concurrently. Only date-eligible current lineups passing NhlLineupPlayerResolver identity-and-slot verification suppress further discovery; unknown core players, duplicate identities, and incompatible positions remain unreported and eligible for correction, while unresolved F4/D3 players retain their explicit unresolved status and same-group peer fallback, while a complete official roster remains authoritative when no current lineup exists. Queue-level timeouts and exhausted attempts record terminal failures against the parent import so progress cannot remain working indefinitely. Otherwise, X discovery uses only stored team-scoped source timelines and never generic keyword search. It reads five posts per source in round-robin order and follows pagination until it finds a verified full single-post roster or exhausts the day-before-game boundary. All twelve forwards followed by six defensemen must appear in one roster-shaped block in the same post before player resolution begins. Partial posts remain audit-only; current truth never combines different observations for its forward and defense groups. Historical combined-post lineups cannot be reported or suppress discovery. Lineup extraction and persistence both use `NhlLineupPlayerResolver`; independent name matching is prohibited. The resolver uses canonical normalization, team context, unambiguous acronyms and surname prefixes, and recent team sweater evidence, and reprocessing may enrich unresolved identity fields without changing reported evidence. Same-team surname collisions use reported first initials and do not fall back across conflicting initials. Live terminal and Admin output contains only team, source handle, and five-post range; detailed decisions remain in local troubleshooting Markdown. Each local import removes prior generated lineup-audit Markdown while preserving its README and directories, then writes a new timestamped manifest, fresh team search files, complete timeline results, and per-post decisions. Official starter flags and ordered public G1 reports contribute starting-goalie evidence. Public `/games` pages show every scheduled matchup with independent team evidence statuses and current lineup detail while providing the route foundation for broader game information. Stored scores appear only after both participating teams have boxscore rows and the boxscore import stage is completed. Predictions may use an official or single-post reported lineup with all core skaters resolved; unresolved F4/D3 players may use the average of resolved peers in their exact group. Every resolved skater receives the same NHL, NHLe, or replacement-level game projection ladder regardless of lineup authority. Otherwise existing roster projection remains authoritative. Authority: `docs/architecture/imports/NhlAnticipatedLineups.yaml`.
 
+## NHL Custom Game Prediction Evidence
+
+**Name:** NHL Custom Game Prediction Evidence
+**Type:** Isolated Game-Level Prediction Run And Immutable Outcome Record
+
+The custom game predictor persists its own versioned runs, per-game winner
+probabilities, confidence, recommendations, and final outcomes. Each prediction
+keeps separate home and away team components and snapshots every selected player
+from both lineups. Each player input links to the opposing team's prediction row.
+Player inputs distinguish the player's own Train/L5/L10/L20/LSeason history,
+history against the opponent, and the opposing lineup players' own histories.
+Opponent-team aggregates remain distinct from player sums.
+
+**Public interface:**
+- `nhl_custom_game_prediction_runs`
+- `nhl_custom_game_predictions`
+- `nhl_custom_game_prediction_teams`
+- `nhl_custom_game_prediction_player_inputs`
+- `NhlPregameContextBuilder`
+
+**Authority:** `docs/architecture/stats/NhlCustomGamePrediction.yaml`
+
 **End of ARCHITECTURE_INVENTORY**
