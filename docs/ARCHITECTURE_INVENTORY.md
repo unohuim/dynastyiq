@@ -21,13 +21,52 @@ engine simulations and qualification are not cached. Authority:
 
 Admin SAT Models includes a chronological next-game shot-bucket evaluation.
 Its index manages named evaluation containers; new evaluations require saved
-SAT/60 and TOI projections and prepare strength-specific initial quarter/season
+SAT/60 and TOI projections plus completed model-scoped pregame context and prepare strength-specific initial quarter/season
 outlooks through bounded player jobs, stopping at Ready without game simulation.
+Open leads to a Vue Outlook detail page with metric/strength filters, paginated
+saved initial estimates, and a separate League Average row. History and comparison
+columns remain unavailable until their evidence is saved; the page never dispatches work.
 Existing historical results remain accessible separately.
+The Games tab saves quarter-reference SAT/60 direction and L20/model-fallback TOI
+forecasts for an explicit historical lineup, then automatically compares actuals
+in a separate player-by-player phase before Predict Day advances to another game.
+One resumable player checkpoint runs per projections job; saved forecasts are
+immutable and quarter outlooks stay unchanged. Teams are sums of lineup players.
+Predict Day persists the selected day's work in evaluation inputs and admits games
+sequentially through the same prediction path, continuing independently of the browser.
+Game reads publish compact selected-player display fields and server-aggregated
+league rows; other games' raw player context never enters the browser payload.
+Game inspection separates visiting/home skaters by position and goalies below,
+with pregame team records and Train, LSeason, recent, and opponent-specific context.
+Game Evaluation shot evidence uses the model's frozen Train buckets with confidence
+at least 50% across history, quarters, Previous and Actuals; full strength-specific
+ice time remains the denominator. Opening an older save refreshes its context and
+comparisons through bounded jobs without replacing predictions. Simulate also includes
+stale saved games, then skips them once their evidence refresh finishes.
 Frozen baselines are compared with prior appearances by strength using durable,
 single-player checkpoints, paged game preparation, stale-job fencing, and lightweight
 progress polling. This does not change live predictions. Authority:
 `docs/architecture/stats/NhlNextGameEvaluation.yaml`.
+
+Game Prediction Rule 1 is agreed but not implemented: for each team's first
+three regular-season games, blend lineup LSeason SAT/60 equally with the league
+LSeason reference at the same strength and lineup-total scale. TOI/GP and live
+predictions are unchanged. The canonical rule and league-cohort qualification
+are recorded in `docs/architecture/stats/NhlNextGameEvaluation.yaml`.
+
+The same authority records the agreed, unimplemented B2B classification: fourth
+game in seven days has a separate combined effect, third-game B2Bs receive no
+B2B-specific adjustment, and remaining B2Bs require separate calibration rather
+than stacked penalties. It also records analysis-backed TOI Share guidance
+(opening L20/LSeason, then L10 or equal L5/L10 shares) and SAT/60 guidance
+(retain L20/LSeason stability), with cohort definitions and evidence. Adjustment
+magnitudes and deployment remain undecided; existing prediction behavior is unchanged.
+
+That authority also tracks three expected-goal research views: team xGF/xGA,
+shooter xGF, and individual on-ice xGA. It records the retained SAT-bucket/SOG
+probability definition, distinct exposure denominators, matched-history coverage,
+L20/LSeason window findings, and schedule, venue, road-duration and opponent
+associations. These are analysis candidates, not deployed xG forecasts or weights.
 
 
 Game and goalie prediction inputs use separate SAT-model and historical services.

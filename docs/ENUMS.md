@@ -14,6 +14,8 @@
 
 ## NHL next-game evaluation
 
+- `inputs.predict_day.status`: `running`, `completed`, `failed`. The day selection stores date, strength, period, ordered game IDs, completed cursor, heartbeat, last error, and a rotating queue token. It does not change evaluation readiness or existing game forecast states.
+- `inputs.predict_day.mode`: `day`, `simulation` (absent on older records means `day`). Simulation stores an inclusive end date in `date` and the earliest selected game's date in `start_date`; it reuses the same sequential coordinator and progress states.
 - Run `status`: `queued`, `preparing`, `running`, `completed`, `failed`, `building`, `ready`.
   New outlook preparation uses `building` then `ready`; legacy comparisons retain their lifecycle.
 - Run `inputs._work.stage`: `initialize`, `baselines`, `games`, `evaluate`, `outlook`.
@@ -24,6 +26,21 @@
 - Outlook `period`: `q1`, `q2`, `q3`, `q4`, `season`. Initial revision is `1`.
 - Outlook provenance `method`: `model_projection_initial_v1`. Null metrics denote unavailable projections, not zero.
 - `strength`: `all`, `ev`, `pp`, `pk`.
+- Saved game forecast `status`: `queued`, `running`, `ready`, `comparing`, `compared`, `failed`.
+  Active game work is queued/running/comparing; Ready means forecasts are frozen, not actuals scored.
+- Game work `phase`: `forecast`, `compare`, `context`. Its opaque rotating `work_token` fences stale deliveries.
+  Context enrichment proceeds to comparison for saved forecasts without recalculating projection values.
+- Game inputs `context.version`: `1`–`5` (legacy), `6` (consistent reliable-bucket evidence); `context.role`: `skater`, `goalie`.
+- Game lineup first entry `bucket_filter.version`: `1` (Train confidence >=0.50, inclusive, model-specific level-one keys). New prediction inputs record `bucket_filter_version = 1`; older original inputs are preserved.
+- Game lineup first entry `evidence_version` and player `comparison.evidence_version`: `6` after refresh. An absent/older value requires refresh before Simulate may skip that game. Filtered Previous is stored under `inputs.context.previous`, separately from original prediction inputs.
+- Game context `position`: `C`, `LW`, `RW`, `D`, `G`, `Unknown`. Source L/R normalize to LW/RW.
+- Context windows: `train`, `venue_train`, `last_5`, `last_10`, `last_20`, `last_season`, `venue_last_season`, `opponent_last_10`, `current_quarter`.
+  Team records also use `season` for the target season's completed games before the cutoff.
+- Game forecast `period`: `q1`, `q2`, `q3`, `q4`, explicitly selected as the reference outlook.
+- Game inputs `method`: `quarter_direction_l20_toi_v1`.
+- Game inputs `toi_source`: `last_20`, `model_projection`, `unavailable`.
+- Game `sat_direction`: `higher`, `lower`, `unchanged`, or null when comparison evidence is missing.
+  Direction compares the forecast with the previous appearance's same-strength rate.
 - `baseline_source`: `static_projection`, `training_history`, `unavailable`.
 - Method: `baseline`, `last_season`, `recent_5`, `recent_10`, `recent_20`,
   `blend_5`, `blend_10`, `blend_20`. Blends are fixed equal-weight experiments.
@@ -2875,3 +2892,5 @@ Storage: `nhl_model_runs.metrics.profile_build`, shared by standalone Profiles a
 - `error`: bounded standalone failure explanation. Combined failures also use the existing `prediction_build.error` field.
 
 Profile queued counters count discovered entities, not loaders, and grow during discovery. `profiles_completed_at` is cleared on a fresh build and remains null on failure. A historical timestamp without a successful identified build does not qualify profiles for a new /60 build.
+
+**End of ENUMS**

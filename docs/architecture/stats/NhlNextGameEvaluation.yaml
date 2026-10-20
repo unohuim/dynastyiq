@@ -9,23 +9,407 @@ location:
   - resources/views/admin/nhl-sat-models/next-game.blade.php
   - resources/js/pages/nhl-next-game-evaluation.js
   - resources/js/pages/Admin/Evaluations/Index.vue
+  - resources/js/pages/Admin/Evaluations/Show.vue
+  - resources/js/pages/Admin/Evaluations/Games.vue
+  - resources/js/pages/Admin/Evaluations/TeamContext.vue
+  - app/Http/Controllers/Admin/NhlEvaluationGameController.php
+  - app/Services/NhlEvaluationGameForecaster.php
+  - app/Models/NhlEvaluationGameForecast.php
+  - app/Jobs/ForecastNhlEvaluationPlayerJob.php
+  - app/Jobs/PredictNhlEvaluationDayJob.php
 purpose: Prepare named model-derived quarter and season outlooks while retaining historical bucket experiments, without changing live predictions.
 when_to_use:
   - Measuring next-game individual SAT bucket rates across a completed model test season.
   - Inspecting whether recent evidence improves the same player/game cohort over its baseline.
   - Creating multiple independently named initial outlooks for a model's projection season.
 when_not_to_use:
-  - Predicting roster participation, ice time, game winners, or goalie performance.
+  - Predicting roster participation, production ice time, game winners, or goalie performance.
   - Applying context effects to production predictions or tuning formulas on test outcomes.
 rules:
+  - Game Evaluation skater shot evidence ALWAYS retains only this evaluation model's level-one SAT buckets with pre-determined Train confidence >= 0.50, including exactly 0.50. Freeze the feature mapping, retained keys, model identity and Train seasons once per saved game in existing lineup JSON. The source SAT model must match the evaluation's frozen Train seasons. Missing model evidence fails visibly; it never falls back to all attempts or Test confidence. Exclude shootouts and empty-net attempts; unmatched or low-confidence buckets never merge into Other or a league fallback.
+  - Apply the identical frozen bucket set to Train, Train H/A, L5/L10/L20, LSeason, LSeason H/A, opponent L10, Previous, Current quarter and Actual, separately by selected strength. Derived SAT/GP, quarter blends, team sums, league rows and errors inherit those counts. Keep appearance selection and full matching-strength ice-time denominators; excluded attempts do not remove appearances, and measured zero-attempt appearances remain zero. Missing facts/exposure and unclassified strength remain unavailable. TOI/GP and TOI Share are not bucket-filtered. Shared model-agnostic pregame snapshots and goalie calculations are unchanged by this evaluation correction.
+  - Context version 6 upgrades measured evidence without rewriting saved game projection values, original prediction windows/Previous, or initial outlooks. Filtered Previous lives in context.previous. Recalculate context and then comparison in the existing one-player-per-job chain; replace only older comparison evidence, and mark the game current only after every player finishes. Old shot windows/actuals are withheld from tables until upgraded; raw inputs remain available for audit but are not sent to the browser. Opening a stale saved forecast requests the existing authorized context POST once; GET remains read-only. No migration or model/projection rebuild is required.
+  - Simulate beside Predict Day selects completed regular-season games in the evaluation season through the selected inclusive date, excluding already-compared games with current evidence in the same evaluation, strength and quarter. Older compared games are included for context/actual refresh without recalculating predictions. It starts at the earliest remaining game ordered by start time and game ID, with a 2000-game safety bound. The existing predict_day inputs and coordinator persist mode, date range, ordered IDs, cursor and queue fencing; one game is predicted and compared at a time, never a job burst. Matching active requests are idempotent; incompatible day/simulation requests are blocked. Repeating after failure or a stale heartbeat reselects unfinished games without replacing saved forecasts. Empty selections complete without dispatch. Existing ready forecasts enter comparison through the usual admission path. Existing super-admin authorization applies; no new schema or worker configuration is required.
+  - The game inspection page controls its sibling Team aggregates, Away, and Home disclosures with one page-local selection; opening one closes the others. Selecting a different forecast restores Team aggregates. Nested goalie disclosure remains within its parent team. Tables use viewport-bounded two-axis scroll regions with sticky column headers above sticky player-name cells. Existing disclosure consumers retain independent default-open behavior unless explicitly controlled.
+  - Skater tables alone show a fourth TOI Share row; teams retain three rows and goalies retain two. Each share divides the player's selected-strength TOI by summed available lineup TOI for the same column, times 100. Missing player values or nonpositive lineup totals yield a dash. Quarter Diff is the share difference in percentage points; Game Adj share normalizes adjusted TOI. Errors compare projected shares with actual share. No forecast or persisted data changes are made.
+  - Team, league and player rows show Game Adj immediately after quarter Diff, calculated as Proj quarter plus (Proj quarter minus Current quarter) for each displayed metric. Game Adj % replaces the former quarter Diff percentage and uses (Actual minus Game Adj) divided by Game Adj times 100. Missing inputs or a zero adjusted denominator yield no error percentage; zero Actual with a nonzero adjustment yields minus 100 percent. This comparison does not change persisted game predictions or quarter outlooks.
+  - Display context version 5 adds LSeason H/A, restricted to the previous season and each appearance's historical home/away role matching the target game, with strength-specific rates. Older saved games use bounded context enrichment without replacing forecasts. Player and team columns share names and order, except team-only p10/p20/quarter shares. Previous sums each lineup player's saved previous-game metric, converting SAT/GP before summing; Direction is not displayed. LSeason H/A follows LSeason, and Previous precedes Proj Q. No migration is required.
+  - Game inspection hides all estimate counts and estimate markers while preserving existing missing-player calculations. Team and player labels align as Proj, Actual, Proj Q1, Current Q1, err% Proj and err% ProjQ1, substituting the selected quarter. Current Q retains the prior-game count. Q1 Diff is displayed Proj Q1 minus Current Q1; Game Adj % appears before p10 in aggregate rows. League differences use displayed league values. These display calculations do not mutate saved predictions or context.
+  - Individual skater Q1 Test (or the selected quarter) shows saved current-quarter production before the target game for SAT/60, TOI minutes/GP, and derived SAT/GP. Append the player's prior appearance count in parentheses without a GP label. Missing evidence remains a dash; the separate Test column remains the target game's actual result. This display uses existing context and does not change forecasts or quarter boundaries.
+  - Individual skater tables expose the selected-quarter projection and its signed error for all three metrics using the same per-player blend helper as team quarter totals. Team Proj remains the sum of individual Forecast values, not their average. Team quarter error compares summed quarter projections with summed actuals, not an average of player error percentages; existing marked missing-player imputation is preserved.
+  - The game team-aggregate Proj column preserves saved game predictions. Proj Q1/Q2/Q3/Q4 is a display comparison derived per player from the equal mean of pregame LSeason and L20, at the selected strength, regardless of season games played. Both windows are required; existing lineup-peer imputation applies to missing team contributions. SAT/GP converts blended SAT/60 and TOI/GP per player before summing. This does not rewrite persisted outlooks or forecasts.
+  - Team and league rows display separate signed err% Proj and err% ProjQ errors against this game's Actual, using each projection as denominator. p10/p20 and q1p10/q1p20 (or the selected quarter prefix) are measured-player shares with absolute errors strictly below 10/20 percent; missing evidence and zero denominators are excluded. League errors require matching projection/actual lineup coverage independently for each projection.
+  - Games responses contain only display-required fields for the selected forecast's players, bounded game/status metadata, and three pre-aggregated league rows. Never send the day's other player lineups, raw saved inputs, unused metrics, provenance, or repeated team records. League summaries read bounded pages and aggregate one lineup at a time, preserving the existing per-player conversion, marked imputation, equal lineup weighting, coverage, and measured-player error rules. Status-only polling must not resolve player details or league summaries. This is a read-only presentation change with no forecast writes or schema changes.
+  - Predict Day admits the selected date's completed regular-season games in the evaluation season, at the selected strength and quarter, with a safety limit of 20 games. Durable day progress lives in evaluation inputs; one bounded projections coordinator admits one game through the same service as Predict Game and yields for 30 seconds while the existing player chain runs. No worker sleeps, game-wide fan-out, or browser-dependent continuation is permitted. Each game must finish its automatic actuals comparison before the day cursor advances. Existing forecasts are reused unchanged. A failed or stalled game pauses day work with a visible error; resume the game and explicitly restart the day. Evaluation locking, rotating day tokens, and idempotent active-day requests prevent duplicate chains. Stalled coordinator work can be restarted by repeating Predict Day. Evaluation deletion is blocked while day work is active.
+  - Current-quarter team values append the completed team-game count in parentheses without a unit label, using saved pregame season records and the existing 20/20/20/22 boundaries. Never sum player appearances to obtain team games. Player current-quarter values use their own window appearance count. Unavailable production remains a dash; missing counts are not invented. This display annotation does not change quarter windows or predictions.
+  - Game inspection displays SAT/GP as a third skater metric after SAT/60 and TOI minutes/GP. Derive each player's value as SAT/60 times TOI minutes/GP divided by 60, using the same column, strength and evidence window. Convert players before summing lineup totals or averaging league totals; never multiply team or league aggregate rates together. Missing conversion inputs leave the player value unavailable; existing marked lineup imputation applies only after conversion. SAT/GP errors and measured-player thresholds use its own derived prediction and actual. This is display-only and does not rewrite forecasts, quarter estimates, or goalie metrics.
+  - >-
+    Game Prediction Rule 1 — opening-three-game SAT/60 blend. Agreed, not yet
+    implemented. For each team's first three regular-season games in the model's
+    projection season, predicted lineup SAT/60 equals 0.50 times that game's
+    lineup LSeason SAT/60 plus 0.50 times the league LSeason average on the same
+    summed-lineup scale. Count games separately for each team, not by league
+    calendar date or the number of evaluations run. The current game's lineup
+    supplies the players for its LSeason calculation; teams remain collections
+    of players, not independently projected entities.
+  - >-
+    Rule 1 uses the selected strength consistently for both blend inputs and
+    comparison actuals. LSeason means the season immediately preceding the
+    projection season. League means a last-season reference, not the target
+    game's actual league average or the per-player Outlook reference. The
+    exploratory comparison used the six opening-night lineups; this is not
+    evidence of a full-league population. Freeze and identify the league cohort
+    and source before implementation rather than silently treating those six
+    teams as the entire league.
+  - >-
+    Rule 1 changes only the proposed game SAT/60 prediction. It does not change
+    TOI/GP, initial quarter outlooks, existing saved forecasts, or live prediction
+    behavior. Game four onward retains existing behavior until a separate rule
+    is agreed. This documentation records the agreed evaluation rule; it does
+    not claim the formula is already active or authorize live deployment.
+  - >-
+    Game Prediction Rule 2 — mutually exclusive back-to-back SAT/60 context.
+    Agreed classification, not yet implemented or calibrated. A back-to-back
+    means the team's previous completed regular-season game was on the preceding
+    scheduled calendar date. Count games in seven days as the target game plus
+    completed regular-season games on the preceding six calendar dates. A B2B
+    that is exactly the fourth game in that window uses its own combined effect;
+    a B2B that is exactly the third game receives no B2B-specific adjustment;
+    other B2Bs form the standalone B2B group. Apply at most one B2B effect, never
+    a standalone B2B penalty plus a fourth-game penalty. Non-B2B games receive
+    no adjustment from this rule. This classification does not prescribe a
+    separate adjustment for schedule density or change TOI Share.
+  - >-
+    Rule 2 adjustment magnitudes remain undecided. Recalculate the standalone
+    B2B effect after excluding the third- and fourth-game groups; the pooled
+    B2B result is not its coefficient. The observed combined fourth-game
+    shortfall is evidence for a distinct context, not an approved percentage
+    deduction or proof of an independent fatigue effect. Preserve the chosen
+    classification while accounting for venue and overlapping schedule factors
+    when calibrating it. Five-or-more-game congestion has no separately agreed
+    coefficient and must not silently inherit the exact-fourth-game estimate.
+  - >-
+    Game Prediction Rule 3 — TOI Share window guidance. Analysis-backed candidates,
+    not implemented forecast changes. For each team's first five regular-season
+    games, retain the equal L20/LSeason TOI-per-game blend as the opening candidate;
+    L20 alone is the simpler alternative. From team game six onward, prefer
+    recent usage: L10 is the single-window candidate, and an equal blend of L5
+    and L10 shares is the modestly better candidate observed in this analysis.
+    L10 had the lowest mean absolute percentage error among L5/L10/L20 over each
+    full quarter; L10 and L20 were nearly tied in several quarters. Do not invent
+    quarter-specific weights from these small differences. Last-season usage
+    should not automatically retain equal weight after current-season roles
+    develop. Final switching/fallback behavior still requires implementation
+    approval; this guidance does not change the existing L20/model TOI forecast.
+  - >-
+    Rule 3 derives each window's share from the player's selected-strength TOI
+    per appearance divided by the sum of that same window's values for the
+    expected lineup. The equal recent blend is 0.50 times the L5 share plus
+    0.50 times the L10 share, not an average of historical lineup percentages
+    or a normalization of blended minutes. The opening candidate instead blends
+    L20 and LSeason minutes per player before lineup normalization. Method
+    comparisons must use identical eligible players and normalize projection
+    and Actual over that same set. Missing history is not zero and cannot
+    justify silently changing the lineup denominator. The analysis does not
+    choose a new fallback for players without sufficient history. TOI Share
+    allocates ice time within the lineup; it does not establish total team TOI.
+  - >-
+    Game Prediction Rule 4 — SAT/60 window guidance. Analysis-backed candidates,
+    not implemented forecast changes; Rule 1 remains the agreed opening-three-game
+    proposal. L20 was the lowest-error standalone window among L5/L10/L20 in
+    each full team-season quarter. Retain LSeason as a stabilizing input: the
+    equal LSeason/L20 rate blend used by Proj Q1 was competitive in Q1 and had
+    lower mean absolute percentage error than L20 alone in Q2-Q4. This does not
+    approve a new game-four-onward formula or weights. Pool retained attempts
+    and matching-strength exposure within each player's window, then sum lineup
+    rates using the existing missing-evidence rules. Do not transfer the recent
+    TOI Share blend to SAT/60 or infer shooting-rate momentum from usage changes.
+  - >-
+    Rules 3-4 retain cross-season recent windows, following each player's prior
+    appearances across team changes. L10 and L20 are not empty or irrelevant
+    during the opening twenty games: prior-season appearances fill their older
+    slots. Removing that history in team games 6-20 worsened SAT/60 estimates
+    but slightly improved the L20 TOI Share estimate. Team-season quarters in
+    this analysis are games 1-20, 21-40, 41-60 and 61-82, not player appearance
+    quarters or the selected forecast reference. Proj Q1 means the pregame equal
+    LSeason/L20 blend; Current Q1 means measured quarter-to-date production before
+    the target; Actual means the target game's outcome. Never call all three Q1.
+  - >-
+    Rules 2-4 evidence was reviewed on 2026-10-14 directly from 2025-26 game facts,
+    even-strength summaries and pregame context, using evaluation 3's frozen Train
+    confidence >= 0.50 SAT bucket set from 2022-23 through 2024-25. The primary
+    cohort had 2,464 team-game results in 1,238 distinct games after at least five
+    prior team games; opening-five and full-quarter comparisons were examined
+    separately. These findings do not establish PP, PK or all-strength effects.
+    All historical inputs stop before the target start. SAT/60
+    accuracy describes lineup totals; TOI Share accuracy describes player-game
+    observations, not independent unique players. Report mean absolute relative
+    error using the estimate as denominator, with strictly below-10/20-percent
+    player shares where applicable. This analysis convention does not change
+    the UI's signed error columns. Findings and chosen B2B classifications are
+    documented here without recalculating saved forecasts, changing initial
+    outlooks, or enabling production/API adjustments.
+  - >-
+    Game Prediction Rule 5 — track three distinct expected-goal views for analysis:
+    team xGF/xGA, individual shooter xGF, and individual on-ice xGA. This records
+    the requested research scope and candidate guidance, not implemented forecasts,
+    new UI columns or approved adjustment coefficients. Team xGF counts each
+    retained shot once and equals the opponent's xGA volume. Shooter xGF belongs
+    to the shooter; on-ice xGA belongs to each defending skater present. Never sum
+    skater on-ice xGA into a team total. Compare rates per 60 matching-strength
+    minutes; team rates use unioned team exposure, player rates use player exposure.
+    These physical team rates are separate research measures, not replacements
+    for the evaluation UI's sums of lineup player rates or saved Proj values.
+  - >-
+    Rule 5 evidence uses the existing profile convention: sum the SOG goal-model
+    probabilities on observed shots on goal, after retaining evaluation 3's frozen
+    SAT confidence >= 0.50 buckets. The confidence cutoff applies to SAT buckets,
+    not goal probabilities. The 2026-10-14 analysis used SAT model 4 and goal model
+    3, trained on 2022-23 through 2024-25, with the goal model's geometry bucket and
+    league fallback. Exclude shootouts and empty-net attempts; retain full EV
+    exposure. This is filtered SOG-based expected-goal evidence, not an unfiltered
+    all-attempt xG measure or actual goals scored. Historical inputs precede the
+    target game; rates pool expected-goal volume and exposure within each window.
+  - >-
+    Rule 5 primary coverage is the same 2,464 team-game results after five prior
+    team games, reconstructed directly from tables rather than requiring saved
+    evaluations. There are 44,350 target skater appearances. Missing exposure or
+    on-ice attribution remains unavailable, never zero or a reason to replace a
+    missing recent appearance with an older one. Deduplicate event/player links
+    and compare defending-player counts with the event's situation code. Thirty
+    target-season games failed that on-ice coverage check; conservatively exclude
+    their player xGA and any window containing affected evidence. L20 on-ice xGA
+    has 27,430 valid comparisons, but complete LSeason/L20 has only 5,373; compare
+    methods on identical eligible observations and disclose this selection limit.
+    Team identity 68 has no directly matching LSeason history; do not silently
+    map another team identity into that history.
+  - >-
+    Rule 5 window candidates: L20 beat L5 and L10 for team xGF/xGA, shooter xGF
+    and on-ice xGA in each team-season quarter after five prior games. The separate
+    opening-five comparison favored equal LSeason/L20 for team rates and shooter
+    xGF; on-ice xGA was essentially tied, on much thinner coverage. In matched
+    quarter comparisons, the equal rate blend slightly favored team and shooter
+    xGF in Q1-Q2, while L20 favored them in Q3-Q4. On-ice xGA favored L20 in all
+    four quarters of its complete-history subset. Retain cross-season L10/L20;
+    they are usable early-season history, not empty windows. Do not transfer the
+    L5/L10 TOI Share blend to expected-goal rates or prescribe switching weights
+    from these exploratory differences. Predicting game xG volume would also
+    require a separately validated exposure prediction.
+  - >-
+    Rule 5 context findings: home teams generated more xGF and allowed less xGA;
+    players showed the same direction for shooter xGF and on-ice xGA. Relative
+    rest also mattered descriptively. Keep Rule 2's mutually exclusive B2B groups
+    when tracking xG. Fourth-game B2Bs allowed more team xGA than fourth games
+    without B2B in both season halves; their offensive shortfall was concentrated
+    in the first half. Third-game B2Bs showed no adverse signal and remain excluded
+    from B2B-specific penalties. Only 22 observations remained in the standalone
+    B2B group, insufficient to transfer the pooled effect into its coefficient.
+    Neither these observations nor the SAT findings authorize stacking penalties
+    or assigning the same percentage to offense and defense.
+  - >-
+    Rule 5 travel/opponent findings: track days since the first game in the current
+    consecutive-away sequence separately from kilometers, excluding sequences
+    with a gap of seven or more days. This is a schedule proxy, not verified days
+    physically away from home. Ten-plus-day sequences had lower team/shooter xGF
+    and higher team/on-ice xGA, but only 50 team-game observations and unstable
+    intermediate-duration effects. Kilometers showed no monotonic dose-response.
+    Opponent L5/L10 alone performed worse than the broader-history blend in all
+    three views. A small opponent L10 contribution modestly improved team error
+    within this sample, without dependable player-level gains; no opponent weight
+    is approved. Venue-specific Train/LSeason, Previous and current-quarter rates
+    likewise do not establish replacements for L20 or the broader-history blend.
+    Context associations require joint validation against venue, schedule and
+    opponent strength before adopting adjustments; they are not causal estimates.
+  - >-
+    Game Prediction Rule 6 — Team Win Prediction. Agreed guidance, not yet
+    implemented. Compare each team's pregame xGF–xGA balance. Use L10/L20 as
+    candidate history windows. Include home ice in the baseline. Evaluate
+    relative rest alongside team strength. Track fourth-in-seven B2Bs;
+    calibrate before assigning win penalties.
+  - >-
+    Game Prediction Rule 7 — team penalties/game baseline. Agreed, not yet
+    implemented. For each team independently, Base = max(Train penalties/game,
+    LSeason penalties/game). Train pools attributed skater penalties taken over
+    covered completed regular-season team games in the selected Train seasons;
+    LSeason uses the immediately preceding season. Count penalty events, not
+    assessed PIM or time served. This team-level baseline does not itself
+    establish PP opportunities or PP/PK ice time.
+  - >-
+    Rule 7 identifies the target quarter from that team's upcoming regular-season
+    game number: completed season team games strictly before the target start
+    plus one. Q1 is games 1-20, Q2 21-40, Q3 41-60 and Q4 61-82. Resolve this
+    independently for both teams; calendar dates, player appearances and the
+    evaluation's manually selected quarter reference do not assign this quarter.
+  - >-
+    Rule 7 predicts penalties/game as Base times QuarterFactor, where
+    QuarterFactor = league Train penalties/game in the target team-season quarter
+    divided by league Train full-season penalties/game. Each league rate pools
+    penalty counts and covered team games from its own historical window.
+    Calculate factors from the selected Train seasons and freeze their source,
+    coverage and values before forecasting; never derive them from Test outcomes
+    or target-game facts. Missing history is not zero, and any historical team
+    identity mapping must be explicit. The illustrative percentages in
+    example_usage are evidence, not universal hardcoded constants.
+  - >-
+    Rule 7 evidence reports overall err% as abs(mean prediction minus mean actual)
+    divided by mean actual times 100 on identical teams. Its p10/p20 count teams
+    whose absolute prediction-to-actual difference divided by prediction is
+    strictly below 10/20 percent, excluding zero or missing prediction denominators
+    with coverage disclosed. Quarter summaries compare each team's adjusted
+    prediction with its actual quarter average; season summaries compare Base
+    with its actual full-season average. These team-average comparisons do not
+    establish individual-game accuracy or change existing UI error conventions.
+  - >-
+    Custom prediction engine — opposing defensive buckets. Agreed for the new
+    custom research engine after reviewing the CHI/FLA and PIT/NYR examples.
+    Adopt the tested defensive adjustment as its current research pathway,
+    retaining the offense-only baseline for comparison. This agreement does not
+    modify existing legacy engines, engine series, saved evaluation forecasts,
+    production/API predictions, or their historical records.
+  - >-
+    Apply defense separately to each player's retained bucket SAT/60 at EV, PP,
+    and PK before converting production and summing players into teams. Estimate
+    bucket attempts allowed while accounting for the offensive strength of teams
+    that defense faced. Compare the upcoming defense with the defenses represented
+    in that player's offensive source history. Adjusted bucket SAT/60 equals
+    offensive bucket SAT/60 times (upcoming defensive allowance divided by the
+    historical defensive reference) raised to the fitted adjustment coefficient.
+    An equal allowance leaves the rate unchanged. Retain the same strength,
+    frozen Train-confidence >= 0.50 buckets, and empty-net/shootout exclusions.
+  - >-
+    Construct the historical defensive reference from matching-strength player
+    exposure against prior opponents. When offensive rates combine source
+    windows, combine their defensive references using the corresponding source
+    rate contributions. The tested offensive baseline is an equal Train/L10
+    player-bucket rate blend. Opponent-adjusted offense/defense estimates and
+    sparse-bucket neutral priors must use earlier Train evidence; the tested
+    stabilization is 150 strength-clock minutes. Freeze the source, prior,
+    coefficients and model provenance before Test. Recent defensive histories
+    cross season boundaries and update only after the current game's forecasts
+    for both sides are frozen. Target outcomes cannot select an adjustment.
+  - >-
+    The adopted tested defensive windows are opponent L20 at EV, opponent PK
+    Train when projecting the attacking team's PP, and opponent PP LSeason when
+    projecting short-handed PK production. The 2025-26 replay coefficients are
+    respectively 0.3152975390611162, 0.346997919269746 and 0.32647549417570887,
+    learned from earlier-season next-game attempts with the coefficient bounded
+    between zero and one. These are frozen cohort values, not universal constants
+    for future Train selections. Later bucket-specific window/coefficient
+    findings remain research; they are not substituted into this agreement.
+  - >-
+    Keep projected team time, player TOI shares/minutes, and each player's bucket
+    SOG/SAT and SH% calculations unchanged by this defensive stage. Recalculate
+    SAT/GP, SOG/GP and G/GP from the adjusted bucket attempts, then sum individual
+    production into team and game totals. Team conversion ratios can change
+    because the bucket mix changes. Preserve fractional expected attempts;
+    ballpark example ratings do not round forecasts or replace err%, p10 or p20.
+    Retain per-player/bucket offensive rate, defensive reference, opponent effect,
+    coefficient, multiplier and adjusted production for diagnosis. This stage
+    introduces no additional goalie or post-odds adjustment.
+  - >-
+    Custom prediction engine — team PP goals/game. For each side, first make a
+    team split estimate: use the attacking lineup's summed individual L20 PP
+    goals/game when the opponent's current-season-to-date PK% is at or below the
+    league current-season-to-date PK%; when the opponent is above league PK%, use
+    the opponent's L5 team PP goals-against/game instead. At season start, seed
+    both PK comparisons from Train. Separately predict the game's total PP goals
+    as 75% of the two attacking lineups' summed L20 individual PP goals/game plus
+    25% of the two opponents' L5 team PP goals-against/game. Let A and B be the
+    initial team split estimates and T the separate game-total estimate. Scale
+    each side by T/(A+B), preserving their initial ratio; if A+B is zero, split
+    T equally. This custom-engine rule does not alter legacy engines, saved
+    evaluation forecasts, or production/API predictions.
+  - >-
+    The 2025-26 retrospective test covered 1,312 games and 2,624 team-games.
+    Adjusted team predictions averaged 0.5857 PP goals/game versus 0.6079 actual;
+    pooled overall error was 3.79%, P10 was 4.54% (119/2,624), and P20 was 7.81%
+    (205/2,624). Overall error is the absolute difference between summed
+    predictions and summed actuals divided by summed predictions. P10/P20 are
+    team-game shares with absolute error strictly below 10%/20%, using each
+    prediction as denominator. The retrospective lineup was identified from
+    same-game PP participants, so these results do not measure pregame lineup
+    selection; prospective use must supply the expected PP lineup before puck
+    drop. One zero-sum initial matchup used an equal split of its game total.
+  - >-
+    Custom prediction engine — EV goalie impact on goals per SOG. Agreed for the
+    new custom engine only; it does not alter legacy engines, saved evaluations,
+    production/API predictions, or PP/PK calculations. Keep projected EV SOG
+    unchanged. After offensive and defensive bucket calculations produce baseline
+    EV goals, adjust goals per SOG by the square root of the opposing starter's
+    LSeason EV goal rate divided by the shooting team's LSeason goal rate against
+    the starting goalies it faced. Equivalently, adjusted EV goals equal baseline
+    EV goals times sqrt((1 - opposing goalie LSeason EV SV%) /
+    (1 - faced-goalie LSeason EV SV%)). Use the season immediately preceding
+    the target season, only completed games before puck drop, and 100-shot
+    shrinkage toward league EV SV% for both save-rate estimates. Missing required
+    history leaves the goalie factor neutral. Apply this after bucket-level SOG
+    and baseline goal conversion; it changes EV goals only, never SAT or SOG.
+  - >-
+    Rule 8 evidence: on the 2025-26 test season, this LSeason matchup changed
+    aggregate EV goals/SOG from 0.11828 to 0.11652 against 0.11412 actual; pooled
+    goal error fell from 3.65% to 2.11%. Across 1,312 games, full-game P20 moved
+    from 33.16% to 32.70%, so this does not establish improved game-total P20.
+    The faced-goalie reference uses opposing starting goalies from the shooting
+    team's prior-season games; do not substitute the shooting team's own goalie
+    history. These results require that corrected opponent-history comparison.
+  - >-
+    Custom prediction engine — 2025-26 winner configuration. Starting from the
+    Train-selected goalie reconstruction with EV season-gap and PDO finishing,
+    apply the frozen position context to player bucket production: forwards use
+    a 1.5% home SAT multiplier and reciprocal away multiplier, plus a 2% SAT
+    reduction for a fourth-in-seven B2B; defensemen use a 3% SAT reduction for
+    a fourth-in-seven B2B. No standalone-B2B, third-in-seven, or goalie context
+    adjustment is active. Apply no direct venue win-probability adjustment. If
+    the away team is in a fourth-in-seven B2B, add 0.0433712599 to home win
+    probability, clamp to [0,1], and set away probability to its complement.
+    This schedule adjustment changes the winner probability after scores are
+    calculated. The replay's existing player-bucket score calculation includes
+    EV, PP and PK goal components; position SAT multipliers flow through those
+    player-bucket SOG and goal estimates. The separately documented custom team
+    PP goals/game allocation rule above was not integrated or recalibrated in
+    this replay. This research configuration does not alter legacy or
+    production/API predictions.
+  - >-
+    2025-26 Test evidence for the frozen winner configuration: 740 correct
+    winners from 1,312 games (56.40%), compared with 724/1,312 (55.18%) for its
+    baseline. These are all-game rates; no probability qualification cutoff is
+    part of this rule or result.
+  - Game team tables end with separate League Average SAT/60, TOI minutes/GP, and SAT/GP rows. These average published saved lineup totals for the selected evaluation, game day, strength and quarter, not individual players or unsimulated teams. Each column reports available team coverage and estimated-input provenance; no extra predictions are dispatched. League aggregate percentage error is unavailable unless prediction and actual cover the identical lineups. Individual error shares pool only measured player comparisons. The Outlook/player-table league reference remains a per-player mean.
+  - Predict Game saves required display context as part of its player jobs. Opening an older forecast automatically requests missing context through the authorized POST action, not through GET side effects or a separate user button. Concurrent context requests reuse active work or no-op when current; saved predictions remain unchanged and the evaluation's single active chain limit remains enforced.
+  - Team display totals impute missing lineup contributions from available skaters in that same lineup, metric, and window; mark the total and derived error as estimated with missing-player counts. A wholly unavailable window stays null. Averages exclude missing players, and individual error thresholds never score imputed observations. Saved player predictions and actuals remain unchanged.
+  - Evaluation display context version 3 adds Train history restricted to the player's home or away role in the selected game. Team aggregate columns include that venue-specific Train and each lineup player's last ten appearances against the selected opponent.
+  - Display context version 4 refreshes saved Train and Train H/A from complete strength appearances only, retaining excluded counts without discarding usable history. Opening an older saved game triggers the existing bounded context enrichment path; original forecast values and recent prediction inputs remain unchanged. No schema migration or new evaluation is required.
+  - Saved game inspection uses a default-open team-aggregate accordion followed by default-closed, vertically stacked away/home accordions with full-width tables and nested goalie disclosures. SAT/60, TOI minutes/GP, and SAT/GP occupy separate rows.
+  - Aggregate errors compare summed lineup actuals with summed lineup predictions using prediction as denominator. Below-10/20-percent shares describe measured individual skaters and appear only in the aggregate table; individual rows show signed prediction-to-actual error percentages.
+  - Evaluation display context version 2 adds pregame quarter-to-date windows by player appearance (1-20, 21-40, 41-60, 61-82). Only completed appearances before the target cutoff contribute, using matching strength counts/exposure. Existing forecasts may add this context without replacing saved predictions; empty or missing evidence remains unavailable.
   - Only administrators may create, resume, or read these global NHL experiments.
   - New evaluations inherit Train seasons and projectionSeasonId from the model. A live model needs no Test season; historical evaluations use the model's Test season. The projection season must follow every Train season.
-  - Creation requires completed, persisted offensive SAT/60 and TOI projection builds. Historical profiles are not a substitute for missing projections. Model choices explain unmet prerequisites and POST validates again.
+  - Creation requires completed, persisted offensive SAT/60 and TOI projection builds and the model's latest Build Pregame run to be completed with current-version saved player context, using the same readiness check as View Pregame Impacts. Its season scope must include the model's current Train and optional Test seasons. Absent, active, failed, empty or outdated-scope builds cannot qualify. Historical profiles are not a substitute for missing projections. Model choices explain unmet prerequisites and POST validates again before creating any evaluation or dispatching work. Preparation rechecks the same prerequisites.
   - Creating an evaluation immediately persists a named Building container and dispatches bounded work on projections. Multiple evaluations of one model are allowed. Initial preparation stops at Ready and never dispatches game simulations.
   - Initial outlooks save one player per checkpoint, with explicit strength, period, revision and source provenance. Each quarter and the season initially share the existing model projection; no new predictive formula or quarter boundary assumption is introduced.
   - Strength-specific SAT/60 and TOI/GP come from the saved rate projection splits. All-strength TOI comes from the standalone TOI projection. All-strength SAT can use the saved bucket projection sum when its split is unavailable. Missing strength-specific values remain null, never substituted from All or historical data. TOI is persisted in seconds per game.
   - Preparation rejects changes to the selected model or projection source signatures. Source seasons must be within the frozen Train seasons. Evaluation preparation never reads Test outcomes.
   - Rename changes only the name. Delete is blocked for active work; deleting inactive evaluations cascades only evaluation-owned data. Model projections remain untouched.
+  - The named evaluation index exposes Open to a Vue Outlook detail page under next-game/{evaluation}. Historical evaluations retain their existing result view. The detail GET is read-only and shares the existing super-admin route protection.
+  - Initial Outlook reads revision-one saved estimates only after preparation is Ready or Completed. Metric and strength filters never substitute All for missing strength data. SAT/60 is attempts per 60 minutes; stored TOI seconds per game are converted to minutes per game for display.
+  - Outlook preserves Train, L5, L10, L20, LSeason, Q1-Q4, Test, ET and ELS headings and adds a clearly labeled saved Season estimate. Until their evidence is frozen or comparisons are implemented, history, actuals and error columns remain unavailable, not reconstructed from mutable model outputs. Q1-Q4 are anticipated values, not measured quarter performance.
+  - League Average is its own row and explicitly means an unweighted mean of available saved player estimates in this evaluation and strength, independent of player search or pagination. Null values are excluded, and population availability is shown. This is not a pooled exposure-weighted league rate or a team estimate.
+  - Player reads are paginated and sortable by name or persisted period values. Preparation polling reads metadata only, pauses in hidden tabs, and refreshes estimates once when preparation becomes ready. Opening a page must not dispatch simulations, resume jobs, revise outlooks, or calculate errors.
+  - The Games tab admits an explicit, completed regular-season game in the evaluation season only after outlook preparation is Ready. This first pass uses boxscore identities for observed skater participation, not target performance as a forecast input. Live lineup forecasting is not yet enabled.
+  - Users select strength and quarter reference explicitly. One immutable forecast is allowed per evaluation/game/strength/quarter; repeated starts return it without recalculating. Quarter assignment is not inferred from the calendar, and no outlook revisions are made by this experiment.
+  - SAT/60 is the saved quarter estimate. Its higher/lower/unchanged direction is relative to the player's previous completed regular-season appearance, strictly before the target start, at the selected strength. Missing previous exposure or facts leaves direction unavailable. The experimental direction is not presented as a calibrated accuracy probability.
+  - TOI/GP uses selected-strength pregame L20 seconds divided by appearances when the window has complete evidence; otherwise the saved selected-strength model TOI is used. Missing model values remain null, never replaced with another strength. Zero exposure and missing data are distinct.
+  - Admission freezes the bounded lineup and current strength-separated pregame context with a cutoff matching the game start. Each player checkpoint freezes its outlook reference, reliable-bucket recent windows, previous game evidence, calculation method, and fallback provenance. Actual target rates are read only in the comparison phase after every forecast is saved. Prediction completion automatically resets the player cursor and enters comparing on the same bounded queue chain. Older ready forecasts requested again refresh evidence and compare without rebuilding predictions; already-compared work with current evidence stays unchanged. The explicit Compare actuals action remains available for older saved forecasts.
+  - Game forecast admission serializes on the evaluation row and permits one active game chain per evaluation. Work runs one player per projections job with bounded waits, atomic cursor/output commits, rotating tokens, finite retries, and manual failed/stalled resume. Stale callbacks cannot fail resumed work. GET never starts work. Status polling excludes lineup and player JSON and loads player outputs once on completion.
+  - Forecast and comparison checkpoints are separate phases. Resume preserves committed rows and frozen inputs. Actual comparison never revises forecasts or quarter outlooks. Partial game rows are unpublished until forecasting finishes; partial comparisons are unpublished until every player is scored.
+  - Displayed game errors are signed (Test minus forecast) divided by the original forecast times 100. Zero or missing forecasts have no percentage. Below-10% and below-20% summaries count players with valid absolute percentage errors; directional accuracy excludes missing previous-game evidence.
+  - Team estimates are strictly sums of the selected lineup's player values, with no independent team estimator. Any missing member value makes that sum unavailable rather than silently dropping the player. League quarter reference remains the unweighted mean of saved evaluation player estimates, not a summed team rate.
+  - Desktop game inspection places visitors left and home right; mobile stacks the sides. Skaters sort C, LW, RW, D, then unknown positions and name. Goalies appear in their own lower section and are excluded from skater predictions, team sums, and error counts.
+  - Player display context includes measured Train rates over the evaluation's frozen Train seasons, previous-calendar-season LSeason, L5/L10/L20, and the last ten appearances against this opponent across seasons and player team changes. Rates pool matching retained counts and full exposure; Train is not relabeled model projection output. Original recent windows used by an existing forecast remain its audit inputs; corrected display evidence is versioned separately rather than mixing old unfiltered windows with filtered actuals.
+  - Team record context uses prior regular-season results only for L5/L10/L20, season-to-date, and opponent L10. W-L counts include overtime/shootout losses and display that convention. This is match history, not an independent team performance projection.
+  - Goalie context displays pooled SV percentage and GSAx per 100 xGA, not skater SAT/60 predictions. Goalie strength describes the shooting team, matching faced-shot semantics. Exclude shootouts and empty-net events; missing evidence or unclassified strength leaves affected values unavailable. GSAx uses this evaluation model's single SOG goal model and its matching bucket/league fallback probabilities, and only when its declared Train seasons are contained in the evaluation's frozen Train seasons. Unavailable probabilities never become zero xGA; SV percentage remains independent of xGA availability.
+  - New forecasts include context through the same one-player queue checkpoint. Older saved forecasts use the existing action route and queue with a separate context phase, followed by actuals comparison. This updates versioned display evidence and goalie rows without rewriting saved skater projections, their original inputs, or quarter estimates. Changed skater membership blocks enrichment. GET does not dispatch; the page requests the authorized POST for missing evidence.
+  - Context and team records use existing input/lineup JSON storage; no additional schema change is needed. Enrichment is resumable and old rows remain readable with unavailable new fields until explicitly enriched. This does not require rebuilding shared pregame snapshots.
   - The remaining historical comparison rules apply to preserved legacy bucket evaluations, not initial outlook preparation.
   - Training rates, projection rates, shot-bucket mapping, and model provenance are frozen before target games are evaluated.
   - Recent windows select prior completed regular-season appearances strictly before the target start, including zero-attempt appearances and the last training season when needed.
@@ -47,12 +431,89 @@ rules:
   - Queue states and evaluation methods are canonical in docs/ENUMS.md. Schema is canonical in the evaluation migration.
   - Browser progress uses a lightweight status-only poll while active, pauses in hidden tabs, and displays preparation stage, committed checkpoint counts, last activity, errors, and a resume action for failed or stalled work. Full result aggregation occurs on explicit filter/read actions and once on completion, not every status poll.
 public_interface:
+  - POST /admin/nhl-sat-models/next-game/{evaluation}/predict-day
   - GET /admin/nhl-sat-models/next-game
+  - GET /admin/nhl-sat-models/next-game/{evaluation}
+  - GET /admin/nhl-sat-models/next-game/{evaluation}/games
+  - POST /admin/nhl-sat-models/next-game/{evaluation}/games/{game}/forecast
+  - POST /admin/nhl-sat-models/next-game/{evaluation}/forecasts/{forecast}
   - POST /admin/nhl-sat-models/next-game
   - POST /admin/nhl-sat-models/next-game/{evaluation}/resume
   - PATCH /admin/nhl-sat-models/next-game/{evaluation}
   - DELETE /admin/nhl-sat-models/next-game/{evaluation}
 example_usage: |
-  Open SAT Models > Next-game evaluation. Name an evaluation and select a
-  model with completed projections. Follow preparation on the index until Ready.
+  Agreed Rule 1 (not yet implemented): CHI lineup LSeason = 195.37 SAT/60;
+  exploratory league LSeason reference = 220.21 SAT/60.
+  Opening-three-game prediction = (195.37 + 220.21) / 2 = 207.79 SAT/60.
+  The same rule uses the updated lineup for that team's second and third games.
+
+  Rule 2 evidence: B2B plus the third game in seven days averaged 207.9 lineup
+  SAT/60 across 66 observations, versus 207.7 without B2B at the same game count.
+  B2B plus the fourth game averaged 201.1 across 327 observations, versus 203.8
+  without B2B at the same count. The two B2B groups had similar historical
+  lineup expectations. These are observed totals, not adjustment coefficients.
+  A fourth-game B2B belongs only to the combined group; a third-game B2B is
+  excluded from the standalone B2B group and receives no B2B-specific adjustment.
+
+  Rule 3 evidence: on 41,242 matched player-game observations after five prior
+  team games, normalized TOI Share mean absolute percentage errors were L5
+  12.22%, L10 11.97%, L20 12.03%, equal L5/L10 shares 11.88%, and the equal
+  LSeason/L20 minutes blend 12.48%. The recent share blend had 53.51% of player
+  observations below 10% error and 83.11% below 20%. The ordering persisted
+  across both season halves, but this was exploratory, not untouched validation.
+  In the separately examined opening five games, the LSeason/L20 minutes blend
+  had 12.63% TOI Share error versus 12.86% for L20, 13.03% for L10 and about 13.4%
+  for L5. These matched-coverage figures are not raw display-cohort errors.
+
+  Rule 4 evidence: full-quarter L20 SAT/60 errors were 15.71%, 15.77%, 15.87%
+  and 16.28% for Q1-Q4; the equal LSeason/L20 blend had 15.67%, 15.44%, 15.55%
+  and 16.04%. During games 6-20, removing prior-season appearances from L20
+  worsened SAT/60 error from 15.62% to 16.11%, while matched TOI Share error
+  improved slightly from 12.63% to 12.48%. Keep the two metrics' window choices
+  distinct and preserve Rule 1 until a replacement is explicitly agreed.
+
+  Rule 5 evidence, using L20 after five prior team games: team xGF/60 mean absolute
+  relative error was 22.14%, with 28.21%/53.33% of team-game observations below
+  10%/20%; team xGA/60 was 22.35%, with 29.06%/51.58%. Shooter xGF/60 was 96.09%,
+  with 6.47%/12.73% of 43,949 valid player-game comparisons below 10%/20%.
+  On-ice xGA/60 was 43.15%, with 14.96%/29.64% of 27,430 comparisons below those
+  thresholds. These are separate coverage summaries, not matched-method rankings.
+  Errors use the estimate as denominator and strictly below thresholds. About
+  32.4% of all target player appearances had zero retained shooter xGF; small
+  estimates make percentage errors volatile. Also track absolute rate error:
+  0.445 xGF/60 for shooters and 1.064 on-ice xGA/60 for the L20 comparisons.
+
+  Fourth-game B2Bs (327 team observations) averaged 2.504 xGF/60 and 2.694 xGA/60,
+  versus 2.584 and 2.586 in 1,118 fourth games without B2B. Their L20 expectations
+  were nearly identical. The xGF difference disappeared in the second half;
+  the adverse team xGA direction appeared in both halves. This supports tracking
+  the combined context, not treating these differences as calibrated deductions.
+  Home averaged 2.638 xGF/60 and 2.545 xGA/60; away averaged 2.542 and 2.637.
+  Road sequences of 10+ days averaged 2.433 xGF/60 and 2.781 xGA/60, versus
+  2.590 and 2.607 in days 1-2; the long-road sample contained only 50 observations.
+
+  Rule 7 evidence: 2022-23 through 2024-25 Train, compared with all 32 teams in
+  2025-26 Test. Train-derived QuarterFactors were 1.1042789886, 0.9781537917,
+  0.9685621002 and 0.9532086949 for Q1-Q4. These correspond to +10.43%, -2.18%,
+  -3.14% and -4.68% relative to the full-season baseline. The mean team Base
+  was 3.575 penalties/game versus 3.558 Actual, with 0.49% overall err% and
+  78.13%/96.88% of teams below 10%/20% error. Adjusted quarter mean predictions
+  were 3.948, 3.497, 3.463 and 3.408, versus 3.641, 3.577, 3.461 and 3.554 Actual.
+  Quarter err% was 8.45%, 2.22%, 0.06% and 4.11%; team p10/p20 was respectively
+  31.25%/81.25%, 50.00%/84.38%, 53.13%/90.63% and 62.50%/84.38%.
+  The research used attributed skater penalties from stored play-by-play and
+  positive-TOI skater appearances, and explicitly combined Arizona/Utah history.
+  Stored 2022-23 player summaries covered 1,122 of 1,312 games; preserve that
+  coverage limitation when reproducing this exploratory evidence.
+
+  Open SAT Models > Analysis > Game Evaluations. Name an evaluation and select a
+  model with completed projections and pregame context. Open it to follow preparation until Ready,
+  then inspect saved quarter and season estimates by metric and strength.
+  Open Games, choose a date, strength and quarter reference, then Predict game.
+  After all predictions are saved, automatic comparison adds measured rates and errors without changing the forecast.
+  After deploying the reliable-bucket correction, restart long-running queue workers.
+  Open an older forecast to refresh just that game, or select an inclusive end date
+  and press Simulate to refresh stale saved games and process remaining games sequentially.
+  This uses the projections queue; no new evaluation, Build Pregame, model rebuild,
+  or database migration is needed. Saved Proj values remain unchanged.
   Historical evaluations retain their existing View results links.

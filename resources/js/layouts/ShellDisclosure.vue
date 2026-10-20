@@ -1,7 +1,12 @@
 <script setup>
-import { ref, useId } from 'vue';
-defineProps({ label: String });
-const open = ref(false);
+import { computed, ref, useId } from 'vue';
+const props = defineProps({ label: String, defaultOpen: Boolean, modelValue: { type: Boolean, default: undefined } });
+const emit = defineEmits(['update:modelValue']);
+const localOpen = ref(props.defaultOpen);
+const open = computed({
+    get: () => props.modelValue ?? localOpen.value,
+    set: value => { localOpen.value = value; emit('update:modelValue', value); },
+});
 const id = useId();
 </script>
 

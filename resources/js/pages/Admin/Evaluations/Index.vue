@@ -1,5 +1,5 @@
 <script setup>
-import { Head } from '@inertiajs/vue3';
+import { Head, Link } from '@inertiajs/vue3';
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import axios from 'axios';
 import {
@@ -149,7 +149,7 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(timer); });
             </div>
             <button ref="startButton" :disabled="!canCreate" class="inline-flex min-h-11 items-center gap-2 rounded-lg bg-indigo-600 px-4 text-sm font-semibold text-white shadow-sm transition-colors duration-150 hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none" @click="openDrawer()"><span aria-hidden="true" class="text-xl font-normal">+</span> Start evaluation</button>
         </header>
-        <p v-if="!canCreate" class="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">Build SAT/60 and TOI/GP projections on a completed SAT model before starting an evaluation.</p>
+        <p v-if="!canCreate" class="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">Complete SAT/60 and TOI/GP projections and Analysis → Build Pregame on a completed SAT model before starting an evaluation.</p>
         <p v-if="notice" role="status" class="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">{{ notice }}</p>
         <p v-if="error" role="alert" class="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{{ error }} <button class="ml-2 underline" @click="refresh()">Retry</button></p>
         <section aria-label="Saved evaluations" class="space-y-4">
@@ -166,13 +166,15 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(timer); });
                     </tr></thead>
                     <tbody class="divide-y divide-gray-100">
                         <tr v-for="row in listing.data" :key="row.id" class="transition-colors duration-150 hover:bg-gray-50/70 motion-reduce:transition-none">
-                            <td class="min-w-48 px-4 py-5"><p class="font-semibold text-gray-950">{{ row.name }}</p><p class="mt-1 text-xs text-gray-500">#{{ row.id }}</p><p v-if="row.error" class="mt-2 max-w-sm text-xs text-red-700">{{ row.error }}</p></td>
+                            <td class="min-w-48 px-4 py-5"><a v-if="row.legacy_url" :href="row.legacy_url" class="inline-flex min-h-11 items-center font-semibold text-indigo-700 underline underline-offset-4 hover:text-indigo-900">{{ row.name }}</a><Link v-else :href="row.url" class="inline-flex min-h-11 items-center font-semibold text-indigo-700 underline underline-offset-4 hover:text-indigo-900">{{ row.name }}</Link><p class="mt-1 text-xs text-gray-500">#{{ row.id }}</p><p v-if="row.error" class="mt-2 max-w-sm text-xs text-red-700">{{ row.error }}</p></td>
                             <td class="px-4 py-5 text-gray-600">{{ row.model_name }}</td>
                             <td class="whitespace-nowrap px-4 py-5 tabular-nums text-gray-600">{{ season(row.season_id) }}</td>
                             <td class="px-4 py-5"><span class="inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-medium" :class="row.active ? 'bg-blue-50 text-blue-800' : row.status === 'failed' ? 'bg-red-50 text-red-800' : 'bg-emerald-50 text-emerald-800'"><span aria-hidden="true" class="h-1.5 w-1.5 rounded-full bg-current"></span>{{ statusLabel(row) }}</span></td>
                             <td class="min-w-44 px-4 py-5"><p class="tabular-nums text-gray-700">{{ row.completed.toLocaleString() }} / {{ row.total.toLocaleString() }} {{ row.unit }}</p><p class="mt-1 text-xs text-gray-500">{{ row.active ? 'Updates automatically' : row.status === 'ready' ? 'Initial estimates saved' : row.status === 'failed' ? 'Needs attention' : 'Historical evaluation' }}</p></td>
                             <td class="whitespace-nowrap px-4 py-5 text-xs text-gray-500">{{ date(row.updated_at) }}</td>
                             <td class="px-4 py-5 text-right">
+                                <a v-if="row.legacy_url" :href="row.legacy_url" class="mr-2 inline-flex min-h-11 items-center rounded-lg border border-gray-300 px-3 text-sm font-medium text-gray-700 hover:bg-gray-50">Open</a>
+                                <Link v-else :href="row.url" class="mr-2 inline-flex min-h-11 items-center rounded-lg border border-gray-300 px-3 text-sm font-medium text-gray-700 hover:bg-gray-50">Open</Link>
                                 <DropdownMenuRoot>
                                     <DropdownMenuTrigger :data-evaluation-actions="row.id" class="inline-flex h-9 w-9 items-center justify-center rounded-lg text-xl text-gray-500 hover:bg-gray-100" :aria-label="`Actions for ${row.name}`">⋯</DropdownMenuTrigger>
                                     <DropdownMenuPortal><DropdownMenuContent align="end" :side-offset="6" class="z-40 min-w-44 rounded-lg border border-gray-200 bg-white p-1 text-sm shadow-lg">
@@ -201,7 +203,7 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(timer); });
                                 <DialogDescription class="text-sm leading-6 text-gray-600">{{ editing ? 'Only the name changes. Saved estimates and the model remain unchanged.' : 'Quarter and season estimates start from saved model projections. No next-game simulations run yet.' }}</DialogDescription>
                                 <label class="block text-sm font-medium">Name<input v-model="form.name" autofocus required maxlength="160" class="mt-2 w-full rounded-lg border-gray-300" placeholder="e.g. October outlook" /></label>
                                 <template v-if="!editing">
-                                    <label class="block text-sm font-medium">SAT model<select v-model="form.model_run_id" aria-label="SAT model" required class="mt-2 w-full rounded-lg border-gray-300"><option value="" disabled>Select a model</option><option v-for="model in models" :key="model.id" :value="model.id">{{ model.name }}{{ model.available ? '' : ' — projections required' }}</option></select></label>
+                                    <label class="block text-sm font-medium">SAT model<select v-model="form.model_run_id" aria-label="SAT model" required class="mt-2 w-full rounded-lg border-gray-300"><option value="" disabled>Select a model</option><option v-for="model in models" :key="model.id" :value="model.id">{{ model.name }}{{ model.available ? '' : ' — prerequisites required' }}</option></select></label>
                                     <div v-if="selectedModel" class="space-y-3 rounded-lg bg-gray-50 p-4 text-sm"><div><p class="text-xs text-gray-500">Train seasons</p><p class="mt-1 font-medium">{{ selectedModel.training_seasons.map(season).join(', ') }}</p></div><div><p class="text-xs text-gray-500">Project season</p><p class="mt-1 font-medium">{{ season(selectedModel.season_id) }}</p></div><p v-if="!selectedModel.available" role="alert" class="text-amber-800">{{ selectedModel.reason }}</p></div>
                                     <p class="text-xs leading-5 text-gray-500">EV, PP, PK and All stay separate. Missing strength values remain unavailable. Preparation runs one player at a time on the projections queue.</p>
                                 </template>

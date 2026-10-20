@@ -6,6 +6,7 @@ namespace App\Services;
 
 use App\Models\NhlModelRun;
 use App\Models\NhlNextGameEvaluation;
+use App\Models\NhlPregameContextRun;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
@@ -15,7 +16,7 @@ class NhlEvaluationOutlookBuilder
 {
     private const ROW_LIMIT = 5000;
 
-    /** Require successful, persisted projection builds rather than silently falling back to history. */
+    /** Require persisted projections and a completed model-scoped pregame context build. */
     public function validateModel(NhlModelRun $model): void
     {
         $seasons = array_map('strval', $model->train_season_ids ?? []);
@@ -38,6 +39,15 @@ class NhlEvaluationOutlookBuilder
         if (! $this->rates($model->id)->whereNotNull('projected_xsat_per_60')->exists()
             || ! $this->toi($model->id, $season)->whereNotNull('projected_toi_per_game_seconds')->exists()) {
             throw new RuntimeException('This model has no usable SAT/60 or TOI/GP projections. Build projections first.');
+        }
+        $pregame = NhlPregameContextRun::latestForModel($model->id);
+        $requiredSeasons = $seasons;
+        if ($model->target_season_id !== null && $model->target_season_id !== '') {
+            $requiredSeasons[] = (string) $model->target_season_id;
+        }
+        if (! $pregame?->canViewImpacts()
+            || array_diff($requiredSeasons, array_map('strval', $pregame->season_ids ?? [])) !== []) {
+            throw new RuntimeException('Complete Analysis > Build Pregame for this model before starting an evaluation. The latest build must contain saved context for its Train and Test seasons.');
         }
     }
 

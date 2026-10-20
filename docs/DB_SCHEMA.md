@@ -31,6 +31,20 @@ These JSON-format additions require no migration.
 
 ## NHL next-game evaluations
 
+Migration required for saved game forecasts:
+`2026_10_11_000001_create_nhl_evaluation_game_forecasts.php`.
+`nhl_evaluation_game_forecasts` stores evaluation/game/strength/quarter identity,
+work status and phase, rotating token, player cursor/count, frozen lineup/context JSON,
+pregame cutoff, forecast/comparison timestamps, and last error. That identity is unique.
+`nhl_evaluation_game_player_forecasts` stores one row per forecast/player with team/name,
+frozen input JSON, nullable SAT/60 and TOI/game seconds, direction and later comparison JSON.
+Comparisons contain measured values and signed errors without replacing forecasts.
+Player inputs may include versioned display context, normalized position, role, Train/last-season/
+recent/opponent windows, and historical team records. Goalie context rows leave skater forecast
+columns null. Existing lineup JSON retains shared team records and context-phase return state.
+These JSON additions require no additional migration and do not replace saved forecasts.
+Evaluation deletion cascades through these two tables; no source statistics are removed.
+
 Migration required for named initial outlooks:
 `2026_10_10_000002_add_initial_outlooks_to_nhl_evaluations.php`.
 Adds nullable `name` to existing evaluations (unnamed legacy rows display their ID).

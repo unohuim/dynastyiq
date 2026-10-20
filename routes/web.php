@@ -440,6 +440,18 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                     ->name('admin.nhl-sat-models.next-game');
                 Route::post('/nhl-sat-models/next-game', [\App\Http\Controllers\Admin\NhlNextGameEvaluationController::class, 'store'])
                     ->name('admin.nhl-sat-models.next-game.store');
+                Route::get('/nhl-sat-models/next-game/{evaluation}', [\App\Http\Controllers\Admin\NhlNextGameEvaluationController::class, 'show'])
+                    ->whereNumber('evaluation')->name('admin.nhl-sat-models.next-game.show');
+                Route::get('/nhl-sat-models/next-game/{evaluation}/games', [\App\Http\Controllers\Admin\NhlEvaluationGameController::class, 'index'])
+                    ->whereNumber('evaluation')->name('admin.nhl-sat-models.next-game.games');
+                Route::post('/nhl-sat-models/next-game/{evaluation}/predict-day', [\App\Http\Controllers\Admin\NhlEvaluationGameController::class, 'predictDay'])
+                    ->whereNumber('evaluation')->name('admin.nhl-sat-models.next-game.predict-day');
+                Route::post('/nhl-sat-models/next-game/{evaluation}/simulate', [\App\Http\Controllers\Admin\NhlEvaluationGameController::class, 'simulate'])
+                    ->whereNumber('evaluation')->name('admin.nhl-sat-models.next-game.simulate');
+                Route::post('/nhl-sat-models/next-game/{evaluation}/games/{game}/forecast', [\App\Http\Controllers\Admin\NhlEvaluationGameController::class, 'store'])
+                    ->whereNumber(['evaluation', 'game'])->name('admin.nhl-sat-models.next-game.games.store');
+                Route::post('/nhl-sat-models/next-game/{evaluation}/forecasts/{forecast}', [\App\Http\Controllers\Admin\NhlEvaluationGameController::class, 'update'])
+                    ->whereNumber(['evaluation', 'forecast'])->name('admin.nhl-sat-models.next-game.games.update');
                 Route::post('/nhl-sat-models/next-game/{evaluation}/resume', [\App\Http\Controllers\Admin\NhlNextGameEvaluationController::class, 'resume'])
                     ->whereNumber('evaluation')->name('admin.nhl-sat-models.next-game.resume');
                 Route::patch('/nhl-sat-models/next-game/{evaluation}', [\App\Http\Controllers\Admin\NhlNextGameEvaluationController::class, 'update'])

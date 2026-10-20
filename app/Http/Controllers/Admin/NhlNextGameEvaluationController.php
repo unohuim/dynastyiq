@@ -30,6 +30,7 @@ class NhlNextGameEvaluationController extends Controller
             if ($selected->version !== NhlNextGameEvaluation::OUTLOOK_VERSION) {
                 return $this->legacyIndex($request);
             }
+            return redirect()->route('admin.nhl-sat-models.next-game.show', $selected);
         }
         $filters = $request->validate([
             'q' => ['nullable', 'string', 'max:100'],
@@ -66,6 +67,46 @@ class NhlNextGameEvaluationController extends Controller
         ]);
     }
 
+    /** Inspect saved initial outlooks without running forecasts or reading future outcomes. */
+    public function show(Request $request, NhlNextGameEvaluation $evaluation)
+    {
+        if ($evaluation->version !== NhlNextGameEvaluation::OUTLOOK_VERSION) {
+            return redirect()->route('admin.nhl-sat-models.next-game', ['evaluation' => $evaluation->id]);
+        }
+        $filters = $request->validate([
+            'metric' => ['nullable', Rule::in(['sat_per_60', 'toi_per_game_seconds'])],
+            'strength' => ['nullable', Rule::in(NhlNextGameEvaluationService::STRENGTHS)],
+            'q' => ['nullable', 'string', 'max:100'],
+            'sort' => ['nullable', Rule::in(['player_name', 'q1', 'q2', 'q3', 'q4', 'season'])],
+            'direction' => ['nullable', Rule::in(['asc', 'desc'])],
+            'page' => ['nullable', 'integer', 'min:1'],
+        ]);
+        $filters = array_replace(['metric' => 'sat_per_60', 'strength' => 'ev', 'q' => '',
+            'sort' => 'player_name', 'direction' => 'asc'], array_filter($filters, fn ($value) => $value !== null));
+        $model = NhlModelRun::find($evaluation->model_run_id);
+        $evaluation->model_name = $model?->name;
+        $saved = DB::table('nhl_evaluation_player_outlooks')
+            ->where('evaluation_id', $evaluation->id)->where('strength', $filters['strength'])->where('revision', 1)
+            ->when(! in_array($evaluation->status, ['ready', 'completed'], true), fn ($query) => $query->whereRaw('1 = 0'))
+            ->select('nhl_player_id')->selectRaw('MAX(player_name) as player_name')->groupBy('nhl_player_id');
+        foreach (['q1', 'q2', 'q3', 'q4', 'season'] as $period) {
+            $saved->selectRaw("MAX(CASE WHEN period = ? THEN {$filters['metric']} END) as {$period}", [$period]);
+        }
+
+        return Inertia::render('Admin/Evaluations/Show', [
+            'evaluation' => [...$this->row($evaluation),
+                'training_seasons' => data_get($evaluation->inputs, 'training_seasons', []),
+                'ready_at' => data_get($evaluation->inputs, 'ready_at')],
+            'filters' => $filters,
+            'players' => fn () => DB::query()->fromSub(clone $saved, 'outlooks')
+                ->when($filters['q'] !== '', fn ($query) => $query->where('player_name', 'ilike', '%' . $filters['q'] . '%'))
+                ->orderByRaw("{$filters['sort']} {$filters['direction']} NULLS LAST")
+                ->orderBy('nhl_player_id')->paginate(25)->withQueryString(),
+            'league' => fn () => DB::query()->fromSub(clone $saved, 'outlooks')
+                ->selectRaw('COUNT(*) as players, COUNT(season) as available_players, AVG(q1) as q1, AVG(q2) as q2, AVG(q3) as q3, AVG(q4) as q4, AVG(season) as season')->first(),
+        ]);
+    }
+
     /** Expose prerequisites as read-only choice metadata; POST repeats validation authoritatively. */
     private function models(NhlEvaluationOutlookBuilder $builder): array
     {
@@ -97,6 +138,8 @@ class NhlNextGameEvaluationController extends Controller
             'unit' => $outlook ? 'players' : 'games', 'updated_at' => $evaluation->updated_at?->toISOString(),
             'active' => in_array($evaluation->status, NhlNextGameEvaluation::ACTIVE_STATUSES, true),
             'can_resume' => $evaluation->canResume(), 'error' => $evaluation->last_error,
+            'url' => $outlook ? route('admin.nhl-sat-models.next-game.show', $evaluation->id)
+                : route('admin.nhl-sat-models.next-game', ['evaluation' => $evaluation->id]),
             'legacy_url' => $outlook ? null : route('admin.nhl-sat-models.next-game', ['evaluation' => $evaluation->id])];
     }
 
@@ -243,6 +286,11 @@ class NhlNextGameEvaluationController extends Controller
             $evaluation = NhlNextGameEvaluation::query()->lockForUpdate()->findOrFail($evaluation->id);
             abort_if(in_array($evaluation->status, NhlNextGameEvaluation::ACTIVE_STATUSES, true), 409,
                 'This evaluation is still building. Wait until it finishes before deleting it.');
+            abort_if(data_get($evaluation->inputs, 'predict_day.status') === 'running', 409,
+                'Predict Day is still active. Wait until it finishes before deleting this evaluation.');
+            abort_if(\App\Models\NhlEvaluationGameForecast::query()->where('evaluation_id', $evaluation->id)
+                ->whereIn('status', \App\Models\NhlEvaluationGameForecast::ACTIVE)->exists(), 409,
+                'This evaluation has active game forecasts. Finish or resume them before deleting it.');
             $evaluation->delete();
         });
 
