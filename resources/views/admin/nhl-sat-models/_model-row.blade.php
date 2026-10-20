@@ -91,7 +91,7 @@
                 title="{{ $pregameAutoSyncEnabled ? 'Automatic pregame updates are on' : 'Automatic pregame updates are off' }}"
                 @class([
                     'inline-flex size-11 items-center justify-center rounded-md border shadow-sm transition-colors hover:bg-gray-50 lg:size-8',
-                    'border-indigo-200 bg-indigo-50 text-indigo-700 hover:text-indigo-900' => $pregameAutoSyncEnabled,
+                    'border-green-200 bg-green-50 text-green-700 hover:bg-green-100 hover:text-green-900' => $pregameAutoSyncEnabled,
                     'border-gray-300 bg-white text-gray-500 hover:text-gray-950' => ! $pregameAutoSyncEnabled,
                 ])
             >
@@ -283,8 +283,9 @@
                 aria-label="Configure automatic pregame updates for {{ $run->name }}"
                 title="Configure automatic pregame updates"
             >
-                <svg class="size-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                    <path fill-rule="evenodd" d="M7.84 1.804a1.75 1.75 0 0 1 4.32 0l.184.735c.196.08.385.174.566.28l.71-.29a1.75 1.75 0 0 1 3.057 1.77l-.49.592c.06.2.1.407.122.617l.67.45a1.75 1.75 0 0 1 0 2.884l-.67.45a5.8 5.8 0 0 1-.122.617l.49.593a1.75 1.75 0 0 1-3.057 1.769l-.71-.29a5.8 5.8 0 0 1-.566.28l-.184.735a1.75 1.75 0 0 1-4.32 0l-.184-.735a5.8 5.8 0 0 1-.566-.28l-.71.29a1.75 1.75 0 0 1-3.057-1.769l.49-.593a5.8 5.8 0 0 1-.122-.617l-.67-.45a1.75 1.75 0 0 1 0-2.884l.67-.45c.022-.21.062-.417.122-.617l-.49-.592A1.75 1.75 0 0 1 6.38 2.53l.71.29c.181-.106.37-.2.566-.28l.184-.735ZM10 12a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z" clip-rule="evenodd" />
+                <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="3" />
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1.08 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.08a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1.08 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.08a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1.08Z" />
                 </svg>
             </button>
         </div>

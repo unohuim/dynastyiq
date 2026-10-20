@@ -159,13 +159,6 @@ const requestJson = async (url, method, data) => {
     return payload;
 };
 
-const setPregameScheduleDrawer = (root, open) => {
-    const state = window.Alpine?.$data?.(root);
-    if (state && Object.prototype.hasOwnProperty.call(state, 'pregameScheduleOpen')) {
-        state.pregameScheduleOpen = open;
-    }
-};
-
 const formatScheduleDate = (value) => {
     if (!value) return 'Not scheduled';
     const date = new Date(value);
@@ -218,10 +211,11 @@ const applyAutoSyncState = (row, enabled) => {
     button.setAttribute('aria-pressed', isEnabled ? 'true' : 'false');
     button.setAttribute('aria-label', `${isEnabled ? 'Disable' : 'Enable'} automatic pregame updates for ${row.querySelector('[data-pregame-schedule-gear]')?.dataset.modelName ?? 'model'}`);
     button.title = isEnabled ? 'Automatic pregame updates are on' : 'Automatic pregame updates are off';
-    button.classList.toggle('border-indigo-200', isEnabled);
-    button.classList.toggle('bg-indigo-50', isEnabled);
-    button.classList.toggle('text-indigo-700', isEnabled);
-    button.classList.toggle('hover:text-indigo-900', isEnabled);
+    button.classList.toggle('border-green-200', isEnabled);
+    button.classList.toggle('bg-green-50', isEnabled);
+    button.classList.toggle('text-green-700', isEnabled);
+    button.classList.toggle('hover:bg-green-100', isEnabled);
+    button.classList.toggle('hover:text-green-900', isEnabled);
     button.classList.toggle('border-gray-300', !isEnabled);
     button.classList.toggle('bg-white', !isEnabled);
     button.classList.toggle('text-gray-500', !isEnabled);
@@ -330,7 +324,7 @@ const mountSatModels = (root) => {
         const modelLabel = form.querySelector('[data-pregame-schedule-model]');
         if (modelLabel) modelLabel.textContent = gear.dataset.modelName ?? 'Model';
         showScheduleError(form);
-        setPregameScheduleDrawer(root, true);
+        root.dispatchEvent(new CustomEvent('sat-model-open-pregame'));
         try {
             const response = await fetch(form.dataset.settingsUrl, {
                 headers: { Accept: 'application/json' },

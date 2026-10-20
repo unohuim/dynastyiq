@@ -7,6 +7,7 @@
     <div
         class="min-h-screen bg-gray-50 py-4 pb-24 sm:py-6"
         x-data="{ createOpen: {{ $errors->any() ? 'true' : 'false' }}, pregameScheduleOpen: false }"
+        @sat-model-open-pregame="pregameScheduleOpen = true"
         data-admin-sat-models
     >
         <div class="fixed inset-0 z-50 hidden items-center justify-center bg-gray-950/35 px-4 backdrop-blur-sm" data-sat-model-loading>
