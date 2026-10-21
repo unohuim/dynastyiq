@@ -229,9 +229,10 @@ export const updatePregameProgress = (row, html) => {
 
     progress.innerHTML = html;
     const active = Boolean(progress.querySelector('[data-pregame-active="1"]'));
+    const locked = Boolean(progress.querySelector('[data-pregame-locked="1"]'));
     row.querySelector('[data-model-training-status]')?.classList.toggle('hidden', active);
     const button = row.querySelector('[data-sat-model-pregame-build-form] button[type="submit"]');
-    if (button) button.disabled = active;
+    if (button) button.disabled = locked;
     const viewable = Boolean(progress.querySelector('[data-pregame-viewable="1"]'));
     row.querySelector('[data-pregame-view-link]')?.classList.toggle('hidden', !viewable);
     row.querySelector('[data-pregame-view-disabled]')?.classList.toggle('hidden', viewable);
@@ -277,6 +278,23 @@ const mountSatModels = (root) => {
     const createForm = root.querySelector('[data-sat-model-create-form]');
     const rows = root.querySelector('[data-sat-model-rows]');
     mountPregameProgress(root);
+
+    root.addEventListener('submit', async (event) => {
+        const controlForm = event.target.closest('[data-pregame-run-control-form]');
+        if (!controlForm) return;
+
+        event.preventDefault();
+        const row = controlForm.closest('[data-sat-model-row]');
+        setSubmitting(controlForm, true);
+        try {
+            const payload = await request(controlForm);
+            updatePregameProgress(row, payload.progress_html);
+            showToast(payload.message);
+        } catch (error) {
+            setSubmitting(controlForm, false);
+            showToast(error.message, 'error');
+        }
+    });
 
     root.addEventListener('submit', async (event) => {
         const form = event.target.closest('[data-sat-model-pregame-build-form]');

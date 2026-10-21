@@ -36,7 +36,7 @@ use App\Http\Controllers\PatreonSyncController;
 */
 
 Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
-    Route::view('/', 'welcome')->name('welcome');
+    Route::get('/', [NhlGamesController::class, 'index'])->name('welcome');
 
     Route::post('/analytics/events', [AnalyticsController::class, 'store'])
         ->name('analytics.events.store');
@@ -120,7 +120,7 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
         'verified',
     ])->group(function () {
 
-        Route::redirect('/dashboard', '/games')->name('dashboard');
+        Route::get('/dashboard', [NhlGamesController::class, 'index'])->name('dashboard');
 
         Route::get('/admin', [\App\Http\Controllers\Admin\DashboardController::class, 'index'])
             ->middleware(['admin.super', 'admin.lifecycle'])
@@ -468,6 +468,12 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                     ->whereNumber('run')->name('admin.nhl-sat-models.context.auto-sync.toggle');
                 Route::post('/nhl-sat-models/{run}/context/build', [\App\Http\Controllers\Admin\NhlPregameContextController::class, 'buildForModel'])
                     ->whereNumber('run')->name('admin.nhl-sat-models.context.build');
+                Route::post('/nhl-sat-models/{run}/context/pause', [\App\Http\Controllers\Admin\NhlPregameContextController::class, 'pauseForModel'])
+                    ->whereNumber('run')->name('admin.nhl-sat-models.context.pause');
+                Route::post('/nhl-sat-models/{run}/context/resume', [\App\Http\Controllers\Admin\NhlPregameContextController::class, 'resumeForModel'])
+                    ->whereNumber('run')->name('admin.nhl-sat-models.context.resume');
+                Route::post('/nhl-sat-models/{run}/context/stop', [\App\Http\Controllers\Admin\NhlPregameContextController::class, 'stopForModel'])
+                    ->whereNumber('run')->name('admin.nhl-sat-models.context.stop');
                 Route::get('/nhl-sat-models/{run}/context/progress', [\App\Http\Controllers\Admin\NhlPregameContextController::class, 'modelProgress'])
                     ->whereNumber('run')->name('admin.nhl-sat-models.context.progress');
                 Route::get('/nhl-sat-models/{run}/buckets', [\App\Http\Controllers\Admin\NhlModelRunController::class, 'buckets'])

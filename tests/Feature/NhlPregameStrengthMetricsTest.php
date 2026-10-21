@@ -3,8 +3,12 @@
 declare(strict_types=1);
 
 use App\Models\NhlPregameContextRun;
+use App\Models\NhlPregameContextRunGame;
 use App\Models\NhlExpectedGoalsModel;
 use App\Models\NhlModelRun;
+use App\Jobs\BuildNhlPregameContextGameJob;
+use App\Jobs\CalculateNhlPregameContextLeagueMetricsJob;
+use App\Services\NhlPregameContextOrchestrator;
 use App\Services\NhlPregameContextBuilder;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Bus;
@@ -86,6 +90,26 @@ beforeEach(function (): void {
     $this->evaluationMetrics = fn (array $filter): array => app(NhlPregameContextBuilder::class)->evaluationPlayerMetrics(
         101, 10, 20, 'home', Carbon::parse('2025-10-20 19:00:00 UTC'), '20252026', ['20242025'], $filter
     );
+    $this->teamContext = fn (int $gameId, int $teamId, string $date = '2025-10-20', string $cutoff = '18:00:00'): int => DB::table('nhl_team_game_pregame_contexts')->insertGetId([
+        'run_id' => $this->run->id, 'model_run_id' => null, 'nhl_game_id' => $gameId,
+        'nhl_team_id' => $teamId, 'opponent_team_id' => $teamId + 100, 'game_date' => $date,
+        'source_cutoff_at' => $date . ' ' . $cutoff, 'venue' => 'home',
+        'context_version' => NhlPregameContextBuilder::VERSION, 'schedule_metrics' => '{}',
+        'opponent_metrics' => '{}', 'metrics' => '{}', 'ranks' => '{}',
+        'created_at' => now(), 'updated_at' => now(),
+    ]);
+    $this->playerContext = fn (int $gameId, int $playerId, string $date = '2025-10-20'): int => DB::table('nhl_player_game_pregame_contexts')->insertGetId([
+        'run_id' => $this->run->id, 'model_run_id' => null, 'team_context_id' => null,
+        'nhl_game_id' => $gameId, 'nhl_player_id' => $playerId, 'nhl_team_id' => 10,
+        'opponent_team_id' => 20, 'game_date' => $date, 'source_cutoff_at' => $date . ' 18:00:00',
+        'venue' => 'home', 'participant_source' => 'completed_game_summary',
+        'context_version' => NhlPregameContextBuilder::VERSION, 'metrics' => '{}', 'ranks' => '{}',
+        'created_at' => now(), 'updated_at' => now(),
+    ]);
+    $this->contextMetric = fn (string $table, string $foreignKey, int $contextId, string $metric, float $value) => DB::table($table)->insert([
+        $foreignKey => $contextId, 'metric_key' => $metric, 'window_key' => 'l20', 'strength' => 'ALL',
+        'measure_key' => 'value', 'value' => $value, 'created_at' => now(), 'updated_at' => now(),
+    ]);
     ($this->game)(2025020010, '2025-10-20');
     ($this->game)(2025020001, '2025-10-10');
     ($this->exposure)(2025020001, 'EV', 600);
@@ -268,6 +292,111 @@ it('uses the same inclusive confidence cutoff for Train recent quarter and all-s
         ->and($metrics['all']['last_5']['sat_per_60'])->toEqual(6);
 });
 
+it('stores team league mean deltas rank and population for a target day', function (): void {
+    $first = ($this->teamContext)(2025020101, 10);
+    $second = ($this->teamContext)(2025020102, 11);
+    ($this->contextMetric)('nhl_team_game_pregame_context_metrics', 'team_context_id', $first, 'sat_for_per_game', 40);
+    ($this->contextMetric)('nhl_team_game_pregame_context_metrics', 'team_context_id', $second, 'sat_for_per_game', 60);
+
+    app(NhlPregameContextBuilder::class)->buildLeagueBenchmarksForDate(null, '2025-10-20');
+    $row = DB::table('nhl_team_game_pregame_context_metrics')->where('team_context_id', $first)->first();
+
+    expect((float) $row->league_average)->toBe(50.0)
+        ->and((float) $row->signed_difference)->toBe(-10.0)
+        ->and((float) $row->absolute_difference)->toBe(10.0)
+        ->and((float) $row->percentage_difference)->toBe(-20.0)
+        ->and($row->league_rank)->toBe(2)
+        ->and($row->rank_population)->toBe(2);
+});
+
+it('ranks player metrics independently from team metrics', function (): void {
+    $first = ($this->playerContext)(2025020101, 101);
+    $second = ($this->playerContext)(2025020102, 102);
+    ($this->contextMetric)('nhl_player_game_pregame_context_metrics', 'player_context_id', $first, 'sat_per_60', 12);
+    ($this->contextMetric)('nhl_player_game_pregame_context_metrics', 'player_context_id', $second, 'sat_per_60', 18);
+
+    app(NhlPregameContextBuilder::class)->buildLeagueBenchmarksForDate(null, '2025-10-20');
+    $row = DB::table('nhl_player_game_pregame_context_metrics')->where('player_context_id', $first)->first();
+
+    expect((float) $row->league_average)->toBe(15.0)
+        ->and($row->league_rank)->toBe(2)
+        ->and($row->rank_population)->toBe(2);
+});
+
+it('limits each league comparison to the matching metric window strength and game day', function (): void {
+    $first = ($this->teamContext)(2025020101, 10);
+    $second = ($this->teamContext)(2025020102, 11);
+    $otherDate = ($this->teamContext)(2025020103, 12, '2025-10-21');
+    ($this->contextMetric)('nhl_team_game_pregame_context_metrics', 'team_context_id', $first, 'sat_for_per_game', 10);
+    ($this->contextMetric)('nhl_team_game_pregame_context_metrics', 'team_context_id', $second, 'sat_for_per_game', 30);
+    ($this->contextMetric)('nhl_team_game_pregame_context_metrics', 'team_context_id', $second, 'sog_per_sat_pct', 50);
+    ($this->contextMetric)('nhl_team_game_pregame_context_metrics', 'team_context_id', $otherDate, 'sat_for_per_game', 100);
+
+    app(NhlPregameContextBuilder::class)->buildLeagueBenchmarksForDate(null, '2025-10-20');
+    $firstRow = DB::table('nhl_team_game_pregame_context_metrics')->where('team_context_id', $first)->first();
+    $nextDateRow = DB::table('nhl_team_game_pregame_context_metrics')->where('team_context_id', $otherDate)->first();
+
+    expect((float) $firstRow->league_average)->toBe(20.0)
+        ->and($firstRow->rank_population)->toBe(2)
+        ->and($nextDateRow->league_average)->toBeNull();
+});
+
+it('assigns tied ranks and leaves percent difference null for a zero league average', function (): void {
+    $first = ($this->teamContext)(2025020101, 10);
+    $second = ($this->teamContext)(2025020102, 11);
+    ($this->contextMetric)('nhl_team_game_pregame_context_metrics', 'team_context_id', $first, 'wins', 0);
+    ($this->contextMetric)('nhl_team_game_pregame_context_metrics', 'team_context_id', $second, 'wins', 0);
+
+    app(NhlPregameContextBuilder::class)->buildLeagueBenchmarksForDate(null, '2025-10-20');
+    $rows = DB::table('nhl_team_game_pregame_context_metrics')->whereIn('team_context_id', [$first, $second])->get();
+
+    expect($rows)->toHaveCount(2)
+        ->and($rows->every(fn (object $row): bool => (float) $row->league_average === 0.0
+            && $row->league_rank === 1 && $row->rank_population === 2 && $row->percentage_difference === null))->toBeTrue();
+});
+
+it('uses only peer snapshots available by each target start time', function (): void {
+    $early = ($this->teamContext)(2025020101, 10, '2025-10-20', '18:00:00');
+    $late = ($this->teamContext)(2025020102, 11, '2025-10-20', '20:00:00');
+    ($this->contextMetric)('nhl_team_game_pregame_context_metrics', 'team_context_id', $early, 'sat_for_per_game', 10);
+    ($this->contextMetric)('nhl_team_game_pregame_context_metrics', 'team_context_id', $late, 'sat_for_per_game', 90);
+
+    app(NhlPregameContextBuilder::class)->buildLeagueBenchmarksForDate(null, '2025-10-20');
+    $earlyRow = DB::table('nhl_team_game_pregame_context_metrics')->where('team_context_id', $early)->first();
+    $lateRow = DB::table('nhl_team_game_pregame_context_metrics')->where('team_context_id', $late)->first();
+
+    expect((float) $earlyRow->league_average)->toBe(10.0)
+        ->and($earlyRow->rank_population)->toBe(1)
+        ->and((float) $lateRow->league_average)->toBe(50.0)
+        ->and($lateRow->rank_population)->toBe(2);
+});
+
+it('finishes one day league comparisons before dispatching the following day', function (): void {
+    $first = NhlPregameContextRunGame::create([
+        'run_id' => $this->run->id, 'nhl_game_id' => 2025020101, 'game_date' => '2025-10-20',
+        'sequence' => 1, 'state' => NhlPregameContextRunGame::STATE_PENDING,
+    ]);
+    NhlPregameContextRunGame::create([
+        'run_id' => $this->run->id, 'nhl_game_id' => 2025020102, 'game_date' => '2025-10-21',
+        'sequence' => 2, 'state' => NhlPregameContextRunGame::STATE_PENDING,
+    ]);
+
+    $orchestrator = app(NhlPregameContextOrchestrator::class);
+    $orchestrator->load($this->run->id);
+    Bus::assertDispatched(BuildNhlPregameContextGameJob::class, fn ($job): bool => $job->gameId === $first->nhl_game_id);
+
+    $first->update(['state' => NhlPregameContextRunGame::STATE_COMPLETE]);
+    $orchestrator->load($this->run->id);
+    Bus::assertDispatched(CalculateNhlPregameContextLeagueMetricsJob::class, fn ($job): bool =>
+        $job->runId === $this->run->id && $job->gameDate === '2025-10-20'
+    );
+    expect(data_get($this->run->fresh()->options, 'league_benchmarks.2025-10-20'))->toBe('processing');
+
+    $orchestrator->markLeagueBenchmarksComplete($this->run->id, '2025-10-20');
+    $orchestrator->load($this->run->id);
+    Bus::assertDispatched(BuildNhlPregameContextGameJob::class, fn ($job): bool => $job->gameId === 2025020102);
+});
+
 it('retains genuine zero appearances and missing-data checks after bucket exclusion without changing shared context', function (): void {
     $filter = ($this->reliableFilter)();
     ($this->fact)(2025020001, 'EV', true, false, ['shot_type_bucket' => 'backhand']);
@@ -293,4 +422,128 @@ it('keeps the frozen bucket set strength-specific and rejects a different Train 
     $model = NhlExpectedGoalsModel::findOrFail($filter['sat_model_id']);
     expect(fn () => app(NhlPregameContextBuilder::class)->evaluationBucketFilter($model->model_run_id, ['20252026']))
         ->toThrow(\RuntimeException::class, 'matching its frozen Train seasons');
+});
+
+it('builds league averages from prior results before any context exists', function (): void {
+    ($this->fact)(2025020001, 'EV', true, true);
+    $day = \App\Models\NhlPregameContextRunDay::create(['run_id' => $this->run->id, 'game_date' => '2025-10-20']);
+    NhlPregameContextRunGame::create(['run_id' => $this->run->id, 'nhl_game_id' => 2025020010,
+        'game_date' => '2025-10-20', 'sequence' => 1, 'state' => 'pending']);
+    app(\App\Services\NhlPregameLeagueResults::class)->buildAverages($this->run, $day);
+    $average = DB::table('nhl_pregame_context_league_averages')->where('run_day_id', $day->id)
+        ->where('entity_type', 'player')->where('window_key', 'l5')->where('strength', 'EV')
+        ->where('metric_key', 'sat_per_60')->first();
+    expect((float) $average->league_average)->toBe(6.0)->and($average->rank_population)->toBe(1)
+        ->and(DB::table('nhl_player_game_pregame_contexts')->count())->toBe(0)
+        ->and(DB::table('nhl_team_game_pregame_contexts')->count())->toBe(0);
+});
+
+it('excludes target outcomes and target-only participants from league peers', function (): void {
+    ($this->fact)(2025020001, 'EV', true);
+    ($this->fact)(2025020010, 'EV', true, true);
+    DB::table('nhl_game_summaries')->insert(['nhl_game_id' => 2025020010, 'nhl_player_id' => 999,
+        'nhl_team_id' => 10, 'toi' => 600, 'sat' => 100, 'sog' => 90, 'g' => 80]);
+    $game = DB::table('nhl_games')->where('nhl_game_id', 2025020010)->first();
+    $rows = collect(app(NhlPregameContextBuilder::class)->leagueResultRows($this->run, $game, 'player'));
+    expect($rows->pluck('entity_id')->unique()->values()->all())->toBe([101]);
+    $rate = $rows->first(fn (array $row): bool => $row['metric_key'] === 'sat_per_60'
+        && $row['window_key'] === 'l5' && $row['strength'] === 'EV');
+    expect($rate['value'])->toBe(6.0);
+});
+
+it('preserves summed exposure and shooting denominators in result-based league metrics', function (): void {
+    ($this->fact)(2025020001, 'EV', true, true);
+    ($this->game)(2025020002, '2025-10-15');
+    ($this->exposure)(2025020002, 'EV', 1200);
+    foreach (range(1, 3) as $index) {
+        ($this->fact)(2025020002, 'EV', true);
+    }
+    $game = DB::table('nhl_games')->where('nhl_game_id', 2025020010)->first();
+    $rows = collect(app(NhlPregameContextBuilder::class)->leagueResultRows($this->run, $game, 'player'))
+        ->where('window_key', 'l5')->where('strength', 'EV')->keyBy('metric_key');
+    expect($rows['sat_per_60']['value'])->toBe(8.0)->and($rows['shooting_pct']['value'])->toBe(25.0);
+});
+
+it('retains model Train and cross-season recent windows independently', function (): void {
+    $this->run->update(['season_ids' => ['20242025', '20252026'], 'options' => ['train_season_ids' => ['20242025']]]);
+    ($this->game)(2024020001, '2025-04-10', '20242025');
+    ($this->exposure)(2024020001, 'EV', 600);
+    ($this->fact)(2024020001, 'EV', true);
+    ($this->fact)(2025020001, 'EV', true);
+    $game = DB::table('nhl_games')->where('nhl_game_id', 2025020010)->first();
+    $rows = collect(app(NhlPregameContextBuilder::class)->leagueResultRows($this->run, $game, 'player'))
+        ->where('metric_key', 'games')->where('strength', 'EV')->keyBy('window_key');
+    expect($rows['train']['value'])->toBe(1.0)->and($rows['lseason']['value'])->toBe(1.0)
+        ->and($rows['l5']['value'])->toBe(2.0)->and($rows['season_to_date']['value'])->toBe(1.0);
+});
+
+it('does not manufacture a league rate from missing shot facts', function (): void {
+    $game = DB::table('nhl_games')->where('nhl_game_id', 2025020010)->first();
+    $rows = collect(app(NhlPregameContextBuilder::class)->leagueResultRows($this->run, $game, 'player'));
+    expect($rows->contains(fn (array $row): bool => $row['metric_key'] === 'sat_per_60'
+        && $row['strength'] === 'EV' && $row['window_key'] === 'l5'))->toBeFalse();
+});
+
+it('attaches competition ranks with ties and deltas without replacing context values', function (): void {
+    $day = \App\Models\NhlPregameContextRunDay::create(['run_id' => $this->run->id, 'game_date' => '2025-10-20']);
+    NhlPregameContextRunGame::create(['run_id' => $this->run->id, 'nhl_game_id' => 2025020010,
+        'game_date' => '2025-10-20', 'sequence' => 1, 'state' => 'pending']);
+    $builder = \Mockery::mock(NhlPregameContextBuilder::class);
+    $builder->shouldReceive('leagueResultRows')->andReturnUsing(function ($run, $game, string $type): \Generator {
+        if ($type === 'player') {
+            foreach ([101 => 10.0, 102 => 20.0, 103 => 20.0] as $id => $value) {
+                yield ['entity_id' => $id, 'metric_key' => 'sat_per_60', 'window_key' => 'l20', 'strength' => 'ALL', 'value' => $value];
+            }
+        }
+    });
+    $service = new \App\Services\NhlPregameLeagueResults($builder);
+    $service->buildAverages($this->run, $day);
+    $contexts = [];
+    foreach ([101 => 10.0, 102 => 20.0, 103 => 20.0] as $id => $value) {
+        $contextId = ($this->playerContext)(2025020010, $id);
+        DB::table('nhl_player_game_pregame_contexts')->where('id', $contextId)->update(['source_cutoff_at' => '2025-10-20 19:00:00']);
+        ($this->contextMetric)('nhl_player_game_pregame_context_metrics', 'player_context_id', $contextId, 'sat_per_60', $value);
+        $contexts[] = $contextId;
+    }
+    $service->attachComparisons($this->run, $day);
+    $metrics = DB::table('nhl_player_game_pregame_context_metrics')->whereIn('player_context_id', $contexts)->orderBy('player_context_id')->get();
+    expect($metrics->pluck('league_rank')->map(fn ($rank): int => (int) $rank)->all())->toBe([3, 1, 1])
+        ->and($metrics->pluck('value')->map(fn ($value): float => (float) $value)->all())->toBe([10.0, 20.0, 20.0])
+        ->and((float) $metrics[0]->league_average)->toBe(16.666667)
+        ->and((float) $metrics[0]->signed_difference)->toBe(-6.666667)
+        ->and($metrics[0]->league_average_id)->not->toBeNull();
+    $averageId = $metrics[0]->league_average_id;
+    $service->buildAverages($this->run, $day);
+    expect(DB::table('nhl_pregame_context_league_averages')->count())->toBe(1)
+        ->and(DB::table('nhl_pregame_context_league_averages')->value('id'))->toBe($averageId);
+});
+
+it('honors cancellation before writing result-based league baselines', function (): void {
+    $day = \App\Models\NhlPregameContextRunDay::create(['run_id' => $this->run->id, 'game_date' => '2025-10-20']);
+    NhlPregameContextRunGame::create(['run_id' => $this->run->id, 'nhl_game_id' => 2025020010,
+        'game_date' => '2025-10-20', 'sequence' => 1, 'state' => 'pending']);
+    expect(fn () => app(\App\Services\NhlPregameLeagueResults::class)->buildAverages($this->run, $day, fn (): bool => true))
+        ->toThrow(\App\Exceptions\NhlPregameContextRunStopped::class);
+    expect(DB::table('nhl_pregame_context_league_averages')->count())->toBe(0);
+});
+
+it('keeps percentage differences unavailable when the league average is zero', function (): void {
+    $day = \App\Models\NhlPregameContextRunDay::create(['run_id' => $this->run->id, 'game_date' => '2025-10-20']);
+    NhlPregameContextRunGame::create(['run_id' => $this->run->id, 'nhl_game_id' => 2025020010,
+        'game_date' => '2025-10-20', 'sequence' => 1, 'state' => 'pending']);
+    $context = ($this->playerContext)(2025020010, 101);
+    DB::table('nhl_player_game_pregame_contexts')->where('id', $context)->update(['source_cutoff_at' => '2025-10-20 19:00:00']);
+    ($this->contextMetric)('nhl_player_game_pregame_context_metrics', 'player_context_id', $context, 'goals', 0);
+    $builder = \Mockery::mock(NhlPregameContextBuilder::class);
+    $builder->shouldReceive('leagueResultRows')->andReturnUsing(function ($run, $game, string $type): \Generator {
+        if ($type === 'player') {
+            yield ['entity_id' => 101, 'metric_key' => 'goals', 'window_key' => 'l20', 'strength' => 'ALL', 'value' => 0.0];
+        }
+    });
+    $service = new \App\Services\NhlPregameLeagueResults($builder);
+    $service->buildAverages($this->run, $day);
+    $service->attachComparisons($this->run, $day);
+    $metric = DB::table('nhl_player_game_pregame_context_metrics')->where('player_context_id', $context)->first();
+    expect((float) $metric->league_average)->toBe(0.0)->and((float) $metric->signed_difference)->toBe(0.0)
+        ->and($metric->percentage_difference)->toBeNull()->and((int) $metric->league_rank)->toBe(1);
 });

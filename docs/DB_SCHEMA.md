@@ -13,8 +13,8 @@ import schedules and historical game-import runs are not rewritten.
 Model-specific pregame auto-sync uses additional allowlisted keys in this same
 table and stores task qualification in `settings.include_update_pregame`; no new
 schedule table or migration is required. Each scheduled run is recorded in
-`nhl_pregame_context_runs` and refreshes shared snapshot rows through their
-existing unique keys.
+`nhl_pregame_context_runs` and refreshes that model's snapshot rows through
+model/game/entity/context-version unique keys.
 
 ## Private admin engine prediction saves
 
@@ -5037,17 +5037,50 @@ stack, or player-evaluation records.
   measured results. Both lineups are stored, so opponent players' own histories
   remain separate rows under the linked opposing team and are not confused with
   a player's history against that opponent.
-- Shared `nhl_team_game_pregame_contexts` keeps each team's rolling metrics in
-  `metrics`, schedule evidence in `schedule_metrics`, and head-to-head windows in
-  `opponent_metrics`. Shared player rows keep self and opponent-only windows in
-  separate metric keys. Team L5/L10/L20/LSeason and head-to-head windows include
-  game counts and available goal, SAT/Corsi, SOG/SAT, shooting, save, PDO, and
-  win-rate measures. Schedule JSON distinguishes exact third/fourth-in-seven
-  and B2B-fourth-in-seven from travel distance and days on the current road trip.
-- Model-specific team/player Train evidence, for both sides and each player's
-  opponent-facing history, belongs to custom prediction input JSON, not shared
-  model-agnostic context rows. Missing source evidence remains null; it is never
-  silently recorded as zero.
+- `nhl_pregame_context_runs.model_run_id` and the same key on team/player
+  contexts scope each model's snapshots to its own Train and Test seasons.
+  Model-owned unique keys include model, game, entity, and context version.
+- Pregame run and run-game lifecycle values are stored in their existing string
+  status/state fields. Pausing preserves the run for resumption; stopping marks
+  unfinished game work stopped and leaves completed context rows intact.
+- `nhl_team_game_pregame_contexts` keeps each team's metrics in `metrics`,
+  schedule evidence in `schedule_metrics`, and head-to-head windows in
+  `opponent_metrics`. Player rows keep their own and opponent-only windows
+  separate and reference their same-model, same-game team context through
+  `team_context_id`.
+- `nhl_team_game_pregame_context_metrics` and
+  `nhl_player_game_pregame_context_metrics` store explicit metric, window,
+  strength, and measure rows, including sample games, exposure, league average,
+  signed and absolute differences, percentage difference, and league rank and
+  population. Results-based comparisons use freshly aggregated peer results strictly
+  before the target cutoff; team and player populations remain separate. Missing source or comparison evidence remains
+  null, not zero.
+- `nhl_pregame_context_run_days` tracks per-date context and league-average
+  states, counts, attempts, timestamps, and errors for bounded day batches.
+  The older three-stage pipeline uses `comparison_state`, `comparison_started_at`, and
+  `comparison_completed_at`. League-first builds use two stages: averages first,
+  then context including rankings and deltas. Comparison columns remain for compatibility.
+- `nhl_pregame_context_league_averages` stores each distinct run/date/cutoff,
+  entity type, metric, window, and strength baseline with its population size.
+  Team and player normalized metric rows reference the corresponding average
+  through nullable `league_average_id`; existing inline comparison fields remain
+  available for compatibility.
+- Context windows include the model's Train seasons, last game, L5/L10/L20,
+  LSeason, opponent L5/L10, and supported schedule/current-season windows.
+  Team L5/L10/L20/LSeason and head-to-head windows include available goals,
+  SAT/Corsi, SOG/SAT, shooting, saves, PDO, and win-rate measures. Schedule JSON
+  distinguishes third/fourth-in-seven and B2B-fourth-in-seven from travel
+  distance and days on the current road trip.
+- Rerunning Build Pregame for a model updates its existing model/game/entity/
+  version rows and metric values in place. Bounded batch transactions keep
+  context and normalized metric writes together; obsolete player rows for that
+  same model/game/version are removed.
+- New model-initiated builds use `results_league_v2`. League averages aggregate
+  raw results without requiring context rows; each context job waits for its date’s
+  averages and attaches ranks and deltas before completion. Existing batched runs
+  upgrade only when fully paused and resumed, retaining completed snapshots and
+  game rows while refreshing day progress and comparisons. Older unmarked runs
+  keep their per-game pipeline. No additional migration is introduced for v2.
 - Deleting a custom run cascades only through its prediction, team, and player
   input rows. Shared NHL facts, pregame contexts, engines and evaluations remain.
 

@@ -50,6 +50,66 @@ class NhlPregameContextController extends Controller
         ], 202);
     }
 
+    /** Pause future dispatch and allow the already-claimed page to finish. */
+    public function pauseForModel(
+        Request $request,
+        NhlModelRun $run,
+        NhlPregameContextOrchestrator $orchestrator
+    ): JsonResponse|RedirectResponse {
+        $this->assertSatModel($run);
+        $build = $orchestrator->pauseModelBackfill($run);
+
+        $message = $build->status === NhlPregameContextRun::STATUS_PAUSING
+            ? 'Pregame will pause after claimed work finishes.'
+            : 'Pregame build paused.';
+
+        return $this->controlResponse($request, $run, $build, $message);
+    }
+
+    /** Resume the latest paused context run from its durable game work rows. */
+    public function resumeForModel(
+        Request $request,
+        NhlModelRun $run,
+        NhlPregameContextOrchestrator $orchestrator
+    ): JsonResponse|RedirectResponse {
+        $this->assertSatModel($run);
+        $build = $orchestrator->resumeModelBackfill($run);
+
+        return $this->controlResponse($request, $run, $build, 'Pregame build resumed.');
+    }
+
+    /** Stop the latest run, retain completed snapshots, and allow a fresh build. */
+    public function stopForModel(
+        Request $request,
+        NhlModelRun $run,
+        NhlPregameContextOrchestrator $orchestrator
+    ): JsonResponse|RedirectResponse {
+        $this->assertSatModel($run);
+        $build = $orchestrator->stopModelBackfill($run);
+
+        return $this->controlResponse($request, $run, $build, 'Pregame build stopped. You can start a new build.');
+    }
+
+    /** Render the current status after one model-row control action. */
+    private function controlResponse(
+        Request $request,
+        NhlModelRun $run,
+        NhlPregameContextRun $build,
+        string $message
+    ): JsonResponse|RedirectResponse {
+        if (! $request->expectsJson()) {
+            return redirect()->route('admin.nhl-sat-models.index')->with('status', $message);
+        }
+
+        return response()->json([
+            'message' => $message,
+            'progress_html' => view('admin.nhl-sat-models._pregame-progress', [
+                'pregameBuild' => $build,
+                'modelRunId' => $run->id,
+            ])->render(),
+        ]);
+    }
+
     /** Read progress without loading model projections or changing the model's training state. */
     public function modelProgress(NhlModelRun $run): JsonResponse
     {
@@ -58,6 +118,7 @@ class NhlPregameContextController extends Controller
         return response()->json([
             'progress_html' => view('admin.nhl-sat-models._pregame-progress', [
                 'pregameBuild' => NhlPregameContextRun::latestForModel($run->id),
+                'modelRunId' => $run->id,
             ])->render(),
         ])->header('Cache-Control', 'no-store');
     }

@@ -40,7 +40,8 @@ class PrepareNhlPregameContextRunJob implements ShouldQueue
 
     public function failed(Throwable $exception): void
     {
-        NhlPregameContextRun::query()->whereKey($this->runId)->update([
+        NhlPregameContextRun::query()->whereKey($this->runId)
+            ->where('status', NhlPregameContextRun::STATUS_QUEUED)->update([
             'status' => NhlPregameContextRun::STATUS_FAILED,
             'last_error' => mb_strimwidth($exception->getMessage(), 0, 2000),
             'updated_at' => now(),

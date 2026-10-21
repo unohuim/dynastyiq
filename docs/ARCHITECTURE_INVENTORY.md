@@ -1750,7 +1750,13 @@ WHERE target_season_id = '20262027';
 
 **Purpose:** Preserve only the evidence known before each game so context factors can be tested without changing predictions.
 
+Context runs and snapshots are model-scoped. Normalized team/player metric rows
+retain metric windows, strengths, sample counts, and available comparison fields;
+player rows link to their same-model team context for that game.
+
 Model actions expose **Analysis > Build Pregame**, using the model's Train and optional Test seasons. The model row shows independent context progress without changing model training state.
+
+Active builds can be paused after already-claimed work finishes, resumed from their durable game rows, or stopped with run-scoped cancellation. Stop marks unfinished run-game rows stopped, retains completed snapshots, and permits a fresh Build Pregame run.
 
 Evaluation Train and Train H/A strength windows retain complete appearances instead of rejecting the entire history for a missing game. Saved display context upgrades through the existing bounded enrichment workflow without replacing predictions.
 
@@ -1758,13 +1764,27 @@ Evaluation Train and Train H/A strength windows retain complete appearances inst
 
 **Public Interface:**
 - `admin.nhl-sat-models.context.build`
+- `admin.nhl-sat-models.context.pause`
+- `admin.nhl-sat-models.context.resume`
+- `admin.nhl-sat-models.context.stop`
 - `admin.nhl-sat-models.context.effects` (View Pregame Impacts; All seasons by default)
 - `nhl_pregame_context_runs`
 - `nhl_pregame_context_run_games`
+- `nhl_pregame_context_run_days`
+- `nhl_pregame_context_league_averages`
 - `nhl_team_game_pregame_contexts`
 - `nhl_player_game_pregame_contexts`
+- `nhl_team_game_pregame_context_metrics`
+- `nhl_player_game_pregame_context_metrics`
 - `NhlPregameContextBuilder`
 - `NhlPregameContextOrchestrator`
+
+New model-initiated runs build raw-result league averages first. Each context date
+waits for its averages, then attaches ranks and deltas within the context job.
+Both stages have configurable bounded concurrency and visible day progress. Fully
+paused batched runs upgrade on resume while retaining completed snapshots.
+`NhlPregameLeagueResults` shares result calculations with the builder and keeps
+league peer staging in temporary SQL tables rather than PHP memory or JSON.
 
 **Authority:** `docs/architecture/stats/NhlPregameContextEvidence.yaml`
 

@@ -65,7 +65,7 @@ async function changeDate(value, background = false) {
     const next = await response.json();
     if (version !== requestVersion) return;
     payload.value = next;
-    if (!background) window.history.replaceState({}, '', `/games?date=${value}`);
+    if (!background) window.history.replaceState({}, '', `${window.location.pathname}?date=${value}`);
   } catch (exception) {
     if (version === requestVersion && exception?.name !== 'AbortError' && !background)
       error.value = exception instanceof Error ? exception.message : 'Unable to load games.';

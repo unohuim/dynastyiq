@@ -74,6 +74,7 @@ class NhlEvaluationGameForecaster
             throw new RuntimeException('A unique lineup of at most 64 players is required.');
         }
         $contexts = DB::table('nhl_player_game_pregame_contexts')->where('nhl_game_id', $game->nhl_game_id)
+            ->where('model_run_id', $evaluation->model_run_id)
             ->where('context_version', NhlPregameContextBuilder::VERSION)
             ->whereIn('nhl_player_id', $players->pluck('nhl_player_id'))->limit(65)->get()
             ->keyBy(fn ($row) => $row->nhl_player_id . ':' . $row->nhl_team_id);

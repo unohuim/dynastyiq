@@ -29,7 +29,8 @@
     $canBuildToiProjection = (bool) data_get($toiProjectionState ?? [], 'can_build_toi_projection', false);
     $canViewToiProjection = (bool) data_get($toiProjectionState ?? [], 'can_view_toi_projection', false);
     $pregameBuild = $pregameBuild ?? null;
-    $pregameActive = in_array($pregameBuild?->status, ['queued', 'running'], true);
+    $pregameActive = in_array($pregameBuild?->status, ['queued', 'running', 'pausing'], true);
+    $pregameLocked = $pregameActive || $pregameBuild?->status === 'paused';
     $canViewPregame = $pregameBuild?->canViewImpacts() ?? false;
     $pregameSchedule = $pregameSchedule ?? null;
     $pregameAutoSyncEnabled = (bool) ($pregameSchedule?->enabled ?? false);
@@ -55,7 +56,7 @@
     </td>
     <td class="min-w-0 break-words px-4 py-3"><span class="mb-1 block text-xs text-gray-500 lg:hidden">Status</span>
         <div data-pregame-progress data-progress-url="{{ route('admin.nhl-sat-models.context.progress', $run) }}">
-            @include('admin.nhl-sat-models._pregame-progress', ['pregameBuild' => $pregameBuild])
+            @include('admin.nhl-sat-models._pregame-progress', ['pregameBuild' => $pregameBuild, 'modelRunId' => $run->id])
         </div>
         <span data-model-training-status @class(['hidden' => $pregameActive, 'inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset', $statusClasses[$run->status] ?? 'bg-gray-100 text-gray-700 ring-gray-200'])>
             {{ $label($run->status) }}
@@ -242,7 +243,7 @@
                     <div id="analysis-menu-{{ $run->id }}" x-cloak x-show="analysisOpen" x-transition.opacity.duration.150ms class="relative mx-3 border-l border-gray-200 bg-gray-50 py-1 motion-reduce:transition-none lg:absolute lg:right-full lg:top-0 lg:z-40 lg:ml-0 lg:mr-1 lg:w-52 lg:rounded-md lg:border lg:bg-white lg:shadow-lg" role="menu">
                         <form method="POST" action="{{ route('admin.nhl-sat-models.context.build', $run) }}" data-sat-model-pregame-build-form>
                             @csrf
-                            <button type="submit" @disabled($pregameActive) class="block w-full px-3 py-2 text-left text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950 disabled:cursor-not-allowed disabled:opacity-60" role="menuitem">Build Pregame</button>
+                            <button type="submit" @disabled($pregameLocked) class="block w-full px-3 py-2 text-left text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950 disabled:cursor-not-allowed disabled:opacity-60" role="menuitem">Build Pregame</button>
                         </form>
                         <a data-pregame-view-link href="{{ route('admin.nhl-sat-models.context.effects') }}" @class(['hidden' => ! $canViewPregame, 'block px-3 py-2 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950']) role="menuitem">View Pregame Impacts</a>
                         <span data-pregame-view-disabled @class(['hidden' => $canViewPregame, 'block cursor-not-allowed px-3 py-2 text-xs font-medium text-gray-300']) role="menuitem" aria-disabled="true">View Pregame Impacts</span>

@@ -54,11 +54,6 @@
             >Home</x-nav-link>
 
             <x-nav-link
-                href="{{ route('games.index') }}"
-                class="text-lg font-semibold {{ request()->routeIs('games.*') ? 'text-indigo-600' : 'text-gray-600 hover:text-indigo-500' }}"
-            >Games</x-nav-link>
-
-            <x-nav-link
                 href="{{ route('stats.index') }}"
                 class="text-lg font-semibold {{ request()->routeIs('stats.index') ? 'text-indigo-600' : 'text-gray-600 hover:text-indigo-500' }}"
             >Stats</x-nav-link>
@@ -138,15 +133,6 @@
                               d="M3 12l2-2 7-7 7 7 2 2M5 10v10a1 1 0 001 1h3m10-11v10a1 1 0 01-1 1h-3"/>
                     </svg>
                     Home
-                </a>
-            </li>
-
-            <li class="flex-1 text-center">
-                <a href="{{ route('games.index') }}" class="flex flex-col items-center {{ request()->routeIs('games.*') ? 'text-white' : '' }}">
-                    <svg class="mb-0.5 h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 6.75h7.5m-9 3.75h10.5m-12 3.75h13.5m-12 3.75h10.5M6 3.75h12A2.25 2.25 0 0120.25 6v12A2.25 2.25 0 0118 20.25H6A2.25 2.25 0 013.75 18V6A2.25 2.25 0 016 3.75Z"/>
-                    </svg>
-                    Games
                 </a>
             </li>
 

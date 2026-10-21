@@ -60,7 +60,6 @@ class HandleInertiaRequests extends Middleware
         ];
         $primary = [
             $link('Home', $user ? 'dashboard' : 'welcome', $user ? 'dashboard' : 'welcome'),
-            $link('Games', 'games.index', 'games.*'),
             $link('Stats', 'stats.index', 'stats.index'),
         ];
         if ($user) {

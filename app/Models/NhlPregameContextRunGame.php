@@ -16,6 +16,7 @@ class NhlPregameContextRunGame extends Model
     public const STATE_COMPLETE = 'complete';
     public const STATE_BLOCKED = 'blocked';
     public const STATE_FAILED = 'failed';
+    public const STATE_STOPPED = 'stopped';
 
     protected $guarded = [];
 

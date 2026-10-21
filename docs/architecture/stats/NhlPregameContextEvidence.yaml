@@ -5,11 +5,22 @@ location:
   - app/Jobs/PrepareNhlPregameContextRunJob.php
   - app/Jobs/LoadNhlPregameContextRunJob.php
   - app/Jobs/BuildNhlPregameContextGameJob.php
+  - app/Jobs/BuildNhlPregameContextDayJob.php
+  - app/Jobs/CalculateNhlPregameContextLeagueMetricsJob.php
+  - app/Jobs/CalculateNhlPregameContextRunDayLeagueAveragesJob.php
+  - app/Jobs/CompareNhlPregameContextRunDayJob.php
   - app/Models/NhlPregameContextRun.php
   - app/Models/NhlPregameContextRunGame.php
+  - app/Models/NhlPregameContextRunDay.php
+  - app/Models/NhlPregameContextLeagueAverage.php
   - app/Services/NhlPregameContextBuilder.php
   - app/Services/NhlPregameContextOrchestrator.php
+  - app/Services/NhlPregameLeagueResults.php
+  - config/nhl-pregame.php
   - database/migrations/2026_10_06_000001_create_nhl_pregame_context_tables.php
+  - database/migrations/2026_10_20_000001_add_model_scoped_pregame_context_metrics.php
+  - database/migrations/2026_10_21_000001_add_batched_pregame_context_and_league_averages.php
+  - database/migrations/2026_10_21_000002_add_pregame_comparison_stage_to_run_days.php
   - resources/views/admin/nhl-sat-models/context-effects.blade.php
 purpose: Preserve what was knowable before each NHL game as versioned evidence for retrospective analysis and the separately versioned custom game-prediction pathway.
 when_to_use:
@@ -22,26 +33,34 @@ when_not_to_use:
   - Replacing raw game summaries, strength summaries, shot facts, or play-by-play facts.
 rules:
   - SAT model actions expose Analysis > Build Pregame first. This queues the existing context backfill for the model's distinct Train seasons plus its optional Test season, ignoring client-supplied season overrides. It does not train models or change context calculations.
-  - Model-initiated context runs retain model_run_id in existing run options. Context snapshots remain shared, versioned upserts; model association does not duplicate snapshots or mutate model training status, timestamps, or outputs.
+  - Model-initiated context runs store model_run_id as a relational owner. Their team/player snapshots are model-scoped upserts and include that model's frozen Train seasons; another model cannot overwrite them.
   - Each model's Build Pregame and scheduled Update Pregame use that model's own Train seasons plus its Test season. A newest model whose Test season is current continues to include that Test season; no model borrows another model's season selection.
   - Each SAT model row has an independent auto-sync switch and settings drawer. The process key is `nhl-pregame-context-model-{model_run_id}`; its Update Pregame qualification, integer frequency hours, and America/Toronto start time are persisted in scheduled_processes.
-  - Scheduled Update Pregame creates a new durable context run with the model id and auto-sync trigger, then continues through the same bounded, date-ordered jobs as manual Build Pregame. A schedule that overlaps active context work remains due and retries on a later scheduler tick.
-  - Scheduled updates select completed games missing one or more current-version team/player snapshots, continuing after the latest complete context. The builder upserts selected game/team/player/context-version keys, filling new or partial evidence without duplication; manual Build Pregame remains the full rebuild path. Every run remains in context run history; custom game prediction records and model definitions are untouched.
-  - Model-triggered context builds use serialized admission and reject active runs overlapping any selected season. Existing bounded, date-ordered dispatch remains unchanged.
+  - Scheduled Update Pregame creates a new durable context run with the model id and auto-sync trigger, then uses the same bounded game-day pipeline as manual Build Pregame. A schedule that overlaps active context work remains due and retries on a later scheduler tick.
+  - Scheduled updates select completed games missing one or more current-version snapshots for that model, continuing after the latest complete context. The builder upserts model/game/entity/context-version keys, filling new or partial evidence without duplication. Manual Build Pregame reprocesses all selected games, upserts current snapshot and metric values in bounded transactions, and prunes obsolete player rows for that model/game/version. Every run remains in context run history; custom game prediction records and model definitions are untouched.
+  - New model-triggered runs use two stages. League-average dates read raw results independently and may run concurrently. Each context date waits only for its own completed league averages, then builds snapshots and attaches rankings and deltas within the same context job. Separate bounded league and context concurrency limits live in config/nhl-pregame.php. Both stages stay on projections.
   - Analysis > View Pregame Impacts opens the context/effects page. Its season filter defaults to All, pooling eligible player-game evidence across available seasons; selecting a season limits both groups and their baseline to that season. Sorting preserves the selection.
   - View Pregame Impacts is greyed out unless the latest context build initiated from that model's menu is completed and has persisted current-version player context rows. Queued, running, failed, absent, and empty builds cannot enable the link. Progress polling updates link availability without a page reload; the shared impacts endpoint remains read-only and super-admin protected.
   - The standalone context page and its manual-backfill GET/POST routes are removed; context building starts from model actions. Stored context and run history are preserved.
   - The model status cell shows Building and context game counts while queued or running, then Pregame completed or Pregame failed. Page-local polling reads active progress every five seconds without full-page reloads or queue dispatch; training status remains independent.
+  - Model-row Pause stops new claims and waits for claimed work to finish. Resuming a fully paused older batched run upgrades it to league-first work, preserves completed snapshots and game rows, and resets day progress. Context jobs reuse completed snapshots and attach refreshed comparisons after league averages finish. Running legacy work is never switched mid-job.
+  - Model-row Stop writes a run-scoped cancellation signal and marks unfinished game, context, league, and comparison work stopped. Active context transactions roll back at cancellation checkpoints; queued run jobs become no-ops and completed evidence remains. No worker process is killed.
+  - A stopped run is terminal. Build Pregame is re-enabled and starts a new durable run; the existing model-scoped upserts prevent duplicate snapshots.
   - Every snapshot uses only completed regular-season games strictly before the target game's scheduled start time; target-game outcomes and later games are forbidden inputs.
   - Player snapshots record the completed-game participant only for historical evidence and label that source explicitly; future prediction use requires independently selected pregame rosters.
-  - Team snapshots keep each team's own rates separate from its opponent's rates. Team metrics include Train-independent L5, L10, L20, LSeason, and season-to-date windows for goals, SAT/Corsi, SOG/SAT, shooting, saves, PDO, and win rate when the underlying game facts are complete. Head-to-head metrics use the same windows and stay in a separate opponent_metrics object.
+  - Team snapshots keep each team's own rates separate from its opponent's rates. Team metrics include model Train, last game, L5, L10, L20, LSeason, and season-to-date windows for goals, SAT/Corsi, SOG/SAT, shooting, saves, PDO, and win rate when the underlying game facts are complete. Head-to-head metrics use the available windows and stay in a separate opponent_metrics object.
   - Schedule snapshots identify exact B2B, third-in-seven, fourth-in-seven, and B2B-fourth-in-seven classifications from the target date plus its preceding six calendar dates. They retain travel distance separately from days on the current road trip. Unknown venue or incomplete history remains null.
   - Player snapshots preserve each player's own history and their history against the target opponent in separate objects. Opponent-player histories remain the other team's own player-context rows for the same target game; consumers must retain both lineups and must not replace opponent-player rates with the target player's opponent-only history.
-  - Shared context snapshots remain model-agnostic. A custom game-prediction run stores model-specific Train windows, both teams' player rows, and its exact pregame input snapshot in its own prediction tables so one model cannot overwrite another model's Train evidence.
+  - Team/player snapshot rows are model-owned and include explicit metric/window/strength/measure rows linked to their parent snapshot. League average, signed and absolute differences, percentage difference, and league rank fields are stored per metric; unavailable comparisons remain null.
+  - Results-based league averages use raw completed results strictly before each scheduled target cutoff, independently of saved context. Each eligible team or player contributes one freshly calculated value per metric/window/strength; missing values are excluded. Population eligibility requires a prior appearance in the model-selected seasons. History and metric definitions are shared with the context builder, including summed exposure for rates.
+  - Each peer's latest prior team identity comes from completed results; the next scheduled game supplies venue and opponent orientation without using future participants or outcomes. Without a known next matchup, matchup-dependent comparisons remain unavailable. Generic windows still use prior results.
+  - The context job attaches the shared average by run/day/cutoff/entity/metric/window/strength and store descending competition rank, population, and signed/absolute/percentage deltas on existing context-metric rows. Ties share rank, nulls stay unavailable, and zero league average leaves percentage delta null. Target metrics and samples are preserved. Rankings compare the target value to the raw peer population and exclude the target peer from the greater-value count.
+  - Every player context references its same-model, same-game, same-version team context. The database enforces this composite relationship for model-owned rows.
+  - A custom game-prediction run still freezes its exact pregame input snapshot in its own prediction tables; its inputs do not overwrite model-owned context evidence.
   - The custom prediction pathway may consume these snapshots only through its separately versioned, frozen run inputs. It does not alter existing SAT Engine or partner API predictions.
   - Player history follows the player across team changes. Opponent and home/away filters use the player's team on each historical summary, not the target game's team.
-  - The evaluation read helper can derive measured Train windows for explicitly supplied Train seasons and LSeason for the calendar season preceding the target. It shares the player strength/window calculations without writing shared snapshots. Model-specific Train selections are not persisted into shared model-agnostic context rows.
-  - Game Evaluation calls supply a frozen model-specific reliable bucket filter to the read helper. Individual SAT/SOG/goals use only level-one buckets with Train confidence >= 0.50, with exactly 0.50 retained, and exclude empty-net/shootout attempts. All selected-strength windows use the same retained keys and full exposure. Unclassified source strength remains detectable even when its count would be excluded. Shared context builds remain model-agnostic and unchanged; their unfiltered individual counts must not replace the model-filtered Game Evaluation evidence. See NhlNextGameEvaluation.yaml for refresh and persistence rules.
+  - The evaluation read helper can derive measured Train windows for explicitly supplied Train seasons and LSeason for the calendar season preceding the target. It shares player strength/window calculations without writing context rows.
+  - Game Evaluation calls supply a frozen model-specific reliable bucket filter to the read helper. Individual SAT/SOG/goals use only level-one buckets with Train confidence >= 0.50, with exactly 0.50 retained, and exclude empty-net/shootout attempts. All selected-strength windows use the same retained keys and full exposure. Unclassified source strength remains detectable even when its count would be excluded. Model-owned context builds use the model's frozen Train selection; unfiltered counts must not replace model-filtered Game Evaluation evidence. See NhlNextGameEvaluation.yaml for refresh and persistence rules.
   - Evaluation strength-specific Train and venue Train use only complete appearances. Counts, ice time, on-ice metrics, and games all use that same sample; usable_games records its size and individual_missing_games retains the excluded count. No usable games leaves individual rates unavailable. This exception does not change completeness requirements for recent windows, LSeason, or current-quarter evidence.
   - Rest and back-to-back classification use forward calendar-day differences between scheduled game dates. One day means a back-to-back with zero intervening rest days; absent prior history leaves rest unavailable.
   - Raw results remain in existing NHL fact tables. Context snapshots store compact derived metrics, sample counts, and ranks only.
@@ -50,9 +69,9 @@ rules:
   - Strength windows select prior positive-TOI appearances first, including games with zero attempts or zero time at the selected strength. L5/L10/L20 cross season boundaries; season, matching-venue season, and last-ten-opponent windows retain historical team identity across trades. Target-game and future results remain excluded.
   - Prefer the raw EV/PP/PK shot strength when descriptive buckets identify empty-net or penalty-shot context; otherwise use a recognized strength bucket. Shootout attempts are excluded. Unclassified individual attempts, absent game facts, absent strength summaries, or attempts without matching exposure make individual window values unavailable, with individual_missing_games recording the affected appearances. An absent strength row is zero exposure only when another strength row exists for that player-game; zero exposure yields null rates, and zero SOG yields null shooting percentage.
   - Strength rates divide summed individual counts by summed matching exposure, not by all-strength time or by averaging game rates. Existing all-strength metrics remain under all; they are never fallback inputs for EV analysis. The SAT trend impacts factor reads strength.EV individual SAT/60 only; older snapshots without those keys are unavailable for that factor.
-  - Rebuilding through Build Pregame upserts the existing context version and writes metrics.individual_strength_version = 1. Deploying the builder does not upgrade saved snapshots; rerun Build Pregame for each required model after deployment. No schema migration, model-profile rebuild, or next-game evaluation is required for this context correction.
-  - Backfills use durable run and run-game rows. A loader may claim only a bounded page from the earliest unfinished game date and must never enqueue one job per player or a run-sized job burst.
-  - Later dates may begin after the current date's work is terminal. Missing historical source data blocks only that game with a durable readiness reason; later snapshots use their available prior-game facts. Unexpected execution failures fail the run.
+  - Existing comparison-state columns remain for compatibility with older three-stage runs; the league-first change requires no additional migration beyond the existing schema migrations. Migrations add schema only and never aggregate historical facts or rebuild context. Existing runs retain their pipeline until the explicit paused-run upgrade; original applied migrations remain unchanged.
+  - Backfills use durable run, run-game, and run-day rows. League-average and context stages have durable states and timestamps. Context is complete only after its rankings and deltas are attached. Loaders claim only configured bounded work and never enqueue one job per player or a run-sized burst. A run is completed only when both stages are complete, every selected game has a day-work row, and completed plus blocked games account for the selected total. Missing day work or unfinished game rows fail visibly instead of reporting completion. Queue workers must reload after pipeline changes.
+  - The two stages may process different dates concurrently once each context date has its league averages. Context histories use bounded player groups and metric buffers. The context job reconstructs result-based peers in a connection-local temporary SQL table for rankings; the table is discarded after each cutoff/entity population. Unexpected errors and timeouts, including comparison failures, fail the affected stage and run. Older three-stage jobs remain compatible until their run is paused and upgraded.
   - Arena travel uses dated venue coordinates and great-circle distance. Missing venue evidence leaves travel metrics unavailable.
   - Seven-day travel is an arena-to-arena arrival proxy, not an observed itinerary. Include arrivals at prior games in the seven days before the scheduled start and the target game, anchored by the preceding historical venue even when its game is outside the window. Zero known distance is zero; missing anchor or any required venue makes the seven-day total unavailable rather than a partial sum.
   - Venue date selection uses the scheduled game date rather than the UTC timestamp's calendar date. Rerunning the same context version upserts corrected snapshots; changed builder logic does not retroactively update stored rows without a rebuild.
@@ -60,13 +79,20 @@ rules:
   - Context collection and inspection are analysis-only. A context factor may affect predictions only after a separately approved, later-season evidence change.
 public_interface:
   - POST /admin/nhl-sat-models/{run}/context/build
+  - POST /admin/nhl-sat-models/{run}/context/pause
+  - POST /admin/nhl-sat-models/{run}/context/resume
+  - POST /admin/nhl-sat-models/{run}/context/stop
   - GET /admin/nhl-sat-models/{run}/context/progress
   - GET /admin/nhl-sat-models/context/effects
   - nhl_pregame_context_runs
   - nhl_pregame_context_run_games
+  - nhl_pregame_context_run_days
+  - nhl_pregame_context_league_averages
   - nhl_team_game_pregame_contexts
   - nhl_player_game_pregame_contexts
+  - nhl_team_game_pregame_context_metrics
+  - nhl_player_game_pregame_context_metrics
 example_usage: |
   Choose Analysis > Build Pregame on a SAT model to use its Train and Test seasons.
-  The run creates durable game work rows, processes the oldest date in bounded pages,
+  The run creates durable game and day work rows, processes bounded game-day batches,
   and stores each player's pregame EV/PP/PK context without changing predictions.

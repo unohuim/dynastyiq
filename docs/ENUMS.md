@@ -146,10 +146,34 @@ Horizon assigns twenty-five workers to `projections`, five workers to `default`,
 - `nhl_pregame_context_runs.options.trigger`: `auto_sync` identifies a scheduled
   model pregame-context update.
   Other scheduler entries have not migrated; no user-supplied command is executable.
+- `nhl_team_game_pregame_context_metrics.window_key` and
+  `nhl_player_game_pregame_context_metrics.window_key`: `last_game`, `l5`, `l10`,
+  `l20`, `lseason`, `season_to_date`, `train`, `opponent_l5`, `opponent_l10`, and
+  `pregame`; existing derived context windows may also use `venue_*`, other
+  `opponent_*`, or `q1_to_date` through `q4_to_date`.
+- `nhl_*_game_pregame_context_metrics.strength`: `ALL`, `EV`, `PP`, or `PK`.
+- `nhl_*_game_pregame_context_metrics.measure_key`: `value` identifies the
+  stored metric value; league comparisons and rank are separate columns.
 - `scheduled_processes.settings.days_back`: positive integer prior calendar-date count;
   excludes today, defaults to 3, currently accepts 1–31.
 - `frequency_hours`: integer 1–168, default 24. Timezone is fixed to `America/Toronto`.
 - `NhlSatEngineRun.definition.automatic_search.work_scheduling`: `stage_games_v1`
+
+## NHL Pregame Context Runs
+
+- Run `status`: `queued`, `running`, `pausing`, `paused`, `stopped`, `completed`, or `failed`.
+  `pausing` stops new page claims while already-claimed games finish. `paused` is
+  resumable. `stopped` is terminal; completed snapshots remain, unfinished game
+  work is marked `stopped`, and a new Build Pregame action creates a fresh run.
+- Run-game `state`: `pending`, `ready`, `processing`, `complete`, `blocked`,
+  `failed`, or `stopped`. Stopping a run marks every unfinished game `stopped`.
+- `nhl_pregame_context_runs.options.pipeline_version`: `results_league_v2` selects league averages first, then context with integrated rankings and deltas.
+  `results_league_v1` retains the previous independent context, league, and comparison jobs until paused-run upgrade.
+  `game_day_batch_v1` retains the earlier context-dependent league stage; absent values retain the legacy per-game loader.
+- Pregame run-day `context_state`, `league_state`, and `comparison_state`: `pending`, `processing`,
+  `complete`, `failed`, or `stopped`. In `results_league_v2`, league dates need only prior raw results;
+  each context date waits for its averages and finishes only after attaching rankings and deltas.
+  `comparison_state` is used only by the older three-stage pipeline; v2 completion uses context and league states.
   queues every missing game/split coordinate in the current stage immediately;
   Horizon controls execution concurrency. `game_lanes_v1` retains legacy fixed
   game chains; missing values retain legacy split chains. Pause/resume upgrades
