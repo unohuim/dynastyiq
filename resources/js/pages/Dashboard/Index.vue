@@ -351,7 +351,7 @@ function navigateTabs(event, group) {
                 </div>
             </DashboardSection>
 
-            <DashboardSection title="Around the NHL" :href="dashboard.links.news" external class="order-3 md:order-none xl:col-span-3">
+            <DashboardSection title="Around the NHL" :href="dashboard.links.news" external class="order-3 hidden md:order-none md:flex xl:col-span-3">
                 <div class="min-h-0 flex-1 divide-y divide-slate-100 overflow-y-auto">
                     <a v-for="story in headlinePreview" :key="story.id" :href="story.url" v-bind="externalLinkAttributes(story.url)" class="flex min-h-8 items-center gap-2 py-1 hover:text-blue-600">
                         <img v-if="story.image_url" :src="story.image_url" alt="" class="h-6 w-11 shrink-0 rounded object-cover" loading="lazy" />
