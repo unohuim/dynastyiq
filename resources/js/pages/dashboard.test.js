@@ -16,7 +16,8 @@ describe('NHL dashboard', () => {
         document.body.innerHTML = '<div id="dashboard"></div>';
         data = {
             featured: [story(1), story(2), story(3)], headlines: [story(4), story(5), story(6), story(7), story(8), story(9)],
-            videos: [story(10), story(11), story(12), story(13)], performance_date: '2026-10-21',
+            line_combinations: [{ unit_id: 1, game_id: 1, team: 'TOR', players: ['Alpha', 'Beta', 'Gamma'],
+                gf: 2, ga: 0, cf_pct: 65, toi_seconds: 425, url: '/stats/units?nhl_game_id=1' }], performance_date: '2026-10-21',
             performers: [1, 2, 3, 4].map(id => ({ nhl_player_id: id, name: `Player ${id}`, avatar: `/player-${id}.png`,
                 team: 'TOR', team_logo: '/tor.svg', position: 'C', url: `/players/${id}`, goalie: false,
                 goals: 1, assists: 2, points: 3, badge: '3-point night' })),
@@ -32,7 +33,7 @@ describe('NHL dashboard', () => {
                 { nhl_player_id: 3, name: 'Breakout Player', position: 'RW', team: 'TOR', current: 1, previous: 0, delta: 1, delta_pct: null, breakout: true, url: '/players/3' },
             ],
             news_unavailable: false, news_updated_at: '2026-10-22T12:00:00Z', query: '', search: null,
-            links: { news: 'https://www.nhl.com/news', video: 'https://www.nhl.com/video', stats: '/stats', transactions: '/transactions', injuries: '/injuries', games: '/games' },
+            links: { news: 'https://www.nhl.com/news', line_combinations: '/stats/units', stats: '/stats', transactions: '/transactions', injuries: '/injuries', games: '/games' },
         };
     });
     afterEach(() => { app?.unmount(); app = null; document.body.innerHTML = ''; });
@@ -51,31 +52,31 @@ describe('NHL dashboard', () => {
         mount(); expect(document.querySelector('[aria-label="Featured NHL stories"] img').getAttribute('src')).toBe('/story-1.jpg');
     });
     it('keeps the supporting panels from the reference design', () => {
-        mount(); for (const title of ['Top Performers', 'Notable Signings & Moves', 'Injury Watch', 'Team Trends', 'Player Heat Check', 'Must-Watch Video & Analysis', 'Around the NHL']) expect(section(title)).toBeTruthy();
+        mount(); for (const title of ["Last Night's Top Performers", 'Notable Signings & Moves', 'Injury Watch', 'Team Trends', 'Player Heat Check', 'Last Night’s 5v5 Lines', 'Around the NHL']) expect(section(title)).toBeTruthy();
     });
     it('shows four top performer cards without introducing a fixed goalie slot', () => {
-        mount(); expect(section('Top Performers').querySelectorAll('a[href^="/players/"]')).toHaveLength(4);
+        mount(); expect(section("Last Night's Top Performers").querySelectorAll('a[href^="/players/"]')).toHaveLength(4);
     });
     it('shows four goalie cards when that is the supplied best-performing group', () => {
         data.performers.forEach(row => Object.assign(row, { goalie: true, position: 'G', saves: 38, goals_against: 1, save_percentage: 38 / 39, badge: '38 saves' }));
-        mount(); expect(section('Top Performers').textContent.match(/38 SV/g)).toHaveLength(4);
+        mount(); expect(section("Last Night's Top Performers").textContent.match(/38 SV/g)).toHaveLength(4);
     });
     it('formats goalie save percentage as a ratio with three decimals', () => {
         Object.assign(data.performers[0], { goalie: true, saves: 38, goals_against: 1, save_percentage: 38 / 39 }); mount();
-        expect(section('Top Performers').textContent).toContain('.974');
+        expect(section("Last Night's Top Performers").textContent).toContain('.974');
     });
     it('shows skater goals assists and points distinctly', () => {
-        mount(); const panel = section('Top Performers').textContent;
+        mount(); const panel = section("Last Night's Top Performers").textContent;
         expect(panel).toContain('1 G'); expect(panel).toContain('2 A'); expect(panel).toContain('3 PTS');
     });
     it('uses initials when a performer has no headshot', () => {
-        data.performers[0].avatar = null; mount(); expect(section('Top Performers').textContent).toContain('P1');
+        data.performers[0].avatar = null; mount(); expect(section("Last Night's Top Performers").textContent).toContain('P1');
     });
     it('labels the completed performance date', () => {
-        mount(); expect(section('Top Performers').textContent).toContain('Completed games · Oct 21');
+        mount(); expect(section("Last Night's Top Performers").textContent).toContain('Wed Oct 21');
     });
     it('shows an honest empty state if no imported player performances exist', () => {
-        data.performers = []; mount(); expect(section('Top Performers').textContent).toContain('completed boxscores');
+        data.performers = []; mount(); expect(section("Last Night's Top Performers").textContent).toContain('completed boxscores');
     });
     it('shows actual transaction descriptions', () => {
         mount(); expect(section('Notable Signings & Moves').textContent).toContain('A real signing');
@@ -136,12 +137,24 @@ describe('NHL dashboard', () => {
         expect(document.querySelector('#dashboard-more-headlines a').textContent).toContain('Story 9');
     });
     it('shows the NHL source attribution', () => {
-        mount(); expect(document.querySelector('main').textContent).toContain('Stories & video: NHL.com');
+        mount(); expect(document.querySelector('main').textContent).toContain('Stories: NHL.com');
     });
-    it('shows four supplied videos with the lead video emphasized', () => {
-        mount(); const panel = section('Must-Watch Video & Analysis');
-        expect(panel.querySelectorAll('a').length).toBe(5);
-        expect(panel.textContent).toContain('Story 10');
+    it('replaces videos with factual five-on-five line results and internal links', () => {
+        mount(); const panel = section('Last Night’s 5v5 Lines');
+        expect(panel.textContent).toContain('Alpha · Beta · Gamma');
+        expect(panel.textContent).toContain('2–0');
+        expect(panel.textContent).toContain('65.0%');
+        expect(panel.textContent).toContain('7:05');
+        expect(panel.querySelector('a').getAttribute('href')).toBe('/stats/units');
+        expect(panel.querySelector('a').hasAttribute('target')).toBe(false);
+        expect(document.querySelector('main').textContent).not.toContain('Must-Watch');
+    });
+    it('shows a truthful empty state when last nights shift data is missing', () => {
+        data.line_combinations = []; mount();
+        expect(section('Last Night’s 5v5 Lines').textContent).toContain('completed shift and play-by-play data');
+    });
+    it('does not label the performer date as completed games', () => {
+        mount(); expect(section("Last Night's Top Performers").textContent).not.toContain('Completed games');
     });
     it('renders unavailable news without blank fake story cards', () => {
         data.featured = []; data.headlines = []; mount();
@@ -166,4 +179,39 @@ describe('NHL dashboard', () => {
     it('identifies a stale feed without claiming it was newly published', () => {
         data.news_unavailable = true; mount(); expect(document.querySelector('main').textContent).toContain('Showing the last available feed');
     });
+    it('opens every external dashboard destination safely in a new tab', async () => {
+        data.performers[0].url = 'https://www.nhl.com/player/1';
+        data.player_trends[0].url = 'https://www.nhl.com/player/2';
+        data.query = 'Player';
+        data.search = { players: [data.performers[0]], stories: [story(1)] };
+        mount();
+        section('Around the NHL').querySelector('button').click(); await nextTick();
+        const links = [...document.querySelectorAll('main a')].filter(link => link.origin !== window.location.origin);
+        expect(links.length).toBeGreaterThan(10);
+        for (const link of links) {
+            expect(link.target).toBe('_blank');
+            expect(link.rel).toBe('noopener noreferrer');
+        }
+    });
+    it('keeps internal relative and absolute links in the current tab', () => {
+        data.performers[0].url = `${window.location.origin}/players/1`;
+        mount();
+        const links = [...document.querySelectorAll('main a')].filter(link => link.origin === window.location.origin);
+        expect(links.length).toBeGreaterThan(5);
+        for (const link of links) expect(link.hasAttribute('target')).toBe(false);
+    });
+    it('opens official fallback links in a new tab when feeds are unavailable', () => {
+        data.featured = []; mount();
+        const links = [...document.querySelectorAll('main a')].filter(link => link.hostname === 'www.nhl.com');
+        expect(links.length).toBeGreaterThan(0);
+        for (const link of links) expect(link.target).toBe('_blank');
+    });
+    it('shows each teams available comparison counts instead of claiming ten games', () => {
+        Object.assign(data.team_trends[0], { games: 5, previous_games: 2, comparison_games: 5 });
+        Object.assign(data.team_trends[1], { games: 10, previous_games: 10, comparison_games: 10 });
+        mount();
+        expect(document.querySelector('#team-trend-results').textContent).toContain('5 GP vs 2 GP');
+        expect(document.querySelector('#team-trend-results').textContent).toContain('10 GP vs 10 GP');
+    });
+
 });

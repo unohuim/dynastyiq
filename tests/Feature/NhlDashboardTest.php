@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Models\NhlGame;
+use App\Models\Player;
 use App\Models\User;
 use App\Services\NhlDashboardNews;
 use App\Services\NhlDashboardPayload;
@@ -130,10 +131,10 @@ it('deduplicates editorial entities before selecting featured stories', function
     expect(app(NhlDashboardNews::class)->feed()['items'])->toHaveCount(1);
 });
 
-it('caches news and video feeds separately across dashboard visits', function (): void {
+it('caches news without fetching the removed video feed across dashboard visits', function (): void {
     app(NhlDashboardPayload::class)->build();
     app(NhlDashboardPayload::class)->build();
-    Http::assertSentCount(2);
+    Http::assertSentCount(1);
 });
 
 it('renders an empty news state when the first provider request fails', function (): void {
@@ -243,9 +244,90 @@ it('keeps unavailable special-team boxscore coverage null rather than reporting 
 it('exposes matching news search results without extra provider requests', function (): void {
     $data = app(NhlDashboardPayload::class)->build('Story 1');
     expect($data['search']['stories'])->toHaveCount(1);
-    Http::assertSentCount(2);
+    Http::assertSentCount(1);
 });
 
-it('returns videos linked to their official NHL video pages', function (): void {
-    expect(app(NhlDashboardPayload::class)->build()['videos'][0]['url'])->toBe('https://www.nhl.com/video/story-1');
+it('replaces the video payload with local line combinations', function (): void {
+    $data = app(NhlDashboardPayload::class)->build();
+    expect($data)->not->toHaveKey('videos');
+    expect($data['line_combinations'])->toBe([]);
+    expect($data['links']['line_combinations'])->toContain('/stats/units');
+    Http::assertSentCount(1);
 });
+
+it('selects team comparison windows from available finished games', function (int $total, int $window, int $currentGames, int $priorGames, float $offense, ?float $delta): void {
+    foreach (range(0, $total - 1) as $index) {
+        $game = ($this->game)(2026020100 + $index, Carbon::parse('2026-10-21')->subDays($index)->toDateString());
+        $game->update(['home_team_score' => [4, 2, 6, 8][intdiv($index, 5)]]);
+    }
+
+    $team = collect(app(NhlDashboardPayload::class)->build()['team_trends'])->firstWhere('team', 'TOR');
+    expect($team['comparison_games'])->toBe($window)
+        ->and($team['games'])->toBe($currentGames)
+        ->and($team['previous_games'])->toBe($priorGames)
+        ->and((float) $team['offense'])->toBe($offense)
+        ->and($team['offense_delta'] === null ? null : (float) $team['offense_delta'])->toBe($delta);
+
+    $this->get(route('welcome'))->assertOk()->assertInertia(fn (Assert $page) => $page
+        ->where('dashboard.team_trends.0.comparison_games', $window)
+        ->where('dashboard.team_trends.0.games', $currentGames)
+        ->where('dashboard.team_trends.0.previous_games', $priorGames));
+})->with([
+    'twenty games uses ten versus ten' => [20, 10, 10, 10, 3.0, -4.0],
+    'nineteen games uses five versus five' => [19, 5, 5, 5, 4.0, 2.0],
+    'ten games uses five versus five' => [10, 5, 5, 5, 4.0, 2.0],
+    'seven games exposes partial previous window' => [7, 5, 5, 2, 4.0, 2.0],
+    'five games has no prior comparison' => [5, 5, 5, 0, 4.0, null],
+    'three games exposes partial current window' => [3, 5, 3, 0, 4.0, null],
+]);
+
+
+it('reads strictly five-on-five trios from the completed night', function (int $defenders, int $goalies, int $goalieEnd, int $expectedCount): void {
+    ($this->game)();
+    $forwardShifts = [];
+    foreach (['TOR' => 10, 'BOS' => 6] as $team => $teamId) {
+        foreach (['F' => 3, 'D' => $defenders, 'G' => $goalies] as $type => $count) {
+            if ($count === 0) {
+                continue;
+            }
+            $unit = DB::table('nhl_units')->insertGetId(['team_abbrev' => $team, 'unit_type' => $type]);
+            for ($i = 0; $i < $count; $i++) {
+                $player = Player::create(['full_name' => $team.' '.$type.$i, 'first_name' => $team, 'last_name' => $type.$i]);
+                DB::table('nhl_unit_players')->insert(['unit_id' => $unit, 'player_id' => $player->id]);
+            }
+            $end = $type === 'G' ? $goalieEnd : 360;
+            $shift = DB::table('nhl_unit_shifts')->insertGetId([
+                'nhl_game_id' => 2026020001, 'unit_id' => $unit, 'team_id' => $teamId, 'team_abbrev' => $team,
+                'period' => 1, 'start_time' => '00:00', 'end_time' => '06:00',
+                'start_game_seconds' => 0, 'end_game_seconds' => $end, 'seconds' => $end,
+            ]);
+            if ($type === 'F') {
+                $forwardShifts[] = $shift;
+            }
+        }
+    }
+    foreach ([['goal', '1551'], ['missed-shot', '1551'], ['goal', '1541'], ['goal', '1441'], ['goal', '0651']] as [$type, $situation]) {
+        $event = DB::table('play_by_plays')->insertGetId([
+            'nhl_game_id' => 2026020001, 'type_desc_key' => $type, 'shot_type' => 'wrist',
+            'period_type' => 'REG', 'situation_code' => $situation, 'event_owner_team_id' => 10,
+        ]);
+        foreach ($forwardShifts as $shift) {
+            DB::table('event_unit_shifts')->insert(['event_id' => $event, 'unit_shift_id' => $shift]);
+        }
+    }
+    $rows = app(NhlDashboardPayload::class)->build()['line_combinations'];
+    expect($rows)->toHaveCount($expectedCount);
+    if ($expectedCount > 0) {
+        expect($rows[0]['team'])->toBe('TOR')->and($rows[0]['players'])->toHaveCount(3)
+            ->and($rows[0]['toi_seconds'])->toBe($goalieEnd)->and($rows[0]['gf'])->toBe(1)
+            ->and($rows[0]['ga'])->toBe(0)->and($rows[0]['cf'])->toBe(2)
+            ->and((float) $rows[0]['cf_pct'])->toBe(100.0);
+        $this->get(route('welcome'))->assertOk()->assertInertia(fn (Assert $page) => $page
+            ->has('dashboard.line_combinations', 2)->where('dashboard.line_combinations.0.gf', 1));
+    }
+})->with([
+    'full five on five' => [2, 1, 360, 2],
+    'only time with both goalies counts' => [2, 1, 300, 2],
+    'four on four is excluded' => [1, 1, 360, 0],
+    'empty nets are excluded' => [2, 0, 360, 0],
+]);

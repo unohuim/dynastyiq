@@ -12,7 +12,6 @@ import { connectShellRealtime } from './shell-realtime';
 const page = usePage();
 const shell = computed(() => page.props.shell);
 const user = computed(() => page.props.auth?.user);
-const searchQuery = ref(new URL(page.url, 'https://dynastyiq.invalid').searchParams.get('q') ?? '');
 const drawer = ref(null);
 const newsOpen = ref(false);
 const mobileNewsOpen = ref(false);
@@ -62,7 +61,6 @@ function reconnect() {
 }
 
 watch(() => page.url, url => {
-    searchQuery.value = new URL(url, 'https://dynastyiq.invalid').searchParams.get('q') ?? '';
     drawer.value = new URL(url, 'https://dynastyiq.invalid').searchParams.get('drawer') === 'account' && user.value ? 'account' : null;
     newsOpen.value = false;
     mobileNewsOpen.value = false;
@@ -100,15 +98,13 @@ onBeforeUnmount(() => {
                 <nav aria-label="Primary navigation" class="hidden flex-1 flex-wrap items-center gap-x-5 gap-y-2 md:flex">
                     <a v-for="link in shell.primary.slice(1)" :key="link.href" :href="link.href" :aria-current="link.active ? 'page' : undefined" class="border-b-2 py-2 text-sm font-medium transition-colors duration-150 motion-reduce:transition-none" :class="link.active ? 'border-sky-400 text-white' : 'border-transparent text-[#C9D5E0] hover:text-white'">{{ link.label }}</a>
                     <DropdownMenuRoot v-model:open="newsOpen">
-                        <DropdownMenuTrigger class="flex items-center gap-1 py-2 text-sm font-medium transition-colors duration-150 hover:text-white motion-reduce:transition-none" :class="shell.news.some(link => link.active) ? 'text-white' : 'text-[#C9D5E0]'">News <span aria-hidden="true">⌄</span></DropdownMenuTrigger>
+                        <DropdownMenuTrigger class="flex items-center gap-1 py-2 text-sm font-medium transition-colors duration-150 hover:text-white motion-reduce:transition-none" :class="shell.news.some(link => link.active) ? 'text-white' : 'text-[#C9D5E0]'">
+                            <span>News</span>
+                            <svg aria-hidden="true" class="h-3 w-3 shrink-0 transition-transform duration-300 ease-out motion-reduce:transition-none" :class="newsOpen ? 'rotate-180' : ''" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m6 9 6 6 6-6" /></svg>
+                        </DropdownMenuTrigger>
                         <DropdownMenuPortal force-mount><Transition enter-active-class="transition-opacity duration-200 ease-out motion-reduce:transition-none" leave-active-class="transition-opacity duration-100 ease-in motion-reduce:transition-none" enter-from-class="opacity-0" leave-to-class="opacity-0"><DropdownMenuContent v-if="newsOpen" force-mount :side-offset="8" class="z-40 min-w-48 rounded-lg border border-gray-200 bg-white p-1 shadow-lg"><DropdownMenuItem v-for="link in shell.news" :key="link.href" as-child><a :href="link.href" :aria-current="link.active ? 'page' : undefined" class="block rounded px-3 py-2 text-sm outline-none data-[highlighted]:bg-gray-100">{{ link.label }}</a></DropdownMenuItem></DropdownMenuContent></Transition></DropdownMenuPortal>
                     </DropdownMenuRoot>
                 </nav>
-                <form :action="shell.primary[0].href" method="get" role="search" class="hidden w-64 shrink-0 items-center gap-2 rounded-md border border-white/15 bg-white/5 px-3 xl:flex">
-                    <svg aria-hidden="true" class="h-4 w-4 shrink-0 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" d="m21 21-4.5-4.5m1.5-6a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0Z" /></svg>
-                    <input v-model="searchQuery" type="search" name="q" maxlength="100" aria-label="Search players, teams and NHL news" placeholder="Search players, teams, news…" class="min-w-0 flex-1 border-0 bg-transparent py-2 text-xs text-white placeholder:text-slate-400 focus:ring-0" />
-                    <button type="submit" class="sr-only">Search</button>
-                </form>
                 <button v-if="user" type="button" aria-label="Notification settings" class="hidden h-9 w-9 shrink-0 items-center justify-center rounded text-slate-200 transition-colors duration-150 hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 motion-reduce:transition-none lg:flex" @click="openDrawer('account', $event)"><svg aria-hidden="true" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M14.25 18.75a2.25 2.25 0 0 1-4.5 0m10.5-2.25H3.75c1.5-1.5 2.25-3 2.25-6a6 6 0 0 1 12 0c0 3 .75 4.5 2.25 6Z" /></svg></button>
                 <button v-if="user" type="button" aria-label="Open account" class="flex shrink-0 items-center rounded-lg p-1 text-sm transition-colors duration-150 hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 motion-reduce:transition-none" @click="openDrawer('account', $event)"><img v-if="shell.avatar" :src="shell.avatar" alt="" class="h-9 w-9 rounded-full object-cover" /><span v-else aria-hidden="true" class="flex h-9 w-9 items-center justify-center rounded-full bg-indigo-50 font-semibold text-indigo-700">{{ user.name?.slice(0, 1) }}</span></button>
                 <a v-else :href="shell.login_url" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white">Sign in</a>

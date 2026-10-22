@@ -29,17 +29,17 @@ class NhlDashboardPayload
             $slate->subDay();
         }
         $date = $slate->toDateString();
-        $facts = Cache::remember('nhl:dashboard:facts:v1:'.$date, 300, fn (): array => $this->facts($date));
+        $facts = Cache::remember('nhl:dashboard:facts:v3:'.$date, 300, fn (): array => $this->facts($date));
         $stories = $this->news->feed();
-        $videos = $this->news->feed('videos');
         $articles = collect($stories['items']);
 
         return [
             ...$facts, 'featured' => $articles->take(3)->values()->all(),
-            'headlines' => $articles->slice(3)->values()->all(), 'videos' => array_slice($videos['items'], 0, 4),
+            'headlines' => $articles->slice(3)->values()->all(),
             'news_unavailable' => $stories['unavailable'], 'news_updated_at' => $stories['updated_at'],
             'query' => $query, 'search' => $query !== '' ? $this->search($query, $articles) : null,
-            'links' => ['news' => 'https://www.nhl.com/news', 'video' => 'https://www.nhl.com/video',
+            'links' => ['news' => 'https://www.nhl.com/news',
+                'line_combinations' => route('stats.units.index', ['date' => $facts['performance_date'], 'sum' => 0, 'pos' => ['F']]),
                 'stats' => route('stats.index'), 'transactions' => route('transactions.index'),
                 'injuries' => route('injuries.index'), 'games' => route('games.index')],
         ];
@@ -67,6 +67,7 @@ class NhlDashboardPayload
         return [
             'slate_date' => $date, 'performance_date' => $performanceDate,
             'performers' => $this->performers($dayBoxes, $completeDay ?? collect()),
+            'line_combinations' => $this->lineCombinations($completeDay ?? collect()),
             'transactions' => $this->transactions(), 'injuries' => $this->injuries(),
             'team_trends' => $this->teamTrends($finished, $boxscores),
             'player_trends' => $this->playerTrends($finished, $boxscores),
@@ -182,7 +183,98 @@ class NhlDashboardPayload
             ])->all();
     }
 
-    /** Compare each team's last ten finished games with its preceding ten games. */
+    /** Rank forward trios using strictly five-on-five shift time and linked shot events. */
+    private function lineCombinations(Collection $games): array
+    {
+        if ($games->isEmpty()) {
+            return [];
+        }
+
+        $shifts = DB::table('nhl_unit_shifts as s')
+            ->join('nhl_units as u', 'u.id', '=', 's.unit_id')
+            ->whereIn('s.nhl_game_id', $games->pluck('nhl_game_id'))
+            ->whereIn('u.unit_type', ['F', 'D', 'G'])
+            ->whereColumn('s.end_game_seconds', '>', 's.start_game_seconds')
+            ->get(['s.*', 'u.unit_type']);
+        $members = DB::table('nhl_unit_players as up')->join('players as p', 'p.id', '=', 'up.player_id')
+            ->whereIn('up.unit_id', $shifts->pluck('unit_id')->unique())
+            ->orderBy('p.id')->get(['up.unit_id', 'p.id', 'p.full_name', 'p.first_name', 'p.last_name'])->groupBy('unit_id');
+        $time = [];
+        foreach ($games as $game) {
+            $boundaries = [];
+            foreach ($shifts->where('nhl_game_id', $game->nhl_game_id) as $shift) {
+                if (! in_array($shift->team_abbrev, [$game->home_team_abbrev, $game->away_team_abbrev], true)) {
+                    continue;
+                }
+                $boundaries[(int) $shift->start_game_seconds]['start'][] = $shift;
+                $boundaries[(int) $shift->end_game_seconds]['end'][] = $shift;
+            }
+            ksort($boundaries, SORT_NUMERIC);
+            $active = [];
+            $previous = null;
+            foreach ($boundaries as $second => $changes) {
+                $counts = [];
+                foreach ($active as $shift) {
+                    $kind = $shift->unit_type === 'G' ? 'goalies' : 'skaters';
+                    $counts[$shift->team_abbrev][$kind] = ($counts[$shift->team_abbrev][$kind] ?? 0)
+                        + $members->get($shift->unit_id, collect())->count();
+                }
+                $fiveOnFive = count($counts) === 2 && collect($counts)->every(
+                    fn (array $count): bool => ($count['skaters'] ?? 0) === 5 && ($count['goalies'] ?? 0) === 1
+                );
+                if ($previous !== null && $fiveOnFive) {
+                    foreach ($active as $shift) {
+                        if ($shift->unit_type === 'F' && $members->get($shift->unit_id, collect())->count() === 3) {
+                            $key = $game->nhl_game_id.':'.$shift->unit_id;
+                            $time[$key] ??= ['unit_id' => (int) $shift->unit_id, 'game_id' => (int) $game->nhl_game_id,
+                                'team' => $shift->team_abbrev, 'toi_seconds' => 0, 'gf' => 0, 'ga' => 0, 'cf' => 0, 'ca' => 0];
+                            $time[$key]['toi_seconds'] += $second - $previous;
+                        }
+                    }
+                }
+                foreach ($changes['end'] ?? [] as $shift) {
+                    unset($active[$shift->id]);
+                }
+                foreach ($changes['start'] ?? [] as $shift) {
+                    $active[$shift->id] = $shift;
+                }
+                $previous = $second;
+            }
+        }
+
+        $attemptPredicate = app(NhlPbpEventNormalizer::class)->shotAttemptSqlPredicate('p');
+        $events = DB::table('event_unit_shifts as e')->join('nhl_unit_shifts as s', 's.id', '=', 'e.unit_shift_id')
+            ->join('play_by_plays as p', 'p.id', '=', 'e.event_id')->join('nhl_units as u', 'u.id', '=', 's.unit_id')
+            ->whereIn('s.nhl_game_id', $games->pluck('nhl_game_id'))->whereColumn('p.nhl_game_id', 's.nhl_game_id')
+            ->where('u.unit_type', 'F')->where('p.situation_code', '1551')->whereRaw($attemptPredicate)
+            ->distinct()->get(['s.nhl_game_id', 's.unit_id', 's.team_id', 'p.id', 'p.event_owner_team_id', 'p.type_desc_key']);
+        foreach ($events as $event) {
+            $key = $event->nhl_game_id.':'.$event->unit_id;
+            $game = $games->firstWhere('nhl_game_id', $event->nhl_game_id);
+            if (! isset($time[$key]) || ! in_array((int) $event->event_owner_team_id, [(int) $game->home_team_id, (int) $game->away_team_id], true)) {
+                continue;
+            }
+            $for = (int) $event->event_owner_team_id === (int) $event->team_id;
+            $time[$key][$for ? 'cf' : 'ca']++;
+            if ($event->type_desc_key === 'goal') {
+                $time[$key][$for ? 'gf' : 'ga']++;
+            }
+        }
+
+        return collect($time)->map(function (array $row) use ($members, $games): array {
+            $game = $games->firstWhere('nhl_game_id', $row['game_id']);
+            $side = $game->home_team_abbrev === $row['team'] ? 'home' : 'away';
+            return [...$row, 'goal_diff' => $row['gf'] - $row['ga'],
+                'cf_pct' => $row['cf'] + $row['ca'] > 0 ? $row['cf'] / ($row['cf'] + $row['ca']) * 100 : null,
+                'players' => $members[$row['unit_id']]->map(fn (object $player): string => $player->full_name ?: trim($player->first_name.' '.$player->last_name))->all(),
+                'team_logo' => $game->{$side.'_team_logo'},
+                'url' => route('stats.units.index', ['nhl_game_id' => $row['game_id'], 'team' => $row['team'],
+                    'season_id' => $game->season_id, 'game_type' => $game->game_type, 'pos' => ['F'], 'sum' => 0])];
+        })->sortBy([['goal_diff', 'desc'], ['cf_pct', 'desc'], ['toi_seconds', 'desc'], ['unit_id', 'asc']])
+            ->take(4)->values()->all();
+    }
+
+    /** Compare ten-game windows with twenty results available, otherwise five-game windows. */
     private function teamTrends(Collection $games, Collection $boxscores): array
     {
         $teams = [];
@@ -202,10 +294,12 @@ class NhlDashboardPayload
             }
         }
         return collect($teams)->map(function (array $rows): array {
-            $current = collect(array_slice($rows, 0, 10));
-            $previous = collect(array_slice($rows, 10, 10));
+            $window = count($rows) >= 20 ? 10 : 5;
+            $current = collect(array_slice($rows, 0, $window));
+            $previous = collect(array_slice($rows, $window, $window));
 
             return ['team' => $rows[0]['team'], 'name' => $rows[0]['name'], 'logo' => $rows[0]['logo'], 'games' => $current->count(),
+                'comparison_games' => $window, 'previous_games' => $previous->count(),
                 'offense' => $current->avg('gf'), 'defense' => $current->avg('ga'),
                 'special_teams' => $current->every(fn ($row): bool => $row['ppg'] !== null) ? $current->avg('ppg') : null,
                 'offense_delta' => $previous->isNotEmpty() ? $current->avg('gf') - $previous->avg('gf') : null,
