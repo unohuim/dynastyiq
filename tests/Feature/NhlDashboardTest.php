@@ -282,7 +282,7 @@ it('selects team comparison windows from available finished games', function (in
 ]);
 
 
-it('reads strictly five-on-five trios from the completed night', function (int $defenders, int $goalies, int $goalieEnd, int $expectedCount, array $positions = ['R', 'C', 'L'], array $expectedNames = ['TOR F2', 'TOR F1', 'TOR F0']): void {
+it('reads strictly five-on-five trios from the completed night', function (int $defenders, int $goalies, int $goalieEnd, int $expectedCount, array $positions = ['R', 'C', 'L'], array $expectedNames = ['TOR F2', 'TOR F1', 'TOR F0'], array $drawCounts = []): void {
     ($this->game)();
     $forwardShifts = [];
     foreach (['TOR' => 10, 'BOS' => 6] as $team => $teamId) {
@@ -293,7 +293,8 @@ it('reads strictly five-on-five trios from the completed night', function (int $
             $unit = DB::table('nhl_units')->insertGetId(['team_abbrev' => $team, 'unit_type' => $type]);
             for ($i = 0; $i < $count; $i++) {
                 $player = Player::create(['full_name' => $team.' '.$type.$i, 'first_name' => $team, 'last_name' => $type.$i,
-                    'position' => $type === 'F' ? $positions[$i] : $type]);
+                    'position' => $type === 'F' ? $positions[$i] : $type,
+                    'nhl_id' => $type === 'F' ? ($team === 'TOR' ? 9000000 : 9100000) + $i : null]);
                 DB::table('nhl_unit_players')->insert(['unit_id' => $unit, 'player_id' => $player->id]);
             }
             $end = $type === 'G' ? $goalieEnd : 360;
@@ -305,6 +306,15 @@ it('reads strictly five-on-five trios from the completed night', function (int $
             if ($type === 'F') {
                 $forwardShifts[] = $shift;
             }
+        }
+    }
+    foreach ($drawCounts as $index => $draws) {
+        for ($draw = 0; $draw < $draws; $draw++) {
+            DB::table('play_by_plays')->insert([
+                'nhl_game_id' => 2026020001, 'type_desc_key' => 'faceoff',
+                'fo_winning_player_id' => $draw % 2 === 0 ? 9000000 + $index : 9999999,
+                'fo_losing_player_id' => $draw % 2 === 0 ? 9999999 : 9000000 + $index,
+            ]);
         }
     }
     foreach ([['goal', '1551'], ['missed-shot', '1551'], ['goal', '1541'], ['goal', '1441'], ['goal', '0651']] as [$type, $situation]) {
@@ -326,10 +336,13 @@ it('reads strictly five-on-five trios from the completed night', function (int $
             ->and($rows[0]['corsi'])->toBe(2)->and($rows[0]['shifts'])->toBe(1)
             ->and((float) $rows[0]['cf_pct'])->toBe(100.0);
         $this->get(route('welcome'))->assertOk()->assertInertia(fn (Assert $page) => $page
-            ->has('dashboard.line_combinations', 2)->where('dashboard.line_combinations.0.gf', 1));
+            ->has('dashboard.line_combinations', 2)->where('dashboard.line_combinations.0.gf', 1)
+            ->where('dashboard.line_combinations.0.players', $expectedNames));
     }
 })->with([
     'full five on five' => [2, 1, 360, 2],
+    'game draws override listed wing position for centre' => [2, 1, 360, 2, ['L', 'R', 'R'], ['TOR F1', 'TOR F0', 'TOR F2'], [12, 0, 1]],
+    'tied game draws prefer listed centre and wings' => [2, 1, 360, 2, ['R', 'C', 'L'], ['TOR F2', 'TOR F1', 'TOR F0'], [5, 5, 0]],
     'ambiguous roles retain stable identity order' => [2, 1, 360, 2, ['', '', ''], ['TOR F0', 'TOR F1', 'TOR F2']],
     'multi-position eligibility maximizes matching slots' => [2, 1, 360, 2, ['C/R', 'LW', 'C'], ['TOR F1', 'TOR F2', 'TOR F0']],
     'only time with both goalies counts' => [2, 1, 300, 2],

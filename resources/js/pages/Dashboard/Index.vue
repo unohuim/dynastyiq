@@ -258,27 +258,27 @@ function navigateTabs(event, group) {
                 </div>
             </DashboardSection>
 
-            <DashboardSection title="Last Night’s Top Lines" :href="dashboard.links.line_combinations" class="xl:col-span-3">
-                <div role="tablist" aria-label="5v5 line metric" class="mb-2 grid shrink-0 grid-cols-5 gap-1.5">
-                    <button v-for="tab in lineTabs" :id="`line-tab-${tab.key}`" :key="tab.key" type="button" role="tab" :title="tab.unit" :tabindex="lineTab === tab.key ? 0 : -1" :aria-selected="lineTab === tab.key" aria-controls="line-trend-results" class="min-h-9 rounded-lg px-1 text-[11px] font-semibold transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 motion-reduce:transition-none" :class="lineTab === tab.key ? 'bg-blue-600 text-white shadow-sm' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'" @click="lineTab = tab.key" @keydown="navigateTabs($event, 'line')">{{ tab.label }}</button>
+            <DashboardSection title="Last Night’s Top Lines" :href="dashboard.links.line_combinations" class="xl:col-span-3 [&_h2]:text-xs [&>div:first-child>a]:text-[10px]">
+                <div role="tablist" aria-label="5v5 line metric" class="mb-1.5 grid shrink-0 grid-cols-5 gap-1">
+                    <button v-for="tab in lineTabs" :id="`line-tab-${tab.key}`" :key="tab.key" type="button" role="tab" :title="tab.unit" :tabindex="lineTab === tab.key ? 0 : -1" :aria-selected="lineTab === tab.key" aria-controls="line-trend-results" class="min-h-7 rounded-md px-0.5 py-1 text-[10px] font-semibold transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 motion-reduce:transition-none" :class="lineTab === tab.key ? 'bg-blue-600 text-white shadow-sm' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'" @click="lineTab = tab.key" @keydown="navigateTabs($event, 'line')">{{ tab.label }}</button>
                 </div>
-                <p class="mb-2 text-[10px] text-slate-400">{{ performanceDate }} · 5v5 · {{ lineUnit }}<span v-if="lineTab === 'cf_pct'"> · Min. 5:00 TOI</span></p>
+                <p class="mb-2 text-[9px] text-slate-400">{{ performanceDate }} · 5v5 · {{ lineUnit }}<span v-if="lineTab === 'cf_pct'"> · Min. 5:00 TOI</span></p>
                 <div id="line-trend-results" role="tabpanel" :aria-labelledby="`line-tab-${lineTab}`" class="min-h-0 flex-1 overflow-y-auto">
                     <a v-for="(line, index) in lines" :key="`${line.game_id}-${line.unit_id}`" :href="line.url" class="flex items-center gap-2 border-b border-slate-100 py-3 transition-colors duration-150 last:border-b-0 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 motion-reduce:transition-none">
-                        <span class="w-3 shrink-0 text-xs font-semibold tabular-nums text-slate-600">{{ index + 1 }}</span>
+                        <span class="w-3 shrink-0 text-[10px] font-semibold tabular-nums text-slate-600">{{ index + 1 }}</span>
                         <img v-if="line.team_logo" :src="line.team_logo" :alt="line.team" class="h-10 w-10 shrink-0 object-contain" loading="lazy" />
-                        <span v-else class="w-10 shrink-0 text-center text-[10px] font-medium text-slate-500">{{ line.team }}</span>
+                        <span v-else class="w-10 shrink-0 text-center text-[9px] font-medium text-slate-500">{{ line.team }}</span>
                         <div class="min-w-0 flex-1">
                             <div class="flex items-start justify-between gap-2">
-                                <h3 class="min-w-0 text-[11px] font-semibold leading-snug text-slate-950">{{ line.players.join(' · ') }}</h3>
-                                <span class="shrink-0 whitespace-nowrap rounded-lg bg-blue-50 px-2 py-1 text-xs font-bold tabular-nums text-blue-600">{{ lineValue(line, lineTab) }} {{ lineLabel }}</span>
+                                <h3 :title="line.players.join(' · ')" class="min-w-0 truncate text-[10px] font-semibold leading-snug text-slate-950">{{ line.players.join(' · ') }}</h3>
+                                <span class="shrink-0 whitespace-nowrap rounded-md bg-blue-50 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-blue-600">{{ lineValue(line, lineTab) }} {{ lineLabel }}</span>
                             </div>
-                            <div class="mt-1 flex flex-wrap gap-x-1.5 gap-y-1 text-[9px] leading-4 tabular-nums">
+                            <div class="mt-1 flex flex-wrap gap-x-1.5 gap-y-1 text-[8px] leading-3 tabular-nums">
                                 <span v-for="tab in secondaryLineTabs" :key="tab.key" class="whitespace-nowrap border-r border-slate-200 pr-1.5 last:border-r-0 last:pr-0"><span class="text-slate-500">{{ tab.label }}</span>{{ ' ' }}<b class="font-semibold text-slate-950">{{ lineValue(line, tab.key) }}</b></span>
                             </div>
                         </div>
                     </a>
-                    <p v-if="!lines.length" class="py-6 text-center text-xs text-slate-500">{{ dashboard.line_combinations?.length ? 'No lines have data for this metric.' : '5v5 line performances will appear when completed shift and play-by-play data are available.' }}</p>
+                    <p v-if="!lines.length" class="py-6 text-center text-[10px] text-slate-500">{{ dashboard.line_combinations?.length ? 'No lines have data for this metric.' : '5v5 line performances will appear when completed shift and play-by-play data are available.' }}</p>
                 </div>
             </DashboardSection>
 

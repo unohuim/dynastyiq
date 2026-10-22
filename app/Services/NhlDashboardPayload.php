@@ -29,7 +29,7 @@ class NhlDashboardPayload
             $slate->subDay();
         }
         $date = $slate->toDateString();
-        $facts = Cache::remember('nhl:dashboard:facts:v6:'.$date, 300, fn (): array => $this->facts($date));
+        $facts = Cache::remember('nhl:dashboard:facts:v7:'.$date, 300, fn (): array => $this->facts($date));
         $stories = $this->news->feed();
         $articles = collect($stories['items']);
 
@@ -198,7 +198,12 @@ class NhlDashboardPayload
             ->get(['s.*', 'u.unit_type']);
         $members = DB::table('nhl_unit_players as up')->join('players as p', 'p.id', '=', 'up.player_id')
             ->whereIn('up.unit_id', $shifts->pluck('unit_id')->unique())
-            ->orderBy('p.id')->get(['up.unit_id', 'p.id', 'p.full_name', 'p.first_name', 'p.last_name', 'p.position'])->groupBy('unit_id');
+            ->orderBy('p.id')->get(['up.unit_id', 'p.id', 'p.nhl_id', 'p.full_name', 'p.first_name', 'p.last_name', 'p.position'])->groupBy('unit_id');
+        $faceoffs = DB::table('play_by_plays')->whereIn('nhl_game_id', $games->pluck('nhl_game_id'))
+            ->where('type_desc_key', 'faceoff')->get(['nhl_game_id', 'fo_winning_player_id', 'fo_losing_player_id'])
+            ->groupBy('nhl_game_id')->map(fn (Collection $plays): Collection => $plays
+                ->flatMap(fn (object $play): array => [$play->fo_winning_player_id, $play->fo_losing_player_id])
+                ->filter()->countBy());
         $time = [];
         $countedShifts = [];
         foreach ($games as $game) {
@@ -266,12 +271,12 @@ class NhlDashboardPayload
             }
         }
 
-        return collect($time)->map(function (array $row) use ($members, $games): array {
+        return collect($time)->map(function (array $row) use ($members, $games, $faceoffs): array {
             $game = $games->firstWhere('nhl_game_id', $row['game_id']);
             $side = $game->home_team_abbrev === $row['team'] ? 'home' : 'away';
             return [...$row, 'goal_diff' => $row['gf'] - $row['ga'], 'corsi' => $row['cf'] - $row['ca'],
                 'cf_pct' => $row['cf'] + $row['ca'] > 0 ? $row['cf'] / ($row['cf'] + $row['ca']) * 100 : null,
-                'players' => $this->orderedLinePlayers($members[$row['unit_id']]),
+                'players' => $this->orderedLinePlayers($members[$row['unit_id']], $faceoffs->get($row['game_id'], collect())),
                 'team_logo' => $game->{$side.'_team_logo'},
                 'url' => route('stats.units.index', ['nhl_game_id' => $row['game_id'], 'team' => $row['team'],
                     'season_id' => $game->season_id, 'game_type' => $game->game_type, 'pos' => ['F'], 'sum' => 0])];
@@ -279,22 +284,25 @@ class NhlDashboardPayload
             ->values()->all();
     }
 
-    /** Arrange a trio as LW, C, RW using listed eligibility, with stable ties for uncertain roles. */
-    private function orderedLinePlayers(Collection $members): array
+    /** Put the game's busiest faceoff taker at C, then maximize listed wing eligibility with stable ties. */
+    private function orderedLinePlayers(Collection $members, Collection $faceoffs): array
     {
         $players = $members->values()->all();
         $best = [0, 1, 2];
         $bestScore = -1;
+        $bestDraws = -1;
         foreach ([[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]] as $order) {
+            $draws = (int) $faceoffs->get($players[$order[1]]->nhl_id, 0);
             $score = 0;
             foreach ($order as $slot => $index) {
                 $positions = preg_split('/[^A-Z]+/', strtoupper((string) $players[$index]->position), -1, PREG_SPLIT_NO_EMPTY);
                 $eligible = [['L', 'LW'], ['C'], ['R', 'RW']][$slot];
                 $score += count(array_intersect($positions, $eligible)) > 0 ? 1 : 0;
             }
-            if ($score > $bestScore) {
+            if ($draws > $bestDraws || ($draws === $bestDraws && $score > $bestScore)) {
                 $best = $order;
                 $bestScore = $score;
+                $bestDraws = $draws;
             }
         }
 
