@@ -32,15 +32,15 @@ const lineTabs = [
     { key: 'toi_seconds', label: 'TOI', unit: 'Shared 5v5 time' },
 ];
 const lineUnit = computed(() => lineTabs.find(tab => tab.key === lineTab.value)?.unit);
-const lineLabel = computed(() => lineTabs.find(tab => tab.key === lineTab.value)?.label);
 const lines = computed(() => [...(props.dashboard.line_combinations ?? [])]
     .filter(line => Number.isFinite(line[lineTab.value]))
     .sort((a, b) => b[lineTab.value] - a[lineTab.value]
         || b.goal_diff - a.goal_diff || (b.cf_pct ?? -1) - (a.cf_pct ?? -1)
         || b.toi_seconds - a.toi_seconds || a.unit_id - b.unit_id || a.game_id - b.game_id).slice(0, 4));
-const lineValue = line => lineTab.value === 'toi_seconds' ? toi(line.toi_seconds)
-    : lineTab.value === 'cf_pct' ? `${decimal(line.cf_pct)}%`
-        : lineTab.value === 'corsi' && line.corsi > 0 ? `+${line.corsi}` : String(line[lineTab.value]);
+const lineValue = (line, key) => !Number.isFinite(line[key]) ? '—'
+    : key === 'toi_seconds' ? toi(line.toi_seconds)
+        : key === 'cf_pct' ? `${decimal(line.cf_pct)}%`
+            : key === 'corsi' && line.corsi > 0 ? `+${line.corsi}` : String(line[key]);
 const teams = computed(() => [...props.dashboard.team_trends]
     .filter(team => team[teamTab.value] !== null)
     .sort((a, b) => teamTab.value === 'defense' ? a.defense - b.defense : b[teamTab.value] - a[teamTab.value]).slice(0, 5));
@@ -255,18 +255,25 @@ function navigateTabs(event, group) {
                 </div>
             </DashboardSection>
 
-            <DashboardSection title="Last Night’s 5v5 Lines" :href="dashboard.links.line_combinations" class="xl:col-span-3">
-                <div role="tablist" aria-label="5v5 line metric" class="mb-2 grid grid-cols-5 gap-1 rounded bg-slate-50 p-0.5">
-                    <button v-for="tab in lineTabs" :id="`line-tab-${tab.key}`" :key="tab.key" type="button" role="tab" :title="tab.unit" :tabindex="lineTab === tab.key ? 0 : -1" :aria-selected="lineTab === tab.key" aria-controls="line-trend-results" class="min-h-8 rounded border px-1 text-[10px] font-medium transition-colors duration-150 motion-reduce:transition-none" :class="lineTab === tab.key ? 'border-blue-200 bg-white text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-900'" @click="lineTab = tab.key" @keydown="navigateTabs($event, 'line')">{{ tab.label }}</button>
+            <DashboardSection title="Last Night’s 5v5 Lines" :href="dashboard.links.line_combinations" class="[container-type:inline-size] xl:col-span-3">
+                <div role="tablist" aria-label="5v5 line metric" class="mb-2 grid shrink-0 grid-cols-5 gap-1.5">
+                    <button v-for="tab in lineTabs" :id="`line-tab-${tab.key}`" :key="tab.key" type="button" role="tab" :title="tab.unit" :tabindex="lineTab === tab.key ? 0 : -1" :aria-selected="lineTab === tab.key" aria-controls="line-trend-results" class="min-h-9 rounded-lg px-1 text-[11px] font-semibold transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 motion-reduce:transition-none" :class="lineTab === tab.key ? 'bg-blue-600 text-white shadow-sm' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'" @click="lineTab = tab.key" @keydown="navigateTabs($event, 'line')">{{ tab.label }}</button>
                 </div>
                 <p class="mb-2 text-[10px] text-slate-400">{{ performanceDate }} · {{ lineUnit }}</p>
-                <div id="line-trend-results" role="tabpanel" :aria-labelledby="`line-tab-${lineTab}`" class="min-h-0 flex-1 divide-y divide-slate-100 overflow-y-auto">
-                    <a v-for="line in lines" :key="`${line.game_id}-${line.unit_id}`" :href="line.url" class="block rounded py-2 hover:text-blue-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
-                        <div class="flex items-start gap-2">
-                            <img v-if="line.team_logo" :src="line.team_logo" alt="" class="h-7 w-7 shrink-0 object-contain" loading="lazy" />
-                            <div class="min-w-0 flex-1"><h3 class="text-[11px] font-semibold leading-snug">{{ line.players.join(' · ') }}</h3><p class="mt-0.5 text-[9px] text-slate-500">{{ line.team }} · 5v5</p></div>
+                <div id="line-trend-results" role="tabpanel" :aria-labelledby="`line-tab-${lineTab}`" class="min-h-0 flex-1 overflow-y-auto">
+                    <a v-for="line in lines" :key="`${line.game_id}-${line.unit_id}`" :href="line.url" class="grid gap-2 rounded-lg border-t border-slate-100 px-1 py-2.5 transition-colors duration-150 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 motion-reduce:transition-none [@container(min-width:600px)]:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)] [@container(min-width:600px)]:items-center">
+                        <div class="flex min-w-0 items-center gap-2.5">
+                            <div class="flex w-10 shrink-0 flex-col items-center">
+                                <img v-if="line.team_logo" :src="line.team_logo" alt="" class="h-9 w-10 object-contain" loading="lazy" />
+                                <span class="mt-0.5 text-[9px] font-medium text-slate-500">{{ line.team }}</span>
+                            </div>
+                            <h3 class="min-w-0 text-[11px] font-semibold leading-snug text-slate-950">{{ line.players.join(' · ') }}</h3>
                         </div>
-                        <div class="mt-1 flex justify-between gap-2 text-[10px] tabular-nums text-slate-600"><span class="font-semibold text-blue-700">{{ lineValue(line) }} {{ lineLabel }}</span><span><b>{{ line.gf }}–{{ line.ga }}</b> GF–GA</span><span v-if="lineTab !== 'toi_seconds'"><b>{{ toi(line.toi_seconds) }}</b> TOI</span><span v-else><b>{{ decimal(line.cf_pct) }}{{ line.cf_pct === null ? '' : '%' }}</b> CF%</span></div>
+                        <div class="grid grid-cols-5 gap-1 text-center tabular-nums">
+                            <div v-for="tab in lineTabs" :key="tab.key" class="flex min-w-0 flex-col justify-center rounded-md border px-0.5 py-1.5" :class="lineTab === tab.key ? 'border-blue-100 bg-blue-50 text-blue-600' : 'border-transparent bg-slate-100/80 text-slate-950'">
+                                <span class="text-xs font-bold leading-5">{{ lineValue(line, tab.key) }}</span>{{ ' ' }}<span class="text-[9px] leading-4" :class="lineTab === tab.key ? 'text-blue-600' : 'text-slate-500'">{{ tab.label }}</span>
+                            </div>
+                        </div>
                     </a>
                     <p v-if="!lines.length" class="py-6 text-center text-xs text-slate-500">{{ dashboard.line_combinations?.length ? 'No lines have data for this metric.' : '5v5 line performances will appear when completed shift and play-by-play data are available.' }}</p>
                 </div>

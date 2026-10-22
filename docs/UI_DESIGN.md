@@ -10,6 +10,11 @@ brand in the reference. Responsive layouts retain the same content and existing
 mobile navigation. Behavior and data ownership are defined in
 `docs/architecture/ui/NhlDashboard.yaml`.
 
+The homepage Last Night’s 5v5 Lines section follows
+`docs/designs/5v5-lineups-design.png`: solid blue selected tabs, team logos and
+trio names, and five stat tiles with the selected metric highlighted. Retain its
+dashboard position; narrow panels place the stat tiles beneath the trio identity.
+
 The default desktop dashboard overview should fit above the fold, with a compact
 performers/signings/injuries row. Shorter viewports may scroll panel contents;
 explicitly expanded content remains accessible through normal page scrolling.
