@@ -71,6 +71,66 @@ class NhlAnticipatedLineupPayload
         ]];
     }
 
+    /**
+     * Return compact schedule/score facts without assembling lineups or predictions.
+     *
+     * @return array<string,mixed>
+     */
+    public function scoreboard(Carbon $start, Carbon $end): array
+    {
+        $games = NhlGame::query()->whereBetween('game_date', [$start->toDateString(), $end->toDateString()])
+            ->orderBy('game_date')->orderBy('start_time_utc')->orderBy('nhl_game_id')->get();
+        $rows = $games->map(function (NhlGame $game): array {
+            $storedState = mb_strtoupper((string) $game->game_state);
+            $finished = in_array($storedState, ['FINAL', 'OFF'], true);
+            $hasFinalScore = $finished && $game->away_team_score !== null && $game->home_team_score !== null;
+            $today = Carbon::now('UTC')->startOfDay();
+            $older = $game->game_date->toDateString() < $today->copy()->subDay()->toDateString();
+            if ($hasFinalScore) {
+                $live = null;
+            } elseif (($older && ! in_array($storedState, ['PPD', 'CNCL'], true))
+                || ($finished && $game->game_date->toDateString() <= $today->toDateString())) {
+                $this->liveContext->refreshFinalScore($game);
+                $live = null;
+            } else {
+                $live = $this->recentGameContext($game, true);
+            }
+            $provider = $live['live_game'] ?? null;
+            $state = mb_strtoupper((string) ($provider['game_state'] ?? $live['state'] ?? $game->game_state));
+            $liveState = $state !== '' && ! in_array($state, ['FUT', 'PRE', 'FINAL', 'OFF', 'PPD', 'CNCL'], true);
+            $available = ! $liveState || $provider !== null;
+            $showScore = ! in_array($state, ['', 'FUT', 'PRE', 'PPD', 'CNCL'], true)
+                && ($provider !== null || ($live['show_score'] ?? false)
+                    || (in_array($state, ['FINAL', 'OFF'], true)
+                        && $game->away_team_score !== null && $game->home_team_score !== null));
+            $teams = [];
+            foreach (['away', 'home'] as $side) {
+                $team = $provider[$side] ?? null;
+                $teams[$side] = [
+                    'team_abbrev' => $available ? ($team['team_abbrev'] ?? $game->{$side.'_team_abbrev'}) : null,
+                    'team_logo' => $available ? ($team['team_logo'] ?? $game->{$side.'_team_logo'}) : null,
+                    'score' => $showScore && $available ? ($team['score'] ?? $game->{$side.'_team_score'}) : null,
+                ];
+                // Live identity and scores must come only from provider JSON.
+                if ($provider !== null) {
+                    $teams[$side] = ['team_abbrev' => $team['team_abbrev'] ?? null,
+                        'team_logo' => $team['team_logo'] ?? null, 'score' => $showScore ? ($team['score'] ?? null) : null];
+                }
+            }
+
+            return ['nhl_game_id' => $game->nhl_game_id, 'href' => route('games.show', $game->nhl_game_id),
+                'game_date' => $game->game_date->toDateString(),
+                'start_time_utc' => $liveState ? ($provider['start_time_utc'] ?? null)
+                    : ($provider['start_time_utc'] ?? $game->start_time_utc?->toIso8601String()),
+                'game_state' => $state, 'live_data_unavailable' => ! $available, ...$teams];
+        });
+        $bounds = NhlGame::query()->selectRaw('MIN(game_date) AS first_date, MAX(game_date) AS last_date')->first();
+
+        return ['games' => $rows, 'meta' => ['start' => $start->toDateString(), 'end' => $end->toDateString(),
+            'min_date' => $bounds?->first_date, 'max_date' => $bounds?->last_date,
+            'timezone' => 'America/Toronto', 'generated_at' => now()->toIso8601String()]];
+    }
+
     /** @return array<string,mixed> */
     public function page(Carbon $date): array
     {
@@ -378,7 +438,7 @@ class NhlAnticipatedLineupPayload
     }
 
     /** @return array<string,mixed>|null */
-    private function recentGameContext(NhlGame $game): ?array
+    private function recentGameContext(NhlGame $game, bool $compact = false): ?array
     {
         $today = Carbon::now('UTC')->startOfDay();
         if (! in_array($game->game_date->toDateString(), [
@@ -388,7 +448,7 @@ class NhlAnticipatedLineupPayload
         }
 
         if ($game->game_state !== 'FINAL') {
-            $context = $this->liveContext->forGame($game);
+            $context = $compact ? $this->liveContext->forGame($game, true) : $this->liveContext->forGame($game);
             if ($context !== null && filled($context['state'] ?? null)) {
                 return $context;
             }

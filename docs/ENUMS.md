@@ -1,5 +1,10 @@
 # ENUMS - Canonical Enum Authority
 
+## NHL dashboard editorial feeds
+
+- `NhlDashboardNews::feed` accepts `stories` or `videos`; the default is `stories`.
+- Dashboard tabs are page-local display state and do not configure prediction engines.
+
 ## Admin engine game prediction snapshots
 
 - Snapshot `version`: `1` (legacy single Engine), `2` (multi-Engine accordion workspace).

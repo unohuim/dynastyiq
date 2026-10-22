@@ -55,6 +55,22 @@ class NhlGamesController extends Controller
         return response()->json($payload->page($date));
     }
 
+    /** Read a bounded, compact date range for the mobile shell scoreboard. */
+    public function scoreboard(Request $request, NhlAnticipatedLineupPayload $payload): JsonResponse
+    {
+        $input = $request->validate([
+            'start' => ['required', 'date_format:Y-m-d'],
+            'end' => ['required', 'date_format:Y-m-d', 'after_or_equal:start'],
+        ]);
+        $start = Carbon::createFromFormat('Y-m-d', $input['start'])->startOfDay();
+        $end = Carbon::createFromFormat('Y-m-d', $input['end'])->startOfDay();
+        if ($start->diffInDays($end) > 30) {
+            throw \Illuminate\Validation\ValidationException::withMessages(['end' => 'Request at most 31 calendar days at a time.']);
+        }
+
+        return response()->json($payload->scoreboard($start, $end))->header('Cache-Control', 'no-store');
+    }
+
     /** Display the latest current lineup projection for both teams in a game. */
     public function show(int $nhlGameId, NhlAnticipatedLineupPayload $payload): Response
     {

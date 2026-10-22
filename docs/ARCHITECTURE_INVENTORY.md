@@ -1,11 +1,33 @@
 # Architecture Inventory
 
+The public root and authenticated dashboard share the Vue NHL dashboard defined
+by `docs/designs/diq-dashboard-desktop-design.png`, using the complete DynastyIQ
+logo. `NhlDashboardController`, `NhlDashboardPayload`, and `NhlDashboardNews`
+supply cached official NHL news/video, four factual top performers, transactions,
+injuries and recent team/player form. Featured stories are excluded from Around
+the NHL. `/games` remains the separate game index. Authority:
+`docs/architecture/ui/NhlDashboard.yaml`.
+
 Inertia pages use a dedicated `resources/js/inertia.js` entry and Vue `AppLayout`
 for navigation, account controls, mobile drawers and toast feedback. Safe shared
 shell props come from `HandleInertiaRequests`; account writes retain existing
 endpoints. The root Blade file is only an HTML/asset/mount document. Legacy page
 layouts and their Alpine bootstrap remain separate. Authority:
 `docs/architecture/ui/InertiaAppShell.yaml`.
+
+The shared Inertia mobile and desktop layout includes a compact dark scoreboard with date
+controls and a Games link with a right chevron above a full-width strip. Horizontal browsing
+updates the selected date and link, loading weeks with directional feedback and
+retaining fetched dates locally for return navigation. Empty dates do not block
+calendar browsing beyond stored schedule bounds. Its default date
+rolls from yesterday to today at 11 a.m. America/Toronto. The browser-only
+`games.scoreboard` route returns bounded compact facts without assembling lineups
+or predictions. Completed header games use stored final scores without player-import
+requirements; missing historical finals use a cached NHL fallback that persists
+validated final scores. Authority: `docs/architecture/ui/InertiaAppShell.yaml`.
+
+Desktop navigation sits above the scoreboard with the full home-linked DynastyIQ
+logo at the left, eligible menu links in the middle and the account avatar at the right.
 
 Private admin engine game prediction snapshots preserve diagnostic workspaces
 with four rotating autosaves and fifty named copies per user. Controller/model:

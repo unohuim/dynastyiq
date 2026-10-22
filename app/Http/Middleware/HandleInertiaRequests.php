@@ -59,7 +59,7 @@ class HandleInertiaRequests extends Middleware
             'label' => $label, 'href' => route($route), 'active' => $request->routeIs($pattern),
         ];
         $primary = [
-            $link('Home', $user ? 'dashboard' : 'welcome', $user ? 'dashboard' : 'welcome'),
+            [...$link('Home', 'welcome', 'welcome'), 'active' => $request->routeIs('welcome', 'dashboard')],
             $link('Stats', 'stats.index', 'stats.index'),
         ];
         if ($user) {
@@ -93,6 +93,8 @@ class HandleInertiaRequests extends Middleware
         return [
             'csrf' => csrf_token(),
             'primary' => $primary,
+            'scoreboard_url' => route('games.scoreboard'),
+            'scoreboard_games_url' => route('games.index'),
             'news' => [
                 $link('Transactions', 'transactions.index', 'transactions.*'),
                 $link('Starting Goalies', 'starting-goalies.index', 'starting-goalies.*'),

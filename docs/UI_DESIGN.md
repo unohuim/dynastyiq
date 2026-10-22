@@ -2,6 +2,18 @@
 
 This document defines the **authoritative UI design rules** for this repository.
 
+For the public root and authenticated dashboard, the approved visual reference is
+`docs/designs/diq-dashboard-desktop-design.png`. Its editorial grid, image overlays,
+panel arrangement, dark chrome and blue actions are explicitly approved for those
+surfaces. Use the complete DynastyIQ logo asset rather than recreating the textual
+brand in the reference. Responsive layouts retain the same content and existing
+mobile navigation. Behavior and data ownership are defined in
+`docs/architecture/ui/NhlDashboard.yaml`.
+
+The default desktop dashboard overview should fit above the fold, with a compact
+performers/signings/injuries row. Shorter viewports may scroll panel contents;
+explicitly expanded content remains accessible through normal page scrolling.
+
 Its purpose is to:
 
 - Prevent UI drift across many PRs

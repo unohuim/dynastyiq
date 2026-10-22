@@ -45,6 +45,9 @@ return [
     | inject any credentials.
     |
     */
+    'nhl_content' => [
+        'base' => 'https://forge-dapi.d3.nhle.com/v2/content/en-us',
+    ],
     'nhl' => [
         'base'      => env('NHL_BASE_URL', 'https://api-web.nhle.com/v1'),
         'auth'      => [

@@ -6,23 +6,26 @@ location:
   - app/Services/NhlAnticipatedLineupPayload.php
   - resources/js/pages/Games/GameCard.vue
   - resources/js/pages/Games/Show.vue
+  - resources/js/layouts/MobileScoreboard.vue
 purpose: Enrich today's public NHL game cards with short-lived official state, current scores, and canonical starting-goalie selection.
 when_to_use:
   - Rendering a UTC-today or UTC-yesterday NHL game that remains unfinished.
+  - Repairing missing final scoreboard scores for older scheduled games from cached final provider evidence.
   - Selecting the same starting-goalie identity for public game cards and partner predictions.
 when_not_to_use:
   - Replacing completed historical boxscore imports.
-  - Polling NHL gamecenter for future dates or dates older than UTC yesterday.
+  - Polling NHL gamecenter for future dates or repeatedly fetching historical games with complete stored final scores.
   - Treating projected goalie selection as confirmed evidence.
 rules:
   - The Vue games index sorts live games first, pregame or unknown-state games next, and FINAL games last, with ascending puck-drop time within each group. Ordering recomputes after AJAX payload updates without mutating provider payload order; unavailable live games retain live priority.
   - NHL gamecenter boxscore responses are cached independently by NHL game id for sixty seconds.
   - Live presentation uses NHL boxscore JSON exclusively. The sole local enrichment is goalie avatar lookup by provider playerId. Database names, scores, team metadata, projected starters, and anticipated lineups must not fill missing live fields.
   - Provider failure must not prevent the page from rendering; known-live games display unavailable rather than stored game details. Cached provider JSON remains provider evidence under the existing sixty-second cache.
-  - Public index/detail refreshes and scheduled boxscore sync include UTC yesterday's unfinished games so midnight cannot strand games in progress. Stored FINAL games do not refresh; recent final scores remain visible without waiting for the historical import pipeline. Older games retain the existing historical import checks.
+  - Public index/detail refreshes and scheduled boxscore sync include UTC yesterday's unfinished games so midnight cannot strand games in progress. Stored FINAL games do not refresh; recent final scores remain visible without waiting for the historical import pipeline. Older index/detail games retain the existing historical import checks; the compact scoreboard uses the separate final-score rules below.
   - FUT renders as Pregame and PRE renders as Starting soon.
   - Every non-empty provider state other than FUT, PRE, and FINAL is treated as live and renders current provider scores; FINAL renders final provider scores.
   - Live and FINAL provider state, scores, and team shots on goal are persisted to existing nhl_games fields. Missing provider SOG fields preserve stored counts rather than inventing zero.
+  - The compact mobile scoreboard reads bounded date ranges without lineup or prediction assembly. The shared live reader offers compact mode, which reuses its boxscore cache and persistence while omitting goalie selection and roster assembly. Live identity and scores remain provider-owned and unavailable live evidence never falls back to database team facts. Completed OFF and FINAL games use nhl_games scores without requiring player-boxscore imports. Missing final scores or stale older schedule states may use the cached gamecenter fallback; only matching game IDs, final states and both nonnegative integer scores may repair nhl_games. This repair does not select or lock goalies, assemble rosters or update import progress. Failed fallback requests are cached for sixty seconds; unavailable scores remain unknown. Complete stored finals never trigger provider calls. Future zero score columns remain hidden. This browser endpoint does not change partner API contracts.
   - Live Vue game cards replace team lineup badges and observation timestamps with team scores and SOG counts. Missing values display a dash; pregame and FINAL presentation is unchanged. Public game payloads expose each team's nullable sog alongside score.
   - Pregame cards select goalies in order from official boxscore starter, confirmed or expected observation, season projection, then workload projection.
   - Pregame public and prediction consumers use NhlStartingGoalieSelector; live presentation must bypass that selector and its projected-player fallbacks entirely.
@@ -34,7 +37,9 @@ rules:
 public_interface:
   - GET /games
   - GET /games/payload
+  - GET /games/scoreboard
   - NhlGameLiveContext::forGame
+  - NhlGameLiveContext::refreshFinalScore
   - NhlStartingGoalieSelector::select
 example_usage: |
   $context = app(NhlGameLiveContext::class)->forGame($game);

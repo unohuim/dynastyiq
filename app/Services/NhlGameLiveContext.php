@@ -20,8 +20,47 @@ class NhlGameLiveContext
     {
     }
 
-    /** @return array<string,mixed>|null */
-    public function forGame(NhlGame $game): ?array
+    /** Repair missing historical final scores without loading player or goalie context. */
+    public function refreshFinalScore(NhlGame $game): void
+    {
+        $response = Cache::remember(
+            'nhl:gamecenter:boxscore:' . $game->nhl_game_id,
+            60,
+            function () use ($game): array|string {
+                try {
+                    return $this->getAPIData('nhl', 'boxscore', ['gameId' => $game->nhl_game_id]);
+                } catch (Throwable $exception) {
+                    report($exception);
+
+                    return [];
+                }
+            }
+        );
+        if (! is_array($response)
+            || (int) ($response['id'] ?? 0) !== (int) $game->nhl_game_id
+            || ! in_array(mb_strtoupper((string) ($response['gameState'] ?? '')), ['FINAL', 'OFF'], true)) {
+            return;
+        }
+
+        $away = data_get($response, 'awayTeam.score');
+        $home = data_get($response, 'homeTeam.score');
+        if (! is_int($away) || ! is_int($home) || $away < 0 || $home < 0) {
+            return;
+        }
+
+        $game->forceFill([
+            'game_state' => mb_strtoupper((string) $response['gameState']),
+            'away_team_score' => $away,
+            'home_team_score' => $home,
+        ])->save();
+    }
+
+    /**
+     * Read shared provider evidence; compact mode omits goalie selection and roster assembly.
+     *
+     * @return array<string,mixed>|null
+     */
+    public function forGame(NhlGame $game, bool $compact = false): ?array
     {
         try {
             $response = Cache::remember(
@@ -53,6 +92,19 @@ class NhlGameLiveContext
             ])->save();
         } elseif ($state !== '' && $game->game_state !== $state) {
             $game->forceFill(['game_state' => $state])->save();
+        }
+
+        if ($compact) {
+            $teams = [];
+            foreach (['away', 'home'] as $side) {
+                $team = $response[$side.'Team'] ?? [];
+                $teams[$side] = ['team_abbrev' => $team['abbrev'] ?? null,
+                    'team_logo' => $team['logo'] ?? null, 'score' => $showScore ? ($team['score'] ?? null) : null];
+            }
+
+            return ['state' => $state, 'show_score' => $showScore,
+                'live_game' => $showScore ? ['game_state' => $state,
+                    'start_time_utc' => $response['startTimeUTC'] ?? null, ...$teams] : null];
         }
 
         if ($showScore && $state !== 'FINAL') {

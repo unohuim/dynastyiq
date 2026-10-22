@@ -8,6 +8,7 @@ use App\Http\Controllers\PlayerImportController;
 use App\Http\Controllers\NhlPlayerTransactionController;
 use App\Http\Controllers\NhlAvailabilityController;
 use App\Http\Controllers\NhlGamesController;
+use App\Http\Controllers\NhlDashboardController;
 use App\Http\Controllers\PlayerRankingController;
 use App\Http\Controllers\SeasonStatController;
 use App\Http\Controllers\LeagueController;
@@ -36,7 +37,7 @@ use App\Http\Controllers\PatreonSyncController;
 */
 
 Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
-    Route::get('/', [NhlGamesController::class, 'index'])->name('welcome');
+    Route::get('/', [NhlDashboardController::class, 'index'])->name('welcome');
 
     Route::post('/analytics/events', [AnalyticsController::class, 'store'])
         ->name('analytics.events.store');
@@ -73,6 +74,7 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
     Route::get('/lineups-test/{matchId}/lineups', [\App\Http\Controllers\HighlightlyLineupsTestController::class, 'lineups'])
         ->whereNumber('matchId')->name('lineups-test.lineups');
     Route::get('/games/payload', [NhlGamesController::class, 'payload'])->name('games.payload');
+    Route::get('/games/scoreboard', [NhlGamesController::class, 'scoreboard'])->name('games.scoreboard');
     Route::get('/games/{nhlGameId}', [NhlGamesController::class, 'show'])
         ->whereNumber('nhlGameId')
         ->name('games.show');
@@ -120,7 +122,7 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
         'verified',
     ])->group(function () {
 
-        Route::get('/dashboard', [NhlGamesController::class, 'index'])->name('dashboard');
+        Route::get('/dashboard', [NhlDashboardController::class, 'index'])->name('dashboard');
 
         Route::get('/admin', [\App\Http\Controllers\Admin\DashboardController::class, 'index'])
             ->middleware(['admin.super', 'admin.lifecycle'])

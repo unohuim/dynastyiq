@@ -2,6 +2,9 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp, h, nextTick } from 'vue';
+import * as inertia from '@inertiajs/vue3';
+import * as shellRealtime from '../layouts/shell-realtime';
+import AppLayout from '../layouts/AppLayout.vue';
 import ManualLineupModal from './Games/ManualLineupModal.vue';
 import ToggleSwitch from '../components/ToggleSwitch.vue';
 import GameCard from './Games/GameCard.vue';
@@ -886,5 +889,123 @@ describe('Vue game sync settings', () => {
         await vi.advanceTimersByTimeAsync(500);
         await settle();
         expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ enabled: false, timing: { start_before_minutes: 30, pregame_seconds: 4500, live_seconds: 300 } });
+    });
+});
+
+
+describe('Inertia mobile navigation', () => {
+    let app;
+    let page;
+    const mobileNav = () => document.querySelector('nav[aria-label="Mobile navigation"]');
+
+    beforeEach(() => {
+        document.body.innerHTML = '<div id="mobile-shell"></div>';
+        page = { url: '/dashboard', props: {
+            auth: { user: { id: 1, name: 'Rob' } },
+            shell: {
+                primary: [
+                    { label: 'Home', href: '/', active: true },
+                    { label: 'Stats', href: '/stats', active: false },
+                    { label: 'Leagues', href: '/leagues', active: false },
+                ],
+                news: [
+                    { label: 'Transactions', href: '/transactions', active: false },
+                    { label: 'Starting Goalies', href: '/starting-goalies', active: false },
+                    { label: 'Injuries', href: '/injuries', active: false },
+                ],
+                organization: { id: null }, csrf: 'test-token', flashes: [],
+                avatar: '/avatar.png', login_url: '/auth/discord',
+            },
+        } };
+        vi.spyOn(inertia, 'usePage').mockImplementation(() => page);
+        vi.spyOn(shellRealtime, 'connectShellRealtime').mockReturnValue(() => {});
+    });
+
+    afterEach(() => {
+        app?.unmount();
+        document.body.innerHTML = '';
+        vi.restoreAllMocks();
+    });
+
+    function mountShell() {
+        app = createApp(AppLayout);
+        app.mount('#mobile-shell');
+    }
+
+    it('places the desktop home logo before the menu and account avatar after it', () => {
+        mountShell();
+        const menu = document.querySelector('[aria-label="Primary navigation"]');
+        const row = menu.parentElement;
+        const home = row.firstElementChild;
+        expect(home.getAttribute('href')).toBe('/');
+        expect(home.getAttribute('aria-label')).toBe('Home');
+        expect(home.querySelector('image').getAttribute('href')).toBe('/images/logo.png');
+        expect(home.querySelector('image').getAttribute('filter')).toBe('url(#desktop-brand-transparent)');
+        expect(home.querySelector('filter').id).toBe('desktop-brand-transparent');
+        expect(home.querySelector('svg').getAttribute('viewBox')).toBe('0 0 928 804');
+        expect(menu.querySelector('a[href="/"]')).toBeNull();
+        expect(menu.querySelector('a[href="/stats"]')).not.toBeNull();
+        expect(menu.querySelector('a[href="/leagues"]')).not.toBeNull();
+        expect(row.lastElementChild.getAttribute('aria-label')).toBe('Open account');
+        expect(row.lastElementChild.querySelector('img').getAttribute('src')).toBe('/avatar.png');
+    });
+
+    it('matches the original dark mobile bar and evenly spaced icon layout', () => {
+        mountShell();
+        expect(mobileNav().classList.contains('bg-gray-900')).toBe(true);
+        expect(mobileNav().classList.contains('md:hidden')).toBe(true);
+        expect(mobileNav().querySelector('ul').children).toHaveLength(5);
+        expect(mobileNav().querySelectorAll('svg')).toHaveLength(4);
+        expect(mobileNav().querySelector('a[href="/"] image').getAttribute('href')).toBe('/images/logo.png');
+        expect(mobileNav().querySelector('a[href="/"] image').getAttribute('filter')).toBe('url(#mobile-brand-transparent)');
+        const home = mobileNav().querySelector('[aria-current="page"]');
+        expect(home.getAttribute('aria-label')).toBe('Home');
+        expect(home.textContent.trim()).toBe('');
+        const logo = home.querySelector('svg');
+        const avatar = mobileNav().querySelector('[aria-label="Open account"] img');
+        expect(logo.classList.contains('h-11')).toBe(true);
+        expect(logo.classList.contains('w-12')).toBe(true);
+        expect(avatar.classList.contains('h-9')).toBe(true);
+        expect(avatar.classList.contains('w-9')).toBe(true);
+        expect(logo.getAttribute('viewBox')).toBe('0 0 928 804');
+        expect(logo.getAttribute('preserveAspectRatio')).toBe('xMidYMid meet');
+        expect(mobileNav().querySelector('a[href="/stats"]')).not.toBeNull();
+        expect(mobileNav().querySelector('a[href="/leagues"]')).toBeNull();
+    });
+
+    it('shows the account avatar in the original circular style', () => {
+        mountShell();
+        const account = mobileNav().querySelector('[aria-label="Open account"]');
+        expect(account.querySelector('img').getAttribute('src')).toBe('/avatar.png');
+        expect(account.querySelector('img').classList.contains('rounded-full')).toBe(true);
+        expect(account.querySelector('.sr-only').textContent).toBe('Account');
+    });
+
+    it('shows the guest Discord sign-in item without member controls', () => {
+        page.props.auth.user = null;
+        mountShell();
+        expect(mobileNav().querySelector('ul').children).toHaveLength(4);
+        const signIn = mobileNav().querySelector('a[href="/auth/discord"]');
+        expect(signIn.textContent).toContain('Sign In');
+        expect(signIn.querySelector('img').getAttribute('src')).toBe('/images/Discord-Symbol-White.svg');
+        expect(mobileNav().querySelector('[aria-label="Open account"]')).toBeNull();
+        expect(mobileNav().textContent).not.toContain('Menu');
+        expect(shellRealtime.connectShellRealtime).not.toHaveBeenCalled();
+    });
+
+    it('opens the mobile News menu independently of desktop navigation', async () => {
+        mountShell();
+        const trigger = mobileNav().querySelector('[aria-label="Open news menu"]');
+        trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+        await nextTick();
+        await nextTick();
+        expect(trigger.getAttribute('aria-expanded')).toBe('true');
+        const menus = document.querySelectorAll('[role="menu"]');
+        expect(menus).toHaveLength(1);
+        expect([...menus[0].querySelectorAll('a')].map(link => link.getAttribute('href')))
+            .toEqual(['/transactions', '/starting-goalies', '/injuries']);
+        menus[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+        await nextTick();
+        expect(trigger.getAttribute('aria-expanded')).toBe('false');
     });
 });
