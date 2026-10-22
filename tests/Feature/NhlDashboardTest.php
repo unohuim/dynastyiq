@@ -410,24 +410,25 @@ it('retains all line candidates and counts shared shifts once across other-unit 
 });
 
 
-it('orders current injury reports oldest-created first and includes anticipated return dates', function (): void {
-    foreach ([4, 1, 5, 2, 3] as $day) {
+it('shows the 25 newest-created injury reports and includes anticipated return dates', function (): void {
+    foreach (range(28, 1) as $index) {
         \App\Models\NhlPlayerInjury::create([
-            'player_name' => 'Injured '.$day, 'availability' => 'out', 'evidence_level' => 'reported',
-            'sources' => [], 'first_observed_at' => '2026-10-01 12:00:00',
-            'last_observed_at' => Carbon::parse('2026-10-22')->subDays($day),
+            'player_name' => 'Injured '.$index, 'availability' => 'out', 'evidence_level' => 'reported',
+            'sources' => [], 'first_observed_at' => '2026-09-01 12:00:00',
+            'last_observed_at' => Carbon::parse('2026-10-22')->subHours(29 - $index),
             'last_seen_at' => '2026-10-22 12:00:00',
-            'created_at' => '2026-10-0'.$day.' 12:00:00',
-            'anticipated_return_date' => $day === 1 ? '2026-10-29' : null,
+            'created_at' => Carbon::parse('2026-10-22')->subDays($index),
+            'anticipated_return_date' => $index === 1 ? '2026-10-29' : null,
         ]);
     }
     $data = app(NhlDashboardPayload::class)->build();
-    expect(array_column($data['injuries'], 'name'))->toBe(['Injured 1', 'Injured 2', 'Injured 3', 'Injured 4'])
+    expect(array_column($data['injuries'], 'name'))->toBe(array_map(fn (int $index): string => 'Injured '.$index, range(1, 25)))
         ->and($data['injuries'][0]['anticipated_return_date'])->toBe('2026-10-29')
         ->and($data['injuries'][1]['anticipated_return_date'])->toBeNull();
     $this->get(route('welcome'))->assertOk()->assertInertia(fn (Assert $page) => $page
-        ->has('dashboard.injuries', 4)
+        ->has('dashboard.injuries', 25)
         ->where('dashboard.injuries.0.name', 'Injured 1')
+        ->where('dashboard.injuries.24.name', 'Injured 25')
         ->where('dashboard.injuries.0.anticipated_return_date', '2026-10-29')
         ->where('dashboard.injuries.1.anticipated_return_date', null));
 });

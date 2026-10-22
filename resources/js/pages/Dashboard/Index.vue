@@ -287,8 +287,8 @@ function navigateTabs(event, group) {
                 <p v-if="!dashboard.transactions.length" class="py-4 text-center text-xs text-slate-500">No recent signings or moves are available.</p>
             </DashboardSection>
 
-            <DashboardSection title="Injury Watch" :href="dashboard.links.injuries" class="order-3 md:order-none xl:col-span-3">
-                <div class="min-h-0 flex-1 divide-y divide-slate-100 overflow-y-auto">
+            <DashboardSection title="Injury Watch" :href="dashboard.links.injuries" class="order-3 h-64 md:order-none xl:col-span-3 xl:h-auto">
+                <div role="region" aria-label="Recent injuries" tabindex="0" class="min-h-0 flex-1 divide-y divide-slate-100 overflow-y-auto overscroll-y-contain focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500">
                     <a v-for="player in dashboard.injuries" :key="player.id" :href="player.url" v-bind="externalLinkAttributes(player.url)" class="flex min-h-8 items-center gap-2 py-0.5 hover:text-blue-600">
                         <img v-if="player.avatar" :src="player.avatar" alt="" class="h-6 w-6 shrink-0 rounded bg-slate-50 object-contain" loading="lazy" />
                         <span v-else class="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-slate-50 text-[10px] text-slate-500">{{ initials(player.name) }}</span>
