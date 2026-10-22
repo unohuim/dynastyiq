@@ -282,7 +282,7 @@ it('selects team comparison windows from available finished games', function (in
 ]);
 
 
-it('reads strictly five-on-five trios from the completed night', function (int $defenders, int $goalies, int $goalieEnd, int $expectedCount): void {
+it('reads strictly five-on-five trios from the completed night', function (int $defenders, int $goalies, int $goalieEnd, int $expectedCount, array $positions = ['R', 'C', 'L'], array $expectedNames = ['TOR F2', 'TOR F1', 'TOR F0']): void {
     ($this->game)();
     $forwardShifts = [];
     foreach (['TOR' => 10, 'BOS' => 6] as $team => $teamId) {
@@ -292,7 +292,8 @@ it('reads strictly five-on-five trios from the completed night', function (int $
             }
             $unit = DB::table('nhl_units')->insertGetId(['team_abbrev' => $team, 'unit_type' => $type]);
             for ($i = 0; $i < $count; $i++) {
-                $player = Player::create(['full_name' => $team.' '.$type.$i, 'first_name' => $team, 'last_name' => $type.$i]);
+                $player = Player::create(['full_name' => $team.' '.$type.$i, 'first_name' => $team, 'last_name' => $type.$i,
+                    'position' => $type === 'F' ? $positions[$i] : $type]);
                 DB::table('nhl_unit_players')->insert(['unit_id' => $unit, 'player_id' => $player->id]);
             }
             $end = $type === 'G' ? $goalieEnd : 360;
@@ -319,6 +320,7 @@ it('reads strictly five-on-five trios from the completed night', function (int $
     expect($rows)->toHaveCount($expectedCount);
     if ($expectedCount > 0) {
         expect($rows[0]['team'])->toBe('TOR')->and($rows[0]['players'])->toHaveCount(3)
+            ->and($rows[0]['players'])->toBe($expectedNames)
             ->and($rows[0]['toi_seconds'])->toBe($goalieEnd)->and($rows[0]['gf'])->toBe(1)
             ->and($rows[0]['ga'])->toBe(0)->and($rows[0]['cf'])->toBe(2)
             ->and($rows[0]['corsi'])->toBe(2)->and($rows[0]['shifts'])->toBe(1)
@@ -328,6 +330,8 @@ it('reads strictly five-on-five trios from the completed night', function (int $
     }
 })->with([
     'full five on five' => [2, 1, 360, 2],
+    'ambiguous roles retain stable identity order' => [2, 1, 360, 2, ['', '', ''], ['TOR F0', 'TOR F1', 'TOR F2']],
+    'multi-position eligibility maximizes matching slots' => [2, 1, 360, 2, ['C/R', 'LW', 'C'], ['TOR F1', 'TOR F2', 'TOR F0']],
     'only time with both goalies counts' => [2, 1, 300, 2],
     'four on four is excluded' => [1, 1, 360, 0],
     'empty nets are excluded' => [2, 0, 360, 0],

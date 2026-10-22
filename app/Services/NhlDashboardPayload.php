@@ -29,7 +29,7 @@ class NhlDashboardPayload
             $slate->subDay();
         }
         $date = $slate->toDateString();
-        $facts = Cache::remember('nhl:dashboard:facts:v5:'.$date, 300, fn (): array => $this->facts($date));
+        $facts = Cache::remember('nhl:dashboard:facts:v6:'.$date, 300, fn (): array => $this->facts($date));
         $stories = $this->news->feed();
         $articles = collect($stories['items']);
 
@@ -198,7 +198,7 @@ class NhlDashboardPayload
             ->get(['s.*', 'u.unit_type']);
         $members = DB::table('nhl_unit_players as up')->join('players as p', 'p.id', '=', 'up.player_id')
             ->whereIn('up.unit_id', $shifts->pluck('unit_id')->unique())
-            ->orderBy('p.id')->get(['up.unit_id', 'p.id', 'p.full_name', 'p.first_name', 'p.last_name'])->groupBy('unit_id');
+            ->orderBy('p.id')->get(['up.unit_id', 'p.id', 'p.full_name', 'p.first_name', 'p.last_name', 'p.position'])->groupBy('unit_id');
         $time = [];
         $countedShifts = [];
         foreach ($games as $game) {
@@ -271,12 +271,35 @@ class NhlDashboardPayload
             $side = $game->home_team_abbrev === $row['team'] ? 'home' : 'away';
             return [...$row, 'goal_diff' => $row['gf'] - $row['ga'], 'corsi' => $row['cf'] - $row['ca'],
                 'cf_pct' => $row['cf'] + $row['ca'] > 0 ? $row['cf'] / ($row['cf'] + $row['ca']) * 100 : null,
-                'players' => $members[$row['unit_id']]->map(fn (object $player): string => $player->full_name ?: trim($player->first_name.' '.$player->last_name))->all(),
+                'players' => $this->orderedLinePlayers($members[$row['unit_id']]),
                 'team_logo' => $game->{$side.'_team_logo'},
                 'url' => route('stats.units.index', ['nhl_game_id' => $row['game_id'], 'team' => $row['team'],
                     'season_id' => $game->season_id, 'game_type' => $game->game_type, 'pos' => ['F'], 'sum' => 0])];
         })->sortBy([['goal_diff', 'desc'], ['cf_pct', 'desc'], ['toi_seconds', 'desc'], ['unit_id', 'asc']])
             ->values()->all();
+    }
+
+    /** Arrange a trio as LW, C, RW using listed eligibility, with stable ties for uncertain roles. */
+    private function orderedLinePlayers(Collection $members): array
+    {
+        $players = $members->values()->all();
+        $best = [0, 1, 2];
+        $bestScore = -1;
+        foreach ([[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]] as $order) {
+            $score = 0;
+            foreach ($order as $slot => $index) {
+                $positions = preg_split('/[^A-Z]+/', strtoupper((string) $players[$index]->position), -1, PREG_SPLIT_NO_EMPTY);
+                $eligible = [['L', 'LW'], ['C'], ['R', 'RW']][$slot];
+                $score += count(array_intersect($positions, $eligible)) > 0 ? 1 : 0;
+            }
+            if ($score > $bestScore) {
+                $best = $order;
+                $bestScore = $score;
+            }
+        }
+
+        return array_map(fn (int $index): string => $players[$index]->full_name
+            ?: trim($players[$index]->first_name.' '.$players[$index]->last_name), $best);
     }
 
     /** Compare ten-game windows with twenty results available, otherwise five-game windows. */

@@ -32,11 +32,14 @@ const lineTabs = [
     { key: 'toi_seconds', label: 'TOI', unit: 'Shared 5v5 time' },
 ];
 const lineUnit = computed(() => lineTabs.find(tab => tab.key === lineTab.value)?.unit);
+const lineLabel = computed(() => lineTabs.find(tab => tab.key === lineTab.value)?.label);
+const secondaryLineTabs = computed(() => lineTabs.filter(tab => tab.key !== lineTab.value));
 const lines = computed(() => [...(props.dashboard.line_combinations ?? [])]
     .filter(line => Number.isFinite(line[lineTab.value]))
+    .filter(line => lineTab.value !== 'cf_pct' || line.toi_seconds >= 300)
     .sort((a, b) => b[lineTab.value] - a[lineTab.value]
         || b.goal_diff - a.goal_diff || (b.cf_pct ?? -1) - (a.cf_pct ?? -1)
-        || b.toi_seconds - a.toi_seconds || a.unit_id - b.unit_id || a.game_id - b.game_id).slice(0, 4));
+        || b.toi_seconds - a.toi_seconds || a.unit_id - b.unit_id || a.game_id - b.game_id).slice(0, 5));
 const lineValue = (line, key) => !Number.isFinite(line[key]) ? '—'
     : key === 'toi_seconds' ? toi(line.toi_seconds)
         : key === 'cf_pct' ? `${decimal(line.cf_pct)}%`
@@ -255,23 +258,23 @@ function navigateTabs(event, group) {
                 </div>
             </DashboardSection>
 
-            <DashboardSection title="Last Night’s 5v5 Lines" :href="dashboard.links.line_combinations" class="[container-type:inline-size] xl:col-span-3">
+            <DashboardSection title="Last Night’s Top Lines" :href="dashboard.links.line_combinations" class="xl:col-span-3">
                 <div role="tablist" aria-label="5v5 line metric" class="mb-2 grid shrink-0 grid-cols-5 gap-1.5">
                     <button v-for="tab in lineTabs" :id="`line-tab-${tab.key}`" :key="tab.key" type="button" role="tab" :title="tab.unit" :tabindex="lineTab === tab.key ? 0 : -1" :aria-selected="lineTab === tab.key" aria-controls="line-trend-results" class="min-h-9 rounded-lg px-1 text-[11px] font-semibold transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 motion-reduce:transition-none" :class="lineTab === tab.key ? 'bg-blue-600 text-white shadow-sm' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'" @click="lineTab = tab.key" @keydown="navigateTabs($event, 'line')">{{ tab.label }}</button>
                 </div>
-                <p class="mb-2 text-[10px] text-slate-400">{{ performanceDate }} · {{ lineUnit }}</p>
+                <p class="mb-2 text-[10px] text-slate-400">{{ performanceDate }} · 5v5 · {{ lineUnit }}<span v-if="lineTab === 'cf_pct'"> · Min. 5:00 TOI</span></p>
                 <div id="line-trend-results" role="tabpanel" :aria-labelledby="`line-tab-${lineTab}`" class="min-h-0 flex-1 overflow-y-auto">
-                    <a v-for="line in lines" :key="`${line.game_id}-${line.unit_id}`" :href="line.url" class="grid gap-2 rounded-lg border-t border-slate-100 px-1 py-2.5 transition-colors duration-150 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 motion-reduce:transition-none [@container(min-width:600px)]:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)] [@container(min-width:600px)]:items-center">
-                        <div class="flex min-w-0 items-center gap-2.5">
-                            <div class="flex w-10 shrink-0 flex-col items-center">
-                                <img v-if="line.team_logo" :src="line.team_logo" alt="" class="h-9 w-10 object-contain" loading="lazy" />
-                                <span class="mt-0.5 text-[9px] font-medium text-slate-500">{{ line.team }}</span>
+                    <a v-for="(line, index) in lines" :key="`${line.game_id}-${line.unit_id}`" :href="line.url" class="flex items-center gap-2 border-b border-slate-100 py-3 transition-colors duration-150 last:border-b-0 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 motion-reduce:transition-none">
+                        <span class="w-3 shrink-0 text-xs font-semibold tabular-nums text-slate-600">{{ index + 1 }}</span>
+                        <img v-if="line.team_logo" :src="line.team_logo" :alt="line.team" class="h-10 w-10 shrink-0 object-contain" loading="lazy" />
+                        <span v-else class="w-10 shrink-0 text-center text-[10px] font-medium text-slate-500">{{ line.team }}</span>
+                        <div class="min-w-0 flex-1">
+                            <div class="flex items-start justify-between gap-2">
+                                <h3 class="min-w-0 text-[11px] font-semibold leading-snug text-slate-950">{{ line.players.join(' · ') }}</h3>
+                                <span class="shrink-0 whitespace-nowrap rounded-lg bg-blue-50 px-2 py-1 text-xs font-bold tabular-nums text-blue-600">{{ lineValue(line, lineTab) }} {{ lineLabel }}</span>
                             </div>
-                            <h3 class="min-w-0 text-[11px] font-semibold leading-snug text-slate-950">{{ line.players.join(' · ') }}</h3>
-                        </div>
-                        <div class="grid grid-cols-5 gap-1 text-center tabular-nums">
-                            <div v-for="tab in lineTabs" :key="tab.key" class="flex min-w-0 flex-col justify-center rounded-md border px-0.5 py-1.5" :class="lineTab === tab.key ? 'border-blue-100 bg-blue-50 text-blue-600' : 'border-transparent bg-slate-100/80 text-slate-950'">
-                                <span class="text-xs font-bold leading-5">{{ lineValue(line, tab.key) }}</span>{{ ' ' }}<span class="text-[9px] leading-4" :class="lineTab === tab.key ? 'text-blue-600' : 'text-slate-500'">{{ tab.label }}</span>
+                            <div class="mt-1 flex flex-wrap gap-x-1.5 gap-y-1 text-[9px] leading-4 tabular-nums">
+                                <span v-for="tab in secondaryLineTabs" :key="tab.key" class="whitespace-nowrap border-r border-slate-200 pr-1.5 last:border-r-0 last:pr-0"><span class="text-slate-500">{{ tab.label }}</span>{{ ' ' }}<b class="font-semibold text-slate-950">{{ lineValue(line, tab.key) }}</b></span>
                             </div>
                         </div>
                     </a>

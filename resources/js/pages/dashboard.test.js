@@ -52,7 +52,7 @@ describe('NHL dashboard', () => {
         mount(); expect(document.querySelector('[aria-label="Featured NHL stories"] img').getAttribute('src')).toBe('/story-1.jpg');
     });
     it('keeps the supporting panels from the reference design', () => {
-        mount(); for (const title of ["Last Night's Top Performers", 'Notable Signings & Moves', 'Injury Watch', 'Team Trends', 'Player Heat Check', 'Last Night’s 5v5 Lines', 'Around the NHL']) expect(section(title)).toBeTruthy();
+        mount(); for (const title of ["Last Night's Top Performers", 'Notable Signings & Moves', 'Injury Watch', 'Team Trends', 'Player Heat Check', 'Last Night’s Top Lines', 'Around the NHL']) expect(section(title)).toBeTruthy();
     });
     it('shows four top performer cards without introducing a fixed goalie slot', () => {
         mount(); expect(section("Last Night's Top Performers").querySelectorAll('a[href^="/players/"]')).toHaveLength(4);
@@ -140,9 +140,9 @@ describe('NHL dashboard', () => {
         mount(); expect(document.querySelector('main').textContent).toContain('Stories: NHL.com');
     });
     it('replaces videos with factual five-on-five line results and internal links', async () => {
-        mount(); const panel = section('Last Night’s 5v5 Lines');
+        mount(); const panel = section('Last Night’s Top Lines');
         expect(panel.textContent).toContain('Alpha · Beta · Gamma');
-        expect(panel.textContent).toContain('2–0');
+        expect(panel.textContent).toContain('2 G');
         document.querySelector('#line-tab-cf_pct').click(); await nextTick();
         expect(panel.textContent).toContain('65.0%');
         expect(panel.textContent).toContain('7:05');
@@ -152,7 +152,7 @@ describe('NHL dashboard', () => {
     });
     it('shows a truthful empty state when last nights shift data is missing', () => {
         data.line_combinations = []; mount();
-        expect(section('Last Night’s 5v5 Lines').textContent).toContain('completed shift and play-by-play data');
+        expect(section('Last Night’s Top Lines').textContent).toContain('completed shift and play-by-play data');
     });
     it('does not label the performer date as completed games', () => {
         mount(); expect(section("Last Night's Top Performers").textContent).not.toContain('Completed games');
@@ -291,7 +291,7 @@ describe('NHL dashboard', () => {
         expect(tabs.map(tab => tab.textContent)).toEqual(['G', 'Corsi', 'CF%', 'Shifts', 'TOI']);
         expect(document.querySelector('#line-tab-gf').getAttribute('aria-selected')).toBe('true');
     });
-    it('ranks every available line for each selected metric before selecting four', async () => {
+    it('ranks every available line for each selected metric before selecting five', async () => {
         data.line_combinations = Array.from({ length: 5 }, (_, index) => ({ ...data.line_combinations[0], unit_id: index + 1,
             players: [`Line ${index + 1}`], gf: 5 - index, corsi: index === 1 ? 20 : index,
             cf_pct: index === 2 ? 90 : 50, shifts: index === 3 ? 15 : 3, toi_seconds: index === 4 ? 900 : 400 }));
@@ -300,7 +300,7 @@ describe('NHL dashboard', () => {
         for (const [tab, expected] of [['corsi', 'Line 2'], ['cf_pct', 'Line 3'], ['shifts', 'Line 4'], ['toi_seconds', 'Line 5']]) {
             document.querySelector(`#line-tab-${tab}`).click(); await nextTick();
             expect(first()).toBe(expected);
-            expect(document.querySelectorAll('#line-trend-results a')).toHaveLength(4);
+            expect(document.querySelectorAll('#line-trend-results a')).toHaveLength(5);
         }
     });
     it('displays Corsi as a signed differential and CF percentage as attempt share', async () => {
@@ -321,6 +321,22 @@ describe('NHL dashboard', () => {
         document.querySelector('#line-tab-cf_pct').click(); await nextTick();
         expect(document.querySelectorAll('#line-trend-results a')).toHaveLength(0);
         expect(document.querySelector('#line-trend-results').textContent).toContain('No lines have data');
+    });
+    it('excludes brief trios from CF percentage ranking using total shared game time', async () => {
+        data.line_combinations = [
+            { ...data.line_combinations[0], unit_id: 1, players: ['Eleven seconds'], cf_pct: 100, toi_seconds: 11 },
+            { ...data.line_combinations[0], unit_id: 2, players: ['Below minimum'], cf_pct: 95, toi_seconds: 299 },
+            { ...data.line_combinations[0], unit_id: 3, players: ['Five minutes'], cf_pct: 70, toi_seconds: 300 },
+            { ...data.line_combinations[0], unit_id: 4, players: ['Established line'], cf_pct: 80, toi_seconds: 600 },
+        ];
+        mount();
+        expect(document.querySelectorAll('#line-trend-results a')).toHaveLength(4);
+        document.querySelector('#line-tab-cf_pct').click(); await nextTick();
+        expect([...document.querySelectorAll('#line-trend-results h3')].map(node => node.textContent))
+            .toEqual(['Established line', 'Five minutes']);
+        expect(section('Last Night’s Top Lines').textContent).toContain('Min. 5:00 TOI');
+        document.querySelector('#line-tab-gf').click(); await nextTick();
+        expect(document.querySelectorAll('#line-trend-results a')).toHaveLength(4);
     });
     it('supports keyboard selection and focus for all line metric tabs', async () => {
         mount(); const first = document.querySelector('#line-tab-gf'); first.focus();
