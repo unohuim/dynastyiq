@@ -84,6 +84,18 @@ describe('NHL dashboard', () => {
     it('renders injury availability separately from the injury details', () => {
         mount(); const panel = section('Injury Watch'); expect(panel.textContent).toContain('Out'); expect(panel.textContent).toContain('Upper body');
     });
+    it('shows a known anticipated return date for an injured player', () => {
+        data.injuries[0].anticipated_return_date = '2026-10-29'; mount();
+        const panel = section('Injury Watch');
+        expect(panel.querySelector('time').getAttribute('datetime')).toBe('2026-10-29');
+        expect(panel.textContent).toContain('Return Oct 29');
+        expect(panel.textContent).not.toContain('Return unknown');
+    });
+    it('shows return unknown without inventing a date when unavailable', () => {
+        data.injuries[0].anticipated_return_date = null; mount();
+        expect(section('Injury Watch').textContent).toContain('Return unknown');
+        expect(section('Injury Watch').querySelector('time')).toBeNull();
+    });
     it('orders offense by highest goals per game initially', () => {
         mount(); expect(document.querySelector('#team-trend-results a').textContent).toContain('TOR');
     });

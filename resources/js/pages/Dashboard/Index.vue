@@ -160,15 +160,15 @@ function navigateTabs(event, group) {
             </div>
         </DashboardSection>
 
-        <section v-if="dashboard.featured.length" class="grid min-h-0 gap-3 md:grid-cols-3 xl:grid-cols-[1.2fr_1fr_1fr]" aria-label="Featured NHL stories">
-            <article v-for="(story, index) in dashboard.featured" :key="story.id" class="relative isolate flex h-64 overflow-hidden rounded-lg bg-slate-900 text-white lg:h-[260px] xl:h-full xl:min-h-0">
+        <section v-if="dashboard.featured.length" tabindex="0" class="grid min-h-0 min-w-0 grid-flow-col auto-cols-[100%] snap-x snap-mandatory gap-3 overflow-x-auto overflow-y-hidden overscroll-x-contain [scrollbar-width:none] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 md:grid-flow-row md:auto-cols-auto md:grid-cols-3 md:snap-none md:overflow-visible xl:grid-cols-[1.2fr_1fr_1fr] [&::-webkit-scrollbar]:hidden" aria-label="Featured NHL stories">
+            <article v-for="(story, index) in dashboard.featured" :key="story.id" class="relative isolate flex h-40 snap-start snap-always overflow-hidden rounded-lg bg-slate-900 text-white md:h-64 lg:h-[260px] xl:h-full xl:min-h-0">
                 <img v-if="story.image_url" :src="story.image_url" alt="" class="absolute inset-0 -z-20 h-full w-full object-contain object-top" :loading="index === 0 ? 'eager' : 'lazy'" />
                 <div class="absolute inset-0 -z-10 bg-gradient-to-t from-black via-black/50 to-black/5" />
                 <div class="flex min-h-0 w-full flex-col items-start p-3">
                     <span class="rounded px-2 py-1 text-[10px] font-bold uppercase tracking-wide" :class="index === 0 ? 'bg-blue-600' : index === 1 ? 'bg-violet-700' : 'bg-emerald-600'">{{ story.category }}</span>
                     <div class="mt-auto pt-1">
-                        <h2 class="line-clamp-2 text-xl font-extrabold leading-tight tracking-tight xl:text-lg"><a :href="story.url" v-bind="externalLinkAttributes(story.url)" :title="story.title" class="rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">{{ story.title }}</a></h2>
-                        <p v-if="story.summary" class="mt-1 line-clamp-1 text-xs leading-snug text-white/90 [@media(min-width:1280px)_and_(max-height:800px)]:hidden">{{ story.summary }}</p>
+                        <h2 class="line-clamp-2 text-base font-extrabold leading-tight tracking-tight md:text-xl xl:text-lg"><a :href="story.url" v-bind="externalLinkAttributes(story.url)" :title="story.title" class="rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">{{ story.title }}</a></h2>
+                        <p v-if="story.summary" class="mt-1 hidden text-xs leading-snug text-white/90 md:line-clamp-1 [@media(min-width:1280px)_and_(max-height:800px)]:hidden">{{ story.summary }}</p>
                         <a :href="story.url" v-bind="externalLinkAttributes(story.url)" class="mt-2 inline-flex min-h-7 items-center gap-3 rounded bg-blue-600 px-3 text-xs font-semibold transition-colors duration-150 hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white motion-reduce:transition-none">Read story <span aria-hidden="true">→</span></a>
                     </div>
                     <span class="sr-only">Source: NHL.com, {{ shortDate(story.published_at) }}</span>
@@ -221,7 +221,7 @@ function navigateTabs(event, group) {
                         <img v-if="player.avatar" :src="player.avatar" alt="" class="h-6 w-6 shrink-0 rounded bg-slate-50 object-contain" loading="lazy" />
                         <span v-else class="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-slate-50 text-[10px] text-slate-500">{{ initials(player.name) }}</span>
                         <div class="min-w-0 flex-1"><h3 class="truncate text-[11px] font-semibold leading-tight">{{ player.name }}</h3><p class="text-[9px] leading-tight text-slate-500">{{ player.position }} · {{ player.team }}</p></div>
-                        <div class="flex min-w-0 max-w-[46%] flex-col items-end text-right"><span class="inline-block rounded-full px-1.5 text-[9px] font-medium leading-4" :class="player.availability === 'out' ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-700'">{{ injuryLabel(player) }}</span><p class="max-w-full truncate text-[9px] leading-tight text-slate-500" :title="player.status || player.body_part">{{ player.body_part || player.status || 'Details pending' }}</p></div>
+                        <div class="flex min-w-0 max-w-[46%] flex-col items-end text-right"><span class="inline-block rounded-full px-1.5 text-[9px] font-medium leading-4" :class="player.availability === 'out' ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-700'">{{ injuryLabel(player) }}</span><p class="max-w-full truncate text-[9px] leading-tight text-slate-500" :title="player.status || player.body_part">{{ player.body_part || player.status || 'Details pending' }}</p><time v-if="player.anticipated_return_date" :datetime="player.anticipated_return_date" class="text-[9px] leading-tight text-slate-500">Return {{ shortDate(player.anticipated_return_date) }}</time><span v-else class="text-[9px] leading-tight text-slate-400">Return unknown</span></div>
                     </a>
                 </div>
                 <p v-if="!dashboard.injuries.length" class="py-4 text-center text-xs text-slate-500">No current injury reports.</p>

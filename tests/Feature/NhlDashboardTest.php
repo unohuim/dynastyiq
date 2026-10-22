@@ -408,3 +408,26 @@ it('retains all line candidates and counts shared shifts once across other-unit 
     expect($away['shifts'])->toBe(1)->and($away['toi_seconds'])->toBe(360);
     $this->get(route('welcome'))->assertOk()->assertInertia(fn (Assert $page) => $page->has('dashboard.line_combinations', 7));
 });
+
+
+it('orders current injury reports oldest-created first and includes anticipated return dates', function (): void {
+    foreach ([4, 1, 5, 2, 3] as $day) {
+        \App\Models\NhlPlayerInjury::create([
+            'player_name' => 'Injured '.$day, 'availability' => 'out', 'evidence_level' => 'reported',
+            'sources' => [], 'first_observed_at' => '2026-10-01 12:00:00',
+            'last_observed_at' => Carbon::parse('2026-10-22')->subDays($day),
+            'last_seen_at' => '2026-10-22 12:00:00',
+            'created_at' => '2026-10-0'.$day.' 12:00:00',
+            'anticipated_return_date' => $day === 1 ? '2026-10-29' : null,
+        ]);
+    }
+    $data = app(NhlDashboardPayload::class)->build();
+    expect(array_column($data['injuries'], 'name'))->toBe(['Injured 1', 'Injured 2', 'Injured 3', 'Injured 4'])
+        ->and($data['injuries'][0]['anticipated_return_date'])->toBe('2026-10-29')
+        ->and($data['injuries'][1]['anticipated_return_date'])->toBeNull();
+    $this->get(route('welcome'))->assertOk()->assertInertia(fn (Assert $page) => $page
+        ->has('dashboard.injuries', 4)
+        ->where('dashboard.injuries.0.name', 'Injured 1')
+        ->where('dashboard.injuries.0.anticipated_return_date', '2026-10-29')
+        ->where('dashboard.injuries.1.anticipated_return_date', null));
+});

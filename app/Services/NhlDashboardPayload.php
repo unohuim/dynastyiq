@@ -29,7 +29,7 @@ class NhlDashboardPayload
             $slate->subDay();
         }
         $date = $slate->toDateString();
-        $facts = Cache::remember('nhl:dashboard:facts:v7:'.$date, 300, fn (): array => $this->facts($date));
+        $facts = Cache::remember('nhl:dashboard:facts:v8:'.$date, 300, fn (): array => $this->facts($date));
         $stories = $this->news->feed();
         $articles = collect($stories['items']);
 
@@ -173,12 +173,13 @@ class NhlDashboardPayload
     private function injuries(): array
     {
         return NhlPlayerInjury::query()->with('player')->whereIn('availability', ['out', 'questionable', 'unknown'])
-            ->orderByDesc('last_observed_at')->orderBy('id')->limit(4)->get()
+            ->orderBy('created_at')->orderBy('id')->limit(4)->get()
             ->map(fn (NhlPlayerInjury $row): array => [
                 'id' => $row->id, 'name' => $row->player_name, 'avatar' => $row->player?->head_shot_url,
                 'position' => $row->position, 'team' => $row->team_abbrev,
                 'availability' => $row->availability, 'status' => $row->status_text,
                 'body_part' => $row->body_part, 'updated_at' => $row->last_observed_at?->toIso8601String(),
+                'anticipated_return_date' => $row->anticipated_return_date?->toDateString(),
                 'url' => route('injuries.index', ['team' => $row->team_abbrev]),
             ])->all();
     }

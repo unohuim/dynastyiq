@@ -16,6 +16,10 @@ trio names in ranked rows, a blue selected-metric badge and inline secondary
 statistics separated by subtle dividers. Retain its dashboard position and wrap
 secondary statistics within narrow panels.
 
+On mobile, featured stories occupy one compact 160-pixel-high slot with native
+horizontal swiping between stories. Preserve full images and the existing
+three-card tablet/desktop layout.
+
 The default desktop dashboard overview should fit above the fold, with a compact
 performers/signings/injuries row. Shorter viewports may scroll panel contents;
 explicitly expanded content remains accessible through normal page scrolling.
