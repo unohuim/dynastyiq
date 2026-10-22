@@ -1779,8 +1779,10 @@ Evaluation Train and Train H/A strength windows retain complete appearances inst
 - `NhlPregameContextBuilder`
 - `NhlPregameContextOrchestrator`
 
-New model-initiated runs build raw-result league averages first. Each context date
-waits for its averages, then attaches ranks and deltas within the context job.
+New model-initiated runs checkpoint raw-result league populations first and save
+indexed peer references alongside their averages. Context then commits one game
+per continuation, reusing those references for ranks and deltas. Snapshot and
+comparison checkpoints make failed work retryable without rebuilding saved games.
 Both stages have configurable bounded concurrency and visible day progress. Fully
 paused batched runs upgrade on resume while retaining completed snapshots.
 `NhlPregameLeagueResults` shares result calculations with the builder and keeps

@@ -643,12 +643,20 @@ class NhlPregameContextBuilder
             ? null
             : (int) now()->parse($lastGame->game_date)->startOfDay()
                 ->diffInDays(now()->parse($game->game_date)->startOfDay());
+        $opponentLastGame = DB::table('nhl_games')->where('game_type', 2)->whereIn('game_state', ['OFF', 'FINAL'])
+            ->where('start_time_utc', '<', $cutoff)
+            ->where(fn ($query) => $query->where('home_team_id', $side['opponent_id'])->orWhere('away_team_id', $side['opponent_id']))
+            ->orderByDesc('start_time_utc')->orderByDesc('nhl_game_id')->first(['game_date']);
+        $opponentDaysSinceLastGame = $opponentLastGame === null ? null
+            : (int) now()->parse($opponentLastGame->game_date)->startOfDay()
+                ->diffInDays(now()->parse($game->game_date)->startOfDay());
         $targetDate = now()->parse($game->game_date)->startOfDay();
         $priorSixDays = $history->filter(fn (object $row): bool => now()->parse($row->game_date)->startOfDay()
             ->betweenIncluded($targetDate->copy()->subDays(6), $targetDate->copy()->subDay()));
         $gamesIncludingTarget = $priorSixDays->count() + 1;
         $schedule = [
             'days_rest' => $daysSinceLastGame === null ? null : max(0, $daysSinceLastGame - 1),
+            'opponent_days_rest' => $opponentDaysSinceLastGame === null ? null : max(0, $opponentDaysSinceLastGame - 1),
             'back_to_back' => $daysSinceLastGame === 1,
             'games_last_4_days' => $history->filter(fn (object $row): bool => now()->parse($row->start_time_utc)->gte($cutoff->copy()->subDays(4)))->count(),
             'games_last_7_days' => $history->filter(fn (object $row): bool => now()->parse($row->start_time_utc)->gte($cutoff->copy()->subDays(7)))->count(),

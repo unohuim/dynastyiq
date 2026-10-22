@@ -25,6 +25,10 @@ class NhlPregameContextRunGame extends Model
         'readiness' => 'array',
         'started_at' => 'datetime',
         'completed_at' => 'datetime',
+        'snapshot_completed_at' => 'datetime',
+        'comparisons_completed_at' => 'datetime',
+        'context_seconds' => 'float',
+        'comparison_seconds' => 'float',
     ];
 
     public function run(): BelongsTo

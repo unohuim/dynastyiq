@@ -75,14 +75,23 @@ class NhlPregameContextRun extends Model
     /** Read progress for the league-first and integrated context stages. */
     public function stageProgress(): ?array
     {
-        if (data_get($this->options, 'pipeline_version') !== \App\Services\NhlPregameContextOrchestrator::RESULTS_PIPELINE) {
+        if (! in_array(data_get($this->options, 'pipeline_version'), [
+            \App\Services\NhlPregameContextOrchestrator::RESULTS_PIPELINE, \App\Services\NhlPregameContextOrchestrator::CHECKPOINT_PIPELINE,
+        ], true)) {
             return null;
         }
         $row = $this->days()->selectRaw('COUNT(*) AS total')
             ->selectRaw("SUM(CASE WHEN context_state = 'complete' THEN 1 ELSE 0 END) AS context")
             ->selectRaw("SUM(CASE WHEN league_state = 'complete' THEN 1 ELSE 0 END) AS league")->first();
 
-        return ['total' => (int) ($row->total ?? 0), 'context' => (int) ($row->context ?? 0),
+        $progress = ['total' => (int) ($row->total ?? 0), 'context' => (int) ($row->context ?? 0),
             'league' => (int) ($row->league ?? 0)];
+        if (data_get($this->options, 'pipeline_version') === \App\Services\NhlPregameContextOrchestrator::CHECKPOINT_PIPELINE) {
+            $timings = $this->days()->selectRaw('SUM(league_seconds) AS league, SUM(context_seconds) AS context, SUM(comparison_seconds) AS comparisons')->first();
+            $progress['timings'] = ['league' => (float) ($timings->league ?? 0),
+                'context' => (float) ($timings->context ?? 0), 'comparisons' => (float) ($timings->comparisons ?? 0)];
+        }
+
+        return $progress;
     }
 }

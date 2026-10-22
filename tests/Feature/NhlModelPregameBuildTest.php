@@ -45,7 +45,7 @@ it('queues model seasons and exposes progress without changing the model', funct
     $build = NhlPregameContextRun::query()->sole();
     expect($build->season_ids)->toBe(['20232024', '20242025', '20252026'])
         ->and($build->options['model_run_id'])->toBe($this->model->id)
-        ->and($build->options['pipeline_version'])->toBe(NhlPregameContextOrchestrator::RESULTS_PIPELINE)
+        ->and($build->options['pipeline_version'])->toBe(NhlPregameContextOrchestrator::CHECKPOINT_PIPELINE)
         ->and($build->action)->toBe('backfill')
         ->and($build->created_by)->toBe($this->admin->id)
         ->and($this->model->fresh()->getRawOriginal())->toBe($before)
@@ -467,7 +467,7 @@ it('upgrades a paused batched run on resume without rebuilding completed context
     $day = NhlPregameContextRunDay::create(['run_id' => $run->id, 'game_date' => '2025-10-10',
         'context_state' => 'complete', 'league_state' => 'complete', 'completed_games' => 1, 'game_count' => 1]);
     $this->actingAs($this->admin)->postJson(route('admin.nhl-sat-models.context.resume', $this->model))->assertOk();
-    expect($run->fresh()->options['pipeline_version'])->toBe(NhlPregameContextOrchestrator::RESULTS_PIPELINE)
+    expect($run->fresh()->options['pipeline_version'])->toBe(NhlPregameContextOrchestrator::CHECKPOINT_PIPELINE)
         ->and($run->fresh()->completed_games)->toBe(1)
         ->and($game->fresh()->state)->toBe('complete')
         ->and($day->fresh()->context_state)->toBe('pending')
@@ -476,7 +476,7 @@ it('upgrades a paused batched run on resume without rebuilding completed context
     Bus::assertNotDispatched(PrepareNhlPregameContextRunJob::class);
     $html = $this->getJson(route('admin.nhl-sat-models.context.progress', $this->model))->assertOk()->json('progress_html');
     expect($html)->toContain('League averages: 0/1 days', 'Context, rankings &amp; deltas: 0/1');
-})->with(['game_day_batch_v1', NhlPregameContextOrchestrator::THREE_STAGE_PIPELINE]);
+})->with(['game_day_batch_v1', NhlPregameContextOrchestrator::THREE_STAGE_PIPELINE, NhlPregameContextOrchestrator::RESULTS_PIPELINE]);
 
 it('rejects a paused-run upgrade while claimed old work is still processing', function (): void {
     $run = NhlPregameContextRun::create(['model_run_id' => $this->model->id, 'action' => 'backfill',
@@ -636,4 +636,131 @@ it('requires terminal game outcomes as well as completed day stages', function (
     app(NhlPregameContextOrchestrator::class)->load($run->id);
     expect($run->fresh()->status)->toBe('failed')->and($run->fresh()->last_error)->toContain('does not match');
     Bus::assertNothingDispatched();
+});
+
+
+it('dispatches checkpointed league batches before context without claiming all games', function (): void {
+    $run = NhlPregameContextRun::create(['model_run_id' => $this->model->id, 'action' => 'backfill',
+        'status' => 'running', 'season_ids' => ['20252026'], 'total_games' => 1,
+        'options' => ['pipeline_version' => NhlPregameContextOrchestrator::CHECKPOINT_PIPELINE]]);
+    $day = NhlPregameContextRunDay::create(['run_id' => $run->id, 'game_date' => '2025-10-10']);
+    $game = NhlPregameContextRunGame::create(['run_id' => $run->id, 'nhl_game_id' => 2025020001,
+        'game_date' => '2025-10-10', 'sequence' => 1, 'state' => 'pending']);
+    app(NhlPregameContextOrchestrator::class)->load($run->id);
+    Bus::assertDispatched(\App\Jobs\CalculateNhlPregameLeagueBatchJob::class);
+    Bus::assertNotDispatched(\App\Jobs\BuildNhlPregameContextDayBatchJob::class);
+    expect($game->fresh()->state)->toBe('pending');
+    $day->update(['league_state' => 'complete']);
+    app(NhlPregameContextOrchestrator::class)->load($run->id);
+    Bus::assertDispatched(\App\Jobs\BuildNhlPregameContextDayBatchJob::class);
+    expect($game->fresh()->state)->toBe('pending');
+});
+
+it('checkpoints one game at a time and completes the day through continuations', function (): void {
+    $run = NhlPregameContextRun::create(['model_run_id' => $this->model->id, 'action' => 'backfill',
+        'status' => 'running', 'season_ids' => ['20252026'], 'total_games' => 2,
+        'options' => ['pipeline_version' => NhlPregameContextOrchestrator::CHECKPOINT_PIPELINE]]);
+    $day = NhlPregameContextRunDay::create(['run_id' => $run->id, 'game_date' => '2025-10-10',
+        'league_state' => 'complete', 'context_state' => 'processing']);
+    foreach ([1, 2] as $sequence) {
+        NhlPregameContextRunGame::create(['run_id' => $run->id, 'nhl_game_id' => 2025020000 + $sequence,
+            'game_date' => '2025-10-10', 'sequence' => $sequence, 'state' => 'pending']);
+    }
+    $builder = Mockery::mock(\App\Services\NhlPregameContextBuilder::class);
+    $builder->shouldReceive('buildDay')->twice()->andReturnUsing(fn ($run, $ids): array => [
+        'games' => [$ids[0] => ['team_context_count' => 2, 'player_context_count' => 40]], 'blocked_games' => 0]);
+    $service = Mockery::mock(\App\Services\NhlPregameLeagueResults::class);
+    $service->shouldReceive('attachGameComparisons')->twice()->withArgs(function ($actualRun, $actualDay, $gameId) use ($run): bool {
+        expect($run->games()->where('nhl_game_id', $gameId)->first()->snapshot_completed_at)->not->toBeNull();
+        return $actualRun->id === $run->id;
+    });
+    $service->shouldReceive('releaseDayPeers')->once();
+    $this->app->instance(\App\Services\NhlPregameLeagueResults::class, $service);
+    $job = new \App\Jobs\BuildNhlPregameContextDayBatchJob($run->id, $day->id);
+    $job->handle($builder);
+    expect($day->fresh()->context_state)->toBe('pending')->and($run->games()->where('state', 'complete')->count())->toBe(1)
+        ->and($run->games()->where('state', 'pending')->count())->toBe(1);
+    app(NhlPregameContextOrchestrator::class)->load($run->id);
+    $job->handle($builder);
+    expect($day->fresh()->context_state)->toBe('complete')->and($run->fresh()->completed_games)->toBe(2)
+        ->and($run->games()->whereNotNull('comparisons_completed_at')->count())->toBe(2);
+});
+
+it('retains a committed snapshot when comparisons fail and retries only unfinished work', function (): void {
+    $run = NhlPregameContextRun::create(['model_run_id' => $this->model->id, 'action' => 'backfill',
+        'status' => 'running', 'season_ids' => ['20252026'], 'total_games' => 1,
+        'options' => ['pipeline_version' => NhlPregameContextOrchestrator::CHECKPOINT_PIPELINE]]);
+    $day = NhlPregameContextRunDay::create(['run_id' => $run->id, 'game_date' => '2025-10-10',
+        'league_state' => 'complete', 'context_state' => 'processing']);
+    $game = NhlPregameContextRunGame::create(['run_id' => $run->id, 'nhl_game_id' => 2025020001,
+        'game_date' => '2025-10-10', 'sequence' => 1, 'state' => 'pending']);
+    $builder = Mockery::mock(\App\Services\NhlPregameContextBuilder::class);
+    $builder->shouldReceive('buildDay')->once()->andReturn(['games' => [2025020001 => ['team_context_count' => 2]], 'blocked_games' => 0]);
+    $service = Mockery::mock(\App\Services\NhlPregameLeagueResults::class);
+    $service->shouldReceive('attachGameComparisons')->once()->andThrow(new RuntimeException('Comparison failure'));
+    $this->app->instance(\App\Services\NhlPregameLeagueResults::class, $service);
+    $job = new \App\Jobs\BuildNhlPregameContextDayBatchJob($run->id, $day->id);
+    expect(fn () => $job->handle($builder))->toThrow(RuntimeException::class);
+    expect($game->fresh()->snapshot_completed_at)->not->toBeNull()->and($game->fresh()->comparisons_completed_at)->toBeNull()
+        ->and($day->fresh()->failed_games)->toBe(1);
+    $this->actingAs($this->admin)->postJson(route('admin.nhl-sat-models.context.resume', $this->model))->assertOk();
+    app(NhlPregameContextOrchestrator::class)->load($run->id);
+    $retryService = Mockery::mock(\App\Services\NhlPregameLeagueResults::class);
+    $retryService->shouldReceive('attachGameComparisons')->once();
+    $retryService->shouldReceive('releaseDayPeers')->once();
+    $this->app->instance(\App\Services\NhlPregameLeagueResults::class, $retryService);
+    $job->handle($builder);
+    expect($game->fresh()->state)->toBe('complete')->and($run->fresh()->failed_games)->toBe(0);
+});
+
+it('marks only the active game failed after a checkpointed timeout', function (): void {
+    $run = NhlPregameContextRun::create(['model_run_id' => $this->model->id, 'action' => 'backfill',
+        'status' => 'running', 'season_ids' => ['20252026'], 'total_games' => 3,
+        'options' => ['pipeline_version' => NhlPregameContextOrchestrator::CHECKPOINT_PIPELINE]]);
+    $day = NhlPregameContextRunDay::create(['run_id' => $run->id, 'game_date' => '2025-10-10',
+        'league_state' => 'complete', 'context_state' => 'processing', 'game_count' => 3]);
+    foreach (['complete', 'processing', 'pending'] as $index => $state) {
+        NhlPregameContextRunGame::create(['run_id' => $run->id, 'nhl_game_id' => 2025020001 + $index,
+            'game_date' => '2025-10-10', 'sequence' => $index + 1, 'state' => $state]);
+    }
+    (new \App\Jobs\BuildNhlPregameContextDayBatchJob($run->id, $day->id))->failed(new RuntimeException('Timed out'));
+    expect($run->fresh()->failed_games)->toBe(1)->and($day->fresh()->failed_games)->toBe(1)
+        ->and($run->games()->orderBy('sequence')->pluck('state')->all())->toBe(['complete', 'failed', 'pending']);
+});
+
+it('keeps continuation checkpoints when a batch finishes during pause', function (): void {
+    $run = NhlPregameContextRun::create(['model_run_id' => $this->model->id, 'action' => 'backfill',
+        'status' => 'pausing', 'season_ids' => ['20252026'], 'total_games' => 1,
+        'options' => ['pipeline_version' => NhlPregameContextOrchestrator::CHECKPOINT_PIPELINE]]);
+    $day = NhlPregameContextRunDay::create(['run_id' => $run->id, 'game_date' => '2025-10-10',
+        'league_state' => 'processing', 'league_cursor' => 1]);
+    $service = Mockery::mock(\App\Services\NhlPregameLeagueResults::class);
+    $service->shouldReceive('buildNextAverages')->once()->andReturnFalse();
+    $builder = Mockery::mock(\App\Services\NhlPregameContextBuilder::class);
+    (new \App\Jobs\CalculateNhlPregameLeagueBatchJob($run->id, $day->id))->handle($builder, $service);
+    app(NhlPregameContextOrchestrator::class)->load($run->id);
+    expect($run->fresh()->status)->toBe('paused')->and($day->fresh()->league_cursor)->toBe(1)
+        ->and($day->fresh()->league_state)->toBe('pending');
+});
+
+it('bounds prepared league dates while continuing partially committed populations', function (): void {
+    config(['nhl-pregame.league_concurrency' => 1, 'nhl-pregame.league_lookahead_days' => 1]);
+    $run = NhlPregameContextRun::create(['model_run_id' => $this->model->id, 'action' => 'backfill',
+        'status' => 'running', 'season_ids' => ['20252026'],
+        'options' => ['pipeline_version' => NhlPregameContextOrchestrator::CHECKPOINT_PIPELINE]]);
+    $partial = NhlPregameContextRunDay::create(['run_id' => $run->id, 'game_date' => '2025-10-10', 'league_cursor' => 1]);
+    $later = NhlPregameContextRunDay::create(['run_id' => $run->id, 'game_date' => '2025-10-11']);
+    app(NhlPregameContextOrchestrator::class)->load($run->id);
+    Bus::assertDispatched(\App\Jobs\CalculateNhlPregameLeagueBatchJob::class, fn ($job): bool => $job->runDayId === $partial->id);
+    expect($later->fresh()->league_state)->toBe('pending');
+});
+
+it('shows retry and separate timing totals for failed checkpointed builds', function (): void {
+    $run = NhlPregameContextRun::create(['model_run_id' => $this->model->id, 'action' => 'backfill',
+        'status' => 'failed', 'season_ids' => ['20252026'],
+        'options' => ['pipeline_version' => NhlPregameContextOrchestrator::CHECKPOINT_PIPELINE]]);
+    NhlPregameContextRunDay::create(['run_id' => $run->id, 'game_date' => '2025-10-10',
+        'league_seconds' => 12, 'context_seconds' => 20, 'comparison_seconds' => 3]);
+    $html = $this->actingAs($this->admin)->getJson(route('admin.nhl-sat-models.context.progress', $this->model))->assertOk()->json('progress_html');
+    expect($html)->toContain('Retry unfinished', 'League 12s', 'Context 20s', 'Comparisons 3s');
 });

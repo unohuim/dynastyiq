@@ -167,13 +167,14 @@ Horizon assigns twenty-five workers to `projections`, five workers to `default`,
   work is marked `stopped`, and a new Build Pregame action creates a fresh run.
 - Run-game `state`: `pending`, `ready`, `processing`, `complete`, `blocked`,
   `failed`, or `stopped`. Stopping a run marks every unfinished game `stopped`.
-- `nhl_pregame_context_runs.options.pipeline_version`: `results_league_v2` selects league averages first, then context with integrated rankings and deltas.
+- `nhl_pregame_context_runs.options.pipeline_version`: `results_league_v3` selects checkpointed league populations with persisted ranking references, followed by one-game context continuations.
+  `results_league_v2` retains the earlier league-first, whole-day context jobs until an explicit paused/failed-run upgrade.
   `results_league_v1` retains the previous independent context, league, and comparison jobs until paused-run upgrade.
   `game_day_batch_v1` retains the earlier context-dependent league stage; absent values retain the legacy per-game loader.
 - Pregame run-day `context_state`, `league_state`, and `comparison_state`: `pending`, `processing`,
-  `complete`, `failed`, or `stopped`. In `results_league_v2`, league dates need only prior raw results;
+  `complete`, `failed`, or `stopped`. In `results_league_v2` and `results_league_v3`, league dates need only prior raw results;
   each context date waits for its averages and finishes only after attaching rankings and deltas.
-  `comparison_state` is used only by the older three-stage pipeline; v2 completion uses context and league states.
+  `comparison_state` is used only by the older three-stage pipeline; v2/v3 completion uses context and league states. In v3, each continuation returns its unfinished day to pending; snapshot/comparison timestamps distinguish committed progress from claimed work.
   queues every missing game/split coordinate in the current stage immediately;
   Horizon controls execution concurrency. `game_lanes_v1` retains legacy fixed
   game chains; missing values retain legacy split chains. Pause/resume upgrades

@@ -5065,22 +5065,34 @@ stack, or player-evaluation records.
   Team and player normalized metric rows reference the corresponding average
   through nullable `league_average_id`; existing inline comparison fields remain
   available for compatibility.
+- `nhl_pregame_context_league_peers` stores transient numeric peer values and precomputed competition ranks keyed by
+  league-average group and entity identity, with an index for greater-value rank
+  lookups. The league stage writes these with the shared averages; context reads
+  them without recomputing league histories. Values are removed after all games
+  for the owning date commit comparisons; shared average rows remain.
+- Run-day `league_cursor` checkpoints completed cutoff/entity populations.
+  Run-game `snapshot_completed_at` and `comparisons_completed_at` separate durable
+  snapshot and comparison completion. Day and game work durations retain context
+  and comparison seconds; days also retain league seconds. New schema columns
+  have empty/default values and the migration performs no historical aggregation.
 - Context windows include the model's Train seasons, last game, L5/L10/L20,
   LSeason, opponent L5/L10, and supported schedule/current-season windows.
   Team L5/L10/L20/LSeason and head-to-head windows include available goals,
   SAT/Corsi, SOG/SAT, shooting, saves, PDO, and win-rate measures. Schedule JSON
   distinguishes third/fourth-in-seven and B2B-fourth-in-seven from travel
-  distance and days on the current road trip.
+  distance and days on the current road trip. Pregame schedule metrics include
+  `days_rest` and `opponent_days_rest`: full calendar days between games, with
+  zero for back-to-backs and null when prior completed-game history is missing.
 - Rerunning Build Pregame for a model updates its existing model/game/entity/
   version rows and metric values in place. Bounded batch transactions keep
   context and normalized metric writes together; obsolete player rows for that
   same model/game/version are removed.
-- New model-initiated builds use `results_league_v2`. League averages aggregate
+- New model-initiated builds use `results_league_v3`. League averages aggregate
   raw results without requiring context rows; each context job waits for its date’s
   averages and attaches ranks and deltas before completion. Existing batched runs
   upgrade only when fully paused and resumed, retaining completed snapshots and
   game rows while refreshing day progress and comparisons. Older unmarked runs
-  keep their per-game pipeline. No additional migration is introduced for v2.
+  keep their per-game pipeline. The v3 migration adds peer references and checkpoints without changing previously applied migrations.
 - Deleting a custom run cascades only through its prediction, team, and player
   input rows. Shared NHL facts, pregame contexts, engines and evaluations remain.
 

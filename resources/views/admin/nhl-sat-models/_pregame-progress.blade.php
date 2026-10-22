@@ -7,6 +7,9 @@
     $pregameStopped = $pregameStatus === 'stopped';
     $canViewPregame = $canViewPregame ?? ($pregameBuild?->canViewImpacts() ?? false);
     $pregameStages = $pregameBuild?->stageProgress();
+    $pregameRetryable = $pregameFailed && in_array(data_get($pregameBuild?->options, 'pipeline_version'), [
+        \App\Services\NhlPregameContextOrchestrator::RESULTS_PIPELINE, \App\Services\NhlPregameContextOrchestrator::CHECKPOINT_PIPELINE,
+    ], true);
 @endphp
 <div data-pregame-active="{{ $pregameActive ? '1' : '0' }}" data-pregame-locked="{{ $pregameLocked ? '1' : '0' }}" data-pregame-viewable="{{ $canViewPregame ? '1' : '0' }}" role="status" aria-live="polite">
     @if($pregameBuild)
@@ -39,13 +42,20 @@
                 Context, rankings &amp; deltas: {{ $pregameStages['context'] }}/{{ $pregameStages['total'] }}
             </div>
         @endif
+        @if(isset($pregameStages['timings']))
+            <div class="mt-1 text-xs text-gray-500">
+                Work time · League {{ number_format($pregameStages['timings']['league'], 0) }}s ·
+                Context {{ number_format($pregameStages['timings']['context'], 0) }}s ·
+                Comparisons {{ number_format($pregameStages['timings']['comparisons'], 0) }}s
+            </div>
+        @endif
         @if($pregameBuild->current_game_date)
             <div class="mt-1 text-xs text-gray-500">{{ $pregameBuild->current_game_date->format('Y-m-d') }}</div>
         @endif
         @if($pregameFailed && $pregameBuild->last_error)
             <div class="mt-1 max-w-xs whitespace-normal text-xs text-red-700">{{ $pregameBuild->last_error }}</div>
         @endif
-        @if($modelRunId && in_array($pregameStatus, ['queued', 'running', 'pausing', 'paused'], true))
+        @if($modelRunId && (in_array($pregameStatus, ['queued', 'running', 'pausing', 'paused'], true) || $pregameRetryable))
             <div class="mt-2 flex flex-wrap gap-2">
                 @if(in_array($pregameStatus, ['queued', 'running'], true))
                     <form method="POST" action="{{ route('admin.nhl-sat-models.context.pause', $modelRunId) }}" data-pregame-run-control-form>
@@ -54,16 +64,18 @@
                     </form>
                 @elseif($pregameStatus === 'pausing')
                     <span class="text-xs text-gray-500">Pausing after claimed games</span>
-                @elseif($pregameStatus === 'paused')
+                @elseif($pregameStatus === 'paused' || $pregameRetryable)
                     <form method="POST" action="{{ route('admin.nhl-sat-models.context.resume', $modelRunId) }}" data-pregame-run-control-form>
                         @csrf
-                        <button type="submit" class="rounded border border-blue-200 bg-blue-50 px-2 py-1 text-xs font-medium text-blue-800 transition-colors hover:bg-blue-100 disabled:opacity-60">Resume</button>
+                        <button type="submit" class="rounded border border-blue-200 bg-blue-50 px-2 py-1 text-xs font-medium text-blue-800 transition-colors hover:bg-blue-100 disabled:opacity-60">{{ $pregameRetryable ? 'Retry unfinished' : 'Resume' }}</button>
                     </form>
                 @endif
-                <form method="POST" action="{{ route('admin.nhl-sat-models.context.stop', $modelRunId) }}" data-pregame-run-control-form>
-                    @csrf
-                    <button type="submit" class="rounded border border-red-200 bg-white px-2 py-1 text-xs font-medium text-red-700 transition-colors hover:bg-red-50 disabled:opacity-60">Stop</button>
-                </form>
+                @if(! $pregameRetryable)
+                    <form method="POST" action="{{ route('admin.nhl-sat-models.context.stop', $modelRunId) }}" data-pregame-run-control-form>
+                        @csrf
+                        <button type="submit" class="rounded border border-red-200 bg-white px-2 py-1 text-xs font-medium text-red-700 transition-colors hover:bg-red-50 disabled:opacity-60">Stop</button>
+                    </form>
+                @endif
             </div>
         @endif
     @endif

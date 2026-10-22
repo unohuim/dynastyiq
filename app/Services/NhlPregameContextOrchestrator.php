@@ -7,6 +7,8 @@ namespace App\Services;
 use App\Jobs\BuildNhlPregameContextGameJob;
 use App\Jobs\CompareNhlPregameContextRunDayJob;
 use App\Jobs\BuildNhlPregameContextDayJob;
+use App\Jobs\BuildNhlPregameContextDayBatchJob;
+use App\Jobs\CalculateNhlPregameLeagueBatchJob;
 use App\Jobs\CalculateNhlPregameContextRunDayLeagueAveragesJob;
 use App\Jobs\CalculateNhlPregameContextLeagueMetricsJob;
 use App\Jobs\LoadNhlPregameContextRunJob;
@@ -24,6 +26,8 @@ use Illuminate\Validation\ValidationException;
 class NhlPregameContextOrchestrator
 {
     public const RESULTS_PIPELINE = 'results_league_v2';
+
+    public const CHECKPOINT_PIPELINE = 'results_league_v3';
 
     public const THREE_STAGE_PIPELINE = 'results_league_v1';
 
@@ -106,7 +110,7 @@ class NhlPregameContextOrchestrator
 
         return $this->queueBackfill($seasons, $model->id, $createdBy, array_merge($runOptions, [
             'train_season_ids' => array_map('strval', $model->train_season_ids ?? []),
-            'pipeline_version' => self::RESULTS_PIPELINE,
+            'pipeline_version' => self::CHECKPOINT_PIPELINE,
         ]), $rejectActive);
     }
 
@@ -115,7 +119,7 @@ class NhlPregameContextOrchestrator
     {
         $run = $this->latestModelRun($model);
         $status = DB::transaction(function () use ($run): string {
-            $fresh = NhlPregameContextRun::query()->lockForUpdate()->findOrFail($run->id);
+            $fresh = NhlPregameContextRun::query()->lock(DB::getDriverName() === 'pgsql' ? 'for no key update' : true)->findOrFail($run->id);
             if ($fresh->status === NhlPregameContextRun::STATUS_QUEUED) {
                 $fresh->update(['status' => NhlPregameContextRun::STATUS_PAUSED]);
             } elseif ($fresh->status === NhlPregameContextRun::STATUS_RUNNING) {
@@ -142,17 +146,31 @@ class NhlPregameContextOrchestrator
     {
         $run = $this->latestModelRun($model);
         $nextStatus = DB::transaction(function () use ($run): string {
-            $fresh = NhlPregameContextRun::query()->lockForUpdate()->findOrFail($run->id);
-            if ($fresh->status !== NhlPregameContextRun::STATUS_PAUSED) {
+            $fresh = NhlPregameContextRun::query()->lock(DB::getDriverName() === 'pgsql' ? 'for no key update' : true)->findOrFail($run->id);
+            if ($fresh->status !== NhlPregameContextRun::STATUS_PAUSED
+                && ! ($fresh->status === NhlPregameContextRun::STATUS_FAILED
+                    && in_array(data_get($fresh->options, 'pipeline_version'), [self::RESULTS_PIPELINE, self::CHECKPOINT_PIPELINE], true))) {
                 throw ValidationException::withMessages(['pregame' => 'Only a paused Pregame build can be resumed.']);
             }
 
+            if ($fresh->status === NhlPregameContextRun::STATUS_FAILED) {
+                $busy = $fresh->days()->where(fn ($query) => $query->where('context_state', 'processing')
+                    ->orWhere('league_state', 'processing'))->exists();
+                if ($busy) {
+                    throw ValidationException::withMessages(['pregame' => 'Wait until claimed batches finish before retrying.']);
+                }
+                $fresh->games()->whereIn('state', ['failed', 'processing'])->update(['state' => 'ready', 'last_error' => null]);
+                $fresh->days()->where('context_state', 'failed')->update(['context_state' => 'pending', 'last_error' => null, 'failed_games' => 0]);
+                $fresh->days()->where('league_state', 'failed')->update(['league_state' => 'pending', 'last_error' => null]);
+                $fresh->update(['last_error' => null]);
+            }
             $this->upgradePausedRun($fresh);
 
             $nextStatus = (int) $fresh->total_games > 0
                 ? NhlPregameContextRun::STATUS_RUNNING
                 : NhlPregameContextRun::STATUS_QUEUED;
             $fresh->update(['status' => $nextStatus]);
+            $this->refreshRunCounts($fresh);
 
             return $nextStatus;
         });
@@ -193,7 +211,7 @@ class NhlPregameContextOrchestrator
 
         try {
             DB::transaction(function () use ($run, $activeStatuses): void {
-                $fresh = NhlPregameContextRun::query()->lockForUpdate()->findOrFail($run->id);
+                $fresh = NhlPregameContextRun::query()->lock(DB::getDriverName() === 'pgsql' ? 'for no key update' : true)->findOrFail($run->id);
                 if (! in_array($fresh->status, $activeStatuses, true)) {
                     throw ValidationException::withMessages(['pregame' => 'This Pregame build is no longer active.']);
                 }
@@ -217,7 +235,7 @@ class NhlPregameContextOrchestrator
                         'league_state' => DB::raw("CASE WHEN league_state IN ('pending', 'processing') THEN 'stopped' ELSE league_state END"),
                         'updated_at' => now(),
                     ]);
-                if (in_array(data_get($fresh->options, 'pipeline_version'), [self::THREE_STAGE_PIPELINE, self::RESULTS_PIPELINE], true)) {
+                if (in_array(data_get($fresh->options, 'pipeline_version'), [self::THREE_STAGE_PIPELINE, self::RESULTS_PIPELINE, self::CHECKPOINT_PIPELINE], true)) {
                     NhlPregameContextRunDay::query()->where('run_id', $fresh->id)
                         ->whereIn('comparison_state', [NhlPregameContextRunDay::STATE_PENDING, NhlPregameContextRunDay::STATE_PROCESSING])
                         ->update(['comparison_state' => NhlPregameContextRunDay::STATE_STOPPED, 'updated_at' => now()]);
@@ -240,7 +258,7 @@ class NhlPregameContextOrchestrator
     /** Upgrade only a fully paused batched run; retain every completed context and game row. */
     private function upgradePausedRun(NhlPregameContextRun $run): void
     {
-        if (! in_array(data_get($run->options, 'pipeline_version'), ['game_day_batch_v1', self::THREE_STAGE_PIPELINE], true)) {
+        if (! in_array(data_get($run->options, 'pipeline_version'), ['game_day_batch_v1', self::THREE_STAGE_PIPELINE, self::RESULTS_PIPELINE], true)) {
             return;
         }
         $busy = NhlPregameContextRunDay::query()->where('run_id', $run->id)
@@ -251,11 +269,12 @@ class NhlPregameContextOrchestrator
             throw ValidationException::withMessages(['pregame' => 'Wait until claimed Pregame work finishes before resuming.']);
         }
         $options = $run->options ?? [];
-        $options['pipeline_version'] = self::RESULTS_PIPELINE;
+        $options['pipeline_version'] = self::CHECKPOINT_PIPELINE;
         $run->update(['options' => $options]);
         NhlPregameContextRunDay::query()->where('run_id', $run->id)->update([
             'context_state' => NhlPregameContextRunDay::STATE_PENDING,
             'context_started_at' => null, 'context_completed_at' => null,
+            'league_cursor' => 0, 'league_seconds' => 0, 'context_seconds' => 0, 'comparison_seconds' => 0,
             'league_state' => NhlPregameContextRunDay::STATE_PENDING,
             'league_started_at' => null, 'league_completed_at' => null,
             'comparison_state' => NhlPregameContextRunDay::STATE_PENDING,
@@ -364,7 +383,7 @@ class NhlPregameContextOrchestrator
             ->get(['nhl_game_id', 'game_date']);
 
         DB::transaction(function () use ($run, $games): void {
-            $fresh = NhlPregameContextRun::query()->lockForUpdate()->findOrFail($run->id);
+            $fresh = NhlPregameContextRun::query()->lock(DB::getDriverName() === 'pgsql' ? 'for no key update' : true)->findOrFail($run->id);
             if ($fresh->status !== NhlPregameContextRun::STATUS_QUEUED) {
                 return;
             }
@@ -388,7 +407,7 @@ class NhlPregameContextOrchestrator
                 );
             }
 
-            if (in_array(data_get($fresh->options, 'pipeline_version'), ['game_day_batch_v1', self::THREE_STAGE_PIPELINE, self::RESULTS_PIPELINE], true)) {
+            if (in_array(data_get($fresh->options, 'pipeline_version'), ['game_day_batch_v1', self::THREE_STAGE_PIPELINE, self::RESULTS_PIPELINE, self::CHECKPOINT_PIPELINE], true)) {
                 $dayRows = collect($rows)->groupBy('game_date')->map(fn (Collection $dateRows, string $date): array => [
                     'run_id' => $fresh->id,
                     'game_date' => $date,
@@ -421,7 +440,7 @@ class NhlPregameContextOrchestrator
     public function load(int $runId): void
     {
         $run = NhlPregameContextRun::query()->find($runId);
-        if (in_array(data_get($run?->options, 'pipeline_version'), ['game_day_batch_v1', self::THREE_STAGE_PIPELINE, self::RESULTS_PIPELINE], true)) {
+        if (in_array(data_get($run?->options, 'pipeline_version'), ['game_day_batch_v1', self::THREE_STAGE_PIPELINE, self::RESULTS_PIPELINE, self::CHECKPOINT_PIPELINE], true)) {
             $this->loadDayBatch($runId);
 
             return;
@@ -434,7 +453,7 @@ class NhlPregameContextOrchestrator
 
         try {
             $work = DB::transaction(function () use ($runId): array {
-                $run = NhlPregameContextRun::query()->lockForUpdate()->find($runId);
+                $run = NhlPregameContextRun::query()->lock(DB::getDriverName() === 'pgsql' ? 'for no key update' : true)->find($runId);
                 if ($run === null || ! in_array($run->status, [
                     NhlPregameContextRun::STATUS_RUNNING,
                     NhlPregameContextRun::STATUS_PAUSING,
@@ -550,12 +569,13 @@ class NhlPregameContextOrchestrator
 
         try {
             $claimed = DB::transaction(function () use ($runId): array {
-                $run = NhlPregameContextRun::query()->lockForUpdate()->find($runId);
+                $run = NhlPregameContextRun::query()->lock(DB::getDriverName() === 'pgsql' ? 'for no key update' : true)->find($runId);
                 if ($run === null || ! in_array($run->status, [NhlPregameContextRun::STATUS_RUNNING, NhlPregameContextRun::STATUS_PAUSING], true)) {
                     return ['context' => [], 'league' => [], 'comparison' => []];
                 }
 
-                $leagueFirst = data_get($run->options, 'pipeline_version') === self::RESULTS_PIPELINE;
+                $checkpointed = data_get($run->options, 'pipeline_version') === self::CHECKPOINT_PIPELINE;
+                $leagueFirst = $checkpointed || data_get($run->options, 'pipeline_version') === self::RESULTS_PIPELINE;
                 $independent = $leagueFirst || data_get($run->options, 'pipeline_version') === self::THREE_STAGE_PIPELINE;
                 $activeComparisons = $independent && ! $leagueFirst ? NhlPregameContextRunDay::query()->where('run_id', $runId)
                     ->where('comparison_state', NhlPregameContextRunDay::STATE_PROCESSING)->count() : 0;
@@ -604,8 +624,11 @@ class NhlPregameContextOrchestrator
                         $day->update([
                             'context_state' => NhlPregameContextRunDay::STATE_PROCESSING,
                             'attempts' => DB::raw('attempts + 1'),
-                            'context_started_at' => now(),
+                            'context_started_at' => $checkpointed ? ($day->context_started_at ?? now()) : now(),
                         ]);
+                        if ($checkpointed) {
+                            continue;
+                        }
                         NhlPregameContextRunGame::query()->where('run_id', $runId)->whereDate('game_date', $day->game_date)
                             ->whereIn('state', [NhlPregameContextRunGame::STATE_PENDING, NhlPregameContextRunGame::STATE_READY])
                             ->update([
@@ -619,10 +642,16 @@ class NhlPregameContextOrchestrator
 
                 $leagueDays = [];
                 $availableLeagueSlots = max(0, ($independent ? max(1, (int) config('nhl-pregame.league_concurrency', 4)) : 2) - $activeLeagueCount);
+                // Bound transient peer storage while allowing configured worker concurrency.
+                $lookahead = max((int) config('nhl-pregame.league_concurrency', 4), (int) config('nhl-pregame.league_lookahead_days', 8));
+                $preparedDays = $checkpointed ? NhlPregameContextRunDay::query()->where('run_id', $runId)
+                    ->where('context_state', '<>', 'complete')->where(fn ($query) => $query->whereIn('league_state', ['complete', 'processing'])
+                        ->orWhere('league_cursor', '>', 0))->count() : 0;
                 while ($availableLeagueSlots > 0) {
                     $leagueDay = NhlPregameContextRunDay::query()->where('run_id', $runId)
                         ->when(! $independent, fn ($query) => $query->where('context_state', NhlPregameContextRunDay::STATE_COMPLETE))
                         ->where('league_state', NhlPregameContextRunDay::STATE_PENDING)
+                        ->when($checkpointed && $preparedDays >= $lookahead, fn ($query) => $query->where('league_cursor', '>', 0))
                         ->when(! $independent, fn ($query) => $query->whereNotExists(function ($priorDay) use ($runId): void {
                             $priorDay->selectRaw('1')->from('nhl_pregame_context_run_days as prior_day')
                                 ->whereColumn('prior_day.run_id', 'nhl_pregame_context_run_days.run_id')
@@ -634,8 +663,11 @@ class NhlPregameContextOrchestrator
                     if ($leagueDay !== null) {
                         $leagueDay->update([
                             'league_state' => NhlPregameContextRunDay::STATE_PROCESSING,
-                            'league_started_at' => now(),
+                            'league_started_at' => $checkpointed ? ($leagueDay->league_started_at ?? now()) : now(),
                         ]);
+                        if ($checkpointed && (int) $leagueDay->league_cursor === 0) {
+                            $preparedDays++;
+                        }
                         $leagueDays[] = (int) $leagueDay->id;
                         $availableLeagueSlots--;
                     } else {
@@ -691,11 +723,20 @@ class NhlPregameContextOrchestrator
                 ];
             });
 
+            $checkpointed = data_get(NhlPregameContextRun::query()->find($runId)?->options, 'pipeline_version') === self::CHECKPOINT_PIPELINE;
             foreach ($claimed['league'] as $dayId) {
-                CalculateNhlPregameContextRunDayLeagueAveragesJob::dispatch($runId, $dayId);
+                if ($checkpointed) {
+                    CalculateNhlPregameLeagueBatchJob::dispatch($runId, $dayId);
+                } else {
+                    CalculateNhlPregameContextRunDayLeagueAveragesJob::dispatch($runId, $dayId);
+                }
             }
             foreach ($claimed['context'] as $dayId) {
-                BuildNhlPregameContextDayJob::dispatch($runId, $dayId);
+                if ($checkpointed) {
+                    BuildNhlPregameContextDayBatchJob::dispatch($runId, $dayId);
+                } else {
+                    BuildNhlPregameContextDayJob::dispatch($runId, $dayId);
+                }
             }
             foreach ($claimed['comparison'] as $dayId) {
                 CompareNhlPregameContextRunDayJob::dispatch($runId, $dayId);
@@ -731,7 +772,7 @@ class NhlPregameContextOrchestrator
     public function markLeagueBenchmarksComplete(int $runId, string $gameDate): void
     {
         DB::transaction(function () use ($runId, $gameDate): void {
-            $run = NhlPregameContextRun::query()->lockForUpdate()->find($runId);
+            $run = NhlPregameContextRun::query()->lock(DB::getDriverName() === 'pgsql' ? 'for no key update' : true)->find($runId);
             if ($run === null || ! in_array($run->status, [
                 NhlPregameContextRun::STATUS_RUNNING,
                 NhlPregameContextRun::STATUS_PAUSING,
