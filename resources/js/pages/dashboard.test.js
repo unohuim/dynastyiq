@@ -38,8 +38,36 @@ describe('NHL dashboard', () => {
     });
     afterEach(() => { app?.unmount(); app = null; document.body.innerHTML = ''; });
 
-    it('renders the three featured story cards', () => {
-        mount(); expect(document.querySelectorAll('[aria-label="Featured NHL stories"] article')).toHaveLength(3);
+    it('renders all fetched stories while reserving only the first three for desktop', () => {
+        mount();
+        const cards = [...document.querySelectorAll('[aria-label="Featured NHL stories"] article')];
+        expect(cards).toHaveLength(9);
+        expect(cards.filter(card => !card.classList.contains('md:hidden'))).toHaveLength(3);
+    });
+    it('keeps every story in source order without duplicating featured headlines', () => {
+        data.headlines.unshift(data.featured[1]); mount();
+        expect([...document.querySelectorAll('#featured-story-cards h2')].map(node => node.textContent))
+            .toEqual(Array.from({ length: 9 }, (_, index) => `Story ${index + 1}`));
+    });
+    it('tracks the story scrollbar thumb and supports end and home navigation', async () => {
+        mount(); const strip = document.querySelector('#featured-story-cards');
+        Object.defineProperty(strip, 'clientWidth', { configurable: true, value: 400 });
+        Object.defineProperty(strip, 'scrollWidth', { configurable: true, value: 3600 });
+        strip.scrollLeft = 800; strip.dispatchEvent(new Event('scroll')); await nextTick();
+        const bar = document.querySelector('[aria-label="Browse NHL stories"]');
+        expect(Number(bar.querySelectorAll('rect')[1].getAttribute('width'))).toBeCloseTo(100 / 9);
+        expect(bar.getAttribute('aria-valuenow')).toBe('800');
+        bar.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true })); await nextTick();
+        expect(strip.scrollLeft).toBe(3200);
+        bar.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true })); await nextTick();
+        expect(strip.scrollLeft).toBe(0);
+    });
+    it('hides the story scrollbar when all story content fits', async () => {
+        mount(); const strip = document.querySelector('#featured-story-cards');
+        Object.defineProperty(strip, 'clientWidth', { configurable: true, value: 400 });
+        Object.defineProperty(strip, 'scrollWidth', { configurable: true, value: 400 });
+        strip.dispatchEvent(new Event('scroll')); await nextTick();
+        expect(document.querySelector('[aria-label="Browse NHL stories"]')).toBeNull();
     });
     it('uses actual NHL headlines rather than mock editorial titles', () => {
         data.featured[0].title = 'Provider headline'; mount();

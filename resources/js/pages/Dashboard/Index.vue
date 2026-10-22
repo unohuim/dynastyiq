@@ -8,6 +8,15 @@ const teamTab = ref('offense');
 const playerTab = ref('up');
 const lineTab = ref('gf');
 const moreHeadlines = ref(false);
+const storyStrip = ref(null);
+const storyScroll = ref({ position: 0, maximum: 0, visible: 0, total: 0 });
+const storyDrag = ref(null);
+const stories = computed(() => [...props.dashboard.featured, ...props.dashboard.headlines]
+    .filter((story, index, all) => all.findIndex(candidate => candidate.id === story.id) === index));
+const storyThumbWidth = computed(() => storyScroll.value.total > 0
+    ? Math.min(100, storyScroll.value.visible / storyScroll.value.total * 100) : 100);
+const storyThumbLeft = computed(() => storyScroll.value.maximum > 0
+    ? storyScroll.value.position / storyScroll.value.maximum * (100 - storyThumbWidth.value) : 0);
 const performerStrip = ref(null);
 const performerPosition = ref(0);
 const performerMaximum = ref(0);
@@ -65,6 +74,60 @@ const performanceDate = computed(() => props.dashboard.performance_date
 const toi = seconds => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 const injuryLabel = row => row.availability === 'out' ? 'Out' : row.availability === 'questionable' ? 'Questionable' : 'Reported';
 const deltaClass = (value, defense = false) => !Number.isFinite(value) || value === 0 ? 'text-slate-500' : (defense ? value < 0 : value > 0) ? 'text-emerald-600' : 'text-rose-600';
+
+function updateStoryScroll() {
+    const strip = storyStrip.value;
+    const visible = strip?.clientWidth ?? 0;
+    const total = strip?.scrollWidth ?? 0;
+    const maximum = Math.max(0, total - visible);
+    storyScroll.value = { visible, total, maximum, position: Math.max(0, Math.min(maximum, strip?.scrollLeft ?? 0)) };
+}
+
+function dragStoryScrollbar(event) {
+    const strip = storyStrip.value;
+    if (!strip || storyScroll.value.maximum <= 0) return;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    if (!bounds.width) return;
+    const pointer = (event.clientX - bounds.left) / bounds.width * 100;
+    if (event.type === 'pointerdown') {
+        if (event.button !== 0) return;
+        const overThumb = pointer >= storyThumbLeft.value && pointer <= storyThumbLeft.value + storyThumbWidth.value;
+        storyDrag.value = { id: event.pointerId, offset: overThumb ? pointer - storyThumbLeft.value : storyThumbWidth.value / 2 };
+        event.currentTarget.setPointerCapture?.(event.pointerId);
+    }
+    if (!storyDrag.value || storyDrag.value.id !== event.pointerId) return;
+    strip.scrollLeft = Math.max(0, Math.min(storyScroll.value.maximum,
+        (pointer - storyDrag.value.offset) / 100 * strip.scrollWidth));
+    updateStoryScroll();
+}
+
+function stopStoryDrag(event) {
+    if (storyDrag.value?.id !== event.pointerId) return;
+    storyDrag.value = null;
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+}
+
+function storyScrollbarKey(event) {
+    const strip = storyStrip.value;
+    if (!strip || !['ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)) return;
+    event.preventDefault();
+    const step = strip.querySelector('article')?.offsetWidth + 12 || strip.clientWidth;
+    strip.scrollLeft = event.key === 'Home' ? 0 : event.key === 'End' ? storyScroll.value.maximum
+        : strip.scrollLeft + (['ArrowLeft', 'PageUp'].includes(event.key) ? -step : step);
+    updateStoryScroll();
+}
+
+watch(storyStrip, (strip, _previous, onCleanup) => {
+    updateStoryScroll();
+    if (!strip || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(updateStoryScroll);
+    observer.observe(strip);
+    onCleanup(() => observer.disconnect());
+}, { flush: 'post' });
+watch(() => stories.value.length, async () => {
+    await nextTick();
+    updateStoryScroll();
+}, { flush: 'post' });
 
 function updatePerformerScroll() {
     const strip = performerStrip.value;
@@ -160,8 +223,9 @@ function navigateTabs(event, group) {
             </div>
         </DashboardSection>
 
-        <section v-if="dashboard.featured.length" tabindex="0" class="grid min-h-0 min-w-0 grid-flow-col auto-cols-[100%] snap-x snap-mandatory gap-3 overflow-x-auto overflow-y-hidden overscroll-x-contain [scrollbar-width:none] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 md:grid-flow-row md:auto-cols-auto md:grid-cols-3 md:snap-none md:overflow-visible xl:grid-cols-[1.2fr_1fr_1fr] [&::-webkit-scrollbar]:hidden" aria-label="Featured NHL stories">
-            <article v-for="(story, index) in dashboard.featured" :key="story.id" class="relative isolate flex h-40 snap-start snap-always overflow-hidden rounded-lg bg-slate-900 text-white md:h-64 lg:h-[260px] xl:h-full xl:min-h-0">
+        <div v-if="stories.length" class="flex min-h-0 min-w-0 flex-col">
+        <section id="featured-story-cards" ref="storyStrip" tabindex="0" class="grid min-h-0 min-w-0 grid-flow-col auto-cols-[100%] gap-3 overflow-x-auto overflow-y-hidden overscroll-x-contain [scrollbar-width:none] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 md:flex-1 md:grid-flow-row md:auto-cols-auto md:grid-cols-3 md:snap-none md:overflow-visible xl:grid-cols-[1.2fr_1fr_1fr] [&::-webkit-scrollbar]:hidden" :class="storyDrag ? 'snap-none' : 'snap-x snap-mandatory'" aria-label="Featured NHL stories" @scroll.passive="updateStoryScroll">
+            <article v-for="(story, index) in stories" :key="story.id" class="relative isolate flex h-40 snap-start snap-always overflow-hidden rounded-lg bg-slate-900 text-white md:h-64 lg:h-[260px] xl:h-full xl:min-h-0" :class="index >= dashboard.featured.length ? 'md:hidden' : ''">
                 <img v-if="story.image_url" :src="story.image_url" alt="" class="absolute inset-0 -z-20 h-full w-full object-contain object-top" :loading="index === 0 ? 'eager' : 'lazy'" />
                 <div class="absolute inset-0 -z-10 bg-gradient-to-t from-black via-black/50 to-black/5" />
                 <div class="flex min-h-0 w-full flex-col items-start p-3">
@@ -175,10 +239,15 @@ function navigateTabs(event, group) {
                 </div>
             </article>
         </section>
+            <svg v-if="storyScroll.maximum > 1" role="scrollbar" aria-label="Browse NHL stories" aria-controls="featured-story-cards" aria-orientation="horizontal" :aria-valuemin="0" :aria-valuemax="Math.round(storyScroll.maximum)" :aria-valuenow="Math.round(storyScroll.position)" tabindex="0" viewBox="0 0 100 12" preserveAspectRatio="none" class="group h-3 w-full shrink-0 touch-none cursor-grab rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 active:cursor-grabbing md:hidden" @pointerdown.prevent="dragStoryScrollbar" @pointermove="dragStoryScrollbar" @pointerup="stopStoryDrag" @pointercancel="stopStoryDrag" @lostpointercapture="stopStoryDrag" @keydown="storyScrollbarKey">
+                <rect x="0" y="4" width="100" height="4" rx="0.6" class="fill-slate-200" />
+                <rect :x="storyThumbLeft" y="3" :width="storyThumbWidth" height="6" rx="0.8" class="fill-slate-400 transition-colors duration-150 group-hover:fill-slate-500 motion-reduce:transition-none" />
+            </svg>
+        </div>
         <div v-else class="rounded-lg border border-slate-200 bg-white p-6 text-sm text-slate-600" role="status">NHL stories are currently unavailable. <a :href="dashboard.links.news" v-bind="externalLinkAttributes(dashboard.links.news)" class="font-medium text-blue-600">Read the latest on NHL.com ›</a></div>
 
-        <div class="grid min-h-0 gap-3 xl:grid-cols-12">
-            <DashboardSection title="Last Night's Top Performers" :href="dashboard.links.stats" class="xl:col-span-5">
+        <div class="contents min-h-0 gap-3 md:grid xl:grid-cols-12">
+            <DashboardSection title="Last Night's Top Performers" :href="dashboard.links.stats" class="order-1 md:order-none xl:col-span-5">
                 <div class="mb-1 flex shrink-0 items-center justify-between text-[10px] text-slate-500"><span>{{ performanceDate || 'Latest completed game day' }}</span><div class="flex items-center gap-2"><span>Standouts first</span><div v-if="dashboard.performers.length" class="flex items-center gap-1"><button type="button" aria-label="Previous performers" :disabled="performerPosition <= 1" class="flex h-4 w-5 items-center justify-center rounded text-slate-600 transition-colors duration-150 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-30 motion-reduce:transition-none" @click="movePerformers(-1)"><svg aria-hidden="true" class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m15 18-6-6 6-6" /></svg></button><button type="button" aria-label="Next performers" :disabled="performerPosition >= performerMaximum - 1" class="flex h-4 w-5 items-center justify-center rounded text-slate-600 transition-colors duration-150 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-30 motion-reduce:transition-none" @click="movePerformers(1)"><svg aria-hidden="true" class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m9 18 6-6-6-6" /></svg></button></div></div></div>
                 <div v-if="dashboard.performers.length" class="flex min-h-0 flex-1 flex-col">
                 <div id="top-performer-cards" ref="performerStrip" role="region" aria-label="Last night’s top performers, scroll horizontally" tabindex="0" class="grid min-h-0 grid-flow-col auto-cols-[calc((100%_-_0.5rem)/2)] gap-2 overflow-x-auto overflow-y-hidden overscroll-x-contain [scrollbar-width:none] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 sm:auto-cols-[calc((100%_-_1.5rem)/4)] [&::-webkit-scrollbar]:hidden" @scroll.passive="updatePerformerScroll">
@@ -203,7 +272,7 @@ function navigateTabs(event, group) {
                 <p v-else class="flex flex-1 items-center justify-center py-4 text-center text-xs text-slate-500">Player performances will appear when completed boxscores are available.</p>
             </DashboardSection>
 
-            <DashboardSection title="Notable Signings & Moves" :href="dashboard.links.transactions" class="xl:col-span-4">
+            <DashboardSection title="Notable Signings & Moves" :href="dashboard.links.transactions" class="order-3 md:order-none xl:col-span-4">
                 <div class="min-h-0 flex-1 divide-y divide-slate-100 overflow-y-auto">
                     <a v-for="move in dashboard.transactions" :key="move.id" :href="move.url" v-bind="externalLinkAttributes(move.url)" class="flex min-h-8 items-center gap-2 py-1 hover:text-blue-600">
                         <img v-if="move.avatar" :src="move.avatar" alt="" class="h-6 w-6 shrink-0 rounded bg-slate-50 object-contain" loading="lazy" />
@@ -215,7 +284,7 @@ function navigateTabs(event, group) {
                 <p v-if="!dashboard.transactions.length" class="py-4 text-center text-xs text-slate-500">No recent signings or moves are available.</p>
             </DashboardSection>
 
-            <DashboardSection title="Injury Watch" :href="dashboard.links.injuries" class="xl:col-span-3">
+            <DashboardSection title="Injury Watch" :href="dashboard.links.injuries" class="order-3 md:order-none xl:col-span-3">
                 <div class="min-h-0 flex-1 divide-y divide-slate-100 overflow-y-auto">
                     <a v-for="player in dashboard.injuries" :key="player.id" :href="player.url" v-bind="externalLinkAttributes(player.url)" class="flex min-h-8 items-center gap-2 py-0.5 hover:text-blue-600">
                         <img v-if="player.avatar" :src="player.avatar" alt="" class="h-6 w-6 shrink-0 rounded bg-slate-50 object-contain" loading="lazy" />
@@ -228,8 +297,8 @@ function navigateTabs(event, group) {
             </DashboardSection>
         </div>
 
-        <div class="grid min-h-0 gap-3 md:grid-cols-2 xl:grid-cols-12">
-            <DashboardSection title="Team Trends" :href="dashboard.links.stats" class="xl:col-span-3">
+        <div class="contents min-h-0 gap-3 md:grid md:grid-cols-2 xl:grid-cols-12">
+            <DashboardSection title="Team Trends" :href="dashboard.links.stats" class="order-3 md:order-none xl:col-span-3">
                 <div role="tablist" aria-label="Team trend metric" class="mb-2 grid grid-cols-3 gap-1 rounded bg-slate-50 p-0.5">
                     <button v-for="tab in teamTabs" :id="`team-tab-${tab.key}`" :key="tab.key" type="button" role="tab" :tabindex="teamTab === tab.key ? 0 : -1" :aria-selected="teamTab === tab.key" aria-controls="team-trend-results" class="min-h-8 rounded border px-1 text-[10px] font-medium transition-colors duration-150 motion-reduce:transition-none" :class="teamTab === tab.key ? 'border-blue-200 bg-white text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-900'" @click="teamTab = tab.key" @keydown="navigateTabs($event, 'team')">{{ tab.label }}</button>
                 </div>
@@ -243,7 +312,7 @@ function navigateTabs(event, group) {
                 </div>
             </DashboardSection>
 
-            <DashboardSection title="Player Heat Check" :href="dashboard.links.stats" class="xl:col-span-3">
+            <DashboardSection title="Player Heat Check" :href="dashboard.links.stats" class="order-3 md:order-none xl:col-span-3">
                 <div role="tablist" aria-label="Player scoring form" class="mb-2 grid grid-cols-3 gap-1 rounded bg-slate-50 p-0.5">
                     <button v-for="tab in playerTabs" :id="`player-tab-${tab.key}`" :key="tab.key" type="button" role="tab" :tabindex="playerTab === tab.key ? 0 : -1" :aria-selected="playerTab === tab.key" aria-controls="player-trend-results" class="min-h-8 rounded border px-1 text-[10px] font-medium transition-colors duration-150 motion-reduce:transition-none" :class="playerTab === tab.key ? 'border-blue-200 bg-white text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-900'" @click="playerTab = tab.key" @keydown="navigateTabs($event, 'player')">{{ tab.label }}</button>
                 </div>
@@ -258,7 +327,7 @@ function navigateTabs(event, group) {
                 </div>
             </DashboardSection>
 
-            <DashboardSection title="Last Night’s Top Lines" :href="dashboard.links.line_combinations" class="xl:col-span-3 [&_h2]:text-xs [&>div:first-child>a]:text-[10px]">
+            <DashboardSection title="Last Night’s Top Lines" :href="dashboard.links.line_combinations" class="order-2 md:order-none xl:col-span-3 [&_h2]:text-xs [&>div:first-child>a]:text-[10px]">
                 <div role="tablist" aria-label="5v5 line metric" class="mb-1.5 grid shrink-0 grid-cols-5 gap-1">
                     <button v-for="tab in lineTabs" :id="`line-tab-${tab.key}`" :key="tab.key" type="button" role="tab" :title="tab.unit" :tabindex="lineTab === tab.key ? 0 : -1" :aria-selected="lineTab === tab.key" aria-controls="line-trend-results" class="min-h-7 rounded-md px-0.5 py-1 text-[10px] font-semibold transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 motion-reduce:transition-none" :class="lineTab === tab.key ? 'bg-blue-600 text-white shadow-sm' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'" @click="lineTab = tab.key" @keydown="navigateTabs($event, 'line')">{{ tab.label }}</button>
                 </div>
@@ -282,7 +351,7 @@ function navigateTabs(event, group) {
                 </div>
             </DashboardSection>
 
-            <DashboardSection title="Around the NHL" :href="dashboard.links.news" external class="xl:col-span-3">
+            <DashboardSection title="Around the NHL" :href="dashboard.links.news" external class="order-3 md:order-none xl:col-span-3">
                 <div class="min-h-0 flex-1 divide-y divide-slate-100 overflow-y-auto">
                     <a v-for="story in headlinePreview" :key="story.id" :href="story.url" v-bind="externalLinkAttributes(story.url)" class="flex min-h-8 items-center gap-2 py-1 hover:text-blue-600">
                         <img v-if="story.image_url" :src="story.image_url" alt="" class="h-6 w-11 shrink-0 rounded object-cover" loading="lazy" />
@@ -298,6 +367,6 @@ function navigateTabs(event, group) {
                 <p v-if="!dashboard.headlines.length" class="py-8 text-center text-sm text-slate-500">More NHL headlines will appear here.</p>
             </DashboardSection>
         </div>
-        <p class="text-right text-[10px] text-slate-400">Stories: NHL.com<template v-if="dashboard.news_updated_at"> · Updated {{ shortDate(dashboard.news_updated_at) }}</template><template v-if="dashboard.news_unavailable"> · Showing the last available feed</template></p>
+        <p class="order-last text-right text-[10px] text-slate-400 md:order-none">Stories: NHL.com<template v-if="dashboard.news_updated_at"> · Updated {{ shortDate(dashboard.news_updated_at) }}</template><template v-if="dashboard.news_unavailable"> · Showing the last available feed</template></p>
     </main>
 </template>

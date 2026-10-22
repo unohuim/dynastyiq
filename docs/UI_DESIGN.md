@@ -17,8 +17,11 @@ statistics separated by subtle dividers. Retain its dashboard position and wrap
 secondary statistics within narrow panels.
 
 On mobile, featured stories occupy one compact 160-pixel-high slot with native
-horizontal swiping between stories. Preserve full images and the existing
-three-card tablet/desktop layout.
+horizontal swiping through all fetched stories and a subtle proportional
+scrollbar beneath it when content overflows. Preserve full images and the existing
+three-card tablet/desktop layout. On mobile, Last Night’s Top Lines appears
+immediately below Last Night’s Top Performers; tablet and desktop retain their
+existing panel order.
 
 The default desktop dashboard overview should fit above the fold, with a compact
 performers/signings/injuries row. Shorter viewports may scroll panel contents;
