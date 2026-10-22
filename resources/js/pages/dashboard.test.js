@@ -142,9 +142,9 @@ describe('NHL dashboard', () => {
     it('replaces videos with factual five-on-five line results and internal links', async () => {
         mount(); const panel = section('Last Night’s Top Lines');
         expect(panel.textContent).toContain('Alpha · Beta · Gamma');
-        expect(panel.textContent).toContain('2 G');
+        expect(panel.querySelector('[aria-label="2 G"]').textContent).toBe('2');
         document.querySelector('#line-tab-cf_pct').click(); await nextTick();
-        expect(panel.textContent).toContain('65.0%');
+        expect(panel.querySelector('[aria-label="65.0% CF%"]').textContent).toBe('65.0');
         expect(panel.textContent).toContain('7:05');
         expect(panel.querySelector('a').getAttribute('href')).toBe('/stats/units');
         expect(panel.querySelector('a').hasAttribute('target')).toBe(false);
@@ -246,6 +246,19 @@ describe('NHL dashboard', () => {
         expect(document.querySelector('[aria-label="Next performers"]').disabled).toBe(true);
     });
 
+    it('shows the performer scrollbar only while cards overflow the visible area', async () => {
+        mount(); const strip = document.querySelector('#top-performer-cards');
+        Object.defineProperty(strip, 'clientWidth', { configurable: true, value: 400 });
+        Object.defineProperty(strip, 'scrollWidth', { configurable: true, value: 400 });
+        strip.dispatchEvent(new Event('scroll')); await nextTick();
+        expect(document.querySelector('[role="scrollbar"]')).toBeNull();
+        Object.defineProperty(strip, 'scrollWidth', { configurable: true, value: 800 });
+        strip.dispatchEvent(new Event('scroll')); await nextTick();
+        expect(document.querySelector('[role="scrollbar"]')).not.toBeNull();
+        Object.defineProperty(strip, 'scrollWidth', { configurable: true, value: 400 });
+        strip.dispatchEvent(new Event('scroll')); await nextTick();
+        expect(document.querySelector('[role="scrollbar"]')).toBeNull();
+    });
     it('sizes and positions the visible scrollbar thumb from the actual content', async () => {
         mount(); const strip = section("Last Night's Top Performers").querySelector('[role="region"]');
         Object.defineProperty(strip, 'clientWidth', { configurable: true, value: 400 });
@@ -305,15 +318,15 @@ describe('NHL dashboard', () => {
     });
     it('displays Corsi as a signed differential and CF percentage as attempt share', async () => {
         mount(); document.querySelector('#line-tab-corsi').click(); await nextTick();
-        expect(document.querySelector('#line-trend-results').textContent).toContain('+6 Corsi');
+        expect(document.querySelector('#line-trend-results [aria-label="+6 Corsi"]').textContent).toBe('+6');
         document.querySelector('#line-tab-cf_pct').click(); await nextTick();
-        expect(document.querySelector('#line-trend-results').textContent).toContain('65.0% CF%');
+        expect(document.querySelector('#line-trend-results [aria-label="65.0% CF%"]').textContent).toBe('65.0');
     });
     it('shows shared shift counts and formatted shared time for their tabs', async () => {
         mount(); document.querySelector('#line-tab-shifts').click(); await nextTick();
-        expect(document.querySelector('#line-trend-results').textContent).toContain('8 Shifts');
+        expect(document.querySelector('#line-trend-results [aria-label="8 Shifts"]').textContent).toBe('8');
         document.querySelector('#line-tab-toi_seconds').click(); await nextTick();
-        expect(document.querySelector('#line-trend-results').textContent).toContain('7:05 TOI');
+        expect(document.querySelector('#line-trend-results [aria-label="7:05 TOI"]').textContent).toBe('7:05');
     });
     it('does not treat unavailable CF percentage as zero or remove it from other metrics', async () => {
         data.line_combinations[0].cf_pct = null; mount();
@@ -337,6 +350,16 @@ describe('NHL dashboard', () => {
         expect(section('Last Night’s Top Lines').textContent).toContain('Min. 5:00 TOI');
         document.querySelector('#line-tab-gf').click(); await nextTick();
         expect(document.querySelectorAll('#line-trend-results a')).toHaveLength(4);
+    });
+    it('colours negative secondary Corsi red while keeping primary badges blue', async () => {
+        data.line_combinations[0].corsi = -6; mount();
+        const secondary = () => [...document.querySelectorAll('#line-trend-results b')].find(node => node.textContent === '-6');
+        expect(secondary().classList.contains('text-red-600')).toBe(true);
+        document.querySelector('#line-tab-corsi').click(); await nextTick();
+        expect(secondary()).toBeUndefined();
+        expect(document.querySelector('#line-trend-results [aria-label="-6 Corsi"]').classList.contains('text-blue-600')).toBe(true);
+        document.querySelector('#line-tab-gf').click(); await nextTick();
+        expect(secondary().classList.contains('text-red-600')).toBe(true);
     });
     it('supports keyboard selection and focus for all line metric tabs', async () => {
         mount(); const first = document.querySelector('#line-tab-gf'); first.focus();

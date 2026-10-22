@@ -195,7 +195,7 @@ function navigateTabs(event, group) {
                         <span class="mt-0.5 block max-w-full self-start truncate rounded bg-blue-50 px-1.5 py-0.5 text-[9px] font-medium leading-3 text-blue-700">{{ player.badge }}</span>
                     </a>
                 </div>
-                    <svg role="scrollbar" aria-label="Browse top performers" aria-controls="top-performer-cards" aria-orientation="horizontal" :aria-valuemin="0" :aria-valuemax="Math.round(performerMaximum)" :aria-valuenow="Math.round(performerPosition)" :aria-disabled="performerMaximum <= 0" :tabindex="performerMaximum > 0 ? 0 : -1" viewBox="0 0 100 12" preserveAspectRatio="none" class="group h-3 w-full shrink-0 touch-none cursor-grab rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 active:cursor-grabbing" @pointerdown.prevent="dragPerformerScrollbar" @pointermove="dragPerformerScrollbar" @pointerup="stopPerformerDrag" @pointercancel="stopPerformerDrag" @lostpointercapture="stopPerformerDrag" @keydown="performerScrollbarKey">
+                    <svg v-if="performerMaximum > 1" role="scrollbar" aria-label="Browse top performers" aria-controls="top-performer-cards" aria-orientation="horizontal" :aria-valuemin="0" :aria-valuemax="Math.round(performerMaximum)" :aria-valuenow="Math.round(performerPosition)" :aria-disabled="performerMaximum <= 0" :tabindex="performerMaximum > 0 ? 0 : -1" viewBox="0 0 100 12" preserveAspectRatio="none" class="group h-3 w-full shrink-0 touch-none cursor-grab rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 active:cursor-grabbing" @pointerdown.prevent="dragPerformerScrollbar" @pointermove="dragPerformerScrollbar" @pointerup="stopPerformerDrag" @pointercancel="stopPerformerDrag" @lostpointercapture="stopPerformerDrag" @keydown="performerScrollbarKey">
                         <rect x="0" y="4" width="100" height="4" rx="0.6" class="fill-slate-200" />
                         <rect :x="performerThumbLeft" y="3" :width="performerThumbWidth" height="6" rx="0.8" class="fill-slate-400 transition-colors duration-150 group-hover:fill-slate-500 motion-reduce:transition-none" />
                     </svg>
@@ -271,10 +271,10 @@ function navigateTabs(event, group) {
                         <div class="min-w-0 flex-1">
                             <div class="flex items-start justify-between gap-2">
                                 <h3 :title="line.players.join(' · ')" class="min-w-0 truncate text-[10px] font-semibold leading-snug text-slate-950">{{ line.players.join(' · ') }}</h3>
-                                <span class="shrink-0 whitespace-nowrap rounded-md bg-blue-50 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-blue-600">{{ lineValue(line, lineTab) }} {{ lineLabel }}</span>
+                                <span :aria-label="`${lineValue(line, lineTab)} ${lineLabel}`" class="shrink-0 whitespace-nowrap rounded-md bg-blue-50 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-blue-600">{{ lineValue(line, lineTab).replace(/%$/, '') }}</span>
                             </div>
                             <div class="mt-1 flex flex-wrap gap-x-1.5 gap-y-1 text-[8px] leading-3 tabular-nums">
-                                <span v-for="tab in secondaryLineTabs" :key="tab.key" class="whitespace-nowrap border-r border-slate-200 pr-1.5 last:border-r-0 last:pr-0"><span class="text-slate-500">{{ tab.label }}</span>{{ ' ' }}<b class="font-semibold text-slate-950">{{ lineValue(line, tab.key) }}</b></span>
+                                <span v-for="tab in secondaryLineTabs" :key="tab.key" class="whitespace-nowrap border-r border-slate-200 pr-1.5 last:border-r-0 last:pr-0"><span class="text-slate-500">{{ tab.label }}</span>{{ ' ' }}<b class="font-semibold" :class="tab.key === 'corsi' && line.corsi < 0 ? 'text-red-600' : 'text-slate-950'">{{ lineValue(line, tab.key) }}</b></span>
                             </div>
                         </div>
                     </a>
