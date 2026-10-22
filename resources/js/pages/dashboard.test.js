@@ -369,7 +369,7 @@ describe('NHL dashboard', () => {
         expect(tabs.map(tab => tab.textContent)).toEqual(['G', 'Corsi', 'CF%', 'Shifts', 'TOI']);
         expect(document.querySelector('#line-tab-gf').getAttribute('aria-selected')).toBe('true');
     });
-    it('ranks every available line for each selected metric before selecting five', async () => {
+    it('ranks every available line for each selected metric before applying the limit', async () => {
         data.line_combinations = Array.from({ length: 5 }, (_, index) => ({ ...data.line_combinations[0], unit_id: index + 1,
             players: [`Line ${index + 1}`], gf: 5 - index, corsi: index === 1 ? 20 : index,
             cf_pct: index === 2 ? 90 : 50, shifts: index === 3 ? 15 : 3, toi_seconds: index === 4 ? 900 : 400 }));
@@ -380,6 +380,20 @@ describe('NHL dashboard', () => {
             expect(first()).toBe(expected);
             expect(document.querySelectorAll('#line-trend-results a')).toHaveLength(5);
         }
+    });
+    it('shows up to 20 lines per tab after sorting every available candidate', async () => {
+        data.line_combinations = Array.from({ length: 30 }, (_, index) => ({ ...data.line_combinations[0],
+            unit_id: index + 1, players: [`Line ${index + 1}`], gf: index, corsi: index,
+            cf_pct: 50 + index, shifts: index + 1, toi_seconds: 400 + index }));
+        mount();
+        for (const tab of ['gf', 'corsi', 'cf_pct', 'shifts', 'toi_seconds']) {
+            document.querySelector(`#line-tab-${tab}`).click(); await nextTick();
+            const rows = document.querySelectorAll('#line-trend-results a');
+            expect(rows).toHaveLength(20);
+            expect(rows[0].querySelector('h3').textContent).toBe('Line 30');
+            expect(rows[19].querySelector('h3').textContent).toBe('Line 11');
+        }
+        expect(document.querySelector('#line-trend-results').tabIndex).toBe(0);
     });
     it('displays Corsi as a signed differential and CF percentage as attempt share', async () => {
         mount(); document.querySelector('#line-tab-corsi').click(); await nextTick();

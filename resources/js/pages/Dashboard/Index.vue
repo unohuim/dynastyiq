@@ -48,7 +48,7 @@ const lines = computed(() => [...(props.dashboard.line_combinations ?? [])]
     .filter(line => lineTab.value !== 'cf_pct' || line.toi_seconds >= 300)
     .sort((a, b) => b[lineTab.value] - a[lineTab.value]
         || b.goal_diff - a.goal_diff || (b.cf_pct ?? -1) - (a.cf_pct ?? -1)
-        || b.toi_seconds - a.toi_seconds || a.unit_id - b.unit_id || a.game_id - b.game_id).slice(0, 5));
+        || b.toi_seconds - a.toi_seconds || a.unit_id - b.unit_id || a.game_id - b.game_id).slice(0, 20));
 const lineValue = (line, key) => !Number.isFinite(line[key]) ? '—'
     : key === 'toi_seconds' ? toi(line.toi_seconds)
         : key === 'cf_pct' ? `${decimal(line.cf_pct)}%`
@@ -335,7 +335,7 @@ function navigateTabs(event, group) {
                     <button v-for="tab in lineTabs" :id="`line-tab-${tab.key}`" :key="tab.key" type="button" role="tab" :title="tab.unit" :tabindex="lineTab === tab.key ? 0 : -1" :aria-selected="lineTab === tab.key" aria-controls="line-trend-results" class="min-h-7 rounded-md px-0.5 py-1 text-[10px] font-semibold transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 motion-reduce:transition-none" :class="lineTab === tab.key ? 'bg-blue-600 text-white shadow-sm' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'" @click="lineTab = tab.key" @keydown="navigateTabs($event, 'line')">{{ tab.label }}</button>
                 </div>
                 <p class="mb-2 text-[9px] text-slate-400">{{ performanceDate }} · 5v5 · {{ lineUnit }}<span v-if="lineTab === 'cf_pct'"> · Min. 5:00 TOI</span></p>
-                <div id="line-trend-results" role="tabpanel" :aria-labelledby="`line-tab-${lineTab}`" class="min-h-0 flex-1 overflow-y-auto">
+                <div id="line-trend-results" role="tabpanel" :aria-labelledby="`line-tab-${lineTab}`" tabindex="0" class="max-h-96 min-h-0 flex-1 overflow-y-auto overscroll-y-contain focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 xl:max-h-none">
                     <a v-for="(line, index) in lines" :key="`${line.game_id}-${line.unit_id}`" :href="line.url" class="flex items-center gap-2 border-b border-slate-100 py-3 transition-colors duration-150 last:border-b-0 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 motion-reduce:transition-none">
                         <span class="w-3 shrink-0 text-[10px] font-semibold tabular-nums text-slate-600">{{ index + 1 }}</span>
                         <img v-if="line.team_logo" :src="line.team_logo" :alt="line.team" class="h-10 w-10 shrink-0 object-contain" loading="lazy" />
