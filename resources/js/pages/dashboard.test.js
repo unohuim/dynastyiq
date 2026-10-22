@@ -80,7 +80,7 @@ describe('NHL dashboard', () => {
         mount(); expect(document.querySelector('[aria-label="Featured NHL stories"] img').getAttribute('src')).toBe('/story-1.jpg');
     });
     it('keeps the supporting panels from the reference design', () => {
-        mount(); for (const title of ["Last Night's Top Performers", 'Notable Signings & Moves', 'Injury Watch', 'Team Trends', 'Player Heat Check', 'Last Night’s Top Lines', 'Around the NHL']) expect(section(title)).toBeTruthy();
+        mount(); for (const title of ["Last Night's Top Performers", 'Notable Signings & Moves', 'Injury Watch', 'Team Trends', 'Player Trends', 'Last Night’s Top Lines', 'Around the NHL']) expect(section(title)).toBeTruthy();
     });
     it('shows four top performer cards without introducing a fixed goalie slot', () => {
         mount(); expect(section("Last Night's Top Performers").querySelectorAll('a[href^="/players/"]')).toHaveLength(4);
@@ -124,6 +124,31 @@ describe('NHL dashboard', () => {
         expect(section('Injury Watch').textContent).toContain('Return unknown');
         expect(section('Injury Watch').querySelector('time')).toBeNull();
     });
+    it('shows every available team including teams with missing selected metrics', async () => {
+        data.team_trends = Array.from({ length: 32 }, (_, index) => ({ ...data.team_trends[0], team: `TEAM${index}`,
+            offense: index, defense: 32 - index, special_teams: index === 0 ? null : index / 10 }));
+        mount();
+        expect(document.querySelectorAll('#team-trend-results a')).toHaveLength(32);
+        document.querySelector('#team-tab-special_teams').click(); await nextTick();
+        expect(document.querySelectorAll('#team-trend-results a')).toHaveLength(32);
+        expect([...document.querySelectorAll('#team-trend-results a')].at(-1).textContent).toContain('TEAM0');
+    });
+    it('shows the leading 25 players separately for up down and breakout tabs', async () => {
+        const template = data.player_trends[0];
+        data.player_trends = Array.from({ length: 60 }, (_, index) => ({ ...template, nhl_player_id: index + 1,
+            name: `Trend Player ${index + 1}`, delta: index < 30 ? index + 1 : -(index - 29), breakout: index < 30 }));
+        mount();
+        for (const [tab, name] of [['up', 'Trend Player 30'], ['down', 'Trend Player 60'], ['breakout', 'Trend Player 30']]) {
+            document.querySelector(`#player-tab-${tab}`).click(); await nextTick();
+            expect(document.querySelectorAll('#player-trend-results a')).toHaveLength(25);
+            expect(document.querySelector('#player-trend-results h3').textContent).toBe(name);
+            expect(document.querySelector('#player-trend-results').tabIndex).toBe(0);
+        }
+    });
+    it('places the story source attribution before the featured story carousel', () => {
+        mount(); const source = [...document.querySelectorAll('main p')].find(node => node.textContent.startsWith('Stories: NHL.com'));
+        expect(source.compareDocumentPosition(document.querySelector('#featured-story-cards')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
     it('orders offense by highest goals per game initially', () => {
         mount(); expect(document.querySelector('#team-trend-results a').textContent).toContain('TOR');
     });
@@ -157,8 +182,8 @@ describe('NHL dashboard', () => {
         expect(document.querySelector('#player-trend-results').textContent).toContain('Breakout Player');
     });
     it('uses an absolute scoring change when the prior rate was zero', () => {
-        mount(); expect(section('Player Heat Check').textContent).toContain('+1.0 P/GP');
-        expect(section('Player Heat Check').textContent).not.toContain('Infinity');
+        mount(); expect(section('Player Trends').textContent).toContain('+1.0 P/GP');
+        expect(section('Player Trends').textContent).not.toContain('Infinity');
     });
     it('does not mutate server-owned trend arrays during tab sorting', async () => {
         const before = JSON.stringify(data.team_trends); mount(); document.querySelector('#team-tab-defense').click(); await nextTick();

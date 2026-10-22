@@ -54,11 +54,11 @@ const lineValue = (line, key) => !Number.isFinite(line[key]) ? '—'
         : key === 'cf_pct' ? `${decimal(line.cf_pct)}%`
             : key === 'corsi' && line.corsi > 0 ? `+${line.corsi}` : String(line[key]);
 const teams = computed(() => [...props.dashboard.team_trends]
-    .filter(team => team[teamTab.value] !== null)
-    .sort((a, b) => teamTab.value === 'defense' ? a.defense - b.defense : b[teamTab.value] - a[teamTab.value]).slice(0, 5));
+    .sort((a, b) => Number.isFinite(b[teamTab.value]) - Number.isFinite(a[teamTab.value])
+        || (teamTab.value === 'defense' ? (a.defense ?? 0) - (b.defense ?? 0) : (b[teamTab.value] ?? 0) - (a[teamTab.value] ?? 0))));
 const players = computed(() => [...props.dashboard.player_trends]
     .filter(player => playerTab.value === 'down' ? player.delta < 0 : playerTab.value === 'breakout' ? player.breakout : player.delta > 0)
-    .sort((a, b) => playerTab.value === 'down' ? a.delta - b.delta : b.delta - a.delta).slice(0, 5));
+    .sort((a, b) => playerTab.value === 'down' ? a.delta - b.delta : b.delta - a.delta).slice(0, 25));
 const teamUnit = computed(() => teamTabs.find(tab => tab.key === teamTab.value)?.unit);
 const headlinePreview = computed(() => props.dashboard.headlines.slice(0, 5));
 const externalLinkAttributes = href => href && new URL(href, window.location.href).origin !== window.location.origin
@@ -204,7 +204,7 @@ function navigateTabs(event, group) {
 
 <template>
     <Head title="Home · DynastyIQ" />
-    <main class="mx-auto grid w-full max-w-[1800px] gap-2 bg-slate-50 px-3 py-2 text-slate-900 sm:px-5 lg:px-7" :class="!dashboard.search && !moreHeadlines ? 'xl:h-[calc(100dvh-196px)] xl:min-h-[550px] xl:grid-rows-[minmax(112px,0.9fr)_232px_minmax(160px,1.3fr)_auto]' : ''" aria-label="NHL dashboard">
+    <main class="mx-auto grid w-full max-w-[1800px] gap-2 bg-slate-50 px-3 py-2 text-slate-900 sm:px-5 lg:px-7" :class="!dashboard.search && !moreHeadlines ? 'xl:h-[calc(100dvh-196px)] xl:min-h-[550px] xl:grid-rows-[minmax(112px,0.9fr)_232px_minmax(160px,1.3fr)]' : ''" aria-label="NHL dashboard">
         <h1 class="sr-only">DynastyIQ hockey dashboard</h1>
 
         <DashboardSection v-if="dashboard.search" :title="`Search results for “${dashboard.query}”`">
@@ -223,7 +223,9 @@ function navigateTabs(event, group) {
             </div>
         </DashboardSection>
 
-        <div v-if="stories.length" class="flex min-h-0 min-w-0 flex-col">
+        <div class="flex min-h-0 min-w-0 flex-col">
+            <p class="mb-1 text-right text-[10px] text-slate-400">Stories: NHL.com<template v-if="dashboard.news_updated_at"> · Updated {{ shortDate(dashboard.news_updated_at) }}</template><template v-if="dashboard.news_unavailable"> · Showing the last available feed</template></p>
+        <div v-if="stories.length" class="flex min-h-0 min-w-0 flex-1 flex-col">
         <section id="featured-story-cards" ref="storyStrip" tabindex="0" class="grid min-h-0 min-w-0 grid-flow-col auto-cols-[100%] gap-3 overflow-x-auto overflow-y-hidden overscroll-x-contain [scrollbar-width:none] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 md:flex-1 md:grid-flow-row md:auto-cols-auto md:grid-cols-3 md:snap-none md:overflow-visible xl:grid-cols-[1.2fr_1fr_1fr] [&::-webkit-scrollbar]:hidden" :class="storyDrag ? 'snap-none' : 'snap-x snap-mandatory'" aria-label="Featured NHL stories" @scroll.passive="updateStoryScroll">
             <article v-for="(story, index) in stories" :key="story.id" class="relative isolate flex h-40 snap-start snap-always overflow-hidden rounded-lg bg-slate-900 text-white md:h-64 lg:h-[260px] xl:h-full xl:min-h-0" :class="index >= dashboard.featured.length ? 'md:hidden' : ''">
                 <img v-if="story.image_url" :src="story.image_url" alt="" class="absolute inset-0 -z-20 h-full w-full object-contain object-top" :loading="index === 0 ? 'eager' : 'lazy'" />
@@ -245,6 +247,7 @@ function navigateTabs(event, group) {
             </svg>
         </div>
         <div v-else class="rounded-lg border border-slate-200 bg-white p-6 text-sm text-slate-600" role="status">NHL stories are currently unavailable. <a :href="dashboard.links.news" v-bind="externalLinkAttributes(dashboard.links.news)" class="font-medium text-blue-600">Read the latest on NHL.com ›</a></div>
+        </div>
 
         <div class="contents min-h-0 gap-3 md:grid xl:grid-cols-12">
             <DashboardSection title="Last Night's Top Performers" :href="dashboard.links.stats" class="order-1 md:order-none xl:col-span-5">
@@ -298,12 +301,12 @@ function navigateTabs(event, group) {
         </div>
 
         <div class="contents min-h-0 gap-3 md:grid md:grid-cols-2 xl:grid-cols-12">
-            <DashboardSection title="Team Trends" :href="dashboard.links.stats" class="order-3 md:order-none xl:col-span-3">
+            <DashboardSection title="Team Trends" :href="dashboard.links.stats" class="order-3 h-80 md:order-none xl:col-span-3 xl:h-auto">
                 <div role="tablist" aria-label="Team trend metric" class="mb-2 grid grid-cols-3 gap-1 rounded bg-slate-50 p-0.5">
                     <button v-for="tab in teamTabs" :id="`team-tab-${tab.key}`" :key="tab.key" type="button" role="tab" :tabindex="teamTab === tab.key ? 0 : -1" :aria-selected="teamTab === tab.key" aria-controls="team-trend-results" class="min-h-8 rounded border px-1 text-[10px] font-medium transition-colors duration-150 motion-reduce:transition-none" :class="teamTab === tab.key ? 'border-blue-200 bg-white text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-900'" @click="teamTab = tab.key" @keydown="navigateTabs($event, 'team')">{{ tab.label }}</button>
                 </div>
                 <p class="mb-2 text-[10px] text-slate-400">{{ teamUnit }} · 10 GP vs 10 GP at 20+ games; otherwise 5 GP vs 5 GP</p>
-                <div id="team-trend-results" role="tabpanel" :aria-labelledby="`team-tab-${teamTab}`" class="min-h-0 flex-1 divide-y divide-slate-100 overflow-y-auto">
+                <div id="team-trend-results" role="tabpanel" :aria-labelledby="`team-tab-${teamTab}`" tabindex="0" class="min-h-0 flex-1 divide-y divide-slate-100 overflow-y-auto overscroll-y-contain focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500">
                     <a v-for="(team, index) in teams" :key="team.team" :href="team.url" v-bind="externalLinkAttributes(team.url)" class="flex min-h-8 items-center gap-2 py-1 text-xs hover:text-blue-600">
                         <span class="w-3 text-[10px] text-slate-500">{{ index + 1 }}</span><img v-if="team.logo" :src="team.logo" alt="" class="h-5 w-5 object-contain" loading="lazy" />
                         <span class="min-w-0 flex-1"><span class="block truncate font-semibold">{{ team.name || team.team }}</span><span class="block text-[9px] text-slate-400">{{ team.games }} GP vs {{ team.previous_games }} GP</span></span><b class="tabular-nums">{{ decimal(team[teamTab]) }}</b><span class="w-10 text-right text-[10px] tabular-nums" :class="deltaClass(team[`${teamTab}_delta`], teamTab === 'defense')">{{ signed(team[`${teamTab}_delta`]) }}</span>
@@ -312,12 +315,12 @@ function navigateTabs(event, group) {
                 </div>
             </DashboardSection>
 
-            <DashboardSection title="Player Heat Check" :href="dashboard.links.stats" class="order-3 md:order-none xl:col-span-3">
+            <DashboardSection title="Player Trends" :href="dashboard.links.stats" class="order-3 h-80 md:order-none xl:col-span-3 xl:h-auto">
                 <div role="tablist" aria-label="Player scoring form" class="mb-2 grid grid-cols-3 gap-1 rounded bg-slate-50 p-0.5">
                     <button v-for="tab in playerTabs" :id="`player-tab-${tab.key}`" :key="tab.key" type="button" role="tab" :tabindex="playerTab === tab.key ? 0 : -1" :aria-selected="playerTab === tab.key" aria-controls="player-trend-results" class="min-h-8 rounded border px-1 text-[10px] font-medium transition-colors duration-150 motion-reduce:transition-none" :class="playerTab === tab.key ? 'border-blue-200 bg-white text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-900'" @click="playerTab = tab.key" @keydown="navigateTabs($event, 'player')">{{ tab.label }}</button>
                 </div>
                 <p class="mb-2 text-[10px] text-slate-400">Points / game · Last 5 vs previous 5 appearances</p>
-                <div id="player-trend-results" role="tabpanel" :aria-labelledby="`player-tab-${playerTab}`" class="min-h-0 flex-1 divide-y divide-slate-100 overflow-y-auto">
+                <div id="player-trend-results" role="tabpanel" :aria-labelledby="`player-tab-${playerTab}`" tabindex="0" class="min-h-0 flex-1 divide-y divide-slate-100 overflow-y-auto overscroll-y-contain focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500">
                     <a v-for="(player, index) in players" :key="player.nhl_player_id" :href="player.url" v-bind="externalLinkAttributes(player.url)" class="flex min-h-8 items-center gap-2 py-1 hover:text-blue-600">
                         <span class="w-3 text-[10px] text-slate-500">{{ index + 1 }}</span><img v-if="player.avatar" :src="player.avatar" alt="" class="h-6 w-6 rounded object-contain" loading="lazy" />
                         <div class="min-w-0 flex-1"><h3 class="truncate text-xs font-semibold">{{ player.name }}</h3><p class="text-[10px] text-slate-400">{{ player.position }} · {{ player.team }}</p></div>
@@ -367,6 +370,5 @@ function navigateTabs(event, group) {
                 <p v-if="!dashboard.headlines.length" class="py-8 text-center text-sm text-slate-500">More NHL headlines will appear here.</p>
             </DashboardSection>
         </div>
-        <p class="order-last text-right text-[10px] text-slate-400 md:order-none">Stories: NHL.com<template v-if="dashboard.news_updated_at"> · Updated {{ shortDate(dashboard.news_updated_at) }}</template><template v-if="dashboard.news_unavailable"> · Showing the last available feed</template></p>
     </main>
 </template>

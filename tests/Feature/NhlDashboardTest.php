@@ -431,3 +431,27 @@ it('orders current injury reports oldest-created first and includes anticipated 
         ->where('dashboard.injuries.0.anticipated_return_date', '2026-10-29')
         ->where('dashboard.injuries.1.anticipated_return_date', null));
 });
+
+
+it('retains downward player trends beyond the first hundred upward comparisons', function (): void {
+    $rows = [];
+    for ($day = 0; $day < 6; $day++) {
+        $gameId = 2026020100 + $day;
+        ($this->game)($gameId, Carbon::parse('2026-10-21')->subDays($day)->toDateString());
+        for ($player = 1; $player <= 130; $player++) {
+            $down = $player > 105;
+            $rows[] = [
+                'nhl_game_id' => $gameId, 'nhl_player_id' => 9000000 + $player, 'nhl_team_id' => 10,
+                'player_name' => 'Trend Player '.$player, 'position' => 'C', 'toi_seconds' => 1200,
+                'goals' => 0, 'assists' => 0, 'points' => ($day < 5) !== $down ? 2 : 0, 'sog' => 2,
+            ];
+        }
+    }
+    DB::table('nhl_boxscores')->insert($rows);
+    $data = app(NhlDashboardPayload::class)->build();
+    expect($data['player_trends'])->toHaveCount(130)
+        ->and(collect($data['player_trends'])->where('delta', '<', 0))->toHaveCount(25);
+    $this->get(route('welcome'))->assertOk()->assertInertia(fn (Assert $page) => $page
+        ->has('dashboard.player_trends', 130)
+        ->where('dashboard.player_trends.129.delta', -2));
+});

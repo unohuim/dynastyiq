@@ -29,7 +29,7 @@ class NhlDashboardPayload
             $slate->subDay();
         }
         $date = $slate->toDateString();
-        $facts = Cache::remember('nhl:dashboard:facts:v8:'.$date, 300, fn (): array => $this->facts($date));
+        $facts = Cache::remember('nhl:dashboard:facts:v9:'.$date, 300, fn (): array => $this->facts($date));
         $stories = $this->news->feed();
         $articles = collect($stories['items']);
 
@@ -374,7 +374,7 @@ class NhlDashboardPayload
                     'games' => $last->count(), 'previous_games' => $prior->count(),
                     'breakout' => $last->sum('points') >= 3 && $current > $previous && $current >= 2 * $previous,
                     'url' => 'https://www.nhl.com/player/'.$row->nhl_player_id];
-            })->filter()->sortByDesc('delta')->take(100)->values()->all();
+            })->filter()->sortByDesc('delta')->values()->all();
     }
 
     /** Search public canonical players and the already-fetched news feed, without another provider call. */
