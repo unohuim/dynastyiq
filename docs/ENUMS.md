@@ -1,5 +1,13 @@
 # ENUMS - Canonical Enum Authority
 
+## Operational game prediction history
+
+- Admin tab key: `game-predictions`.
+- Run status: `queued`, `running`, `completed`, `completed_with_errors`.
+- Run-game status: `queued`, `running`, `completed`, `unavailable`, `failed`.
+- Revision source: `api`, `admin`.
+- Revision `is_canonical` distinguishes default matchup inputs from explicit source/model/goalie overrides. Market-only selections remain canonical.
+
 ## NHL dashboard editorial feeds
 
 - `NhlDashboardNews::feed` accepts `stories` or `videos`; the default is `stories`.

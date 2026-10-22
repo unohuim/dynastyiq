@@ -78,6 +78,7 @@ class DashboardController extends Controller
             'users' => $this->usersPayload(),
             'activity' => $this->activityPayload(),
             'urls' => $this->adminDashboardUrls(),
+            'predictionDate' => Carbon::now('America/Toronto')->toDateString(),
         ]);
     }
 
@@ -95,6 +96,7 @@ class DashboardController extends Controller
                 'admin_panel' => 1,
                 'status' => NhlGameValidation::STATUS_SHIFTCHART_MISMATCH,
             ]),
+            'gamePredictionsUrl' => route('admin.game-predictions.index'),
             'gameImportStatusUrl' => route('admin.nhl-game-imports.status'),
             'gameImportSourceGapsUrl' => route('admin.nhl-game-imports.source-gaps'),
             'gameImportGameRerunUrl' => url('/admin/nhl-game-imports/games'),

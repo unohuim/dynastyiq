@@ -1,5 +1,15 @@
 # Database Schema Inventory (DB_SCHEMA)
 
+## Operational game prediction runs and revisions
+
+Migration `2026_10_22_000001_create_nhl_game_prediction_history_tables.php` defines:
+
+- `nhl_game_prediction_runs`: inclusive dates, requested-stack snapshot, requester, lifecycle and timestamps.
+- `nhl_game_prediction_run_games`: one game per run, status, error and completed revision reference.
+- `nhl_game_prediction_revisions`: append-only calculation time, game/run/source, canonical/available flags, fingerprint, request inputs, frozen evidence, full response and compact summary. Nullable run/game uniqueness makes manual retries idempotent while allowing repeated API revisions.
+
+These global operational records are separate from custom-engine forecasts and private admin workspace saves. Latest successful canonical revisions use the indexed game/flags/id lookup. Migration definitions remain authoritative.
+
 ## Scheduled processes
 
 Migration: `2026_10_10_000001_create_scheduled_processes_table.php`.

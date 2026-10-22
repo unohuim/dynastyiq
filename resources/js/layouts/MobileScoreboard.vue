@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import {
     defaultSlateDate, shiftSlateDate, slateRolloverDelay, slateNavigationLabel,
-    scoreboardStatus, mergeScoreboardGames, scoreboardDays,
+    scoreboardStatus, scoreboardTeamValue, mergeScoreboardGames, scoreboardDays,
 } from './scoreboard';
 
 const props = defineProps({
@@ -189,7 +189,14 @@ const isLive = game => scoreboardStatus(game) === 'Live';
 const isLoser = (game, side) => scoreboardStatus(game) === 'Final'
     && typeof game.away.score === 'number' && typeof game.home.score === 'number'
     && game[side].score < game[side === 'away' ? 'home' : 'away'].score;
-const gameLabel = game => `${game.away.team_abbrev ?? 'Away'} at ${game.home.team_abbrev ?? 'Home'}, ${scoreboardStatus(game)}${game.away.score !== null && game.home.score !== null ? `, ${game.away.score}–${game.home.score}` : ''}`;
+const gameLabel = game => {
+    const label = `${game.away.team_abbrev ?? 'Away'} at ${game.home.team_abbrev ?? 'Home'}, ${scoreboardStatus(game)}`;
+    if (['FUT', 'PRE'].includes((game.game_state ?? '').toUpperCase())) {
+        return label + ['away', 'home'].map(side => scoreboardTeamValue(game, side)
+            ? `, ${game[side].team_abbrev} win probability ${scoreboardTeamValue(game, side)}` : '').join('');
+    }
+    return label + (game.away.score !== null && game.home.score !== null ? `, ${game.away.score}–${game.home.score}` : '');
+};
 
 onMounted(() => {
     document.addEventListener('visibilitychange', refresh);
@@ -233,7 +240,7 @@ onBeforeUnmount(() => {
                             <img v-if="game[side].team_logo" :src="game[side].team_logo" alt="" class="h-[18px] w-[18px] shrink-0 object-contain" :class="isLoser(game, side) ? 'opacity-50' : ''" loading="lazy" />
                             <span v-else aria-hidden="true" class="h-[18px] w-[18px] shrink-0" />
                             <span class="min-w-0 flex-1">{{ game[side].team_abbrev ?? '—' }}</span>
-                            <span>{{ game[side].score ?? '' }}</span>
+                            <span class="shrink-0 tabular-nums" :class="['FUT', 'PRE'].includes((game.game_state ?? '').toUpperCase()) ? 'text-[10px]' : ''">{{ scoreboardTeamValue(game, side) }}</span>
                         </div>
                     </a>
                     <div v-if="!day.games.length" class="flex w-32 shrink-0 items-center justify-center border-r border-[#1F2B37] px-3 text-center text-xs text-[#788997]">No games scheduled</div>

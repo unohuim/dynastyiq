@@ -1,14 +1,17 @@
 <script>
 import adminHub from '../../admin/admin-hub';
+import GamePredictions from './GamePredictions.vue';
 
 export default {
     name: 'AdminDashboard',
+    components: { GamePredictions },
     props: {
         imports: { type: Array, default: () => [] },
         users: { type: Array, default: () => [] },
         activity: { type: Object, default: () => ({}) },
         hasPlayers: { type: Boolean, default: false },
         hasFantraxPlayers: { type: Boolean, default: false },
+        predictionDate: { type: String, required: true },
         urls: { type: Object, required: true },
     },
     data() {
@@ -96,6 +99,7 @@ export default {
                 >
                     Game Imports
                 </button>
+                <button type="button" class="border-b-2 px-0 pb-3 text-sm font-semibold" data-track="admin.tab.game-predictions" @click="setTab('game-predictions')" :class="activeTab === 'game-predictions' ? 'border-indigo-500 text-indigo-700' : 'border-transparent text-gray-600 hover:text-gray-800'">Game Predictions</button>
                 <button
                     type="button"
                     class="border-b-2 px-0 pb-3 text-sm font-semibold"
@@ -653,6 +657,8 @@ export default {
                     </div>
                 </div>
             </div>
+
+            <GamePredictions v-if="activeTab === 'game-predictions'" :url="urls.gamePredictionsUrl" :today="predictionDate" />
 
             <div v-show="activeTab === 'game-imports'" >
                 <div class="mb-4 border-y border-gray-200 bg-white px-4 py-4">

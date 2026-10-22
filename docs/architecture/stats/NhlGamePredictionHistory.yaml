@@ -1,0 +1,42 @@
+name: Operational NHL Game Prediction History
+type: Durable Default Stack Revisions And Manual Runs
+location:
+  - database/migrations/2026_10_22_000001_create_nhl_game_prediction_history_tables.php
+  - app/Services/NhlGamePredictionHistory.php
+  - app/Services/NhlGamePredictionResponseCache.php
+  - app/Http/Controllers/Admin/NhlGamePredictionController.php
+  - app/Jobs/RunNhlGamePredictionJob.php
+  - resources/js/pages/Admin/GamePredictions.vue
+purpose: Preserve live-path game calculation revisions and let super admins run the existing default stack for inclusive schedule dates.
+when_to_use:
+  - Publishing a newly calculated partner prediction, synchronously or through its queued refresh.
+  - Manually calculating one stored schedule date or a bounded inclusive range in Admin Control Panel Game Predictions.
+  - Inspecting latest successful predictions and earlier immutable revisions.
+when_not_to_use:
+  - Changing prediction math, qualification, stack delegation or player inputs.
+  - Running the unfinished custom engine or overwriting its independent tables.
+  - Saving every internal engine candidate, cache hit or historical engine evaluation as a live prediction.
+  - Claiming current-input runs on past dates are point-in-time historical backtests.
+rules:
+  - Each real API calculation appends a revision before cache publication; fresh and stale cache reads retain the same revision identity. Unavailable calculated responses are retained for diagnosis but never replace the latest successful canonical prediction in the admin list. Input changes detected during calculation publish neither a cache response nor a revision.
+  - Revisions freeze the complete response, request inputs, input fingerprint, selected default stack with ordered member engine definitions, model identity/timestamps, lineup evidence identities, starter evidence and calculation time. Existing revision payloads and evidence are never updated or deleted by this workflow.
+  - Partner responses expose additive meta.prediction_revision_id and meta.predicted_at. Existing probability, qualification, lineup and cache behavior remains unchanged. Manual runs force a new calculation through the same cache/build lock and builder, refreshing the corresponding default response cache.
+  - The main admin list selects the highest successful canonical revision id per game. Explicit goalie/model/season/projection overrides remain separately visible in history and cannot replace the canonical display. Market-only request variants remain canonical because they do not change the core matchup.
+  - A manual run stores the requested default-stack definition and one work item per eligible stored schedule game. It does not pin that stack for every future job; each job uses the then-current default stack and freezes its exact evidence, with a pre/post-build fingerprint check. A missing or empty default stack fails admission or work instead of silently using another prediction pathway.
+  - One job calculates one game on projections; automatic live API refreshes remain on lineups. Work-item and parent-run states follow docs/ENUMS.md. Run completion is derived under a parent row lock; failures and retry exhaustion remain visible. Replayed jobs reuse an already committed run/game revision and cannot create duplicates or overwrite later cached predictions with that older revision.
+  - Manual runs accept one date or an inclusive range of at most 366 dates. Use stored preseason, regular-season and playoff schedule rows; exclude postponed and cancelled games. No schedule import, pregame rebuild or source-data synchronization is triggered by this UI.
+  - The UI uses the Game Imports visual language, date/range controls with previous/next-day arrows for each date, Run Predictions, immediate feedback, progress, paginated latest results and expandable paginated revision history with saved evidence. Changing either selected date, its day arrows, or range mode immediately refreshes the matching inclusive game list without calculating predictions; invalid or incomplete selections clear stale results and wait for valid dates. Confidence and moneyline probability remain separate. Polling uses compact summaries, stops on unmount, cancels obsolete requests and never launches predictions.
+  - The public header scoreboard may read only each upcoming team’s full-game moneyline probability from the latest successful canonical revision. It never exposes saved private evidence or calculates predictions; scores retain priority for live and completed games.
+  - All run and history endpoints inherit the existing authenticated super-admin and lifecycle middleware. This is shared operational NHL data, not private per-user diagnostic saves or tenant-owned data. The requesting user is retained for audit.
+public_interface:
+  - GET /admin/game-predictions
+  - POST /admin/game-predictions/runs
+  - GET /admin/game-predictions/games/{game}/revisions
+  - GET /admin/game-predictions/revisions/{revision}
+  - nhl_game_prediction_runs
+  - nhl_game_prediction_run_games
+  - nhl_game_prediction_revisions
+example_usage: |
+  An admin chooses October 22 through October 24 and starts Run Predictions.
+  Each stored game is queued through the existing default-stack builder.
+  Another calculation for the same game appends a revision; history remains readable.

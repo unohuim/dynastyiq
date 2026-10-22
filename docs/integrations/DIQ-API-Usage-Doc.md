@@ -1007,6 +1007,8 @@ nhl-stats:read
 Every successful prediction payload includes `prediction_available`. Consumers
 must check this field before reading prediction or market output.
 
+New calculations are durably archived before publication. `meta.prediction_revision_id` identifies the saved calculation and `meta.predicted_at` is its calculation timestamp. Fresh and stale cache reads retain that identity; a successful recalculation receives a new revision. These additive fields do not change prediction or qualification math. Manual admin default-stack runs also publish through this pathway.
+
 `meta.cache` is `fresh` for a current cached or synchronous response and `stale`
 only when DynastyIQ has queued a rebuild of a response no more than five minutes old
 whose input fingerprint still matches. Engine settings, stack membership/order,

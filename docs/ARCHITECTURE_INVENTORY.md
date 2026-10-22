@@ -1,5 +1,12 @@
 # Architecture Inventory
 
+Operational default-stack predictions retain immutable revisions through
+`NhlGamePredictionHistory` at the response-cache publication boundary. The admin
+Game Predictions tab runs date ranges with `RunNhlGamePredictionJob`, displays
+latest successful results, and exposes saved revision evidence. Authority:
+`docs/architecture/stats/NhlGamePredictionHistory.yaml`. Custom-engine and private
+workspace snapshots remain separate.
+
 The public root and authenticated dashboard share the Vue NHL dashboard defined
 by `docs/designs/diq-dashboard-desktop-design.png`, using the complete DynastyIQ
 logo. `NhlDashboardController`, `NhlDashboardPayload`, and `NhlDashboardNews`

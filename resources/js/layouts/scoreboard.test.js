@@ -3,7 +3,7 @@ import { createApp, nextTick } from 'vue';
 import MobileScoreboard from './MobileScoreboard.vue';
 import {
     defaultSlateDate, shiftSlateDate, slateRolloverDelay, slateDateLabels, slateNavigationLabel,
-    scoreboardStatus, mergeScoreboardGames, scoreboardDays,
+    scoreboardStatus, scoreboardTeamValue, mergeScoreboardGames, scoreboardDays,
 } from './scoreboard';
 
 const game = (id, date = '2026-10-22', extra = {}) => ({
@@ -86,6 +86,53 @@ describe('Compact scoreboard facts', () => {
     });
     it('does not manufacture dates before a range is loaded', () => {
         expect(scoreboardDays(null, null, [])).toEqual([]);
+    });
+});
+
+describe('Header score or probability values', () => {
+    it('formats each upcoming teams own saved probability to one decimal', () => {
+        const row = game(1);
+        row.away.win_probability = .454; row.home.win_probability = .546;
+        expect(scoreboardTeamValue(row, 'away')).toBe('45.4%');
+        expect(scoreboardTeamValue(row, 'home')).toBe('54.6%');
+    });
+    it('also shows probabilities in starting-soon games', () => {
+        const row = game(1, undefined, { game_state: 'PRE' }); row.home.win_probability = .54649;
+        expect(scoreboardTeamValue(row, 'home')).toBe('54.6%');
+    });
+    it('leaves the slot blank when no probability is saved', () => {
+        expect(scoreboardTeamValue(game(1), 'home')).toBe('');
+    });
+    it('does not substitute stored pregame zero scores', () => {
+        const row = game(1); row.home.score = 0;
+        expect(scoreboardTeamValue(row, 'home')).toBe('');
+    });
+    it('supports zero and full probability without treating zero as missing', () => {
+        const row = game(1); row.home.win_probability = 0; row.away.win_probability = 1;
+        expect(scoreboardTeamValue(row, 'home')).toBe('0.0%');
+        expect(scoreboardTeamValue(row, 'away')).toBe('100.0%');
+    });
+    it('ignores nonnumeric or out-of-range probability values', () => {
+        const row = game(1);
+        for (const value of [null, '54.6', -1, 1.5, Infinity, NaN]) {
+            row.home.win_probability = value; expect(scoreboardTeamValue(row, 'home')).toBe('');
+        }
+    });
+    it('gives live and final scores priority including zero', () => {
+        for (const state of ['LIVE', 'CRIT', 'FINAL', 'OFF']) {
+            const row = game(1, undefined, { game_state: state }); row.home.score = 0; row.home.win_probability = .546;
+            expect(scoreboardTeamValue(row, 'home')).toBe(0);
+        }
+    });
+    it('does not show probabilities when live evidence is unavailable', () => {
+        const row = game(1, undefined, { game_state: 'LIVE', live_data_unavailable: true }); row.home.win_probability = .546;
+        expect(scoreboardTeamValue(row, 'home')).toBe('');
+    });
+    it('leaves cancelled and postponed games blank', () => {
+        for (const state of ['CNCL', 'PPD']) {
+            const row = game(1, undefined, { game_state: state }); row.home.win_probability = .546;
+            expect(scoreboardTeamValue(row, 'home')).toBe('');
+        }
     });
 });
 
@@ -313,4 +360,15 @@ describe('Mobile scoreboard lifecycle', () => {
         retry.click(); await settle();
         expect(document.querySelector('a[href="/games/1"]')).not.toBeNull();
     });
+    it('renders both saved probabilities in the shared header tiles and accessible labels', async () => {
+        const row = game(1, '2026-10-21'); row.away.win_probability = .454; row.home.win_probability = .546;
+        fetch.mockImplementation(async url => {
+            const params = new URL(url).searchParams;
+            return { ok: true, json: async () => ({ games: [row], meta: { start: params.get('start'), end: params.get('end') } }) };
+        });
+        mount(); await settle(); const tile = document.querySelector('a[href="/games/1"]');
+        expect(tile.textContent).toContain('45.4%'); expect(tile.textContent).toContain('54.6%');
+        expect(tile.getAttribute('aria-label')).toContain('TOR win probability 54.6%');
+    });
+
 });

@@ -321,6 +321,14 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                 Route::post('/api-keys', [\App\Http\Controllers\Admin\ApiKeyController::class, 'store'])
                     ->name('admin.api-keys.store');
 
+                Route::prefix('game-predictions')->name('admin.game-predictions.')
+                    ->controller(\App\Http\Controllers\Admin\NhlGamePredictionController::class)->group(function () {
+                        Route::get('/', 'index')->name('index');
+                        Route::post('/runs', 'store')->name('runs.store');
+                        Route::get('/games/{game}/revisions', 'revisions')->whereNumber('game')->name('revisions');
+                        Route::get('/revisions/{revision}', 'show')->whereNumber('revision')->name('show');
+                    });
+
                 // Imports
                 Route::get('/imports', [\App\Http\Controllers\Admin\ImportsController::class, 'index'])
                     ->name('admin.imports');

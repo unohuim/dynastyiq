@@ -10,6 +10,7 @@ use App\Models\NhlLineupObservation;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 /** Builds public and partner-facing anticipated-lineup payloads from current projections. */
 class NhlAnticipatedLineupPayload
@@ -80,7 +81,8 @@ class NhlAnticipatedLineupPayload
     {
         $games = NhlGame::query()->whereBetween('game_date', [$start->toDateString(), $end->toDateString()])
             ->orderBy('game_date')->orderBy('start_time_utc')->orderBy('nhl_game_id')->get();
-        $rows = $games->map(function (NhlGame $game): array {
+        $probabilities = $this->scoreboardWinProbabilities($games);
+        $rows = $games->map(function (NhlGame $game) use ($probabilities): array {
             $storedState = mb_strtoupper((string) $game->game_state);
             $finished = in_array($storedState, ['FINAL', 'OFF'], true);
             $hasFinalScore = $finished && $game->away_team_score !== null && $game->home_team_score !== null;
@@ -116,6 +118,14 @@ class NhlAnticipatedLineupPayload
                     $teams[$side] = ['team_abbrev' => $team['team_abbrev'] ?? null,
                         'team_logo' => $team['team_logo'] ?? null, 'score' => $showScore ? ($team['score'] ?? null) : null];
                 }
+                $market = collect($probabilities->get($game->nhl_game_id, []))->first(fn (array $row): bool =>
+                    ($row['market_key'] ?? null) === 'moneyline' && ($row['period_key'] ?? null) === 'full_game'
+                    && ($row['selection_key'] ?? null) === $side
+                    && ($row['team_abbrev'] ?? null) === $teams[$side]['team_abbrev']);
+                $probability = $market['probability'] ?? null;
+                $teams[$side]['win_probability'] = in_array($state, ['FUT', 'PRE'], true) && $available
+                    && is_numeric($probability) && is_finite((float) $probability)
+                    && $probability >= 0 && $probability <= 1 ? (float) $probability : null;
             }
 
             return ['nhl_game_id' => $game->nhl_game_id, 'href' => route('games.show', $game->nhl_game_id),
@@ -129,6 +139,29 @@ class NhlAnticipatedLineupPayload
         return ['games' => $rows, 'meta' => ['start' => $start->toDateString(), 'end' => $end->toDateString(),
             'min_date' => $bounds?->first_date, 'max_date' => $bounds?->last_date,
             'timezone' => 'America/Toronto', 'generated_at' => now()->toIso8601String()]];
+    }
+
+    /** Read only saved public moneyline probabilities, in one batch, without prediction assembly.
+     * @param Collection<int,NhlGame> $games
+     * @return Collection<int,array<int,array<string,mixed>>>
+     */
+    private function scoreboardWinProbabilities(Collection $games): Collection
+    {
+        $ids = $games->filter(fn (NhlGame $game): bool => in_array(mb_strtoupper((string) $game->game_state), ['FUT', 'PRE'], true))
+            ->pluck('nhl_game_id');
+        if ($ids->isEmpty() || ! Schema::hasTable('nhl_game_prediction_revisions')) {
+            return collect();
+        }
+        $latest = DB::table('nhl_game_prediction_revisions')->whereIn('nhl_game_id', $ids)
+            ->where('is_canonical', true)->where('prediction_available', true)
+            ->selectRaw('MAX(id) as id')->groupBy('nhl_game_id');
+
+        return DB::table('nhl_game_prediction_revisions')->whereIn('id', $latest)
+            ->get(['nhl_game_id', 'payload->market_probabilities as markets'])->keyBy('nhl_game_id')
+            ->map(function (object $row): array {
+                $markets = is_string($row->markets) ? json_decode($row->markets, true) : $row->markets;
+                return is_array($markets) ? array_values(array_filter($markets, 'is_array')) : [];
+            });
     }
 
     /** @return array<string,mixed> */

@@ -67,6 +67,19 @@ export function scoreboardStatus(game) {
         : 'TBD';
 }
 
+/** Upcoming games show saved moneyline probability; live/final games retain their score. */
+export function scoreboardTeamValue(game, side) {
+    if (game.live_data_unavailable) return '';
+    const state = (game.game_state ?? '').toUpperCase();
+    if (['FUT', 'PRE'].includes(state)) {
+        const probability = game[side]?.win_probability;
+        return Number.isFinite(probability) && probability >= 0 && probability <= 1
+            ? `${(probability * 100).toFixed(1)}%` : '';
+    }
+    if (!state || ['PPD', 'CNCL'].includes(state)) return '';
+    return game[side]?.score ?? '';
+}
+
 /** Updating a range replaces matching games without duplicates or stale scores. */
 export function mergeScoreboardGames(existing, incoming) {
     const games = new Map(existing.map(game => [game.nhl_game_id, game]));

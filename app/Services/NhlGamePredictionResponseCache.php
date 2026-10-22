@@ -20,7 +20,7 @@ final class NhlGamePredictionResponseCache
     private const BUILD_LOCK_SECONDS = 600;
 
     /** @param array<string,mixed> $input @param callable():array<string,mixed> $build @return array<string,mixed> */
-    public function respond(int $gameId, array $input, callable $build, bool $forceRefresh = false): array
+    public function respond(int $gameId, array $input, callable $build, bool $forceRefresh = false, ?int $runId = null): array
     {
         $fingerprint = $this->fingerprint($gameId, $input);
         $key = $this->key($gameId, $input);
@@ -39,9 +39,19 @@ final class NhlGamePredictionResponseCache
             throw new ServiceUnavailableHttpException(2, 'Prediction is being rebuilt. Retry this request.');
         }
         try {
-            $fingerprint = $this->fingerprint($gameId, $input);
+            if ($runId !== null) {
+                $saved = DB::table('nhl_game_prediction_revisions')->where('run_id', $runId)->where('nhl_game_id', $gameId)->first();
+                if ($saved !== null) {
+                    return $this->annotate(app(NhlGamePredictionHistory::class)->payload($saved), 'fresh');
+                }
+            }
+            $evidence = $this->evidence($gameId, $input);
+            if ($runId !== null && ($evidence['stack'] === null || $evidence['stack']->members->isEmpty())) {
+                throw \Illuminate\Validation\ValidationException::withMessages(['stack' => 'A non-empty default stack is required.']);
+            }
+            $fingerprint = hash('sha256', json_encode($evidence, JSON_THROW_ON_ERROR));
             $current = Cache::get($key);
-            if ($this->matches($current, $fingerprint, self::FRESH_SECONDS)
+            if ($runId === null && $this->matches($current, $fingerprint, self::FRESH_SECONDS)
                 && (! $forceRefresh || ($current['build_id'] ?? null) !== ($cached['build_id'] ?? null))) {
                 return $this->annotate($current['payload'], 'fresh');
             }
@@ -49,7 +59,7 @@ final class NhlGamePredictionResponseCache
             if ($fingerprint !== $this->fingerprint($gameId, $input)) {
                 throw new ServiceUnavailableHttpException(2, 'Prediction inputs changed during the build. Retry this request.');
             }
-            $this->store($key, $fingerprint, $payload);
+            $payload = $this->store($gameId, $input, $key, $fingerprint, $evidence, $payload, $runId);
 
             return $this->annotate($payload, 'fresh');
         } finally {
@@ -73,9 +83,13 @@ final class NhlGamePredictionResponseCache
                     || $this->matches(Cache::get($this->key($gameId, $input)), $fingerprint, self::FRESH_SECONDS)) {
                     return;
                 }
+                $evidence = $this->evidence($gameId, $input);
+                if ($fingerprint !== hash('sha256', json_encode($evidence, JSON_THROW_ON_ERROR))) {
+                    return;
+                }
                 $built = $payload->build($gameId, $input);
                 if ($fingerprint === $this->fingerprint($gameId, $input)) {
-                    $this->store($this->key($gameId, $input), $fingerprint, $built);
+                    $this->store($gameId, $input, $this->key($gameId, $input), $fingerprint, $evidence, $built);
                 }
             } finally {
                 $lock->release();
@@ -106,6 +120,14 @@ final class NhlGamePredictionResponseCache
     /** @param array<string,mixed> $input */
     private function fingerprint(int $gameId, array $input): string
     {
+        return hash('sha256', json_encode($this->evidence($gameId, $input), JSON_THROW_ON_ERROR));
+    }
+
+    /** Freeze the configuration and lineup/starter identities used by the same fingerprint boundary.
+     * @param array<string,mixed> $input @return array<string,mixed>
+     */
+    private function evidence(int $gameId, array $input): array
+    {
         ksort($input);
         $game = DB::table('nhl_games')->where('nhl_game_id', $gameId)->first(['updated_at', 'away_starter_lock', 'home_starter_lock']);
         $stack = NhlSatEngineStack::query()->where('is_default', true)->with('members.engine')->first();
@@ -118,7 +140,8 @@ final class NhlGamePredictionResponseCache
         $goalies = DB::table('nhl_starting_goalie_observations')->where('nhl_game_id', $gameId)
             ->orderBy('id')->get(['id', 'team_abbrev', 'nhl_player_id', 'updated_at']);
 
-        return hash('sha256', json_encode([$input, $game, $stack, $models, $lineups, $goalies], JSON_THROW_ON_ERROR));
+        return ['request' => $input, 'game' => $game, 'stack' => $stack, 'models' => $models,
+            'lineups' => $lineups, 'goalies' => $goalies];
     }
 
     /** @param array<string,mixed> $input */
@@ -126,7 +149,7 @@ final class NhlGamePredictionResponseCache
     {
         ksort($input);
 
-        return 'nhl:game-prediction:production-qualified-upper1-boost7-v4:' . $gameId . ':' . hash('sha256', json_encode($input, JSON_THROW_ON_ERROR));
+        return 'nhl:game-prediction:production-qualified-upper1-boost7-history-v5:' . $gameId . ':' . hash('sha256', json_encode($input, JSON_THROW_ON_ERROR));
     }
 
     /** @param array<string,mixed> $input */
@@ -135,11 +158,19 @@ final class NhlGamePredictionResponseCache
         return $this->key($gameId, $input) . ':queued:' . $fingerprint;
     }
 
-    /** @param array<string,mixed> $payload */
-    private function store(string $key, string $fingerprint, array $payload): void
+    /** Publish only after the durable revision is saved. Cache hits never append history.
+     * @param array<string,mixed> $input
+     * @param array<string,mixed> $evidence
+     * @param array<string,mixed> $payload
+     * @return array<string,mixed>
+     */
+    private function store(int $gameId, array $input, string $key, string $fingerprint, array $evidence, array $payload, ?int $runId = null): array
     {
+        $payload = app(NhlGamePredictionHistory::class)->record($gameId, $input, $fingerprint, $evidence, $payload, $runId);
         Cache::put($key, ['fingerprint' => $fingerprint, 'built_at' => now(),
             'build_id' => (string) \Illuminate\Support\Str::uuid(), 'payload' => $payload], self::STALE_SECONDS);
+
+        return $payload;
     }
 
     /** Accept only matching, bounded snapshots; future or malformed timestamps are unusable. */

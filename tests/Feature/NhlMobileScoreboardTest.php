@@ -117,7 +117,7 @@ it('returns existing game URLs and team identity for compact tiles', function ()
 it('omits lineups goalie projections and prediction inputs from compact responses', function (): void {
     ($this->game)();
     $response = $this->getJson(route('games.scoreboard', $this->range))->assertOk();
-    expect(array_keys($response->json('games.0.away')))->toBe(['team_abbrev', 'team_logo', 'score']);
+    expect(array_keys($response->json('games.0.away')))->toBe(['team_abbrev', 'team_logo', 'score', 'win_probability']);
     Http::assertNothingSent();
 });
 
@@ -252,3 +252,64 @@ it('reads compact live facts without selecting projected goalies or assembling r
     expect($payload['live_game']['away']['score'])->toBe(0)
         ->and(array_keys($payload['live_game']['home']))->toBe(['team_abbrev', 'team_logo', 'score']);
 });
+
+
+it('reads both upcoming moneyline probabilities from the newest successful canonical revision', function (): void {
+    $game = ($this->game)(2026020001, '2026-10-23', ['game_state' => 'FUT']);
+    $history = app(\App\Services\NhlGamePredictionHistory::class);
+    $payload = fn (float $away, float $home): array => ['prediction_available' => true, 'pick_qualified' => false,
+        'market_probabilities' => [
+            ['market_key' => 'moneyline', 'period_key' => 'full_game', 'selection_key' => 'away', 'team_abbrev' => 'BOS', 'probability' => $away],
+            ['market_key' => 'moneyline', 'period_key' => 'full_game', 'selection_key' => 'home', 'team_abbrev' => 'TOR', 'probability' => $home],
+        ]];
+    $history->record($game->nhl_game_id, ['nhl_game_id' => $game->nhl_game_id], str_repeat('a', 64), ['private_input' => 'secret'], $payload(.4, .6));
+    $history->record($game->nhl_game_id, ['nhl_game_id' => $game->nhl_game_id], str_repeat('b', 64), [], $payload(.454, .546));
+    // A newer overridden or unavailable calculation must not replace the canonical saved result.
+    $history->record($game->nhl_game_id, ['nhl_game_id' => $game->nhl_game_id, 'home_goalie_id' => 999], str_repeat('c', 64), [], $payload(.2, .8));
+    $history->record($game->nhl_game_id, ['nhl_game_id' => $game->nhl_game_id], str_repeat('d', 64), [], [...$payload(.1, .9), 'prediction_available' => false]);
+    $builder = Mockery::mock(\App\Services\NhlGamePredictionPayload::class);
+    $builder->shouldNotReceive('build');
+    $this->app->instance(\App\Services\NhlGamePredictionPayload::class, $builder);
+    $response = $this->getJson(route('games.scoreboard', ['start' => '2026-10-23', 'end' => '2026-10-23']))->assertOk()
+        ->assertJsonPath('games.0.away.win_probability', .454)->assertJsonPath('games.0.home.win_probability', .546)
+        ->assertJsonPath('games.0.away.score', null)->assertJsonMissingPath('games.0.evidence');
+    expect($response->getContent())->not->toContain('private_input');
+    Http::assertNothingSent();
+});
+
+it('keeps probability positions empty without a saved prediction', function (): void {
+    ($this->game)(2026020001, '2026-10-23', ['game_state' => 'FUT']);
+    $this->getJson(route('games.scoreboard', ['start' => '2026-10-23', 'end' => '2026-10-23']))->assertOk()
+        ->assertJsonPath('games.0.away.win_probability', null)->assertJsonPath('games.0.home.win_probability', null);
+});
+
+it('never uses invalid different-team or non-moneyline values as win probabilities', function (): void {
+    $game = ($this->game)(2026020001, '2026-10-23', ['game_state' => 'PRE']);
+    app(\App\Services\NhlGamePredictionHistory::class)->record($game->nhl_game_id, [], str_repeat('a', 64), [], [
+        'prediction_available' => true, 'market_probabilities' => [
+            ['market_key' => 'moneyline', 'period_key' => 'full_game', 'selection_key' => 'away', 'team_abbrev' => 'BOS', 'probability' => 1.5],
+            ['market_key' => 'moneyline', 'period_key' => 'full_game', 'selection_key' => 'home', 'team_abbrev' => 'MTL', 'probability' => .6],
+            ['market_key' => 'puckline', 'period_key' => 'full_game', 'selection_key' => 'home', 'team_abbrev' => 'TOR', 'probability' => .7],
+        ],
+    ]);
+    $this->getJson(route('games.scoreboard', ['start' => '2026-10-23', 'end' => '2026-10-23']))->assertOk()
+        ->assertJsonPath('games.0.away.win_probability', null)->assertJsonPath('games.0.home.win_probability', null);
+});
+
+it('preserves live and final scores instead of displaying saved probabilities', function (string $state): void {
+    $date = $state === 'LIVE' ? '2026-10-22' : '2026-10-21';
+    $game = ($this->game)(2026020001, $date, ['game_state' => $state, 'away_team_score' => 0, 'home_team_score' => 3]);
+    app(\App\Services\NhlGamePredictionHistory::class)->record($game->nhl_game_id, [], str_repeat('a', 64), [], [
+        'prediction_available' => true, 'market_probabilities' => [
+            ['market_key' => 'moneyline', 'period_key' => 'full_game', 'selection_key' => 'away', 'team_abbrev' => 'BOS', 'probability' => .454],
+            ['market_key' => 'moneyline', 'period_key' => 'full_game', 'selection_key' => 'home', 'team_abbrev' => 'TOR', 'probability' => .546],
+        ],
+    ]);
+    if ($state === 'LIVE') {
+        Http::fake(['*' => Http::response(['id' => 2026020001, 'gameState' => 'LIVE', 'startTimeUTC' => '2026-10-22T23:00:00Z',
+            'awayTeam' => ['abbrev' => 'BOS', 'score' => 0], 'homeTeam' => ['abbrev' => 'TOR', 'score' => 3]])]);
+    }
+    $this->getJson(route('games.scoreboard', ['start' => $date, 'end' => $date]))->assertOk()
+        ->assertJsonPath('games.0.away.score', 0)->assertJsonPath('games.0.home.score', 3)
+        ->assertJsonPath('games.0.away.win_probability', null)->assertJsonPath('games.0.home.win_probability', null);
+})->with(['LIVE', 'FINAL', 'OFF']);
