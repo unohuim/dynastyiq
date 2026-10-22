@@ -29,7 +29,7 @@ class NhlDashboardPayload
             $slate->subDay();
         }
         $date = $slate->toDateString();
-        $facts = Cache::remember('nhl:dashboard:facts:v3:'.$date, 300, fn (): array => $this->facts($date));
+        $facts = Cache::remember('nhl:dashboard:facts:v5:'.$date, 300, fn (): array => $this->facts($date));
         $stories = $this->news->feed();
         $articles = collect($stories['items']);
 
@@ -75,7 +75,7 @@ class NhlDashboardPayload
         ];
     }
 
-    /** Rank standout performances first; always fill four real cards when four performances exist. */
+    /** Retain every qualifying performance; fill to four real cards when fewer qualify. */
     private function performers(Collection $rows, Collection $games): array
     {
         $gsax = $this->goalieGsax($games->pluck('nhl_game_id')->all(), $rows->where('position', 'G'));
@@ -115,7 +115,7 @@ class NhlDashboardPayload
             ['save_percentage', 'desc'], ['saves', 'desc'], ['nhl_player_id', 'asc'],
         ]);
 
-        return $qualified->concat($skaters)->concat($otherGoalies)->unique('nhl_player_id')->take(4)
+        return $qualified->concat($skaters)->concat($otherGoalies)->unique('nhl_player_id')->take(max(4, $qualified->count()))
             ->map(fn (array $row): array => collect($row)->except(['standout', 'shots'])->all())->values()->all();
     }
 
@@ -200,6 +200,7 @@ class NhlDashboardPayload
             ->whereIn('up.unit_id', $shifts->pluck('unit_id')->unique())
             ->orderBy('p.id')->get(['up.unit_id', 'p.id', 'p.full_name', 'p.first_name', 'p.last_name'])->groupBy('unit_id');
         $time = [];
+        $countedShifts = [];
         foreach ($games as $game) {
             $boundaries = [];
             foreach ($shifts->where('nhl_game_id', $game->nhl_game_id) as $shift) {
@@ -227,8 +228,12 @@ class NhlDashboardPayload
                         if ($shift->unit_type === 'F' && $members->get($shift->unit_id, collect())->count() === 3) {
                             $key = $game->nhl_game_id.':'.$shift->unit_id;
                             $time[$key] ??= ['unit_id' => (int) $shift->unit_id, 'game_id' => (int) $game->nhl_game_id,
-                                'team' => $shift->team_abbrev, 'toi_seconds' => 0, 'gf' => 0, 'ga' => 0, 'cf' => 0, 'ca' => 0];
+                                'team' => $shift->team_abbrev, 'toi_seconds' => 0, 'shifts' => 0, 'gf' => 0, 'ga' => 0, 'cf' => 0, 'ca' => 0];
                             $time[$key]['toi_seconds'] += $second - $previous;
+                            if (! isset($countedShifts[$key][$shift->id])) {
+                                $time[$key]['shifts']++;
+                                $countedShifts[$key][$shift->id] = true;
+                            }
                         }
                     }
                 }
@@ -264,14 +269,14 @@ class NhlDashboardPayload
         return collect($time)->map(function (array $row) use ($members, $games): array {
             $game = $games->firstWhere('nhl_game_id', $row['game_id']);
             $side = $game->home_team_abbrev === $row['team'] ? 'home' : 'away';
-            return [...$row, 'goal_diff' => $row['gf'] - $row['ga'],
+            return [...$row, 'goal_diff' => $row['gf'] - $row['ga'], 'corsi' => $row['cf'] - $row['ca'],
                 'cf_pct' => $row['cf'] + $row['ca'] > 0 ? $row['cf'] / ($row['cf'] + $row['ca']) * 100 : null,
                 'players' => $members[$row['unit_id']]->map(fn (object $player): string => $player->full_name ?: trim($player->first_name.' '.$player->last_name))->all(),
                 'team_logo' => $game->{$side.'_team_logo'},
                 'url' => route('stats.units.index', ['nhl_game_id' => $row['game_id'], 'team' => $row['team'],
                     'season_id' => $game->season_id, 'game_type' => $game->game_type, 'pos' => ['F'], 'sum' => 0])];
         })->sortBy([['goal_diff', 'desc'], ['cf_pct', 'desc'], ['toi_seconds', 'desc'], ['unit_id', 'asc']])
-            ->take(4)->values()->all();
+            ->values()->all();
     }
 
     /** Compare ten-game windows with twenty results available, otherwise five-game windows. */

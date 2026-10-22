@@ -10,7 +10,7 @@ workspace snapshots remain separate.
 The public root and authenticated dashboard share the Vue NHL dashboard defined
 by `docs/designs/diq-dashboard-desktop-design.png`, using the complete DynastyIQ
 logo. `NhlDashboardController`, `NhlDashboardPayload`, and `NhlDashboardNews`
-supply cached official NHL news, four factual top performers, strict 5v5 forward-line results, transactions,
+supply cached official NHL news, ranked top performers, strict 5v5 forward-line results, transactions,
 injuries and recent team/player form. Featured stories are excluded from Around
 the NHL. `/games` remains the separate game index. Authority:
 `docs/architecture/ui/NhlDashboard.yaml`.

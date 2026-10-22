@@ -321,6 +321,7 @@ it('reads strictly five-on-five trios from the completed night', function (int $
         expect($rows[0]['team'])->toBe('TOR')->and($rows[0]['players'])->toHaveCount(3)
             ->and($rows[0]['toi_seconds'])->toBe($goalieEnd)->and($rows[0]['gf'])->toBe(1)
             ->and($rows[0]['ga'])->toBe(0)->and($rows[0]['cf'])->toBe(2)
+            ->and($rows[0]['corsi'])->toBe(2)->and($rows[0]['shifts'])->toBe(1)
             ->and((float) $rows[0]['cf_pct'])->toBe(100.0);
         $this->get(route('welcome'))->assertOk()->assertInertia(fn (Assert $page) => $page
             ->has('dashboard.line_combinations', 2)->where('dashboard.line_combinations.0.gf', 1));
@@ -331,3 +332,62 @@ it('reads strictly five-on-five trios from the completed night', function (int $
     'four on four is excluded' => [1, 1, 360, 0],
     'empty nets are excluded' => [2, 0, 360, 0],
 ]);
+
+
+it('retains every qualifying performer beyond four without adding nonqualifying fillers', function (): void {
+    ($this->game)();
+    foreach (range(1, 7) as $id) {
+        ($this->box)($id, ['goals' => 2, 'assists' => 1, 'points' => 3]);
+    }
+    ($this->box)(8, ['goals' => 0, 'assists' => 1, 'points' => 1]);
+    $data = app(NhlDashboardPayload::class)->build();
+    expect($data['performers'])->toHaveCount(7)
+        ->and(array_column($data['performers'], 'qualified'))->toBe(array_fill(0, 7, true))
+        ->and(array_column($data['performers'], 'nhl_player_id'))->not->toContain(8);
+    $this->get(route('welcome'))->assertOk()->assertInertia(fn (Assert $page) => $page
+        ->has('dashboard.performers', 7)->where('dashboard.performers.6.qualified', true));
+});
+
+it('retains qualifying goalies alongside every qualifying skater beyond four', function (): void {
+    ($this->game)();
+    ($this->goalie)(1);
+    ($this->goalie)(2);
+    foreach (range(3, 7) as $id) {
+        ($this->box)($id, ['goals' => 1, 'assists' => 2, 'points' => 3]);
+    }
+    $rows = app(NhlDashboardPayload::class)->build()['performers'];
+    expect($rows)->toHaveCount(7)
+        ->and(count(array_filter(array_column($rows, 'goalie'))))->toBe(2)
+        ->and(array_column($rows, 'qualified'))->toBe(array_fill(0, 7, true));
+});
+
+
+it('retains all line candidates and counts shared shifts once across other-unit changes', function (): void {
+    ($this->game)();
+    $makeUnit = function (string $team, string $type, int $count, int $start, int $end): void {
+        $unit = DB::table('nhl_units')->insertGetId(['team_abbrev' => $team, 'unit_type' => $type]);
+        for ($index = 0; $index < $count; $index++) {
+            $player = Player::create(['full_name' => $team.' '.$type.$unit.'-'.$index, 'first_name' => $team, 'last_name' => $type.$index]);
+            DB::table('nhl_unit_players')->insert(['unit_id' => $unit, 'player_id' => $player->id]);
+        }
+        DB::table('nhl_unit_shifts')->insert([
+            'nhl_game_id' => 2026020001, 'unit_id' => $unit, 'team_id' => $team === 'TOR' ? 10 : 6, 'team_abbrev' => $team,
+            'period' => 1, 'start_time' => '00:00', 'end_time' => '06:00',
+            'start_game_seconds' => $start, 'end_game_seconds' => $end, 'seconds' => $end - $start,
+        ]);
+    };
+    foreach (['TOR', 'BOS'] as $team) {
+        $makeUnit($team, 'G', 1, 0, 360);
+        $makeUnit($team, 'D', 2, 0, 180);
+        $makeUnit($team, 'D', 2, 180, 360);
+    }
+    $makeUnit('BOS', 'F', 3, 0, 360);
+    foreach (range(0, 5) as $index) {
+        $makeUnit('TOR', 'F', 3, $index * 60, ($index + 1) * 60);
+    }
+    $rows = app(NhlDashboardPayload::class)->build()['line_combinations'];
+    expect($rows)->toHaveCount(7);
+    $away = collect($rows)->firstWhere('team', 'BOS');
+    expect($away['shifts'])->toBe(1)->and($away['toi_seconds'])->toBe(360);
+    $this->get(route('welcome'))->assertOk()->assertInertia(fn (Assert $page) => $page->has('dashboard.line_combinations', 7));
+});

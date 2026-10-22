@@ -10,6 +10,8 @@
 
 ## NHL dashboard editorial feeds
 
+- Dashboard 5v5 line metric tab keys: `gf`, `corsi`, `cf_pct`, `shifts`, `toi_seconds`; labels: G, Corsi, CF%, Shifts, TOI.
+
 - `NhlDashboardNews::feed` accepts `stories` or `videos`; the default is `stories`.
 - Dashboard tabs are page-local display state and do not configure prediction engines.
 

@@ -17,7 +17,7 @@ describe('NHL dashboard', () => {
         data = {
             featured: [story(1), story(2), story(3)], headlines: [story(4), story(5), story(6), story(7), story(8), story(9)],
             line_combinations: [{ unit_id: 1, game_id: 1, team: 'TOR', players: ['Alpha', 'Beta', 'Gamma'],
-                gf: 2, ga: 0, cf_pct: 65, toi_seconds: 425, url: '/stats/units?nhl_game_id=1' }], performance_date: '2026-10-21',
+                gf: 2, ga: 0, goal_diff: 2, cf: 13, ca: 7, corsi: 6, cf_pct: 65, shifts: 8, toi_seconds: 425, url: '/stats/units?nhl_game_id=1' }], performance_date: '2026-10-21',
             performers: [1, 2, 3, 4].map(id => ({ nhl_player_id: id, name: `Player ${id}`, avatar: `/player-${id}.png`,
                 team: 'TOR', team_logo: '/tor.svg', position: 'C', url: `/players/${id}`, goalie: false,
                 goals: 1, assists: 2, points: 3, badge: '3-point night' })),
@@ -139,10 +139,11 @@ describe('NHL dashboard', () => {
     it('shows the NHL source attribution', () => {
         mount(); expect(document.querySelector('main').textContent).toContain('Stories: NHL.com');
     });
-    it('replaces videos with factual five-on-five line results and internal links', () => {
+    it('replaces videos with factual five-on-five line results and internal links', async () => {
         mount(); const panel = section('Last Night’s 5v5 Lines');
         expect(panel.textContent).toContain('Alpha · Beta · Gamma');
         expect(panel.textContent).toContain('2–0');
+        document.querySelector('#line-tab-cf_pct').click(); await nextTick();
         expect(panel.textContent).toContain('65.0%');
         expect(panel.textContent).toContain('7:05');
         expect(panel.querySelector('a').getAttribute('href')).toBe('/stats/units');
@@ -212,6 +213,125 @@ describe('NHL dashboard', () => {
         mount();
         expect(document.querySelector('#team-trend-results').textContent).toContain('5 GP vs 2 GP');
         expect(document.querySelector('#team-trend-results').textContent).toContain('10 GP vs 10 GP');
+    });
+
+    it('renders every supplied performer in an accessible horizontal carousel', () => {
+        data.performers = Array.from({ length: 8 }, (_, index) => ({ ...data.performers[0], nhl_player_id: index + 1, name: `Player ${index + 1}`, url: `/players/${index + 1}` }));
+        mount(); const strip = section("Last Night's Top Performers").querySelector('[role="region"]');
+        expect(strip.getAttribute('aria-label')).toContain('scroll horizontally');
+        expect(strip.tabIndex).toBe(0);
+        expect(strip.querySelectorAll('a')).toHaveLength(8);
+        expect(strip.textContent).toContain('Player 8');
+    });
+    it('moves forward and backward by the visible carousel width', async () => {
+        mount(); const strip = section("Last Night's Top Performers").querySelector('[role="region"]');
+        Object.defineProperty(strip, 'clientWidth', { configurable: true, value: 400 });
+        Object.defineProperty(strip, 'scrollWidth', { configurable: true, value: 1200 });
+        strip.scrollBy = vi.fn(); strip.dispatchEvent(new Event('scroll')); await nextTick();
+        document.querySelector('[aria-label="Next performers"]').click();
+        expect(strip.scrollBy).toHaveBeenCalledWith({ left: 400, behavior: 'smooth' });
+        strip.scrollLeft = 400; strip.dispatchEvent(new Event('scroll')); await nextTick();
+        document.querySelector('[aria-label="Previous performers"]').click();
+        expect(strip.scrollBy).toHaveBeenCalledWith({ left: -400, behavior: 'smooth' });
+    });
+    it('disables carousel arrows at the corresponding edges', async () => {
+        mount(); const strip = section("Last Night's Top Performers").querySelector('[role="region"]');
+        Object.defineProperty(strip, 'clientWidth', { configurable: true, value: 400 });
+        Object.defineProperty(strip, 'scrollWidth', { configurable: true, value: 1200 });
+        strip.dispatchEvent(new Event('scroll')); await nextTick();
+        expect(document.querySelector('[aria-label="Previous performers"]').disabled).toBe(true);
+        expect(document.querySelector('[aria-label="Next performers"]').disabled).toBe(false);
+        strip.scrollLeft = 800; strip.dispatchEvent(new Event('scroll')); await nextTick();
+        expect(document.querySelector('[aria-label="Previous performers"]').disabled).toBe(false);
+        expect(document.querySelector('[aria-label="Next performers"]').disabled).toBe(true);
+    });
+
+    it('sizes and positions the visible scrollbar thumb from the actual content', async () => {
+        mount(); const strip = section("Last Night's Top Performers").querySelector('[role="region"]');
+        Object.defineProperty(strip, 'clientWidth', { configurable: true, value: 400 });
+        Object.defineProperty(strip, 'scrollWidth', { configurable: true, value: 1200 });
+        strip.scrollLeft = 400; strip.dispatchEvent(new Event('scroll')); await nextTick();
+        const bar = document.querySelector('[role="scrollbar"]');
+        expect(Number(bar.querySelectorAll('rect')[1].getAttribute('width'))).toBeCloseTo(100 / 3);
+        expect(Number(bar.querySelectorAll('rect')[1].getAttribute('x'))).toBeCloseTo(100 / 3);
+        expect(bar.getAttribute('aria-valuemax')).toBe('800');
+        expect(bar.getAttribute('aria-valuenow')).toBe('400');
+    });
+    it('lets users navigate the scrollbar with keyboard controls', async () => {
+        mount(); const strip = section("Last Night's Top Performers").querySelector('[role="region"]');
+        Object.defineProperty(strip, 'clientWidth', { configurable: true, value: 400 });
+        Object.defineProperty(strip, 'scrollWidth', { configurable: true, value: 1200 });
+        strip.dispatchEvent(new Event('scroll')); await nextTick();
+        const bar = document.querySelector('[role="scrollbar"]');
+        bar.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true })); await nextTick();
+        expect(strip.scrollLeft).toBe(800);
+        bar.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true })); await nextTick();
+        expect(strip.scrollLeft).toBe(0);
+        bar.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })); await nextTick();
+        expect(strip.scrollLeft).toBe(100);
+    });
+    it('drags the scrollbar thumb to move the performer list proportionally', async () => {
+        mount(); const strip = section("Last Night's Top Performers").querySelector('[role="region"]');
+        Object.defineProperty(strip, 'clientWidth', { configurable: true, value: 400 });
+        Object.defineProperty(strip, 'scrollWidth', { configurable: true, value: 1200 });
+        strip.dispatchEvent(new Event('scroll')); await nextTick();
+        const bar = document.querySelector('[role="scrollbar"]');
+        bar.getBoundingClientRect = () => ({ left: 0, width: 400 });
+        const pointer = (type, clientX) => Object.assign(new Event(type, { bubbles: true, cancelable: true }), { pointerId: 1, button: 0, clientX });
+        bar.dispatchEvent(pointer('pointerdown', 10));
+        bar.dispatchEvent(pointer('pointermove', 210));
+        bar.dispatchEvent(pointer('pointerup', 210)); await nextTick();
+        expect(strip.scrollLeft).toBeCloseTo(600);
+        bar.dispatchEvent(pointer('pointermove', 310));
+        expect(strip.scrollLeft).toBeCloseTo(600);
+    });
+
+    it('shows all five line metric tabs with goals for selected initially', () => {
+        mount(); const tabs = [...document.querySelectorAll('[aria-label="5v5 line metric"] [role="tab"]')];
+        expect(tabs.map(tab => tab.textContent)).toEqual(['G', 'Corsi', 'CF%', 'Shifts', 'TOI']);
+        expect(document.querySelector('#line-tab-gf').getAttribute('aria-selected')).toBe('true');
+    });
+    it('ranks every available line for each selected metric before selecting four', async () => {
+        data.line_combinations = Array.from({ length: 5 }, (_, index) => ({ ...data.line_combinations[0], unit_id: index + 1,
+            players: [`Line ${index + 1}`], gf: 5 - index, corsi: index === 1 ? 20 : index,
+            cf_pct: index === 2 ? 90 : 50, shifts: index === 3 ? 15 : 3, toi_seconds: index === 4 ? 900 : 400 }));
+        mount(); const first = () => document.querySelector('#line-trend-results h3').textContent;
+        expect(first()).toBe('Line 1');
+        for (const [tab, expected] of [['corsi', 'Line 2'], ['cf_pct', 'Line 3'], ['shifts', 'Line 4'], ['toi_seconds', 'Line 5']]) {
+            document.querySelector(`#line-tab-${tab}`).click(); await nextTick();
+            expect(first()).toBe(expected);
+            expect(document.querySelectorAll('#line-trend-results a')).toHaveLength(4);
+        }
+    });
+    it('displays Corsi as a signed differential and CF percentage as attempt share', async () => {
+        mount(); document.querySelector('#line-tab-corsi').click(); await nextTick();
+        expect(document.querySelector('#line-trend-results').textContent).toContain('+6 Corsi');
+        document.querySelector('#line-tab-cf_pct').click(); await nextTick();
+        expect(document.querySelector('#line-trend-results').textContent).toContain('65.0% CF%');
+    });
+    it('shows shared shift counts and formatted shared time for their tabs', async () => {
+        mount(); document.querySelector('#line-tab-shifts').click(); await nextTick();
+        expect(document.querySelector('#line-trend-results').textContent).toContain('8 Shifts');
+        document.querySelector('#line-tab-toi_seconds').click(); await nextTick();
+        expect(document.querySelector('#line-trend-results').textContent).toContain('7:05 TOI');
+    });
+    it('does not treat unavailable CF percentage as zero or remove it from other metrics', async () => {
+        data.line_combinations[0].cf_pct = null; mount();
+        expect(document.querySelectorAll('#line-trend-results a')).toHaveLength(1);
+        document.querySelector('#line-tab-cf_pct').click(); await nextTick();
+        expect(document.querySelectorAll('#line-trend-results a')).toHaveLength(0);
+        expect(document.querySelector('#line-trend-results').textContent).toContain('No lines have data');
+    });
+    it('supports keyboard selection and focus for all line metric tabs', async () => {
+        mount(); const first = document.querySelector('#line-tab-gf'); first.focus();
+        first.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true })); await nextTick();
+        expect(document.activeElement).toBe(document.querySelector('#line-tab-toi_seconds'));
+        expect(document.querySelector('#line-tab-toi_seconds').getAttribute('aria-selected')).toBe('true');
+    });
+    it('preserves source line order when switching ranking tabs', async () => {
+        const before = JSON.stringify(data.line_combinations); mount();
+        document.querySelector('#line-tab-corsi').click(); await nextTick();
+        expect(JSON.stringify(data.line_combinations)).toBe(before);
     });
 
 });
