@@ -42,7 +42,7 @@ class NhlStartingGoalieSelector
             $boxscore = app(NhlPredictionInputContext::class)->remember(
                 __METHOD__ . ':boxscore', [$nhlGameId], function () use ($nhlGameId): mixed {
                     try {
-                        return Cache::remember('nhl:gamecenter:boxscore:' . $nhlGameId, 60, function () use ($nhlGameId): mixed {
+                        return Cache::remember('nhl:gamecenter:boxscore:' . $nhlGameId, 15, function () use ($nhlGameId): mixed {
                             return Http::acceptJson()->connectTimeout(5)->timeout(15)
                                 ->get($this->getApiUrl('nhl', 'boxscore', ['gameId' => $nhlGameId]))->throw()->json();
                         });

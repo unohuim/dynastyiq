@@ -63,6 +63,24 @@ describe('Compact scoreboard facts', () => {
     it('labels live games', () => {
         expect(scoreboardStatus(game(1, undefined, { game_state: 'LIVE' }))).toBe('Live');
     });
+    it('formats provider time remaining and regulation period', () => {
+        expect(scoreboardStatus(game(1, undefined, { game_state: 'LIVE', time_remaining: '12:34', period_number: 1, period_type: 'REG' }))).toBe('12:34 | 1st');
+        expect(scoreboardStatus(game(1, undefined, { game_state: 'CRIT', time_remaining: '00:00', period_number: 3, period_type: 'REG' }))).toBe('00:00 | 3rd');
+    });
+    it('labels intermission using the completed period instead of a game countdown', () => {
+        for (const [period_number, label] of [[1, '1st Int.'], [2, '2nd Int.']]) {
+            expect(scoreboardStatus(game(1, undefined, { game_state: 'LIVE', in_intermission: true, time_remaining: '18:00', period_number, period_type: 'REG' }))).toBe(label);
+        }
+    });
+    it('distinguishes overtime multiple overtimes and shootouts', () => {
+        for (const [period_number, period_type, label] of [[4, 'OT', '04:12 | OT'], [5, 'OT', '04:12 | 2OT'], [5, 'SO', 'SO']]) {
+            expect(scoreboardStatus(game(1, undefined, { game_state: 'LIVE', time_remaining: '04:12', period_number, period_type }))).toBe(label);
+        }
+    });
+    it('does not invent a clock from incomplete or malformed provider evidence', () => {
+        expect(scoreboardStatus(game(1, undefined, { game_state: 'LIVE', period_number: 1, time_remaining: 'bad' }))).toBe('Live');
+        expect(scoreboardStatus(game(1, undefined, { game_state: 'LIVE', time_remaining: '12:34' }))).toBe('Live');
+    });
     it('does not present unavailable live data as a score', () => {
         expect(scoreboardStatus(game(1, undefined, { game_state: 'LIVE', live_data_unavailable: true }))).toBe('Unavailable');
     });
@@ -289,7 +307,7 @@ describe('Mobile scoreboard lifecycle', () => {
         await settle();
         expect(document.querySelector('[data-slate-date="2026-11-04"]')).not.toBeNull();
     });
-    it('keeps loaded weeks available in both directions without fetching them again', async () => {
+    it('keeps loaded historical and future weeks while revalidating a cached recent day', async () => {
         mount(); await settle();
         await scrollToEdge('previous');
         await scrollToEdge('next');
@@ -297,7 +315,9 @@ describe('Mobile scoreboard lifecycle', () => {
         await selectDate('2026-10-07');
         await selectDate('2026-11-04');
         await selectDate('2026-10-21');
-        expect(fetch).toHaveBeenCalledTimes(count);
+        expect(fetch).toHaveBeenCalledTimes(count + 1);
+        expect(requests.at(-1).searchParams.get('start')).toBe('2026-10-21');
+        expect(requests.at(-1).searchParams.get('end')).toBe('2026-10-22');
         expect(document.querySelector('[data-slate-date="2026-10-07"]')).not.toBeNull();
         expect(document.querySelector('[data-slate-date="2026-11-04"]')).not.toBeNull();
     });
@@ -308,7 +328,7 @@ describe('Mobile scoreboard lifecycle', () => {
         await selectDate('2026-10-21');
         expect(document.querySelector('a[href="/games/1"]')).not.toBeNull();
         await selectDate('2026-12-15');
-        expect(fetch).toHaveBeenCalledTimes(count);
+        expect(fetch).toHaveBeenCalledTimes(count + 1);
         expect(document.querySelector('input[type="date"]').value).toBe('2026-12-15');
     });
     it('continues loading complete weeks beyond stored schedule bounds with explicit empty dates', async () => {
@@ -332,12 +352,68 @@ describe('Mobile scoreboard lifecycle', () => {
         expect(document.querySelector('[data-slate-date="2026-10-07"]')).not.toBeNull();
         expect(document.querySelector('a[href="/games/1"]')).not.toBeNull();
     });
-    it('does not periodically refetch a previously loaded historical slate', async () => {
+    it('keeps today and yesterday fresh while browsing a cached historical slate', async () => {
         mount(); await settle();
         await selectDate('2026-10-19');
         const count = fetch.mock.calls.length;
-        await vi.advanceTimersByTimeAsync(120000); await settle();
+        await vi.advanceTimersByTimeAsync(15000); await settle();
+        expect(fetch).toHaveBeenCalledTimes(count + 1);
+        expect(requests.at(-1).searchParams.get('start')).toBe('2026-10-21');
+        expect(requests.at(-1).searchParams.get('end')).toBe('2026-10-22');
+        expect(document.querySelector('input[type="date"]').value).toBe('2026-10-19');
+    });
+    it('updates cached starting-soon games every fifteen seconds while another date is selected', async () => {
+        let live = false;
+        fetch.mockImplementation(async url => {
+            const parsed = new URL(url); requests.push(parsed);
+            const row = game(2, '2026-10-22', { game_state: live ? 'LIVE' : 'PRE',
+                time_remaining: live ? '12:34' : null, period_number: 1, period_type: 'REG' });
+            return { ok: true, json: async () => ({ games: [row] }) };
+        });
+        mount(); await settle();
+        await selectDate('2026-10-23'); live = true;
+        const count = fetch.mock.calls.length;
+        await vi.advanceTimersByTimeAsync(14999); await settle();
         expect(fetch).toHaveBeenCalledTimes(count);
+        await vi.advanceTimersByTimeAsync(1); await settle();
+        const tile = document.querySelector('a[href="/games/2"]');
+        expect(tile.textContent).toContain('12:34 | 1st');
+        expect(tile.querySelector('.text-emerald-400')).not.toBeNull();
+        expect(document.querySelector('input[type="date"]').value).toBe('2026-10-23');
+    });
+    it('reports failed live refreshes and retries without discarding existing games', async () => {
+        mount(); await settle();
+        fetch.mockResolvedValueOnce({ ok: false });
+        await vi.advanceTimersByTimeAsync(15000); await settle();
+        expect(document.querySelector('[role="status"]').textContent).toContain('Unable to refresh live scores');
+        expect(document.querySelector('a[href="/games/2"]')).not.toBeNull();
+        [...document.querySelectorAll('button')].find(button => button.textContent === 'Retry').click(); await settle();
+        expect(document.querySelector('[role="status"]')).toBeNull();
+    });
+    it('does not let a slower initial range response overwrite newer live facts', async () => {
+        let finish;
+        fetch.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+        mount(); await settle();
+        fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ games: [game(2, '2026-10-22', {
+            game_state: 'LIVE', time_remaining: '12:34', period_number: 1, period_type: 'REG',
+        })] }) });
+        await vi.advanceTimersByTimeAsync(15000); await settle();
+        finish({ ok: true, json: async () => ({ games: [game(2, '2026-10-22', { game_state: 'PRE' })] }) });
+        await settle();
+        expect(document.querySelector('a[href="/games/2"]').textContent).toContain('12:34 | 1st');
+    });
+    it('times out a stuck range request and lets the user retry', async () => {
+        let signal;
+        fetch.mockImplementationOnce((_url, options) => new Promise((_resolve, reject) => {
+            signal = options.signal;
+            signal.addEventListener('abort', () => reject(new DOMException('Timed out', 'AbortError')), { once: true });
+        }));
+        mount(); await settle();
+        await vi.advanceTimersByTimeAsync(30001); await settle();
+        expect(signal.aborted).toBe(true);
+        expect(document.querySelector('[role="status"]').textContent).toContain('Unable to load games');
+        [...document.querySelectorAll('button')].find(button => button.textContent === 'Retry').click(); await settle();
+        expect(document.querySelector('a[href="/games/2"]')).not.toBeNull();
     });
     it('links individual game tiles to their existing detail routes', async () => {
         mount(); await settle();

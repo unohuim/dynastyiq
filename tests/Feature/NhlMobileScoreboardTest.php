@@ -313,3 +313,33 @@ it('preserves live and final scores instead of displaying saved probabilities', 
         ->assertJsonPath('games.0.away.score', 0)->assertJsonPath('games.0.home.score', 3)
         ->assertJsonPath('games.0.away.win_probability', null)->assertJsonPath('games.0.home.win_probability', null);
 })->with(['LIVE', 'FINAL', 'OFF']);
+
+
+it('refreshes shared provider state after fifteen seconds and returns clock and intermission evidence', function (): void {
+    ($this->game)(2026020001, '2026-10-22', ['game_state' => 'PRE']);
+    $provider = [
+        'id' => 2026020001, 'gameState' => 'PRE', 'startTimeUTC' => '2026-10-22T23:00:00Z',
+        'awayTeam' => ['abbrev' => 'BOS', 'score' => 0], 'homeTeam' => ['abbrev' => 'TOR', 'score' => 2],
+        'clock' => ['timeRemaining' => '12:34', 'inIntermission' => false],
+        'periodDescriptor' => ['number' => 1, 'periodType' => 'REG'],
+    ];
+    Http::fake(function () use (&$provider) { return Http::response($provider); });
+    $range = ['start' => '2026-10-22', 'end' => '2026-10-22'];
+    $this->getJson(route('games.scoreboard', $range))->assertOk()->assertJsonPath('games.0.game_state', 'PRE');
+    $provider['gameState'] = 'LIVE';
+    $this->travel(14)->seconds();
+    $this->getJson(route('games.scoreboard', $range))->assertOk()->assertJsonPath('games.0.game_state', 'PRE');
+    Http::assertSentCount(1);
+    $this->travel(2)->seconds();
+    $this->getJson(route('games.scoreboard', $range))->assertOk()
+        ->assertJsonPath('games.0.game_state', 'LIVE')
+        ->assertJsonPath('games.0.time_remaining', '12:34')
+        ->assertJsonPath('games.0.period_number', 1)->assertJsonPath('games.0.period_type', 'REG')
+        ->assertJsonPath('games.0.in_intermission', false)->assertJsonPath('games.0.away.score', 0);
+    $this->assertDatabaseHas('nhl_games', ['nhl_game_id' => 2026020001, 'game_state' => 'LIVE', 'home_team_score' => 2]);
+    Http::assertSentCount(2);
+    $provider['clock']['inIntermission'] = true;
+    $this->travel(16)->seconds();
+    $this->getJson(route('games.scoreboard', $range))->assertOk()->assertJsonPath('games.0.in_intermission', true);
+    Http::assertSentCount(3);
+});

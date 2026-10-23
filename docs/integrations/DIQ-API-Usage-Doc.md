@@ -164,7 +164,7 @@ Do not confuse this API with DynastyIQ's separate game-page presentation. That
 presentation can switch to `live_mode: true`, with NHL boxscore data under
 `away` and `home`, roster players under `lineup.players`, live scores and goalie
 statistics, and without pregame projection/injury enrichment. Its NHL boxscore
-fetch is cached for 60 seconds. **That live presentation is not the response of
+fetch is cached for 15 seconds. **That live presentation is not the response of
 either `/api/nhl/lineups` endpoint**, and its cache does not describe lineup API
 freshness.
 
@@ -1192,7 +1192,7 @@ previews, not confirmed dressed participants.
 
 For started-game **prediction requests**, the designated NHL boxscore starter takes
 precedence over all pregame choices, including manual and request overrides.
-The read uses the shared 60-second gamecenter cache, so provider changes may take
+The read uses the shared 15-second gamecenter cache, so provider changes may take
 up to that cache interval to appear. A matching game/team, nonempty state other
 than FUT/PRE, and a unique goalie with `starter: true` are required. Relief-goalie
 ice time and array order do not establish who started. The response identifies

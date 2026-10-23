@@ -25,7 +25,7 @@ class NhlGameLiveContext
     {
         $response = Cache::remember(
             'nhl:gamecenter:boxscore:' . $game->nhl_game_id,
-            60,
+            15,
             function () use ($game): array|string {
                 try {
                     return $this->getAPIData('nhl', 'boxscore', ['gameId' => $game->nhl_game_id]);
@@ -65,7 +65,7 @@ class NhlGameLiveContext
         try {
             $response = Cache::remember(
                 'nhl:gamecenter:boxscore:' . $game->nhl_game_id,
-                60,
+                15,
                 fn (): array|string => $this->getAPIData('nhl', 'boxscore', ['gameId' => $game->nhl_game_id])
             );
         } catch (Throwable $exception) {
@@ -104,6 +104,10 @@ class NhlGameLiveContext
 
             return ['state' => $state, 'show_score' => $showScore,
                 'live_game' => $showScore ? ['game_state' => $state,
+                    'time_remaining' => data_get($response, 'clock.timeRemaining'),
+                    'in_intermission' => data_get($response, 'clock.inIntermission'),
+                    'period_number' => data_get($response, 'periodDescriptor.number'),
+                    'period_type' => data_get($response, 'periodDescriptor.periodType'),
                     'start_time_utc' => $response['startTimeUTC'] ?? null, ...$teams] : null];
         }
 

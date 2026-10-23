@@ -60,7 +60,16 @@ export function scoreboardStatus(game) {
     if (state === 'PRE') return 'Starting soon';
     if (state === 'PPD') return 'Postponed';
     if (state === 'CNCL') return 'Cancelled';
-    if (state && state !== 'FUT') return 'Live';
+    if (state && state !== 'FUT') {
+        const number = game.period_number;
+        const type = (game.period_type ?? '').toUpperCase();
+        const period = type === 'SO' ? 'SO' : type === 'OT' && Number.isInteger(number) && number >= 4
+            ? (number === 4 ? 'OT' : `${number - 3}OT`) : ['1st', '2nd', '3rd'][number - 1];
+        if (game.in_intermission === true && period) return `${period} Int.`;
+        if (type === 'SO') return 'SO';
+        if (period && /^\d{1,2}:[0-5]\d$/.test(game.time_remaining ?? '')) return `${game.time_remaining} | ${period}`;
+        return 'Live';
+    }
     const time = game.start_time_utc ? new Date(game.start_time_utc) : null;
     return time && Number.isFinite(time.getTime())
         ? new Intl.DateTimeFormat('en-US', { timeZone: 'America/Toronto', hour: 'numeric', minute: '2-digit' }).format(time)

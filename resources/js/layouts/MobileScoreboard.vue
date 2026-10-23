@@ -17,6 +17,7 @@ const end = ref(null);
 const loading = ref(false);
 const loadingEdge = ref(null);
 const error = ref('');
+const liveError = ref('');
 const scroller = ref(null);
 const days = computed(() => scoreboardDays(start.value, end.value, games.value));
 const dateLabel = computed(() => slateNavigationLabel(selectedDate.value, clock.value));
@@ -29,7 +30,65 @@ let scrollFrame;
 let rolloverTimer;
 let refreshTimer;
 let failedRange;
+let liveRequest;
+let liveRefreshing = false;
+let payloadVersion = 0;
+const dateVersions = new Map();
 const loadedDates = new Set();
+
+async function fetchRange(from, through, controller) {
+    const timeout = setTimeout(() => controller.abort(), 30000);
+    try {
+        const url = new URL(props.endpoint, window.location.origin);
+        url.searchParams.set('start', from);
+        url.searchParams.set('end', through);
+        const response = await fetch(url.toString(), {
+            headers: { Accept: 'application/json' }, cache: 'no-store', signal: controller.signal,
+        });
+        if (!response.ok) throw new Error('Unable to load games.');
+        return await response.json();
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+function mergeRange(payload, from, through, version) {
+    const accepted = new Set();
+    for (let date = from; date <= through; date = shiftSlateDate(date, 1)) {
+        if (version < (dateVersions.get(date) ?? 0)) continue;
+        accepted.add(date);
+        dateVersions.set(date, version);
+    }
+    // A slower navigation response cannot replace newer live scores for the same day.
+    games.value = mergeScoreboardGames(games.value.filter(game => !accepted.has(game.game_date)),
+        payload.games.filter(game => accepted.has(game.game_date)));
+}
+
+function isRecentDate(date) {
+    const today = new Date().toISOString().slice(0, 10);
+    return date >= shiftSlateDate(today, -1) && date <= today;
+}
+
+async function refreshRecentGames() {
+    if (disposed || document.hidden || liveRefreshing) return;
+    const today = new Date().toISOString().slice(0, 10);
+    const yesterday = shiftSlateDate(today, -1);
+    const controller = new AbortController();
+    liveRequest = controller;
+    liveRefreshing = true;
+    const version = ++payloadVersion;
+    try {
+        const payload = await fetchRange(yesterday, today, controller);
+        if (disposed) return;
+        mergeRange(payload, yesterday, today, version);
+        liveError.value = '';
+    } catch {
+        if (!disposed) liveError.value = 'Unable to refresh live scores.';
+    } finally {
+        liveRefreshing = false;
+        if (liveRequest === controller) liveRequest = null;
+    }
+}
 
 function activateRange(date) {
     if (!loadedDates.has(date)) return;
@@ -51,25 +110,18 @@ async function loadRange(from, through, mode = 'replace', target = selectedDate.
     request?.abort();
     request = new AbortController();
     const version = ++requestVersion;
+    const snapshotVersion = ++payloadVersion;
     loading.value = true;
     loadingEdge.value = mode === 'prepend' ? 'previous' : mode === 'append' ? 'next' : null;
     error.value = '';
     failedRange = null;
     try {
-        const url = new URL(props.endpoint, window.location.origin);
-        url.searchParams.set('start', from);
-        url.searchParams.set('end', through);
-        const response = await fetch(url.toString(), {
-            headers: { Accept: 'application/json' }, cache: 'no-store', signal: request.signal,
-        });
-        if (!response.ok) throw new Error('Unable to load games.');
-        const payload = await response.json();
+        const payload = await fetchRange(from, through, request);
         if (version !== requestVersion || disposed) return false;
         const oldWidth = scroller.value?.scrollWidth ?? 0;
         const oldLeft = scroller.value?.scrollLeft ?? 0;
         // Empty replacements remove cancelled/removed schedule rows from that range too.
-        const retained = games.value.filter(game => game.game_date < from || game.game_date > through);
-        games.value = mergeScoreboardGames(retained, payload.games);
+        mergeRange(payload, from, through, snapshotVersion);
         for (let date = from; date <= through; date = shiftSlateDate(date, 1)) loadedDates.add(date);
         if (mode !== 'refresh') activateRange(loadedDates.has(target) ? target : from);
         await nextTick();
@@ -80,7 +132,7 @@ async function loadRange(from, through, mode = 'replace', target = selectedDate.
         }
         return true;
     } catch (exception) {
-        if (exception?.name !== 'AbortError' && version === requestVersion && !disposed) {
+        if (version === requestVersion && !disposed) {
             error.value = 'Unable to load games.';
             failedRange = { from, through, mode, target };
         }
@@ -98,6 +150,7 @@ async function loadAround(date) {
         activateRange(date);
         await nextTick();
         alignDate(date);
+        if (isRecentDate(date)) await refreshRecentGames();
         return;
     }
     const through = shiftSlateDate(date, 7);
@@ -119,7 +172,7 @@ async function loadAround(date) {
 }
 
 function retryRange() {
-    if (!failedRange) return loadAround(selectedDate.value);
+    if (!failedRange) return refreshRecentGames();
     const { from, through, mode, target } = failedRange;
     return loadRange(from, through, mode, target);
 }
@@ -134,7 +187,10 @@ async function chooseDate(date, manual = true) {
     error.value = '';
     failedRange = null;
     selectedDate.value = date;
-    if (start.value && date >= start.value && date <= end.value) alignDate(date);
+    if (start.value && date >= start.value && date <= end.value) {
+        alignDate(date);
+        if (isRecentDate(date)) await refreshRecentGames();
+    }
     else await loadAround(date);
 }
 
@@ -173,19 +229,17 @@ function scheduleRollover() {
 }
 
 function refresh() {
-    if (disposed || document.hidden || loading.value) return;
+    if (disposed || document.hidden) return;
     clock.value = new Date();
     if (!manuallyBrowsing && selectedDate.value !== defaultSlateDate()) {
         selectedDate.value = defaultSlateDate();
         loadAround(selectedDate.value);
-    } else if (start.value && selectedDate.value >= start.value && selectedDate.value <= end.value
-        && selectedDate.value >= shiftSlateDate(clock.value.toISOString().slice(0, 10), -1)
-        && selectedDate.value <= clock.value.toISOString().slice(0, 10)) {
-        loadRange(selectedDate.value, selectedDate.value, 'refresh');
     }
+    refreshRecentGames();
 }
 
-const isLive = game => scoreboardStatus(game) === 'Live';
+const isLive = game => !game.live_data_unavailable && !!game.game_state
+    && !['FUT', 'PRE', 'FINAL', 'OFF', 'PPD', 'CNCL'].includes(game.game_state.toUpperCase());
 const isLoser = (game, side) => scoreboardStatus(game) === 'Final'
     && typeof game.away.score === 'number' && typeof game.home.score === 'number'
     && game[side].score < game[side === 'away' ? 'home' : 'away'].score;
@@ -203,12 +257,13 @@ onMounted(() => {
     selectedDate.value = defaultSlateDate();
     loadAround(selectedDate.value);
     scheduleRollover();
-    refreshTimer = setInterval(refresh, 60000);
+    refreshTimer = setInterval(refresh, 15000);
 });
 onBeforeUnmount(() => {
     disposed = true;
     ++requestVersion;
     request?.abort();
+    liveRequest?.abort();
     document.removeEventListener('visibilitychange', refresh);
     clearTimeout(rolloverTimer);
     clearInterval(refreshTimer);
@@ -235,7 +290,7 @@ onBeforeUnmount(() => {
                         <span class="whitespace-nowrap font-mono text-[9px] text-[#788997] [writing-mode:vertical-rl]">{{ day.labels.weekday }} {{ day.labels.date }}</span>
                     </div>
                     <a v-for="game in day.games" :key="game.nhl_game_id" :href="game.href" :aria-label="gameLabel(game)" class="relative w-32 shrink-0 border-r border-[#1F2B37] px-3.5 py-2.5 transition-colors duration-150 hover:bg-white/5 focus-visible:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-400 motion-reduce:transition-none">
-                        <div class="mb-1.5 font-mono text-[10px] font-semibold" :class="isLive(game) ? 'text-[#FF7A70]' : 'text-[#788997]'">{{ scoreboardStatus(game) }}</div>
+                        <div class="mb-1.5 font-mono text-[10px] font-semibold" :class="isLive(game) ? 'text-emerald-400' : 'text-[#788997]'">{{ scoreboardStatus(game) }}</div>
                         <div v-for="side in ['away', 'home']" :key="side" class="flex h-5 items-center gap-1.5 font-mono text-[13px] font-semibold" :class="isLoser(game, side) ? 'text-[#788997]' : 'text-[#E7EEF6]'">
                             <img v-if="game[side].team_logo" :src="game[side].team_logo" alt="" class="h-[18px] w-[18px] shrink-0 object-contain" :class="isLoser(game, side) ? 'opacity-50' : ''" loading="lazy" />
                             <span v-else aria-hidden="true" class="h-[18px] w-[18px] shrink-0" />
@@ -251,6 +306,6 @@ onBeforeUnmount(() => {
             <span aria-hidden="true" class="h-5 w-5 animate-spin rounded-full border-2 border-sky-400/20 border-t-sky-300 motion-reduce:animate-none" />
             <span>{{ loadingEdge === 'previous' ? 'Loading previous week…' : 'Loading next week…' }}</span>
         </div>
-        <div v-if="error" role="status" class="flex items-center justify-center gap-2 border-t border-[#1F2B37] px-3 py-1 text-xs text-gray-300 md:absolute md:inset-x-40 md:top-full md:z-20 md:bg-[#101923]">{{ error }} <button type="button" class="min-h-11 underline" @click="retryRange">Retry</button></div>
+        <div v-if="error || liveError" role="status" class="flex items-center justify-center gap-2 border-t border-[#1F2B37] px-3 py-1 text-xs text-gray-300 md:absolute md:inset-x-40 md:top-full md:z-20 md:bg-[#101923]">{{ error || liveError }} <button type="button" class="min-h-11 underline" @click="retryRange">Retry</button></div>
     </header>
 </template>

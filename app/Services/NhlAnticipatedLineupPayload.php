@@ -132,7 +132,11 @@ class NhlAnticipatedLineupPayload
                 'game_date' => $game->game_date->toDateString(),
                 'start_time_utc' => $liveState ? ($provider['start_time_utc'] ?? null)
                     : ($provider['start_time_utc'] ?? $game->start_time_utc?->toIso8601String()),
-                'game_state' => $state, 'live_data_unavailable' => ! $available, ...$teams];
+                'game_state' => $state, 'live_data_unavailable' => ! $available,
+                'time_remaining' => $provider['time_remaining'] ?? null,
+                'in_intermission' => $provider['in_intermission'] ?? null,
+                'period_number' => $provider['period_number'] ?? null,
+                'period_type' => $provider['period_type'] ?? null, ...$teams];
         });
         $bounds = NhlGame::query()->selectRaw('MIN(game_date) AS first_date, MAX(game_date) AS last_date')->first();
 
