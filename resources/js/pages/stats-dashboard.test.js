@@ -3,12 +3,22 @@ import { afterEach, beforeEach, expect, it } from 'vitest';
 import { createApp, nextTick } from 'vue';
 import LeaderList from './Stats/LeaderList.vue';
 import LoadingState from './Stats/LoadingState.vue';
+import LeaderCardRow from './Stats/LeaderCardRow.vue';
+import CategoryNav from './Stats/CategoryNav.vue';
+import { readFileSync } from 'node:fs';
 
 let app;
 let props;
 const row = (id, name, points, gaa = 2) => ({ id, name, gp: id, url: `/players/${id}`,
     stats: { points, gaa, sv_pct: 92.5, toi: 1234, corsi: -3, cf_pct: 52.5 } });
 const mount = () => { app = createApp(LeaderList, props); app.mount('#leaders'); };
+const mountCards = (overrides = {}) => {
+    app = createApp(LeaderCardRow, { title: 'All Skaters', href: '/stats?view=skaters', cards: [
+        { key: 'goals', label: 'G', value: 12, entity: { name: 'Alex Leader', short_name: 'A. Leader',
+            subtitle: 'TOR', image: '/leader.png', url: 'https://www.nhl.com/player/1', external: true } },
+    ], ...overrides });
+    app.mount('#leaders');
+};
 const names = () => [...document.querySelectorAll('tbody a')].map(node => node.textContent);
 const button = label => [...document.querySelectorAll('button')].find(node => node.textContent === label);
 beforeEach(() => {
@@ -106,4 +116,97 @@ it('preserves the category-specific view-all destination', () => {
 it('shows secondary metrics without duplicating the selected metric', () => {
     props.columns = [{ key: 'points', label: 'Points' }, { key: 'corsi', label: 'Corsi' }]; mount();
     expect(document.querySelectorAll('thead th')).toHaveLength(5); expect(document.querySelector('tbody').textContent).toContain('-3');
+});
+
+it('places the All heading above a mobile card row and links to its full report', () => {
+    mountCards();
+    expect(document.querySelector('h2').textContent).toContain('All Skaters');
+    expect(document.querySelector('h2 a').getAttribute('href')).toBe('/stats?view=skaters');
+    expect(document.querySelector('section').getAttribute('aria-label')).toBe('All Skaters');
+});
+
+it('provides a horizontal card row sized for three visible cards', () => {
+    mountCards();
+    const list = document.querySelector('ul');
+    expect(list.classList.contains('grid-flow-col')).toBe(true);
+    expect(list.classList.contains('auto-cols-[calc((100%_-_1rem)/3)]')).toBe(true);
+    expect(list.classList.contains('overflow-x-auto')).toBe(true);
+    expect(list.getAttribute('tabindex')).toBe('0');
+});
+
+it('renders the individual leader and metric value in each mobile card', () => {
+    mountCards();
+    expect(document.querySelector('li').textContent).toContain('12');
+    expect(document.querySelector('li').textContent).toContain('A. Leader');
+    expect(document.querySelector('li a').getAttribute('aria-label')).toBe('G: 12, Alex Leader');
+    expect(document.querySelector('li img').getAttribute('loading')).toBe('lazy');
+});
+
+it('opens an external leader destination in a new tab', () => {
+    mountCards();
+    const link = document.querySelector('li a');
+    expect(link.target).toBe('_blank');
+    expect(link.rel).toBe('noopener noreferrer');
+});
+
+it('keeps internal prospect report destinations in the same tab', () => {
+    mountCards({ cards: [{ key: 'goals', label: 'G', value: 2,
+        entity: { name: 'Prospect', url: '/stats?perspective=prospects', external: false } }] });
+    expect(document.querySelector('li a').getAttribute('href')).toBe('/stats?perspective=prospects');
+    expect(document.querySelector('li a').hasAttribute('target')).toBe(false);
+});
+
+it('shows missing card metrics as unavailable rather than zero', () => {
+    mountCards({ cards: [{ key: 'gsax', label: 'GSAx', value: null, entity: null }] });
+    expect(document.querySelector('li').textContent).toContain('—');
+    expect(document.querySelector('li').textContent).toContain('Unavailable');
+    expect(document.querySelector('li img')).toBeNull();
+});
+
+it('formats mobile percentage and rate metrics with their proper units', () => {
+    mountCards({ cards: [
+        { key: 'ev_sv_pct', label: 'EVSV%', value: 94.25 }, { key: 'win_pct', label: 'W%', value: 66.666 },
+        { key: 'pts_per_gp', label: 'PTS/GP', value: 1.234 },
+    ] });
+    const values = [...document.querySelectorAll('li')].map(node => node.textContent);
+    expect(values[0]).toContain('94.25%');
+    expect(values[1]).toContain('66.7%');
+    expect(values[2]).toContain('1.23');
+});
+
+it('preserves the sign of goals scored and saved above expected', () => {
+    mountCards({ cards: [{ key: 'gax', label: 'GAx', value: 2.5 }, { key: 'gsax', label: 'GSAx', value: -1.25 }] });
+    expect(document.querySelector('ul').textContent).toContain('+2.50');
+    expect(document.querySelector('ul').textContent).toContain('-1.25');
+});
+
+it('keeps mobile category navigation while replacing the desktop hero and leader panels', () => {
+    const source = readFileSync(new URL('./Stats/Index.vue', import.meta.url), 'utf8');
+    expect(source).toContain('bg-[#03131f] sm:hidden');
+    expect(source).toContain('sm:grid lg:grid-cols-[1.6fr_1fr]');
+    expect(source).toContain('aria-label="Mobile season leaders"');
+    expect(source).toContain('class="hidden space-y-3 sm:block"');
+    expect(source).toContain('<LeaderCardRow v-for="row in leaders.mobile_leaders || []"');
+});
+
+
+it('links the Prospects category to the existing full report and marks it active', () => {
+    app = createApp(CategoryNav, { view: 'prospects', links: [
+        { label: 'Skaters', view: 'skaters', href: '/stats?view=skaters&season_id=20252026' },
+        { label: 'Prospects', view: 'prospects', href: '/stats?view=skaters&perspective=prospects&season_id=20252026' },
+    ] });
+    app.mount('#leaders');
+    const active = document.querySelector('[aria-current="page"]');
+    expect(active.textContent).toBe('Prospects');
+    expect(active.getAttribute('href')).toBe('/stats?view=skaters&perspective=prospects&season_id=20252026');
+    expect(document.querySelector('nav').classList.contains('overflow-x-auto')).toBe(true);
+});
+
+it('retains full player reports and separates mobile team rows from the desktop table', () => {
+    const source = readFileSync(new URL('./Stats/Index.vue', import.meta.url), 'utf8');
+    expect(source).toContain('<StatsTable :key="view + selectedPerspective"');
+    expect(source).toContain('aria-label="Mobile team statistics"');
+    expect(source).toContain('<li v-for="team in sortedTeams"');
+    expect(source).toContain('<div class="hidden overflow-x-auto sm:block"><table');
+    expect(source).toContain("['Leaders', 'Skaters', 'Goalies', 'Prospects', 'Teams']");
 });

@@ -52,6 +52,40 @@ beforeEach(function (): void {
         'game_date' => '2026-10-22', 'game_state' => 'OFF', 'home_team_id' => 10, 'home_team_abbrev' => 'TOR',
         'away_team_id' => 8, 'away_team_abbrev' => 'MTL', 'home_team_score' => 4, 'away_team_score' => 2]);
     $this->facts = fn (): array => app(NhlStatsDashboardPayload::class)->build();
+    $this->prospectRows = function (array $rows): Player {
+        $player = Player::create(['first_name' => 'Pat', 'last_name' => 'Prospect', 'full_name' => 'Pat Prospect',
+            'position' => 'C', 'pos_type' => 'F', 'is_goalie' => false]);
+        foreach ($rows as $row) {
+            DB::table('stats')->insert(array_merge(['player_id' => $player->id, 'season_id' => '20262027',
+                'league_abbrev' => 'OHL', 'team_name' => 'Prospect Club', 'is_prospect' => true,
+                'game_type_id' => 2, 'gp' => 10, 'g' => 5, 'a' => 7, 'pts' => 12], $row));
+        }
+
+        return $player;
+    };
+    $this->teamShots = function (bool $complete = true, array $extra = []): void {
+        DB::table('nhl_games')->where('nhl_game_id', 2026020001)->update(['home_team_score' => 1, 'away_team_score' => 0]);
+        $model = DB::table('nhl_expected_goals_models')->insertGetId(['name' => 'Team goals', 'version' => 'team-v1',
+            'training_season_id' => '20262027', 'prediction_target' => 'goal', 'status' => 'draft']);
+        foreach (array_merge([
+            ['team_id' => 10, 'goalie_player_id' => 9000002, 'is_goal' => true, 'xg' => 0.2],
+            ['team_id' => 10, 'goalie_player_id' => 9000002, 'is_goal' => false, 'xg' => 0.1],
+            ['team_id' => 8, 'goalie_player_id' => 9000003, 'is_goal' => false, 'xg' => 0.1],
+        ], $extra) as $index => $row) {
+            $xg = $row['xg'];
+            unset($row['xg']);
+            $play = DB::table('play_by_plays')->insertGetId(['nhl_game_id' => 2026020001]);
+            $fact = DB::table('nhl_shot_attempts_facts')->insertGetId(array_merge([
+                'play_by_play_id' => $play, 'nhl_game_id' => 2026020001, 'season_id' => '20262027',
+                'is_shot_attempt' => true, 'attempt_result' => 'shot_on_goal', 'strength' => 'EV',
+            ], $row));
+            if ($complete || $index !== 1) {
+                DB::table('nhl_shot_attempt_predictions')->insert(['expected_goals_model_id' => $model,
+                    'shot_attempt_fact_id' => $fact, 'play_by_play_id' => $play, 'nhl_game_id' => 2026020001,
+                    'prediction_target' => 'goal', 'is_scored' => true, 'xg' => $xg]);
+            }
+        }
+    };
     $this->goalieScoring = function (bool $complete = true): void {
         DB::table('nhl_season_stats')->where('nhl_player_id', 9000002)->update(['gp' => 1, 'ga' => 1]);
         $model = DB::table('nhl_expected_goals_models')->insertGetId(['name' => 'Stored season goals',
@@ -455,4 +489,107 @@ it('rejects private or unsupported report names as public cache refresh targets'
     expect(fn () => new RefreshNhlStatsDashboardJob('20262027', 'private-perspective'))->toThrow(\InvalidArgumentException::class);
     expect(fn () => app(NhlStatsDashboardPayload::class)->refreshCachedFacts('20262027', 'private-perspective'))
         ->toThrow(\InvalidArgumentException::class);
+});
+
+it('prepares four mobile rows with the requested headings and metric order', function (): void {
+    $rows = ($this->facts)()['mobile_leaders'];
+    expect(array_column($rows, 'title'))->toBe(['All Skaters', 'All Goalies', 'All Teams', 'All Prospects'])
+        ->and(array_column($rows[0]['cards'], 'label'))->toBe(['G', 'A', 'PPP', 'SOG', 'Blocks', 'Hits'])
+        ->and(array_column($rows[1]['cards'], 'label'))->toBe(['W', 'EVSV%', 'QS', 'GSAx', 'SVs', 'QS%'])
+        ->and(array_column($rows[2]['cards'], 'label'))->toBe(['W%', 'G', 'Corsi%', 'GAx', 'GSAx'])
+        ->and(array_column($rows[3]['cards'], 'label'))->toBe(['G', 'A', 'PTS', 'G/GP', 'PTS/GP']);
+});
+
+it('selects a separate skater leader for each mobile metric', function (): void {
+    Player::create(['nhl_id' => 9000004, 'first_name' => 'Goal', 'last_name' => 'Leader', 'full_name' => 'Goal Leader', 'position' => 'R']);
+    DB::table('nhl_season_stats')->insert(['season_id' => '20262027', 'game_type' => 2, 'nhl_player_id' => 9000004,
+        'gp' => 1, 'g' => 10, 'pts' => 10, 'ppp' => 6]);
+    $cards = collect(($this->facts)()['mobile_leaders'][0]['cards'])->keyBy('key');
+    expect($cards['goals']['entity']['name'])->toBe('Goal Leader')->and($cards['assists']['entity']['name'])->toBe('Alex Leader')
+        ->and($cards['ppp']['value'])->toBe(6);
+});
+
+it('ranks goalie quality start count independently from quality start percentage', function (): void {
+    DB::table('nhl_season_stats')->where('nhl_player_id', 9000002)->update(['quality_starts' => 1, 'starts' => 2]);
+    Player::create(['nhl_id' => 9000004, 'first_name' => 'Busy', 'last_name' => 'Goalie', 'full_name' => 'Busy Goalie', 'position' => 'G', 'is_goalie' => true]);
+    DB::table('nhl_season_stats')->insert(['season_id' => '20262027', 'game_type' => 2, 'nhl_player_id' => 9000004,
+        'gp' => 8, 'starts' => 8, 'quality_starts' => 2, 'wins' => 4, 'evsv' => 20, 'evsa' => 25]);
+    $cards = collect(($this->facts)()['mobile_leaders'][1]['cards'])->keyBy('key');
+    expect($cards['quality_starts']['entity']['name'])->toBe('Busy Goalie')
+        ->and($cards['quality_start_pct']['entity']['name'])->toBe('Sam Goalie')
+        ->and($cards['quality_start_pct']['value'])->toBe(50.0)->and($cards['wins']['value'])->toBe(4)
+        ->and($cards['ev_sv_pct']['value'])->toBe(80.0)->and($cards['gsax']['value'])->toBeNull();
+});
+
+it('uses the non NHL Prospects report population rather than NHL rookie leaders', function (): void {
+    ($this->prospectRows)([[], ['league_abbrev' => 'NHL', 'g' => 999, 'pts' => 999],
+        ['is_prospect' => false, 'g' => 999, 'pts' => 999], ['game_type_id' => 3, 'g' => 999, 'pts' => 999],
+        ['season_id' => '20252026', 'g' => 999, 'pts' => 999]]);
+    $cards = collect(($this->facts)()['mobile_leaders'][3]['cards'])->keyBy('key');
+    expect($cards['goals']['value'])->toBe(5)->and($cards['points']['value'])->toBe(12)
+        ->and($cards['goals']['entity']['name'])->toBe('Pat Prospect')->and($cards['goals']['entity']['subtitle'])->toBe('OHL');
+});
+
+it('derives prospect rates from pooled totals and games rather than averaging stored rates', function (): void {
+    ($this->prospectRows)([['gp' => 2, 'g' => 2, 'a' => 2, 'pts' => 4, 'g_per_gp' => 99],
+        ['gp' => 8, 'g' => 0, 'a' => 6, 'pts' => 6, 'g_per_gp' => 99]]);
+    $cards = collect(($this->facts)()['mobile_leaders'][3]['cards'])->keyBy('key');
+    expect($cards['goals']['value'])->toBe(2)->and($cards['g_per_gp']['value'])->toBe(0.2)
+        ->and($cards['pts_per_gp']['value'])->toBe(1.0);
+});
+
+it('keeps different non NHL prospect leagues separate', function (): void {
+    ($this->prospectRows)([['league_abbrev' => 'AHL', 'gp' => 10, 'g' => 2], ['league_abbrev' => 'OHL', 'gp' => 5, 'g' => 10]]);
+    $cards = collect(($this->facts)()['mobile_leaders'][3]['cards'])->keyBy('key');
+    expect($cards['goals']['value'])->toBe(10)->and($cards['goals']['entity']['subtitle'])->toBe('OHL')
+        ->and($cards['g_per_gp']['value'])->toBe(2.0);
+});
+
+it('withholds unavailable prospect leaders instead of substituting NHL players', function (): void {
+    $row = ($this->facts)()['mobile_leaders'][3];
+    expect($row['href'])->toContain('perspective=prospects')->and(array_filter(array_column($row['cards'], 'entity')))->toBe([]);
+});
+
+it('calculates team Corsi GAx and GSAx from team matched attempts', function (): void {
+    ($this->teamShots)();
+    $teams = collect(($this->facts)()['teams'])->keyBy('team');
+    expect($teams['TOR']['win_pct'])->toBe(100.0)->and($teams['TOR']['cf_pct'])->toEqualWithDelta(200 / 3, 0.00001)
+        ->and($teams['TOR']['gax'])->toEqualWithDelta(0.7, 0.00001)
+        ->and($teams['TOR']['gsax'])->toEqualWithDelta(0.1, 0.00001)
+        ->and($teams['MTL']['gsax'])->toEqualWithDelta(-0.7, 0.00001);
+});
+
+it('withholds team expectations with incomplete scoring while retaining factual Corsi', function (): void {
+    ($this->teamShots)(false);
+    $teams = collect(($this->facts)()['teams'])->keyBy('team');
+    expect($teams['TOR']['gax'])->toBeNull()->and($teams['MTL']['gsax'])->toBeNull()
+        ->and($teams['TOR']['cf_pct'])->not->toBeNull()->and($teams['TOR']['gsax'])->toEqualWithDelta(0.1, 0.00001);
+});
+
+it('excludes empty net and shootout goals from matched team expectation calculations', function (): void {
+    ($this->teamShots)(true, [
+        ['team_id' => 10, 'goalie_player_id' => null, 'is_goal' => true, 'is_empty_net' => true, 'xg' => 0.9],
+        ['team_id' => 10, 'goalie_player_id' => 9000002, 'is_goal' => true, 'period_type' => 'SO', 'xg' => 0.9],
+    ]);
+    $teams = collect(($this->facts)()['teams'])->keyBy('team');
+    expect($teams['TOR']['gax'])->toEqualWithDelta(0.7, 0.00001)->and($teams['MTL']['gsax'])->toEqualWithDelta(-0.7, 0.00001);
+});
+
+it('publishes prepared mobile prospect leaders through the public dashboard response', function (): void {
+    ($this->prospectRows)([[]]);
+    (new RefreshNhlStatsDashboardJob('20262027', 'leaders'))->handle(app(NhlStatsDashboardPayload::class));
+    expect(Cache::get(NhlStatsDashboardPayload::CACHE_PREFIX.'leaders:20262027')['mobile_leaders'][3]['cards'][0]['value'])->toBe(5);
+    $this->get('/stats')->assertOk()->assertInertia(fn (Assert $page) => $page
+        ->loadDeferredProps('stats-leaders', fn (Assert $reload) => $reload
+            ->where('leaders.mobile_leaders.3.title', 'All Prospects')
+            ->where('leaders.mobile_leaders.3.cards.0.value', 5)
+            ->where('leaders.mobile_leaders.3.cards.0.entity.name', 'Pat Prospect')));
+});
+
+it('does not add a minimum GP threshold to prospect rate leaders or include prospect goalies', function (): void {
+    ($this->prospectRows)([['gp' => 1, 'g' => 2, 'a' => 1, 'pts' => 3]]);
+    $goalie = ($this->prospectRows)([['gp' => 1, 'g' => 99, 'a' => 99, 'pts' => 198]]);
+    $goalie->update(['position' => 'G', 'pos_type' => 'G', 'is_goalie' => true]);
+    $cards = collect(($this->facts)()['mobile_leaders'][3]['cards'])->keyBy('key');
+    expect($cards['g_per_gp']['value'])->toBe(2.0)->and($cards['pts_per_gp']['value'])->toBe(3.0);
 });

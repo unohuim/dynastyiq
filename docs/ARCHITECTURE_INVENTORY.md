@@ -4198,6 +4198,10 @@ the existing Skaters/Goalies renderer; Teams has a sortable results table.
 The shell loads first, with independent rescued deferred groups for leader facts
 and player tables, local navigation skeletons and retry states. GSAx chooses a
 model actually scoring the displayed season and exposes missing-data reasons.
+Mobile uses Stats/LeaderCardRow.vue for three-visible-card horizontal rows headed
+All Skaters, All Goalies, All Teams and All Prospects, retaining tabs without a
+hero. Its prepared cache includes matched team GAx/GSAx and non-NHL Prospects
+report leaders; desktop panels retain their existing presentation.
 Authority: `docs/architecture/stats/NhlStatsDashboard.yaml`.
 
 ## NHL Prediction Season SAT Scoring

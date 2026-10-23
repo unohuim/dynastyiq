@@ -37,6 +37,24 @@ Smash Potatoes, using the same reusable tabbed leaderboard format as Advanced
 Leaders. Rank skaters by the selected season's SOG, Hits, Blocks or PIMs totals;
 show rank, Player, GP and the selected stat, rather than last-night lines.
 
+On mobile below 640px, /stats removes the hero header across category views and
+keeps the category tabs above the content. Skaters, Goalies and Prospects retain
+the original compact vertical player list shown in `docs/designs/stats-mobile.png`,
+with white 52px-high rows, dark text, team strips, 28px avatars, compact identity
+details and a single inline statistics row, matching the reference spacing. Do
+not add mobile rate-bar rows. The list spans the mobile viewport; desktop rows
+retain their graphite styling and rate bars. Prospects opens
+the existing Prospects report. Teams uses matching compact vertical rows with
+team logos and season statistics; its desktop table remains unchanged. Horizontal
+leader cards belong only to the Leaders tab. Leaders uses four compact horizontal
+card rows headed All Skaters, All Goalies, All Teams and All Prospects. Exactly
+three cards fit each row's visible width; remaining cards scroll horizontally
+with native scrolling and a subtle scrollbar. Use one independently selected
+metric leader per card, compact images, single-line truncated names, and factual
+unavailable states. The desktop hero and leader panels keep their existing design.
+Metric definitions and the non-NHL Prospects population belong to
+`docs/architecture/stats/NhlStatsDashboard.yaml`.
+
 The Skaters and Goalies filter bar follows the updated
 `docs/designs/filter-bar.png`: one compact desktop row of Season Mode,
 Season/Dates, Drafted, Game Type, Team and Slice. Use a dark navy

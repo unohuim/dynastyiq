@@ -66,26 +66,49 @@
   }
 
   .stats-dark-view .player-stats-card-mobile {
-    @apply border-[#233342] bg-[#101923] normal-case;
+    @apply h-[52px] border-[#d5dce3] bg-white uppercase text-slate-900;
   }
 
   .stats-dark-view .stats-goalie-card .player-stats-content-mobile {
     @apply pl-10;
   }
 
+  .stats-dark-view .player-stats-top-row-mobile {
+    @apply mb-0 h-9;
+  }
+
+  .stats-dark-view .player-stats-identity-mobile {
+    @apply min-h-0;
+  }
+
+  .stats-dark-view .player-stats-name-stack-mobile {
+    @apply translate-y-1;
+  }
+
   .stats-dark-view .player-stats-name-mobile,
   .stats-dark-view .player-stats-sorted-value-mobile,
   .stats-dark-view .player-stats-stat-val-mobile {
-    @apply text-slate-100;
+    @apply text-slate-900;
   }
 
   .stats-dark-view .player-stats-meta-mobile,
   .stats-dark-view .player-stats-sorted-label-mobile,
   .stats-dark-view .player-stats-stat-key-mobile,
   .stats-dark-view .player-stats-age-mobile,
-  .stats-dark-view .player-stats-aav-mobile,
   .stats-dark-view .player-stats-league-mobile {
-    @apply text-slate-400;
+    @apply text-slate-600;
+  }
+
+  .stats-dark-view .player-stats-aav-mobile {
+    @apply inline-flex min-w-0 truncate bg-gray-100 text-[9px] text-slate-900;
+  }
+
+  .stats-dark-view .player-stats-bottom-row-mobile {
+    @apply mt-0 h-4 flex-nowrap text-[9px] leading-none;
+  }
+
+  .stats-dark-view .player-stats-stat-group-mobile {
+    @apply flex-nowrap gap-x-3 gap-y-0;
   }
 
   .stats-filterbar {
