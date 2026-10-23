@@ -7,10 +7,12 @@ namespace App\Support\Stats;
 use App\Models\NhlGameSummary;
 use App\Models\NhlSeasonStat;
 use App\Models\Player;
+use App\Models\Perspective;
 use App\Models\Stat;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Cache;
 
 /**
  * Coordinates extracted stats payload services behind the controller boundary.
@@ -25,12 +27,124 @@ final class StatsPayloadBuilder
     ) {
     }
 
+    /** Identify a public report revision without sharing private or user-specific payloads. */
+    public function preparedKey(Perspective $perspective, string $season, int $gameType): string
+    {
+        return 'nhl:stats:table:v1:'.$season.':'.$gameType.':'.$perspective->id.':'.hash('sha256',
+            json_encode([$perspective->slug, $perspective->settings, $perspective->is_slicable], JSON_THROW_ON_ERROR));
+    }
+
+    /** Build every supported slice off-request, publishing one atomic report bundle. */
+    public function refreshPreparedSeasonPayload(Perspective $perspective, string $season, int $gameType): void
+    {
+        if ($perspective->visibility !== 'public_guest') {
+            throw new \InvalidArgumentException('Only guest-visible reports can enter the public cache.');
+        }
+        $slices = [];
+        foreach (['total', 'pgp', 'p60'] as $slice) {
+            [$payload] = $this->buildSeasonPayload(new SeasonStatsPayloadRequest(
+                null, $perspective, $perspective->settings ?? [], (bool) $perspective->is_slicable,
+                $season, $slice, $gameType, null, StatsFilterSet::fromRequest(null),
+            ), freshSchema: true);
+            $payload['data'] = collect($payload['data'])->values()->all();
+            $payload['meta']['cache_status'] = 'ready';
+            $payload['meta']['prepared_at'] = now()->toIso8601String();
+            $slices[$slice] = $payload;
+        }
+        if (! Cache::forever($this->preparedKey($perspective, $season, $gameType), $slices)) {
+            throw new \RuntimeException('Public stats report publication failed.');
+        }
+    }
+
+    /**
+     * Read a prepared public report and apply selections to its already-calculated rows.
+     *
+     * @return array{0:array<string,mixed>,1:array<int,mixed>,2:string,3:array<string,float>}
+     */
+    public function readPreparedSeasonPayload(SeasonStatsPayloadRequest $input): array
+    {
+        if (($input->perspective->visibility ?? null) !== 'public_guest') {
+            throw new \InvalidArgumentException('Only guest-visible reports can read public snapshots.');
+        }
+        $season = (string) ($input->seasonFilter ?: Cache::get(\App\Services\NhlStatsDashboardPayload::CACHE_PREFIX.'latest-season', ''));
+        $gameType = $this->isProspectsPerspective($input->perspective) ? 2 : (int) ($input->gameType ?? 2);
+        $bundle = Cache::get($this->preparedKey($input->perspective, $season, $gameType));
+        $slice = $input->canSlice ? $input->slice : 'total';
+        $payload = $bundle[$slice] ?? null;
+        if (! is_array($payload)) {
+            return [['headings' => [], 'data' => [], 'settings' => ['resource' => 'players', 'slice' => $slice],
+                'meta' => ['season' => $season, 'game_type' => $gameType, 'cache_status' => 'missing',
+                    'availableSeasons' => [], 'filterSchema' => [], 'appliedFilters' => []]], [], $season, []];
+        }
+        $filters = $input->filterSet;
+        $totalRows = collect($bundle['total']['data']);
+        $identity = static fn (array $row): string => ($row['player_id'] ?? $row['nhl_player_id'] ?? '').'|'.($row['league'] ?? '');
+        $totals = $totalRows->keyBy($identity);
+        $positions = collect($filters->positions)->flatMap(static fn (string $pos): array => match (strtoupper($pos)) {
+            'LW' => ['L', 'LW'], 'RW' => ['R', 'RW'], default => [strtoupper($pos)],
+        })->all();
+        if (array_diff($positions, ['G']) !== []) {
+            $positions = array_values(array_diff($positions, ['G']));
+        }
+        $numericKeys = array_column(array_filter($payload['meta']['filterSchema'] ?? [],
+            static fn (array $field): bool => in_array($field['type'] ?? '', ['int', 'float', 'number'], true)), 'key');
+        $numericKeys = array_unique([...$numericKeys, 'gp', 'age', 'contract_value_num', 'contract_last_year_num']);
+        $payload['data'] = collect($payload['data'])->filter(function (array $row) use ($filters, $totals, $identity, $positions, $numericKeys): bool {
+            if ($positions !== [] && ! in_array(strtoupper((string) ($row['pos'] ?? '')), $positions, true)) {
+                return false;
+            }
+            if ($filters->positionTypes !== [] && (! in_array($row['pos_type'] ?? '', $filters->positionTypes, true)
+                || (in_array('G', $filters->positionTypes, true) && ($row['pos'] ?? '') !== 'G'))) {
+                return false;
+            }
+            foreach (['team' => $filters->teams, 'league' => $filters->leagues, 'drafted_year' => $filters->draftYears] as $key => $values) {
+                if ($values !== [] && ! in_array($row[$key] ?? null, $values, false)) {
+                    return false;
+                }
+            }
+            if ($filters->draftYears === []) {
+                $min = $filters->draftYearRange['min'];
+                $max = $filters->draftYearRange['max'];
+                if ($min !== null && $max !== null && $min > $max) {
+                    [$min, $max] = [$max, $min];
+                }
+                if (($min !== null || $max !== null) && (($row['drafted_year'] ?? null) === null
+                    || ($min !== null && $row['drafted_year'] < $min) || ($max !== null && $row['drafted_year'] > $max))) {
+                    return false;
+                }
+            }
+            $total = $totals->get($identity($row), $row);
+            foreach ($filters->numericRanges as $key => $range) {
+                if (! in_array($key, $numericKeys, true)) {
+                    continue;
+                }
+                $value = $key === 'toi' ? ($total['toi_total_seconds'] ?? null) : ($total[$key] ?? null);
+                if (($range['min'] !== null || $range['max'] !== null) && ($value === null
+                    || ($range['min'] !== null && $value < $range['min']) || ($range['max'] !== null && $value > $range['max']))) {
+                    return false;
+                }
+            }
+            return true;
+        })->values()->all();
+        $payload['meta']['pos'] = $filters->positions;
+        $payload['meta']['pos_type'] = $filters->positionTypes;
+        $payload['meta']['appliedFilters'] = array_filter([
+            'team' => $filters->teams, 'league' => $filters->leagues,
+            'entry_draft_year' => $filters->draftYears ?: array_filter($filters->draftYearRange, static fn ($value): bool => $value !== null),
+            ...$filters->numericRanges,
+        ], static fn ($value): bool => $value !== []);
+
+        return [$payload, $payload['meta']['availableSeasons'] ?? [], $season, []];
+    }
+
     /**
      * Build and format a season players payload from perspective settings.
      *
+     * @param bool $freshSchema Recalculate filter bounds during background snapshot publication.
+     *
      * @return array{0:array<string,mixed>,1:array<int,mixed>,2:string|null,3:array<string,float>}
      */
-    public function buildSeasonPayload(SeasonStatsPayloadRequest $payloadRequest): array
+    public function buildSeasonPayload(SeasonStatsPayloadRequest $payloadRequest, bool $freshSchema = false): array
     {
         $buildProfileLast = hrtime(true);
         $buildTimings = [];
@@ -74,6 +188,7 @@ final class StatsPayloadBuilder
                 $filters,
                 $payloadRequest->filterSet,
                 $this->schemaCacheContext($payloadRequest, 'season', $season, $effectiveGameType, $columns),
+                $freshSchema,
             );
             $buildMark('schema_filters_ms');
 
@@ -144,6 +259,7 @@ final class StatsPayloadBuilder
                 $filters,
                 $payloadRequest->filterSet,
                 $this->schemaCacheContext($payloadRequest, 'season', $season, $effectiveGameType, $columns),
+                $freshSchema,
             );
             $buildMark('schema_filters_ms');
 
@@ -444,10 +560,11 @@ final class StatsPayloadBuilder
         array $perspectiveFilters = [],
         ?StatsFilterSet $filterSet = null,
         array $schemaCacheContext = [],
+        bool $freshSchema = false,
     ): array {
         $filterSet ??= StatsFilterSet::fromRequest($request);
         $table = $this->queryFilterApplier->prepareBase($base, $request, $perspectiveFilters);
-        $schema = $this->schemaProvider->schemaForBase($base, $columns, $schemaCacheContext);
+        $schema = $this->schemaProvider->schemaForBase($base, $columns, $schemaCacheContext, $freshSchema);
         $applied = $this->queryFilterApplier->applyRequestFilters(
             $base,
             $table,

@@ -44,13 +44,17 @@ class SeasonSumJob implements ShouldQueue
         $run = $this->adminRun();
 
         try {
-            $run?->update(['status' => NhlGameImportRun::STATUS_RUNNING]);
+            $run?->update([
+                'status' => NhlGameImportRun::STATUS_RUNNING,
+                'last_error' => null,
+                'payload' => [...($run->payload ?? []), 'stats_cache' => $run->payload['stats_cache'] ?? ['status' => 'queued']],
+            ]);
 
             if ($run) {
                 broadcast(new NhlGameImportStatusUpdated('season-sync-running', $run->id));
             }
 
-            $rows = $service->sum($this->seasonId);
+            $rows = $service->sum($this->seasonId, $this->runId);
 
             $this->markCompleted($run, $rows);
         } catch (Throwable $e) {
@@ -84,7 +88,7 @@ class SeasonSumJob implements ShouldQueue
     }
 
     /**
-     * Mark an admin-triggered season sync as completed.
+     * Record rollup completion; keep the run active until every prepared report is published.
      */
     private function markCompleted(?NhlGameImportRun $run, int $rows): void
     {
@@ -92,17 +96,24 @@ class SeasonSumJob implements ShouldQueue
             return;
         }
 
-        $payload = $run->payload ?? [];
-        $payload['rows_upserted'] = $rows;
-        $payload['completed_at'] = now()->toIso8601String();
+        \Illuminate\Support\Facades\DB::transaction(function () use ($run, $rows): void {
+            $current = NhlGameImportRun::query()->lockForUpdate()->findOrFail($run->id);
+            $payload = $current->payload ?? [];
+            $payload['rows_upserted'] = $rows;
+            $payload['aggregation_completed_at'] = now()->toIso8601String();
+            $cacheStatus = $payload['stats_cache']['status'] ?? 'queued';
+            $status = match ($cacheStatus) {
+                'ready' => NhlGameImportRun::STATUS_COMPLETED,
+                'failed' => NhlGameImportRun::STATUS_FAILED,
+                default => NhlGameImportRun::STATUS_RUNNING,
+            };
+            if ($status === NhlGameImportRun::STATUS_COMPLETED) {
+                $payload['completed_at'] = now()->toIso8601String();
+            }
+            $current->update(['status' => $status, 'payload' => $payload]);
+        }, 3);
 
-        $run->update([
-            'status' => NhlGameImportRun::STATUS_COMPLETED,
-            'payload' => $payload,
-            'last_error' => null,
-        ]);
-
-        broadcast(new NhlGameImportStatusUpdated('season-sync-completed', $run->id));
+        broadcast(new NhlGameImportStatusUpdated('season-sync-progress', $run->id));
     }
 
     /**
@@ -114,14 +125,16 @@ class SeasonSumJob implements ShouldQueue
             return;
         }
 
-        $payload = $run->payload ?? [];
-        $payload['failed_at'] = now()->toIso8601String();
-
-        $run->update([
-            'status' => NhlGameImportRun::STATUS_FAILED,
-            'payload' => $payload,
-            'last_error' => $e->getMessage(),
-        ]);
+        \Illuminate\Support\Facades\DB::transaction(function () use ($run, $e): void {
+            $current = NhlGameImportRun::query()->lockForUpdate()->findOrFail($run->id);
+            $payload = $current->payload ?? [];
+            $payload['failed_at'] = now()->toIso8601String();
+            $current->update([
+                'status' => NhlGameImportRun::STATUS_FAILED,
+                'payload' => $payload,
+                'last_error' => $e->getMessage(),
+            ]);
+        }, 3);
 
         broadcast(new NhlGameImportStatusUpdated('season-sync-failed', $run->id));
     }

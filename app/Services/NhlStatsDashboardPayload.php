@@ -23,9 +23,14 @@ class NhlStatsDashboardPayload
     /** Return season leaders and current completed-night highlights for the stats landing. */
     public function build(?string $season = null, string $view = 'leaders'): array
     {
-        $season = $season !== null && preg_match('/^\d{8}$/', $season)
-            ? $season : (string) DB::table('nhl_season_stats')->where('game_type', 2)->where('gp', '>', 0)->max('season_id');
-        $facts = Cache::remember(self::CACHE_PREFIX.$view.':'.$season, 300, fn (): array => $this->seasonFacts($season, $view));
+        $season = $season !== null && preg_match('/^\d{8}$/', $season) ? $season : $this->latestPreparedSeason();
+        $facts = Cache::get(self::CACHE_PREFIX.$view.':'.$season);
+        if (! is_array($facts)) {
+            return ['season' => $season, 'cache_status' => 'missing', 'hero' => null, 'goalie_hero' => null,
+                'categories' => [], 'goalie_categories' => [], 'skaters' => [], 'goalies' => [],
+                'rookies' => [], 'teams' => [], 'mobile_leaders' => []];
+        }
+        $facts['cache_status'] = 'ready';
 
         return $view === 'leaders' ? [...$facts, ...$this->dashboard->statsHighlights()] : $facts;
     }
@@ -37,9 +42,27 @@ class NhlStatsDashboardPayload
             throw new InvalidArgumentException('Only supported public season views can be cached.');
         }
         $facts = $this->seasonFacts($season, $view);
-        Cache::forever(self::CACHE_PREFIX.$view.':'.$season, $facts);
+        $facts['prepared_at'] = now()->toIso8601String();
+        if (! Cache::forever(self::CACHE_PREFIX.$view.':'.$season, $facts)) {
+            throw new \RuntimeException('Public stats cache publication failed.');
+        }
 
         return $facts;
+    }
+
+    /** Resolve the default season from prepared metadata without scanning source stats on page requests. */
+    public function latestPreparedSeason(): string
+    {
+        return (string) Cache::get(self::CACHE_PREFIX.'latest-season', '');
+    }
+
+    /** Refresh the public season catalogue only from a background preparation entrypoint. */
+    public function refreshSeasonCatalogue(): void
+    {
+        $season = (string) DB::table('nhl_season_stats')->where('game_type', 2)->where('gp', '>', 0)->max('season_id');
+        if (! Cache::forever(self::CACHE_PREFIX.'latest-season', $season)) {
+            throw new \RuntimeException('Public stats season catalogue publication failed.');
+        }
     }
 
     /** Normalize actual season totals and rates; missing denominators remain unavailable. */

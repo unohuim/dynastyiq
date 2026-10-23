@@ -99,9 +99,7 @@ class ScoreNhlPredictionGameSatJob implements ShouldQueue
             }
 
             DB::afterCommit(function (): void {
-                foreach (['leaders', 'goalies'] as $view) {
-                    RefreshNhlStatsDashboardJob::dispatch($this->seasonId, $view);
-                }
+                \App\Events\NhlStatsSourceUpdated::dispatch($this->seasonId);
             });
         });
     }

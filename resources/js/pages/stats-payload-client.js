@@ -121,6 +121,7 @@ export class StatsPayloadClient {
   }
 
   cachePayload(params, payload) {
+    if (payload?.meta?.cache_status === 'missing') return;
     this.payloadCache.set(this.cacheKeyFromParams(params), payload);
   }
 

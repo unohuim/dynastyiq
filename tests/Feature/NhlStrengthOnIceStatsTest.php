@@ -15,6 +15,7 @@ use App\Events\NhlSeasonStatsSynced;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Event;
 use Inertia\Testing\AssertableInertia as Assert;
@@ -24,6 +25,14 @@ uses(RefreshDatabase::class);
 beforeEach(function (): void {
     Carbon::setTestNow('2026-06-29 12:00:00');
     Event::fake([NhlSeasonStatsSynced::class]);
+    config(['cache.default' => 'array']);
+    Cache::flush();
+    $this->preparePublicStats = function (): void {
+        app(\App\Services\NhlStatsDashboardPayload::class)->refreshSeasonCatalogue();
+        foreach (Perspective::query()->where('visibility', 'public_guest')->get() as $perspective) {
+            app(\App\Support\Stats\StatsPayloadBuilder::class)->refreshPreparedSeasonPayload($perspective, '20262027', 2);
+        }
+    };
     User::factory()->create();
 
     $this->insertGame = static function (int $gameId = 2026020001): void {
@@ -931,6 +940,7 @@ it('exposes native advanced skater aliases and perspective position buttons in s
         ],
     ]);
 
+    ($this->preparePublicStats)();
     $response = $this->getJson(route('stats.payload', [
         'perspective' => 'native-advanced-test',
         'season_id' => '20262027',
@@ -1024,6 +1034,7 @@ it('keeps native goalie goals against when goalie scoring columns share on-ice k
         ],
     ]);
 
+    ($this->preparePublicStats)();
     $response = $this->getJson(route('stats.payload', [
         'perspective' => 'goalie-scoring-test',
         'season_id' => '20262027',
@@ -1284,6 +1295,7 @@ it('defaults the stats page to skaters instead of the first visible perspective 
         ],
     ]);
 
+    ($this->preparePublicStats)();
     $response = $this->get(route('stats.index'));
 
     $response->assertOk()
@@ -1347,6 +1359,7 @@ it('uses official boxscore toi for stats page per-60 rate calculations', functio
         ],
     ]);
 
+    ($this->preparePublicStats)();
     $response = $this->getJson(route('stats.payload', [
         'perspective' => 'boxscore-toi-test',
         'season_id' => '20262027',
@@ -1429,6 +1442,7 @@ it('maps wing position filters to stored NHL left and right position codes', fun
         ],
     ]);
 
+    ($this->preparePublicStats)();
     $lw = $this->getJson(route('stats.payload', [
         'perspective' => 'position-filter-test',
         'season_id' => '20262027',
@@ -1528,6 +1542,7 @@ it('limits the prospects perspective to players marked as prospects', function (
         ],
     ]);
 
+    ($this->preparePublicStats)();
     $response = $this->getJson(route('stats.payload', [
         'perspective' => 'prospects',
         'season_id' => '20262027',
@@ -1612,6 +1627,7 @@ it('exposes prospect goalie stats from legacy stats goalie columns', function ()
         ],
     ]);
 
+    ($this->preparePublicStats)();
     $response = $this->getJson(route('stats.payload', [
         'perspective' => 'prospects-goalies',
         'season_id' => '20262027',
@@ -1715,6 +1731,7 @@ it('groups prospect stats by player and league while summing same league teams',
         ],
     ]);
 
+    ($this->preparePublicStats)();
     $response = $this->getJson(route('stats.payload', [
         'perspective' => 'prospects',
         'season_id' => '20262027',

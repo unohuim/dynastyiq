@@ -1212,6 +1212,17 @@ export class StatsPageShell {
       return;
     }
 
+    if (this.payload?.meta?.cache_status === 'missing') {
+      const message = createElement('div', 'p-4 text-sm text-slate-300', 'This season report is not prepared yet. Please check back shortly.');
+      message.setAttribute('role', 'status');
+      const retry = createElement('button', 'ml-2 rounded px-2 py-1 text-sky-300 focus-visible:ring-2 focus-visible:ring-sky-400', 'Check again');
+      retry.type = 'button';
+      retry.addEventListener('click', () => this.fetchPayload({ force: true }));
+      message.appendChild(retry);
+      this.contentEl.replaceChildren(message);
+      return;
+    }
+
     if (this.state.error) {
       this.contentEl.replaceChildren(this.renderError());
       return;

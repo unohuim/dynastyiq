@@ -46,7 +46,10 @@ class StatsController extends BaseController
         }
         $season = $request->query('season_id', $request->query('season'));
         $selectedSeason = is_string($season) && preg_match('/^\d{8}$/', $season) ? $season
-            : (string) DB::table('nhl_season_stats')->where('game_type', 2)->where('gp', '>', 0)->max('season_id');
+            : $leaders->latestPreparedSeason();
+        if (! $request->filled('season_id') && $selectedSeason !== '') {
+            $request->query->set('season_id', $selectedSeason);
+        }
 
         return Inertia::render('Stats/Index', [
             ...$this->statsPageProps($request, true, in_array($view, ['skaters', 'goalies'], true)),
@@ -96,7 +99,8 @@ class StatsController extends BaseController
                     is_string($seasonFilter) ? $seasonFilter : null,
                     'total',
                     in_array($gameType, [1, 2, 3], true) ? $gameType : 2,
-                    null
+                    null,
+                    publicCache: true,
                 );
 
                 return $payload;
@@ -671,7 +675,8 @@ class StatsController extends BaseController
                 $season,
                 $effectiveSlice,
                 $gameType,
-                $request
+                $request,
+                publicCache: true,
             );
 
             $payload['connectedLeagues'] = $connectedLeagues;
@@ -714,11 +719,20 @@ class StatsController extends BaseController
         string $slice = 'total',
         ?int $gameType = 2,
         ?Request $request = null,
-        ?StatsFilterSet $filterSet = null
+        ?StatsFilterSet $filterSet = null,
+        bool $publicCache = false,
     ): array {
         $perspective = Perspective::findOrFail($perspectiveId);
         $settings    = is_array($perspective->settings) ? $perspective->settings : (json_decode($perspective->settings ?? '[]', true) ?: []);
         $canSlice    = (bool)($perspective->is_slicable ?? true);
+
+        if ($publicCache && $perspective->visibility === 'public_guest'
+            && (int) ($request?->input('availability', 0) ?? 0) === 0 && ! ($request?->boolean('draft_context') ?? false)) {
+            return app(StatsPayloadBuilder::class)->readPreparedSeasonPayload(new SeasonStatsPayloadRequest(
+                $user, $perspective, $settings, $canSlice, $seasonFilter, $slice, $gameType,
+                $request, $filterSet ?? StatsFilterSet::fromRequest($request),
+            ));
+        }
 
         return $this->buildAndFormatPlayersPayloadFromSettings(
             $user,

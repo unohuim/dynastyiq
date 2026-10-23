@@ -2042,6 +2042,15 @@ export default function adminHub(options = {}) {
 
         gameImportSeasonSyncProgressText(run) {
             const rows = Number(run.payload?.rows_upserted) || 0;
+            const preparation = run.payload?.stats_cache;
+            if (preparation?.status === 'failed') {
+                return 'Stats cache preparation failed';
+            }
+            if (['queued', 'building'].includes(preparation?.status) && run.payload?.aggregation_completed_at) {
+                const completed = Number(run.progress?.cache_completed) || 0;
+                const total = Number(run.progress?.cache_total) || 0;
+                return total > 0 ? `Preparing stats cache · ${completed} / ${total} reports` : 'Stats synced · cache preparation queued';
+            }
 
             if (run.status === 'completed') {
                 return `${this.formatNumber(rows)} season stat rows synced`;

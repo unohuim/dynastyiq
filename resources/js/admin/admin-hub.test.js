@@ -1271,6 +1271,13 @@ describe('admin-hub import listeners', () => {
 
         expect(instance.gameImportVisibleRuns()).toHaveLength(1);
         expect(instance.gameImportLatestSeasonSyncRun().id).toBe(30);
+        expect(instance.gameImportSeasonSyncProgressText({ ...run, status: 'running',
+            payload: { ...run.payload, aggregation_completed_at: '2026-10-23T12:00:00Z', stats_cache: { status: 'building' } },
+            progress: { cache_completed: 3, cache_total: 8 },
+        })).toBe('Preparing stats cache · 3 / 8 reports');
+        expect(instance.gameImportSeasonSyncProgressText({ ...run, status: 'failed',
+            payload: { stats_cache: { status: 'failed' } },
+        })).toBe('Stats cache preparation failed');
         expect(instance.gameImportSeasonSyncProgressText(run)).toBe('812 season stat rows synced');
         expect(instance.gameImportSummaryText(run)).toBe('812 season stat rows synced');
         expect(instance.gameImportProgressPercentage(run)).toBe(100);

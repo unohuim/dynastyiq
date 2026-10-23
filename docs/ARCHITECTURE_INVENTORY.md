@@ -4183,9 +4183,15 @@ Opponent-team aggregates remain distinct from player sums.
 `NhlSeasonStatsSynced` is emitted after committed aggregation from every season
 sync entrypoint. Its queued listener prepares bounded public season/view cache
 refreshes on projections, including following-season comparisons where needed.
-Prediction-season SAT scoring refreshes Leaders/Goalies without evicting ready
-values. Successful publication replaces a complete value and retains it until
-the next source refresh. General player-table payload caching is separate.
+Committed SAT scoring and imported player histories also trigger preparation
+without evicting ready values. Successful publication replaces a complete value
+and retains it until the next source refresh. Guest-visible season reports are
+included; private and custom-range payloads retain their separate pipeline.
+
+Public season dashboards, retained highlights and guest-visible table bundles now
+prepare together. Public reads expose missing snapshots without aggregation; admin
+season sync tracks the preparation batch. `nhl:stats-cache --all` queues deployment
+preparation for stored seasons.
 
 **Authority:** `docs/architecture/stats/NhlStatsCacheRefresh.yaml`.
 

@@ -804,6 +804,21 @@ describe('stats page prospect controls', () => {
     expect(document.body.querySelector('[data-vue-stats-mobile-card]')?.textContent).toContain('Test Prospect');
   });
 
+  it('shows preparation status instead of empty player results for an unprepared report', async () => {
+    const shell = await createShell({ mobile: true, meta: { cache_status: 'missing' } });
+    shell.renderContent();
+    expect(shell.contentEl.querySelector('[role="status"]')?.textContent).toContain('not prepared yet');
+    expect(shell.contentEl.querySelector('button')?.textContent).toBe('Check again');
+    expect(shell.contentEl.querySelector('[data-vue-stats-mobile-card-list]')).toBeNull();
+  });
+
+  it('does not retain an unprepared payload in the browser cache', async () => {
+    const shell = await createShell();
+    const params = shell.buildParams();
+    shell.cachePayload(params, { meta: { cache_status: 'missing' }, data: [] });
+    expect(shell.payloadClient.hasCachedPayload(params)).toBe(false);
+  });
+
   it('renders the Vue mobile empty state when no rows match', async () => {
     const shell = await createShell({ mobile: true });
     shell.payload.data = [];

@@ -580,3 +580,10 @@ Any new deviation from this document requires:
 If a UI element feels "cool", "flashy", or "impressive", it is probably wrong for this system.
 
 Clarity, calmness, and restraint win.
+
+
+Public season statistics read prepared snapshots. When a dashboard, trend snapshot
+or table is not prepared, show a clear compact status and a keyboard-accessible
+Check again action. Do not disguise unavailable preparation as zero statistics or
+run expensive source calculations while a visitor waits. The admin season-sync
+progress distinguishes source rollup from report-cache preparation and failures.

@@ -185,6 +185,9 @@ it('keeps mobile category navigation while replacing the desktop hero and leader
     expect(source).toContain('bg-[#03131f] sm:hidden');
     expect(source).toContain('sm:grid lg:grid-cols-[1.6fr_1fr]');
     expect(source).toContain('aria-label="Mobile season leaders"');
+    expect(source).toContain("leaders.cache_status === 'missing'");
+    expect(source).toContain("initialPayload?.meta?.cache_status === 'missing'");
+    expect(source).toContain('Check again');
     expect(source).toContain('class="hidden space-y-3 sm:block"');
     expect(source).toContain('<LeaderCardRow v-for="row in leaders.mobile_leaders || []"');
 });

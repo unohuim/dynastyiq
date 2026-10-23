@@ -23,7 +23,11 @@ class NhlShotAttemptModelScorer
         float $highDangerThreshold,
         ?string $entityKey = null
     ): bool {
-        return $this->scoreFacts($model, $seasonId, $gameType, $highDangerThreshold, $entityKey);
+        $scored = $this->scoreFacts($model, $seasonId, $gameType, $highDangerThreshold, $entityKey);
+        if ($scored && $entityKey === null) {
+            \App\Events\NhlStatsSourceUpdated::dispatch($seasonId);
+        }
+        return $scored;
     }
 
     /** Rate one game's facts without replacing ratings for other games or seasons. */

@@ -17,9 +17,10 @@ class SumNhlSeasonStats
 {
     /**
      * @param  string $seasonId e.g. '20242025'
+     * @param  int|null $runId Originating admin sync whose preparation should be tracked.
      * @return int    number of rows upserted
      */
-    public function sum(string $seasonId): int
+    public function sum(string $seasonId, ?int $runId = null): int
     {
         $hasSplitHighDangerSatColumns = $this->hasSplitHighDangerSatColumns();
         $splitHighDangerSatSelects = $hasSplitHighDangerSatColumns ? '
@@ -150,7 +151,7 @@ class SumNhlSeasonStats
             ->get();
 
         if ($rows->isEmpty()) {
-            NhlSeasonStatsSynced::dispatch($seasonId, 0);
+            NhlSeasonStatsSynced::dispatch($seasonId, 0, $runId);
             return 0;
         }
 
@@ -342,11 +343,11 @@ class SumNhlSeasonStats
         $colsCount = count($allCols);
         $chunkSize = max(1, intdiv($maxParams, $colsCount));
 
-        DB::transaction(function () use ($payload, $chunkSize, $uniqueBy, $update, $seasonId): void {
+        DB::transaction(function () use ($payload, $chunkSize, $uniqueBy, $update, $seasonId, $runId): void {
             $payload->chunk($chunkSize)->each(function ($chunk) use ($uniqueBy, $update): void {
                 DB::table('nhl_season_stats')->upsert($chunk->all(), $uniqueBy, $update);
             });
-            NhlSeasonStatsSynced::dispatch($seasonId, $payload->count());
+            NhlSeasonStatsSynced::dispatch($seasonId, $payload->count(), $runId);
         }, 3);
 
         // DB::table('nhl_season_stats')->upsert(

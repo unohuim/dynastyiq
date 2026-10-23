@@ -13,7 +13,7 @@ class NhlSeasonStatsSynced implements ShouldDispatchAfterCommit
     use Dispatchable;
 
     /** Carry the affected season and result count without serializing player rows. */
-    public function __construct(public string $seasonId, public int $rowsUpserted)
+    public function __construct(public string $seasonId, public int $rowsUpserted, public ?int $runId = null)
     {
     }
 }

@@ -20,8 +20,11 @@ final class StatsFilterSchemaProvider
      * @param array<int,array<string,mixed>> $columns
      * @return array<int,array<string,mixed>>
      */
-    public function schemaForBase($base, array $columns, array $context = []): array
+    public function schemaForBase($base, array $columns, array $context = [], bool $fresh = false): array
     {
+        if ($fresh) {
+            return $this->withFreshDraftYearOptions($this->buildSchemaForBase($base, $columns));
+        }
         $schema = Cache::remember(
             $this->cacheKeyForBase($base, $columns, $context),
             now()->addMinutes(5),

@@ -10,6 +10,13 @@ use App\Jobs\RefreshNhlStatsDashboardJob;
 use App\Listeners\QueueNhlStatsDashboardRefresh;
 use App\Services\NhlDashboardPayload;
 use App\Services\NhlStatsDashboardPayload;
+use App\Support\Stats\StatsPayloadBuilder;
+use App\Support\Stats\StatsFilterSet;
+use App\Support\Stats\SeasonStatsPayloadRequest;
+use App\Models\NhlGameImportRun;
+use App\Events\NhlStatsSourceUpdated;
+use Illuminate\Support\Facades\Event;
+use Illuminate\Http\Request;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
@@ -25,6 +32,7 @@ beforeEach(function (): void {
     $this->travelTo(Carbon::parse('2026-10-23 14:00:00 UTC'));
     config(['cache.default' => 'array']);
     Cache::flush();
+    Cache::forever(NhlStatsDashboardPayload::CACHE_PREFIX.'latest-season', '20262027');
     Bus::fake();
     Http::preventStrayRequests();
     User::factory()->create();
@@ -51,7 +59,19 @@ beforeEach(function (): void {
     DB::table('nhl_games')->insert(['nhl_game_id' => 2026020001, 'season_id' => '20262027', 'game_type' => 2,
         'game_date' => '2026-10-22', 'game_state' => 'OFF', 'home_team_id' => 10, 'home_team_abbrev' => 'TOR',
         'away_team_id' => 8, 'away_team_abbrev' => 'MTL', 'home_team_score' => 4, 'away_team_score' => 2]);
-    $this->facts = fn (): array => app(NhlStatsDashboardPayload::class)->build();
+    $this->facts = function (): array {
+        $service = app(NhlStatsDashboardPayload::class);
+        $service->refreshCachedFacts('20262027', 'leaders');
+        return $service->build('20262027');
+    };
+    $this->publicReport = fn (): Perspective => Perspective::create(['name' => 'Skaters', 'slug' => 'skaters',
+        'visibility' => 'public_guest', 'sport' => 'hockey', 'is_slicable' => true,
+        'settings' => ['columns' => [['key' => 'pts', 'label' => 'PTS'], ['key' => 'g', 'label' => 'G']],
+            'filters' => ['pos' => ['operator' => '!=', 'value' => 'G']]]]);
+    $this->reportInput = fn (Perspective $perspective, array $query = []): SeasonStatsPayloadRequest => new SeasonStatsPayloadRequest(
+        null, $perspective, $perspective->settings, true, '20262027', $query['slice'] ?? 'total', 2,
+        Request::create('/api/stats', 'GET', $query), StatsFilterSet::fromRequest(Request::create('/api/stats', 'GET', $query)),
+    );
     $this->prospectRows = function (array $rows): Player {
         $player = Player::create(['first_name' => 'Pat', 'last_name' => 'Prospect', 'full_name' => 'Pat Prospect',
             'position' => 'C', 'pos_type' => 'F', 'is_goalie' => false]);
@@ -107,11 +127,13 @@ beforeEach(function (): void {
 afterEach(function (): void { $this->travelBack(); });
 
 it('lands public stats on the leaders dashboard', function (): void {
+    app(NhlStatsDashboardPayload::class)->refreshCachedFacts('20262027', 'leaders');
     $this->get('/stats')->assertOk()->assertInertia(fn (Assert $page) => $page
         ->component('Stats/Index')->where('view', 'leaders')->missing('leaders')->missing('initialPayload')
         ->loadDeferredProps('stats-leaders', fn (Assert $reload) => $reload->where('leaders.hero.name', 'Alex Leader')));
 });
 it('allows authenticated users to read the same public leaders', function (): void {
+    app(NhlStatsDashboardPayload::class)->refreshCachedFacts('20262027', 'leaders');
     $this->actingAs(User::factory()->create())->get('/stats')->assertOk()->assertInertia(fn (Assert $page) => $page
         ->where('view', 'leaders')->missing('leaders')
         ->loadDeferredProps('stats-leaders', fn (Assert $reload) => $reload->where('leaders.hero.stats.points', 8)));
@@ -265,6 +287,7 @@ it('exposes the incomplete scoring count as the goalie GSAx reason', function ()
     expect(($this->facts)()['goalie_hero']['gsax_reason'])->toBe('1 of 2 attempts have xG scores.');
 });
 it('keeps table-view leader payloads compact and skips unused dashboard rows', function (): void {
+    app(NhlStatsDashboardPayload::class)->refreshCachedFacts('20262027', 'skaters');
     $data = app(NhlStatsDashboardPayload::class)->build('20262027', 'skaters');
     expect($data['hero']['id'])->toBe(9000001)->and($data['skaters'])->toBe([])
         ->and($data['goalies'])->toBe([])->and($data['teams'])->toBe([]);
@@ -374,6 +397,7 @@ it('lists an NHL-only eligible rookie using the non-drafting service mode', func
         'player_id' => $this->player->id, 'season_id' => '20262027', 'league_abbrev' => 'NHL',
         'team_name' => 'Toronto Maple Leafs', 'game_type_id' => 2, 'gp' => 2,
     ]);
+    ($this->facts)();
     $this->get('/stats')->assertOk()->assertInertia(fn (Assert $page) => $page
         ->loadDeferredProps('stats-leaders', fn (Assert $reload) => $reload
             ->where('leaders.rookies.0.id', 9000001)->where('leaders.rookies.0.stats.points', 8)));
@@ -406,11 +430,15 @@ it('preserves existing explicit perspective links as table views', function (): 
     $this->get('/stats?perspective=skaters')->assertOk()->assertInertia(fn (Assert $page) => $page->where('view', 'skaters'));
 });
 it('provides a distinct teams category without replacing the route', function (): void {
+    app(NhlStatsDashboardPayload::class)->refreshCachedFacts('20262027', 'teams');
     $this->get('/stats?view=teams')->assertOk()->assertInertia(fn (Assert $page) => $page->where('view', 'teams')->missing('leaders')
         ->loadDeferredProps('stats-leaders', fn (Assert $reload) => $reload->has('leaders.teams', 2)));
 });
 it('does not build leader facts before returning the initial page shell', function (): void {
-    $this->mock(NhlStatsDashboardPayload::class, fn ($mock) => $mock->shouldNotReceive('build'));
+    $this->mock(NhlStatsDashboardPayload::class, function ($mock): void {
+        $mock->shouldNotReceive('build');
+        $mock->shouldReceive('latestPreparedSeason')->andReturn('20262027');
+    });
     $this->get('/stats?view=skaters')->assertOk()->assertInertia(fn (Assert $page) => $page
         ->where('view', 'skaters')->missing('leaders')->missing('initialPayload')->where('selectedSeason', '20262027'));
 });
@@ -427,7 +455,7 @@ it('queues public stats refreshes from the committed season-sync event', functio
 
 it('queues each public view for the affected season', function (): void {
     (new QueueNhlStatsDashboardRefresh())->handle(new NhlSeasonStatsSynced('20262027', 2));
-    Bus::assertDispatchedTimes(RefreshNhlStatsDashboardJob::class, 4);
+    Bus::assertDispatchedTimes(RefreshNhlStatsDashboardJob::class, 5);
     foreach (['leaders', 'skaters', 'goalies', 'teams'] as $view) {
         Bus::assertDispatched(RefreshNhlStatsDashboardJob::class, fn ($job): bool =>
             $job->seasonId === '20262027' && $job->view === $view && $job->queue === 'projections' && $job->afterCommit);
@@ -436,14 +464,14 @@ it('queues each public view for the affected season', function (): void {
 
 it('refreshes following-season comparisons when previous-season summaries change', function (): void {
     (new QueueNhlStatsDashboardRefresh())->handle(new NhlSeasonStatsSynced('20252026', 1));
-    Bus::assertDispatchedTimes(RefreshNhlStatsDashboardJob::class, 8);
+    Bus::assertDispatchedTimes(RefreshNhlStatsDashboardJob::class, 9);
     Bus::assertDispatched(RefreshNhlStatsDashboardJob::class, fn ($job): bool => $job->seasonId === '20262027');
 });
 
 it('coalesces repeated queued refreshes for the same public season and view', function (): void {
     (new QueueNhlStatsDashboardRefresh())->handle(new NhlSeasonStatsSynced('20262027', 2));
     (new QueueNhlStatsDashboardRefresh())->handle(new NhlSeasonStatsSynced('20262027', 2));
-    Bus::assertDispatchedTimes(RefreshNhlStatsDashboardJob::class, 4);
+    Bus::assertDispatchedTimes(RefreshNhlStatsDashboardJob::class, 5);
 });
 
 it('scopes refresh ownership by season and view', function (): void {
@@ -592,4 +620,186 @@ it('does not add a minimum GP threshold to prospect rate leaders or include pros
     $goalie->update(['position' => 'G', 'pos_type' => 'G', 'is_goalie' => true]);
     $cards = collect(($this->facts)()['mobile_leaders'][3]['cards'])->keyBy('key');
     expect($cards['g_per_gp']['value'])->toBe(2.0)->and($cards['pts_per_gp']['value'])->toBe(3.0);
+});
+
+
+it('returns an honest missing state without calculating or queueing public leaders', function (): void {
+    DB::enableQueryLog();
+    $facts = app(NhlStatsDashboardPayload::class)->build('20262027');
+    expect($facts['cache_status'])->toBe('missing')->and($facts['hero'])->toBeNull();
+    expect(DB::getQueryLog())->toBe([]);
+    DB::disableQueryLog();
+    Bus::assertNothingDispatched();
+});
+
+it('reads prepared leaders without touching source statistics', function (): void {
+    ($this->facts)();
+    DB::table('nhl_season_stats')->where('nhl_player_id', 9000001)->update(['pts' => 99]);
+    DB::enableQueryLog();
+    $facts = app(NhlStatsDashboardPayload::class)->build('20262027');
+    expect($facts['hero']['stats']['points'])->toBe(8)->and($facts['cache_status'])->toBe('ready');
+    expect(DB::getQueryLog())->toBe([]);
+    DB::disableQueryLog();
+});
+
+it('resolves the default season solely from prepared metadata', function (): void {
+    Cache::forget(NhlStatsDashboardPayload::CACHE_PREFIX.'latest-season');
+    DB::enableQueryLog();
+    expect(app(NhlStatsDashboardPayload::class)->latestPreparedSeason())->toBe('');
+    expect(DB::getQueryLog())->toBe([]);
+    DB::disableQueryLog();
+});
+
+it('includes highlights and public report jobs in source-triggered preparation', function (): void {
+    $perspective = ($this->publicReport)();
+    (new QueueNhlStatsDashboardRefresh())->handle(new NhlSeasonStatsSynced('20262027', 2));
+    Bus::assertDispatched(RefreshNhlStatsDashboardJob::class, fn ($job): bool => $job->view === 'highlights');
+    foreach ([1, 2, 3] as $type) {
+        Bus::assertDispatched(RefreshNhlStatsDashboardJob::class, fn ($job): bool => $job->view === 'table'
+            && $job->perspectiveId === $perspective->id && $job->gameType === $type && $job->queue === 'projections');
+    }
+});
+
+it('never prepares private perspectives in the shared report cache', function (): void {
+    $perspective = ($this->publicReport)();
+    $perspective->update(['visibility' => 'private']);
+    expect(fn () => app(StatsPayloadBuilder::class)->refreshPreparedSeasonPayload($perspective, '20262027', 2))
+        ->toThrow(\InvalidArgumentException::class);
+    (new QueueNhlStatsDashboardRefresh())->queueSeason('20262027');
+    Bus::assertNotDispatched(RefreshNhlStatsDashboardJob::class, fn ($job): bool => $job->view === 'table');
+});
+
+it('publishes complete report slices and serves the prepared table through HTTP', function (): void {
+    $perspective = ($this->publicReport)();
+    (new RefreshNhlStatsDashboardJob('20262027', 'table', $perspective->id))->handle(app(NhlStatsDashboardPayload::class));
+    DB::table('nhl_season_stats')->where('nhl_player_id', 9000001)->update(['pts' => 99]);
+    $this->getJson('/api/stats?perspective=skaters&season_id=20262027')->assertOk()
+        ->assertJsonPath('data.0.pts', 8)->assertJsonPath('meta.cache_status', 'ready');
+    $builder = app(StatsPayloadBuilder::class);
+    [$pgp] = $builder->readPreparedSeasonPayload(($this->reportInput)($perspective, ['slice' => 'pgp']));
+    expect($pgp['data'][0]['pts'])->toBe(4.0);
+});
+
+it('returns a missing report without performing hockey queries or scheduling work', function (): void {
+    $perspective = ($this->publicReport)();
+    DB::enableQueryLog();
+    [$payload] = app(StatsPayloadBuilder::class)->readPreparedSeasonPayload(($this->reportInput)($perspective));
+    expect($payload['meta']['cache_status'])->toBe('missing')->and($payload['data'])->toBe([]);
+    expect(DB::getQueryLog())->toBe([]);
+    DB::disableQueryLog();
+    Bus::assertNothingDispatched();
+});
+
+it('filters prepared reports using total values while displaying a rate slice', function (): void {
+    $perspective = ($this->publicReport)();
+    $builder = app(StatsPayloadBuilder::class);
+    $builder->refreshPreparedSeasonPayload($perspective, '20262027', 2);
+    [$payload] = $builder->readPreparedSeasonPayload(($this->reportInput)($perspective, ['slice' => 'pgp', 'gp_min' => 3]));
+    expect($payload['data'])->toBe([])->and($payload['meta']['appliedFilters']['gp']['min'])->toBe(3.0);
+});
+
+it('keeps report cache identities separate by perspective settings and game type', function (): void {
+    $perspective = ($this->publicReport)();
+    $builder = app(StatsPayloadBuilder::class);
+    $original = $builder->preparedKey($perspective, '20262027', 2);
+    expect($builder->preparedKey($perspective, '20262027', 3))->not->toBe($original);
+    $perspective->settings = ['columns' => [['key' => 'g', 'label' => 'Goals']]];
+    expect($builder->preparedKey($perspective, '20262027', 2))->not->toBe($original);
+});
+
+it('tracks the preparation batch on its originating season sync', function (): void {
+    $run = NhlGameImportRun::create(['action' => 'season-sync', 'mode' => 'season', 'status' => 'running',
+        'start_date' => '2026-09-01', 'end_date' => '2027-08-31', 'payload' => ['season' => '20262027']]);
+    (new QueueNhlStatsDashboardRefresh())->handle(new NhlSeasonStatsSynced('20262027', 2, $run->id));
+    Bus::assertBatched(fn ($batch): bool => $batch->name === 'Public stats · 20262027'
+        && count($batch->jobs) >= 5 && $batch->options['queue'] === 'projections');
+});
+
+it('queues preparation when ratings or imported player histories change', function (): void {
+    Queue::fake();
+    NhlStatsSourceUpdated::dispatch('20262027');
+    Queue::assertPushed(\Illuminate\Events\CallQueuedListener::class, fn ($job): bool =>
+        $job->class === QueueNhlStatsDashboardRefresh::class && $job->queue === 'projections');
+});
+
+it('retains prepared report bundles after a failed replacement', function (): void {
+    $perspective = ($this->publicReport)();
+    $builder = app(StatsPayloadBuilder::class);
+    $builder->refreshPreparedSeasonPayload($perspective, '20262027', 2);
+    $key = $builder->preparedKey($perspective, '20262027', 2);
+    $original = Cache::get($key);
+    DB::listen(function (\Illuminate\Database\Events\QueryExecuted $query): void {
+        if (str_contains($query->sql, 'nhl_season_stats')) {
+            throw new \RuntimeException('Report refresh interrupted');
+        }
+    });
+    expect(fn () => $builder->refreshPreparedSeasonPayload($perspective, '20262027', 2))->toThrow(\RuntimeException::class);
+    expect(Cache::get($key))->toBe($original);
+});
+
+
+it('keeps season sync running when aggregation finishes before cache preparation', function (): void {
+    $run = NhlGameImportRun::create(['action' => 'season-sync', 'mode' => 'season', 'status' => 'queued',
+        'start_date' => '2026-09-01', 'end_date' => '2027-08-31', 'payload' => ['season' => '20262027']]);
+    $service = Mockery::mock(\App\Services\SumNhlSeasonStats::class);
+    $service->shouldReceive('sum')->once()->with('20262027', $run->id)->andReturn(2);
+    (new \App\Jobs\SeasonSumJob('20262027', $run->id))->handle($service);
+    $run->refresh();
+    expect($run->status)->toBe('running')->and($run->payload['rows_upserted'])->toBe(2)
+        ->and($run->payload['stats_cache']['status'])->toBe('queued');
+});
+
+it('completes season sync only when prepared reports are published', function (): void {
+    $run = NhlGameImportRun::create(['action' => 'season-sync', 'mode' => 'season', 'status' => 'running',
+        'start_date' => '2026-09-01', 'end_date' => '2027-08-31',
+        'payload' => ['rows_upserted' => 2, 'aggregation_completed_at' => now()->toIso8601String()]]);
+    $batch = Mockery::mock(\Illuminate\Bus\Batch::class);
+    $batch->id = 'prepared-stats-batch';
+    QueueNhlStatsDashboardRefresh::recordBatch($run->id, $batch, 'ready');
+    $run->refresh();
+    expect($run->status)->toBe('completed')->and($run->payload['stats_cache']['status'])->toBe('ready')
+        ->and($run->payload['rows_upserted'])->toBe(2);
+});
+
+it('makes preparation failures visible without discarding rollup progress', function (): void {
+    $run = NhlGameImportRun::create(['action' => 'season-sync', 'mode' => 'season', 'status' => 'running',
+        'start_date' => '2026-09-01', 'end_date' => '2027-08-31', 'payload' => ['rows_upserted' => 2]]);
+    $batch = Mockery::mock(\Illuminate\Bus\Batch::class);
+    $batch->id = 'failed-stats-batch';
+    QueueNhlStatsDashboardRefresh::recordBatch($run->id, $batch, 'failed', 'Cache publication failed');
+    $run->refresh();
+    expect($run->status)->toBe('failed')->and($run->last_error)->toBe('Cache publication failed')
+        ->and($run->payload['rows_upserted'])->toBe(2);
+});
+
+it('requires an explicit scope when rebuilding prepared statistics', function (): void {
+    $this->artisan('nhl:stats-cache')->expectsOutput('Choose --season=20262027 or --all.')->assertExitCode(1);
+    Bus::assertNothingDispatched();
+});
+
+it('queues a cache rebuild without importing season data', function (): void {
+    $this->artisan('nhl:stats-cache', ['--season' => '20262027'])
+        ->expectsOutput('Public stats preparation queued on projections.')->assertExitCode(0);
+    Bus::assertDispatched(RefreshNhlStatsDashboardJob::class);
+    Bus::assertNotDispatched(\App\Jobs\SeasonSumJob::class);
+});
+
+
+it('reads retained highlights without rebuilding homepage facts on a stats visit', function (): void {
+    $dashboard = new NhlDashboardPayload(app(\App\Services\NhlDashboardNews::class));
+    DB::enableQueryLog();
+    expect($dashboard->statsHighlights())->toBe(['highlights_cache_status' => 'missing']);
+    $prepared = ['highlights_cache_status' => 'ready', 'player_trends' => [['name' => 'Prepared Player']]];
+    Cache::forever('nhl:stats:highlights:v1', $prepared);
+    expect($dashboard->statsHighlights())->toBe($prepared)->and(DB::getQueryLog())->toBe([]);
+    DB::disableQueryLog();
+    Http::assertNothingSent();
+});
+
+
+it('fails preparation when the cache store rejects publication', function (): void {
+    Cache::shouldReceive('forever')->once()->with(NhlStatsDashboardPayload::CACHE_PREFIX.'skaters:20262027', Mockery::type('array'))
+        ->andReturn(false);
+    expect(fn () => app(NhlStatsDashboardPayload::class)->refreshCachedFacts('20262027', 'skaters'))
+        ->toThrow(\RuntimeException::class, 'Public stats cache publication failed.');
 });

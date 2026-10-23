@@ -1342,9 +1342,11 @@ class NhlGameImportController extends Controller
     private function seasonSyncProgressForRun(NhlGameImportRun $run): array
     {
         $status = $run->status;
+        $batchId = data_get($run->payload, 'stats_cache.batch_id');
+        $batch = $batchId ? Bus::findBatch($batchId) : null;
         $percentage = match ($status) {
             NhlGameImportRun::STATUS_COMPLETED, NhlGameImportRun::STATUS_FAILED => 100,
-            NhlGameImportRun::STATUS_RUNNING => 35,
+            NhlGameImportRun::STATUS_RUNNING => $batch ? min(99, 35 + (int) floor($batch->progress() * 0.64)) : 35,
             default => 0,
         };
 
@@ -1357,6 +1359,9 @@ class NhlGameImportController extends Controller
             'skipped_stage_rows' => 0,
             'failed_stage_rows' => $status === NhlGameImportRun::STATUS_FAILED ? 1 : 0,
             'percentage' => $percentage,
+            'cache_total' => $batch?->totalJobs ?? 0,
+            'cache_completed' => $batch?->processedJobs() ?? 0,
+            'cache_failed' => $batch?->failedJobs ?? 0,
             'last_error' => $run->last_error,
         ];
     }

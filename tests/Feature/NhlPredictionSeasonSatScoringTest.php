@@ -148,6 +148,7 @@ it('ignores a different game type', function (): void {
 });
 
 it('stores both existing probabilities for every eligible SAT including blocked attempts', function (): void {
+    Event::fake([\App\Events\NhlStatsSourceUpdated::class]);
     $run = ($this->createRun)();
     $factId = ($this->insertFact)(['attempt_result' => 'blocked_shot', 'is_shot_on_goal' => false]);
     ($this->score)($run);
@@ -157,10 +158,7 @@ it('stores both existing probabilities for every eligible SAT including blocked 
         ->and((bool) $scores['goal']->is_scored)->toBeTrue()
         ->and((bool) $scores['shot_on_goal']->is_high_danger)->toBeFalse()
         ->and((int) $scores['goal']->model_run_id)->toBe($run->id);
-    Bus::assertDispatched(RefreshNhlStatsDashboardJob::class, fn ($job): bool =>
-        $job->seasonId === '20262027' && $job->view === 'leaders');
-    Bus::assertDispatched(RefreshNhlStatsDashboardJob::class, fn ($job): bool =>
-        $job->seasonId === '20262027' && $job->view === 'goalies');
+    Event::assertDispatched(\App\Events\NhlStatsSourceUpdated::class, fn ($event): bool => $event->seasonId === '20262027');
 });
 
 it('updates reimported game ratings without duplicates', function (): void {

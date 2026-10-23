@@ -2963,3 +2963,12 @@ Dashboard metric keys: `points`, `goals`, `assists`, `ppg` (player points/game),
 `corsi`, `cf_pct`, `gf_pg`, `ga_pg`, `ppg_pg` (team PP goals/game), `up`, `down`,
 `breakout`, `gf`, `shifts`, and `toi_seconds`. These are browser read-model keys,
 not new persisted stat types or prediction-engine settings.
+
+
+Public statistics preparation cache states are `missing` and `ready` on public
+snapshot reads. Season-sync `payload.stats_cache.status` is `queued`, `building`,
+`ready`, or `failed`; its batch identity is stored alongside that status. These
+are preparation metadata, separate from canonical import-run statuses.
+RefreshNhlStatsDashboardJob targets include existing dashboard views plus internal
+`highlights` and `table` tasks; `table` carries a guest-visible perspective ID and
+game type. They do not add public `/stats?view=` values.

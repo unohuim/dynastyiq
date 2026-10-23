@@ -98,8 +98,16 @@ class ImportNHLPlayer
 
         $this->identityResolver->linkIdentityToPlayer($identity, $player);
 
-        $this->importStats($player, $data['seasonTotals'] ?? []);
+        $metadataChanged = $player->wasChanged(['full_name', 'team_abbrev', 'nhl_team_id', 'dob', 'position', 'pos_type', 'is_goalie', 'head_shot_url', 'hero_image_url', 'is_prospect']);
+        $changedSeasons = $this->importStats($player, $data['seasonTotals'] ?? []);
         $this->syncProspectFlags($player);
+        $seasons = $metadataChanged || $player->wasChanged('is_prospect')
+            ? Stat::query()->where('player_id', $player->id)->distinct()->pluck('season_id')->all() : $changedSeasons;
+        foreach ($seasons as $seasonId) {
+            if (preg_match('/^\d{8}$/', (string) $seasonId)) {
+                \App\Events\NhlStatsSourceUpdated::dispatch((string) $seasonId);
+            }
+        }
 
         return $player;
     }
@@ -135,9 +143,11 @@ class ImportNHLPlayer
      *
      * @param Player                     $player
      * @param array<int,array<string,mixed>> $seasonTotals
+     * @return array<int,string> Seasons whose stored source facts changed.
      */
-    private function importStats(Player $player, array $seasonTotals): void
+    private function importStats(Player $player, array $seasonTotals): array
     {
+        $changedSeasons = [];
         foreach ($this->uniqueSeasonTotals($player, $seasonTotals) as $row) {
             $gp     = (int)($row['gamesPlayed'] ?? 0);
             $toiRaw = $row['avgToi'] ?? $row['timeOnIce'] ?? null;
@@ -218,11 +228,16 @@ class ImportNHLPlayer
                 'goals_against'       => $goalsAgainst,
             ]);
 
+            if ($stat->wasRecentlyCreated || $stat->wasChanged()) {
+                $changedSeasons[] = (string) $stat->season_id;
+            }
+
             if ($player->is_prospect) {
                 $player->current_league_abbrev = $stat->league_abbrev;
                 $player->save();
             }
         }
+        return array_values(array_unique($changedSeasons));
     }
 
     private function syncProspectFlags(Player $player): void

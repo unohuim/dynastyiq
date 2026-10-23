@@ -48,14 +48,24 @@ class NhlDashboardPayload
     /** Share existing factual dashboard comparisons without fetching editorial feeds. */
     public function statsHighlights(): array
     {
+        return Cache::get('nhl:stats:highlights:v1', ['highlights_cache_status' => 'missing']);
+    }
+
+    /** Prepare every comparison used by Leaders outside of public page requests. */
+    public function refreshStatsHighlights(): void
+    {
         $slate = Carbon::now('America/Toronto');
         if ($slate->hour < 11) {
             $slate->subDay();
         }
-        $date = $slate->toDateString();
-        $facts = Cache::remember('nhl:dashboard:facts:v10:'.$date, 300, fn (): array => $this->facts($date));
-
-        return collect($facts)->only(['performance_date', 'team_trends', 'player_trends', 'line_combinations'])->all();
+        $facts = $this->facts($slate->toDateString());
+        $prepared = [
+            ...collect($facts)->only(['performance_date', 'team_trends', 'player_trends', 'line_combinations'])->all(),
+            'highlights_cache_status' => 'ready', 'highlights_prepared_at' => now()->toIso8601String(),
+        ];
+        if (! Cache::forever('nhl:stats:highlights:v1', $prepared)) {
+            throw new \RuntimeException('Public stats highlights publication failed.');
+        }
     }
 
     /** Cache shared facts separately from editorial feeds and request-specific searches. */

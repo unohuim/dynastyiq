@@ -2,30 +2,41 @@ name: NHL Public Stats Cache Refresh
 type: Committed Season Event And Queued Public Read Model Refresh
 location:
   - app/Events/NhlSeasonStatsSynced.php
+  - app/Events/NhlStatsSourceUpdated.php
+  - app/Console/Commands/RefreshNhlStatsCacheCommand.php
+  - app/Support/Stats/StatsPayloadBuilder.php
   - app/Listeners/QueueNhlStatsDashboardRefresh.php
   - app/Jobs/RefreshNhlStatsDashboardJob.php
   - app/Services/SumNhlSeasonStats.php
   - app/Services/NhlStatsDashboardPayload.php
   - app/Jobs/ScoreNhlPredictionGameSatJob.php
   - app/Providers/AppServiceProvider.php
-purpose: Prepare public season leader facts after source processing without evicting the last successful cached view.
+purpose: Prepare complete public season dashboards and guest-visible report snapshots after source processing, keeping request-time reads independent of aggregation.
 when_to_use:
   - Completing season-summary aggregation from admin, automatic or command-line entrypoints.
   - Completing prediction-season SAT scoring that changes public xGF and GSAx facts.
 when_not_to_use:
   - Sharing private perspectives, league ownership or user-specific report data.
-  - Replacing raw facts, season summaries or the general player-table payload pipeline.
+  - Caching custom date ranges, private reports, draft contexts or availability and fantasy ownership scopes.
+  - Replacing canonical raw facts or changing calculation semantics.
 rules:
-  - SumNhlSeasonStats emits NhlSeasonStatsSynced independently of optional admin run identity. The event carries the affected season and upsert count, including zero for an empty successful source selection.
+  - SumNhlSeasonStats emits NhlSeasonStatsSynced independently of optional admin run identity. The event carries the affected season, upsert count and optional originating admin run ID, including zero for an empty successful source selection.
   - Season summary chunks commit atomically in stable player/type order. The event is delivered only after the outermost application transaction commits; rolled-back or failed writes cannot trigger publication.
-  - The queued listener and refresh jobs use projections. The listener queues one bounded job per public view and season. A changed previous season also refreshes the following season when it has positive regular-season summaries, preserving player and team comparisons.
+  - The queued listener and refresh jobs use projections. The listener queues bounded jobs per dashboard view/season and per guest-visible perspective/season/game type, plus a highlights publisher. Each table publisher prepares all supported slices off-request and atomically publishes its complete bundle, keyed by perspective settings and game type. A changed previous season also refreshes the following season when it has positive regular-season summaries, preserving player and team comparisons.
   - Pending season/view jobs coalesce. Publishers serialize per season/view, while a source update during active work may queue a follow-up refresh. Source processing never waits for dashboard calculation.
   - Refresh computes complete public facts before replacing the existing cache value. Failed refreshes retain the previous successful value. Published facts have no five-minute expiry and remain until replaced or the shared cache is cleared. Web and queue processes must share their configured cache store and prefix.
-  - Prediction-season SAT scoring queues Leaders and Goalies refreshes after both rating targets commit, instead of deleting ready public cache values.
-  - This workflow refreshes existing public season/view fact caches. Existing cold-cache read bootstrap and factual homepage highlights retain their separate behavior. General table payloads, numeric filter schemas and browser filtering remain governed by StatsPayloadPipeline.yaml; this event does not cache private table responses.
+  - NhlStatsSourceUpdated connects committed SAT ratings and imported player histories to the same preparation pathway. Prediction-season scoring emits it only after both rating targets commit. Full unscoped season SAT scoring also emits it. Ratings and source syncs never delete published snapshots.
+  - Public dashboard and guest-visible season report HTTP reads use prepared snapshots only. Cache misses return cache_status missing with an explicit preparation state; they never perform source aggregation or dispatch background calculations. Default season metadata is prepared too. Report selection, sorting and slicing use prepared data; private reports, availability scopes, draft contexts and custom date ranges retain their separate authorized pipeline. Missing snapshots are not retained in browser payload caches.
+  - Leaders highlights have their own retained snapshot prepared alongside season facts. A Leaders page never rebuilds homepage facts or relies on the homepage five-minute cache. Homepage requests keep their own existing behavior.
+  - Admin season-sync runs remain running until source aggregation and every preparation batch task succeed. Batch identity and preparation status live in the existing run payload; progress includes report counts, and coordinator or publisher failures are visible. Row-locked payload merges preserve concurrent rollup and batch updates. Failed refreshes retain previously published data.
+  - The nhl:stats-cache command requires either an explicit season or --all, queues preparation for existing data without importing it, and supports deployment preparation. Deployments must restart long-lived workers onto the same release as the web app, share cache store/prefix, and prepare current snapshots before routing users to a newly introduced cache schema. No request-time bootstrap substitutes for this deployment step.
   - Existing stats definitions, scored-model selection, coverage requirements, perspective authorization and response shapes are preserved. No model training, imports, predictions or database migrations are introduced by a cache refresh.
 public_interface:
   - NhlSeasonStatsSynced
+  - NhlStatsSourceUpdated
+  - nhl:stats-cache --season=20262027 or --all
+  - StatsPayloadBuilder::readPreparedSeasonPayload
+  - StatsPayloadBuilder::refreshPreparedSeasonPayload
   - QueueNhlStatsDashboardRefresh
   - RefreshNhlStatsDashboardJob
   - NhlStatsDashboardPayload::refreshCachedFacts

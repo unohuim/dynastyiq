@@ -41,6 +41,7 @@ use Sentry\Laravel\Integration;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withCommands([
+        \App\Console\Commands\RefreshNhlStatsCacheCommand::class,
         PatreonNightlySync::class,
         BackfillShotGeometryCommand::class,
         BackfillLeagueCommissionersCommand::class,
