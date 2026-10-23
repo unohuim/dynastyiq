@@ -45,6 +45,19 @@ class NhlDashboardPayload
         ];
     }
 
+    /** Share existing factual dashboard comparisons without fetching editorial feeds. */
+    public function statsHighlights(): array
+    {
+        $slate = Carbon::now('America/Toronto');
+        if ($slate->hour < 11) {
+            $slate->subDay();
+        }
+        $date = $slate->toDateString();
+        $facts = Cache::remember('nhl:dashboard:facts:v10:'.$date, 300, fn (): array => $this->facts($date));
+
+        return collect($facts)->only(['performance_date', 'team_trends', 'player_trends', 'line_combinations'])->all();
+    }
+
     /** Cache shared facts separately from editorial feeds and request-specific searches. */
     private function facts(string $date): array
     {

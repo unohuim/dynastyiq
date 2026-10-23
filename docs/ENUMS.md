@@ -2934,3 +2934,16 @@ Storage: `nhl_model_runs.metrics.profile_build`, shared by standalone Profiles a
 Profile queued counters count discovered entities, not loaders, and grow during discovery. `profiles_completed_at` is cleared on a fresh build and remains null on failure. A historical timestamp without a successful identified build does not qualify profiles for a new /60 build.
 
 **End of ENUMS**
+
+
+## Statistics dashboard views and metrics
+
+`/stats?view=` accepts `leaders` (default), `skaters`, `goalies`, and `teams`.
+Existing explicit `perspective` links retain the matching table view.
+
+Dashboard metric keys: `points`, `goals`, `assists`, `ppg` (player points/game),
+`pts_pg` (the stats table's player points/game, derived from unsliced totals),
+`sog`, `hits`, `ppp` (power-play points), `blocks`, `toi` (seconds/game), `gaa`, `sv_pct`, `quality_starts`, `quality_start_pct` (quality starts/starts, percentage), `saves` (total), `gsax` (goals saved above expected), `ev_sv_pct` (EV saves/shots faced, percentage), `shutouts`, `wins`, `xgf`,
+`corsi`, `cf_pct`, `gf_pg`, `ga_pg`, `ppg_pg` (team PP goals/game), `up`, `down`,
+`breakout`, `gf`, `shifts`, and `toi_seconds`. These are browser read-model keys,
+not new persisted stat types or prediction-engine settings.

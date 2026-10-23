@@ -1,6 +1,6 @@
 <script setup>
 import { computed, ref } from 'vue';
-import { deferAvatarImageSrc, formatStatValue, statValueForKey, teamBg } from '../../../components/StatsPage/stats-utils.js';
+import { deferAvatarImageSrc, formatStatValue, statValueForKey, statsDashboardMetricBar, teamBg } from '../../../components/StatsPage/stats-utils.js';
 
 const SORT_ALIASES = {
   contract_value_num: ['contract_value_num', 'contract_value'],
@@ -40,6 +40,9 @@ const props = defineProps({
 });
 
 const avatarFailed = ref(false);
+const rateBars = computed(() => props.settings.dashboardTable
+  ? (props.settings.dashboardGoalies ? ['sv_pct', 'gaa'] : ['pts_pg']).map(key => ({ key, ...statsDashboardMetricBar(props.player, key, props.settings.statBarMaximums) })).filter(bar => bar.display != null)
+  : []);
 
 const playerName = computed(() => props.player?.name ?? 'Unknown');
 const avatarUrl = computed(() => props.player?.avatar_url || props.player?.head_shot_url || '');
@@ -143,14 +146,14 @@ function mountAvatar(img) {
 </script>
 
 <template>
-  <div class="player-stats-card-mobile" data-vue-stats-mobile-card>
+  <div class="player-stats-card-mobile" :class="{ 'stats-goalie-card': settings.dashboardTable && settings.dashboardGoalies }" data-vue-stats-mobile-card>
     <div class="player-stats-team-strip-mobile" :style="{ background: teamBg(player?.team) }">
       <div class="player-stats-team-text-mobile">{{ player?.team ?? '-' }}</div>
     </div>
 
     <div class="player-stats-content-mobile">
       <span class="player-stats-icon-rail-mobile">
-        <span class="inline-flex h-5 w-5 shrink-0 items-center justify-center self-center">
+        <span v-if="!(settings.dashboardTable && settings.dashboardGoalies)" class="inline-flex h-5 w-5 shrink-0 items-center justify-center self-center">
           <span
             :class="positionClasses(positionType)"
             :style="{ borderColor: positionBorderColor(positionType) }"
@@ -209,6 +212,12 @@ function mountAvatar(img) {
             <span class="player-stats-stat-key-mobile">{{ headingLabel(headings, key) }}</span>
             <span class="player-stats-stat-val-mobile">{{ formatStatValue(key, statValueForKey(player, key)) }}</span>
           </div>
+        </div>
+      </div>
+      <div v-if="rateBars.length" class="flex gap-4 pb-2 pr-3">
+        <div v-for="bar in rateBars" :key="bar.key" class="min-w-0 flex-1" :title="bar.description">
+          <div class="mb-1 flex justify-between text-[10px] text-slate-300"><span>{{ bar.key === 'sv_pct' ? 'SV%' : bar.key === 'gaa' ? 'GAA' : 'PTS/GP' }}</span><b class="text-slate-100">{{ bar.display }}</b></div>
+          <svg viewBox="0 0 100 4" preserveAspectRatio="none" class="h-1 w-full" aria-hidden="true" :data-stat-bar="bar.key"><rect width="100" height="4" rx="2" class="fill-slate-600/70" /><rect :width="bar.width" height="4" rx="2" :class="bar.color" /></svg>
         </div>
       </div>
     </div>

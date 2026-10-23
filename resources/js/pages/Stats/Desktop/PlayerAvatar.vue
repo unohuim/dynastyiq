@@ -32,7 +32,7 @@ function mountAvatar(img) {
 </script>
 
 <template>
-  <span class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gray-100 text-[10px] font-semibold text-gray-500 ring-1 ring-gray-200">
+  <span class="stats-desktop-avatar inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gray-100 text-[10px] font-semibold text-gray-500 ring-1 ring-gray-200">
     <img
       v-if="avatarUrl && !failed"
       :ref="mountAvatar"

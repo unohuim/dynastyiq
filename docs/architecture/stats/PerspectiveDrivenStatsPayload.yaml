@@ -23,7 +23,7 @@ rules:
   - Perspective visibility must use Perspective::forUser().
   - Perspective settings are the UI contract for stats views.
   - Enum-like perspective values must reference docs/ENUMS.md rather than being duplicated here.
-  - The /stats page must default to the Skaters perspective, not the first visible perspective by database id.
+  - The Skaters table on /stats must default to the Skaters perspective, not the first visible perspective by database id. The /stats landing itself defaults to the Leaders dashboard described by NhlStatsDashboard.yaml.
   - Only the canonical Prospects and Prospects - Goalies perspectives may read player rows from the legacy stats table.
   - Prospect row universe filters must use stats.is_prospect from the legacy stats table, not players.is_prospect.
   - stats.is_prospect is maintained by ProspectEligibilityService after NHL landing stats imports.

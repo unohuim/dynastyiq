@@ -4,6 +4,7 @@ import { StatsColumnGroupAdapter } from './stats-column-group-adapter.js';
 import { StatsFilterState } from './stats-filter-state.js';
 import { StatsPayloadClient, normalizeStatsPayload, statsIdentityKeys } from './stats-payload-client.js';
 import { StatsSchemaAdapter } from './stats-schema-adapter.js';
+import { statsDashboardMetricBar, teamLogoUrl } from '../components/StatsPage/stats-utils.js';
 
 const payload = (overrides = {}) => ({
   headings: [
@@ -36,6 +37,45 @@ const state = (overrides = {}) => ({
 });
 
 describe('stats page payload modules', () => {
+  it('uses official logos for known NHL badges without inventing logos for other leagues', () => {
+    expect(teamLogoUrl(' col ')).toBe('https://assets.nhle.com/logos/nhl/svg/COL_light.svg');
+    expect(teamLogoUrl('UTA')).toBe('https://assets.nhle.com/logos/nhl/svg/UTA_light.svg');
+    expect(teamLogoUrl('UNKNOWN')).toBeNull();
+    expect(teamLogoUrl(null)).toBeNull();
+  });
+  it('keeps missing rate values unavailable instead of drawing fabricated zero bars', () => {
+    expect(statsDashboardMetricBar({ stats: { gaa: null } }, 'gaa', { gaa: 5 })).toBeNull();
+    expect(statsDashboardMetricBar({}, 'pts_pg', { pts_pg: 3 })).toBeNull();
+  });
+
+  it('uses the same save-percentage bar for ratio and percentage source units', () => {
+    const ratio = statsDashboardMetricBar({ stats: { sv_pct: .925 } }, 'sv_pct');
+    const percentage = statsDashboardMetricBar({ stats: { sv_pct: 92.5 } }, 'sv_pct');
+    expect(ratio.width).toBeCloseTo(92.5);
+    expect(percentage.width).toBeCloseTo(92.5);
+    expect(ratio.display).toBe('0.925');
+    expect(percentage.display).toBe('0.925');
+  });
+
+  it('makes lower goals-against averages fill more of the GAA bar', () => {
+    const better = statsDashboardMetricBar({ stats: { gaa: 1 } }, 'gaa', { gaa: 5 });
+    const worse = statsDashboardMetricBar({ stats: { gaa: 4 } }, 'gaa', { gaa: 5 });
+    expect(better.width).toBe(80);
+    expect(worse.width).toBeCloseTo(20);
+    expect(better.display).toBe('1.00');
+  });
+
+  it('retains genuine zero rates with a bounded meaningful bar', () => {
+    expect(statsDashboardMetricBar({ stats: { gaa: 0 } }, 'gaa', { gaa: 0 }).width).toBe(100);
+    expect(statsDashboardMetricBar({ stats: { pts_pg: 0 } }, 'pts_pg', { pts_pg: 0 }).width).toBe(0);
+  });
+
+  it('normalizes skater points-per-game bars against the highest report rate', () => {
+    const bar = statsDashboardMetricBar({ stats: { pts_pg: 1.5 } }, 'pts_pg', { pts_pg: 3 });
+    expect(bar.width).toBe(50);
+    expect(bar.display).toBe('1.50');
+    expect(statsDashboardMetricBar({ stats: { gp: 10 } }, 'gp', { gp: 82 })).toBeNull();
+  });
   it('normalizes missing headings and data to arrays', () => {
     const normalized = normalizeStatsPayload({});
 

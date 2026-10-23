@@ -2,6 +2,389 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Opt-in public statistics filter bar; other stats consumers keep their controls. */
+@layer components {
+  .stats-filterbar-wrap {
+    @apply w-full p-0;
+  }
+
+  .stats-dark-row:nth-child(even) {
+    @apply bg-[#14212d];
+  }
+
+  .stats-dark-row:hover {
+    @apply bg-[#193247] ring-1 ring-inset ring-sky-600/60;
+  }
+
+  .stats-dark-row .text-gray-500,
+  .stats-dark-row .text-gray-700 {
+    @apply text-slate-300;
+  }
+
+  .stats-dark-row .stats-player-name {
+    @apply text-[13px] font-semibold text-slate-100;
+  }
+
+  .stats-dark-row > div > div {
+    @apply text-xs;
+  }
+
+  .stats-dark-row .stats-desktop-avatar {
+    @apply h-9 w-9 bg-[#243747] text-slate-300 ring-[#3a5062];
+  }
+
+  .stats-dark-row .stats-desktop-avatar img {
+    @apply h-9 w-9;
+  }
+
+  .stats-dark-row [data-position-label] {
+    @apply text-slate-300;
+  }
+
+  .stats-dark-header .text-gray-900 {
+    @apply text-sky-300;
+  }
+
+  .stats-dark-header [role='button']:focus-visible {
+    @apply rounded outline-none ring-2 ring-sky-400;
+  }
+
+  .stats-rate-sky {
+    @apply fill-sky-400;
+  }
+
+  .stats-rate-green {
+    @apply fill-emerald-400;
+  }
+
+  .stats-rate-yellow {
+    @apply fill-yellow-400;
+  }
+
+  .stats-rate-orange {
+    @apply fill-orange-400;
+  }
+
+  .stats-dark-view .player-stats-card-mobile {
+    @apply border-[#233342] bg-[#101923] normal-case;
+  }
+
+  .stats-dark-view .stats-goalie-card .player-stats-content-mobile {
+    @apply pl-10;
+  }
+
+  .stats-dark-view .player-stats-name-mobile,
+  .stats-dark-view .player-stats-sorted-value-mobile,
+  .stats-dark-view .player-stats-stat-val-mobile {
+    @apply text-slate-100;
+  }
+
+  .stats-dark-view .player-stats-meta-mobile,
+  .stats-dark-view .player-stats-sorted-label-mobile,
+  .stats-dark-view .player-stats-stat-key-mobile,
+  .stats-dark-view .player-stats-age-mobile,
+  .stats-dark-view .player-stats-aav-mobile,
+  .stats-dark-view .player-stats-league-mobile {
+    @apply text-slate-400;
+  }
+
+  .stats-filterbar {
+    @apply relative z-50 mb-2 flex items-center gap-2 rounded-lg border border-[#1b3041] bg-[#04131f] px-2 py-1 text-slate-100 shadow-sm;
+    color-scheme: dark;
+  }
+
+  .stats-filterbar-viewport {
+    @apply grid h-9 min-w-0 flex-1 overflow-hidden;
+    transition: height 500ms ease-in-out;
+  }
+
+  .stats-filterbar-default,
+  .stats-filterbar-expanded {
+    grid-area: 1 / 1;
+    min-width: 0;
+    transition: transform 500ms ease-in-out, opacity 500ms ease-in-out, visibility 0s 500ms;
+  }
+
+  .stats-filterbar-default {
+    @apply grid grid-cols-[minmax(0,1fr)_minmax(220px,0.65fr)_minmax(110px,0.2fr)] items-center gap-4;
+  }
+
+  .stats-filterbar-default.stats-filterbar-search-only {
+    @apply grid-cols-[minmax(0,1fr)_minmax(110px,0.2fr)];
+  }
+
+  .stats-filterbar-default .stats-filterbar-report {
+    @apply col-start-auto row-start-auto pl-3;
+  }
+
+  .stats-filterbar-expanded {
+    @apply grid grid-cols-[1fr_1fr_1fr_1fr_1.1fr_1.5fr] items-stretch;
+    transform: translateX(100%);
+    opacity: 0;
+    visibility: hidden;
+  }
+
+  .stats-filterbar[data-expanded='true'] .stats-filterbar-expanded {
+    transform: translateX(0);
+    opacity: 1;
+    visibility: visible;
+    transition-delay: 0s;
+  }
+
+  .stats-filterbar[data-expanded='true'] .stats-filterbar-default {
+    transform: translateX(-100%);
+    opacity: 0;
+    visibility: hidden;
+  }
+
+  .stats-filterbar[data-expanded='false'] .stats-filterbar-default {
+    transition-delay: 0s;
+  }
+
+  .stats-filterbar-toggle {
+    @apply inline-flex h-7 shrink-0 items-center gap-1.5 rounded border border-[#2a4052] bg-[#162737] px-3 text-[10px] font-semibold text-slate-200 outline-none transition-colors hover:bg-[#243c50] focus-visible:ring-2 focus-visible:ring-blue-300;
+  }
+
+  .stats-filterbar[data-expanded='true'] .stats-filterbar-toggle {
+    @apply border-blue-600 bg-blue-600 text-white;
+  }
+
+  .stats-filterbar-primary {
+    display: contents;
+  }
+
+  .stats-filterbar-primary-controls {
+    display: contents;
+  }
+
+  .stats-filterbar-group {
+    @apply row-start-1 flex min-w-0 flex-col justify-center gap-0.5 rounded-none border-0 border-l border-[#233b4c] bg-none px-3 py-0.5;
+  }
+
+  .stats-filterbar-group:first-child {
+    @apply border-l-0 pl-0;
+  }
+
+  .stats-filterbar-group > div:first-child,
+  .stats-filterbar-secondary-controls > div > div:first-child {
+    @apply mb-0 text-[9px] font-medium normal-case leading-[10px] tracking-normal text-slate-400;
+  }
+
+  .stats-filterbar-group button[role='combobox'],
+  .stats-filterbar-group button[aria-haspopup='menu'],
+  .stats-filterbar-secondary-controls button[role='combobox'] {
+    @apply inline-flex h-5 min-w-0 w-full items-center justify-between gap-1 rounded border-0 bg-transparent px-0 py-0 text-left text-[10px] font-semibold leading-none text-slate-100 outline-none transition-colors hover:text-sky-300 focus-visible:ring-2 focus-visible:ring-blue-400;
+  }
+
+  .stats-filterbar-group svg,
+  .stats-filterbar-secondary-controls svg {
+    @apply h-3 w-3 shrink-0 text-slate-400;
+  }
+
+  .stats-filterbar-group > div:has(> button[aria-pressed]),
+  .stats-filterbar-secondary-controls > div > div:has(> button[aria-pressed]) {
+    @apply grid h-5 grid-flow-col auto-cols-fr items-stretch overflow-hidden rounded border border-[#263b4d] bg-[#162737] p-0;
+  }
+
+  .stats-filterbar button[aria-pressed] {
+    @apply h-full min-w-0 rounded-none border-0 px-2 py-0 text-[9px] font-medium leading-none text-slate-300 outline-none transition-colors hover:bg-[#243c50] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-300;
+  }
+
+  .stats-filterbar button[aria-pressed='true'] {
+    @apply bg-[#2856ff] text-white;
+  }
+
+  .stats-filterbar-secondary-controls {
+    display: contents;
+  }
+
+  .stats-filterbar-secondary {
+    display: contents;
+  }
+
+  .stats-filterbar-default > label {
+    @apply flex h-7 min-w-0 w-auto items-center rounded border border-[#2a4052] bg-[#1a2b3b];
+  }
+
+  .stats-filterbar-default > label svg {
+    @apply ml-2;
+  }
+
+  .stats-filterbar-default > label input {
+    @apply min-w-0 px-2 text-[10px] text-slate-100 placeholder:text-slate-400;
+  }
+
+  .stats-filterbar-secondary-controls > div {
+    @apply row-start-1 ml-0 flex min-w-0 w-auto flex-col justify-center gap-0.5 border-0 border-l border-[#233b4c] px-3 py-0.5;
+  }
+
+  .stats-filterbar-secondary-controls > div > div:first-child {
+    @apply mb-0;
+  }
+
+  .stats-filterbar-secondary-controls > [data-filter-group="team"] {
+    @apply col-start-5;
+  }
+
+  .stats-filterbar-secondary-controls > [data-filter-group="slice"] {
+    @apply col-start-6 pr-0;
+  }
+
+  .stats-filterbar-quick-position > div:first-child {
+    @apply mb-0 text-[9px] font-medium normal-case leading-[10px] tracking-normal text-slate-400;
+  }
+
+  .stats-filterbar-quick-position > div:last-child {
+    @apply grid h-5 grid-flow-col auto-cols-fr border-0 bg-transparent;
+  }
+
+  .stats-filterbar-quick-position button[aria-pressed] {
+    @apply border-0 border-r border-[#233b4c] px-1 last:border-r-0;
+  }
+
+  .stats-filterbar-quick-position button[aria-pressed='true'] {
+    @apply bg-transparent font-bold text-sky-300;
+  }
+
+  .stats-filterbar-group button:not([role]):not([aria-haspopup]) {
+    @apply h-5 px-1 py-0 text-[9px];
+  }
+
+  .stats-filterbar-group input[type='date'] {
+    @apply h-5 min-w-0 rounded border border-[#2a4052] bg-[#1a2b3b] px-1 text-[9px] text-slate-100;
+  }
+
+  .stats-hero-compact .stats-hero-content {
+    @apply grid-cols-[0.65fr_1.35fr] gap-3 p-2 md:px-4 md:pt-2;
+  }
+
+  .stats-goalie-hero-photo.stats-goalie-hero-photo {
+    height: 260%;
+    width: auto;
+    max-width: none;
+    top: -15%;
+    bottom: auto;
+    left: 50%;
+    right: auto;
+    transform: translateX(-50%);
+    object-fit: contain;
+    object-position: center top;
+    mask-image: linear-gradient(to right, transparent, black 18%, black 82%, transparent);
+  }
+
+  .stats-hero-compact .stats-hero-intro h1 {
+    @apply mt-0 text-2xl;
+  }
+
+  .stats-hero-compact .stats-hero-intro > p:nth-of-type(2) {
+    @apply hidden;
+  }
+
+  .stats-hero-compact .stats-hero-intro > p:last-child {
+    @apply mt-1 text-[9px];
+  }
+
+  .stats-hero-compact .stats-hero-player {
+    @apply grid grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] items-center gap-x-2 pt-0;
+  }
+
+  .stats-hero-compact .stats-hero-player > p,
+  .stats-hero-compact .stats-hero-player > a {
+    @apply col-start-1;
+  }
+
+  .stats-hero-compact .stats-hero-player > a {
+    @apply text-xl md:text-2xl;
+  }
+
+  .stats-hero-compact .stats-hero-player > p:last-of-type {
+    @apply mt-0 text-[10px];
+  }
+
+  .stats-hero-compact .stats-hero-metrics {
+    @apply col-start-2 row-span-3 row-start-1 mt-0 grid-cols-2 gap-y-1 md:grid-cols-4;
+  }
+
+  .stats-hero-compact .stats-hero-metrics p:first-child {
+    @apply text-base;
+  }
+
+  .stats-hero-compact nav a {
+    @apply py-1.5;
+  }
+
+  @media (max-width: 767px) {
+    .stats-hero-compact .stats-hero-content {
+      @apply grid-cols-1;
+    }
+
+    .stats-hero-compact .stats-hero-intro {
+      @apply flex items-center gap-2;
+    }
+
+    .stats-hero-compact .stats-hero-intro h1 {
+      @apply text-lg;
+    }
+
+    .stats-hero-compact .stats-hero-intro > p:last-child {
+      @apply ml-auto mt-0;
+    }
+
+    .stats-hero-compact [aria-label='Category leaders'] {
+      @apply p-2;
+    }
+
+    .stats-hero-compact [aria-label='Category leaders'] img {
+      @apply h-14 w-9;
+    }
+  }
+
+  .stats-filterbar-menu.stats-filterbar-menu {
+    @apply border border-[#2a4052] bg-[#132536] text-slate-100 shadow-xl;
+    color-scheme: dark;
+  }
+
+  .stats-filterbar-menu [role='option'],
+  .stats-filterbar-menu [role='menuitemcheckbox'] {
+    @apply text-xs text-slate-200;
+  }
+
+  .stats-filterbar-menu [role='option'][data-highlighted],
+  .stats-filterbar-menu [role='menuitemcheckbox']:hover,
+  .stats-filterbar-menu [role='menuitemcheckbox'][aria-checked='true'] {
+    @apply bg-blue-600 text-white;
+  }
+
+  @media (min-width: 640px) and (max-width: 1023px) {
+    .stats-filterbar-expanded {
+      @apply grid-cols-4;
+    }
+
+    .stats-filterbar[data-expanded='true'] .stats-filterbar-viewport {
+      height: 76px;
+    }
+
+    .stats-filterbar-group,
+    .stats-filterbar-secondary-controls > div {
+      @apply col-auto row-auto;
+    }
+
+
+    .stats-filterbar-secondary-controls > div:nth-child(n) {
+      @apply col-auto;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .stats-filterbar button,
+    .stats-filterbar-viewport,
+    .stats-filterbar-default,
+    .stats-filterbar-expanded {
+      transition: none;
+    }
+  }
+}
+
 [x-cloak] {
     display: none;
 }

@@ -10,6 +10,7 @@ import MobileScoreboard from './MobileScoreboard.vue';
 import { connectShellRealtime } from './shell-realtime';
 
 const page = usePage();
+const statsPage = computed(() => page.component === 'Stats/Index');
 const shell = computed(() => page.props.shell);
 const user = computed(() => page.props.auth?.user);
 const drawer = ref(null);
@@ -81,7 +82,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-    <div class="min-h-screen bg-gray-50 pb-20 text-gray-900 md:pb-0">
+    <div class="min-h-screen pb-20 md:pb-0" :class="statsPage ? 'bg-[#020e17] text-slate-100' : 'bg-gray-50 text-gray-900'">
         <a href="#page-content" class="sr-only fixed left-4 top-4 z-[200] rounded-lg bg-white px-4 py-2 shadow focus:not-sr-only">Skip to content</a>
         <header v-if="shell" class="hidden border-b border-[#1F2B37] bg-[#101923] text-[#E7EEF6] md:block">
             <div class="flex w-full items-center justify-between gap-6 px-6 py-2">

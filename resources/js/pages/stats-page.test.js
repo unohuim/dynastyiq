@@ -78,10 +78,141 @@ describe('stats page prospect controls', () => {
     window.history.replaceState(null, '', '/stats');
   });
 
+  it('keeps local search mounted when dashboard filter controls are refreshed', async () => {
+    const shell = await createShell({ config: { dashboardFilters: true } });
+    shell.render();
+    const search = shell.container.querySelector('input[aria-label="Search players"]');
+    expect(search).not.toBeNull();
+    search.value = 'Test Prospect';
+    search.dispatchEvent(new Event('input'));
+
+    shell.renderControls();
+
+    expect(shell.container.querySelector('input[aria-label="Search players"]')).toBe(search);
+    expect(search.value).toBe('Test Prospect');
+    expect(shell.container.querySelectorAll('input[aria-label="Search players"]')).toHaveLength(1);
+    expect(shell.desktopSearchRow.contains(search)).toBe(true);
+  });
+
+  it('preserves local search through a full dashboard content rerender', async () => {
+    const shell = await createShell({ config: { dashboardFilters: true } });
+    shell.render();
+    const search = shell.container.querySelector('input[aria-label="Search players"]');
+    search.value = 'Missing player';
+    search.dispatchEvent(new Event('input'));
+
+    shell.render();
+
+    expect(shell.container.querySelector('input[aria-label="Search players"]').value).toBe('Missing player');
+    expect(shell.container.querySelectorAll('.stats-filterbar-secondary-controls')).toHaveLength(1);
+  });
+
+  it('defaults to search and position while full dashboard filters are inert', async () => {
+    const shell = await createShell({ config: { dashboardFilters: true } });
+    shell.render();
+    expect(shell.desktopSearchRow.inert).toBe(false);
+    expect(shell.container.querySelector('.stats-filterbar-expanded').inert).toBe(true);
+    expect(shell.container.querySelector('.stats-filterbar-toggle').getAttribute('aria-expanded')).toBe('false');
+    expect(shell.desktopSearchRow.querySelector('[data-filter-group="position"]')).not.toBeNull();
+  });
+
+  it('toggles full filters without losing search or remounting controls', async () => {
+    const shell = await createShell({ config: { dashboardFilters: true } });
+    shell.render();
+    const search = shell.desktopSearchRow.querySelector('input');
+    const toggle = shell.container.querySelector('.stats-filterbar-toggle');
+    search.value = 'Test Prospect';
+    search.dispatchEvent(new Event('input'));
+    toggle.click();
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(shell.desktopSearchRow.inert).toBe(true);
+    expect(shell.container.querySelector('.stats-filterbar-expanded').inert).toBe(false);
+    toggle.click();
+    expect(shell.desktopSearchRow.querySelector('input')).toBe(search);
+    expect(search.value).toBe('Test Prospect');
+    expect(shell.desktopSearchRow.inert).toBe(false);
+  });
+
+  it('keeps full filters open after the stats content is refreshed', async () => {
+    const shell = await createShell({ config: { dashboardFilters: true } });
+    shell.render();
+    shell.toggleDesktopFilters();
+    shell.render();
+    expect(shell.container.querySelector('.stats-filterbar-toggle').getAttribute('aria-expanded')).toBe('true');
+    expect(shell.container.querySelector('.stats-filterbar-expanded').getAttribute('aria-hidden')).toBe('false');
+    expect(shell.desktopSearchRow.inert).toBe(true);
+  });
+
+  it('keeps a single skater position control beside search without a goalie option', async () => {
+    const shell = await createShell({ config: { dashboardFilters: true } });
+    shell.render();
+    const positions = shell.container.querySelectorAll('[data-filter-group="position"]');
+    expect(positions).toHaveLength(1);
+    expect(shell.desktopSearchRow.contains(positions[0])).toBe(true);
+    expect([...positions[0].querySelectorAll('button')].map(button => button.textContent)).toEqual(['SKT', 'F', 'W', 'C', 'D']);
+  });
+
+  it('omits position controls in the goalie report', async () => {
+    const shell = await createShell({ config: { dashboardFilters: true, selectedPerspective: 'goalies' } });
+    shell.render();
+    expect(shell.container.querySelector('[data-filter-group="position"]')).toBeNull();
+    expect(shell.desktopSearchRow.classList.contains('stats-filterbar-search-only')).toBe(true);
+  });
+
+  it('keeps Report in the default row through control and content refreshes', async () => {
+    const shell = await createShell({ config: { dashboardFilters: true } });
+    shell.render();
+    shell.renderControls();
+    shell.renderContent();
+    expect(shell.desktopSearchRow.querySelectorAll('.stats-filterbar-report')).toHaveLength(1);
+    expect(shell.container.querySelector('.stats-filterbar-expanded .stats-filterbar-report')).toBeNull();
+    expect(shell.container.querySelectorAll('.stats-filterbar-toggle svg[aria-hidden="true"]')).toHaveLength(1);
+  });
+
   it('treats prospect payloads as unsupported for date ranges', async () => {
     const shell = await createShell();
 
     expect(shell.supportsDateRange()).toBe(false);
+  });
+
+  it('keeps dashboard PTS/GP based on unsliced totals when changing the display slice', async () => {
+    const shell = await createShell({ meta: { canSlice: true }, config: { dashboardFilters: true, reportView: 'skaters' } });
+    shell.payload.headings.push({ key: 'pts', label: 'PTS' });
+    Object.assign(shell.payload.data[0], { gp: 10, stats: { pts: 12 }, __slice_totals: { gp: 10, pts: 12, toi_total_seconds: 12000 } });
+    shell.render();
+    expect(shell.container.querySelector('[data-stat-bar="pts_pg"]')?.previousElementSibling.textContent).toBe('1.20');
+    shell.state.slice = 'pgp';
+    shell.render();
+    expect(shell.container.querySelector('[data-stat-bar="pts_pg"]')?.previousElementSibling.textContent).toBe('1.20');
+    shell.state.slice = 'p60';
+    shell.render();
+    expect(shell.container.querySelector('[data-stat-bar="pts_pg"]')?.previousElementSibling.textContent).toBe('1.20');
+  });
+
+  it('withholds the PTS/GP bar when games played is zero', async () => {
+    const shell = await createShell({ config: { dashboardFilters: true, reportView: 'skaters' } });
+    shell.payload.headings.push({ key: 'pts', label: 'PTS' });
+    Object.assign(shell.payload.data[0], { gp: 0, stats: { pts: 12, gp: 0 } });
+    shell.render();
+    expect(shell.container.querySelector('[data-stat-bar="pts_pg"]')).toBeNull();
+  });
+
+  it('limits the skater report selector to skater report variants', async () => {
+    const shell = await createShell({ config: { reportView: 'skaters', perspectives: [
+      { slug: 'skaters', name: 'Skaters' }, { slug: 'skaters-adv', name: 'Skaters Adv' },
+      { slug: 'prospects', name: 'Prospects' }, { slug: 'goalies', name: 'Goalies' },
+      { slug: 'goalies-adv', name: 'Goalies Adv' }, { slug: 'prospects-goalies', name: 'Prospects - Goalies' },
+    ] } });
+    expect(shell.perspectiveOptions().map(option => option.value)).toEqual(['skaters', 'skaters-adv', 'prospects']);
+  });
+
+  it('limits the goalie report selector to goalie report variants including prospects', async () => {
+    const shell = await createShell({ config: { reportView: 'goalies', perspectives: [
+      { slug: 'skaters', name: 'Skaters' }, { slug: 'skaters-adv', name: 'Skaters Adv' },
+      { slug: 'prospects', name: 'Prospects' }, { slug: 'goalies', name: 'Goalies' },
+      { slug: 'goalies-adv', name: 'Goalies Adv' }, { slug: 'prospects-goalies', name: 'Prospects - Goalies' },
+    ] } });
+    expect(shell.perspectiveOptions().map(option => option.value)).toEqual(['goalies', 'goalies-adv', 'prospects-goalies']);
   });
 
   it('falls back to skaters when the selected perspective is missing from server config', async () => {

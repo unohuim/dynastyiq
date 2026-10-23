@@ -1,0 +1,44 @@
+name: NHL Statistics Leaders Dashboard
+type: Public Statistics Read Model
+location:
+  - app/Services/NhlStatsDashboardPayload.php
+  - app/Http/Controllers/StatsController.php
+  - resources/js/pages/Stats/Index.vue
+  - resources/js/pages/Stats/LeaderList.vue
+  - resources/js/pages/Stats/Table.vue
+  - docs/designs/stats-leaders-design.png
+  - docs/designs/teams-by-goals-section.png
+purpose: Present factual season leaders and completed-night comparisons without replacing the existing perspective-driven stats pipeline.
+when_to_use:
+  - Rendering the public /stats landing and its category views.
+  - Ranking stored NHL season statistics and team results for the Leaders dashboard.
+when_not_to_use:
+  - Calculating game predictions or importing missing statistics.
+  - Replacing partner stats APIs, perspective permissions or private fantasy scopes.
+rules:
+  - The default /stats view is Leaders. Explicit Skaters and Goalies views retain the existing stats renderer, filters, permissions, perspective-driven payload and API. Existing explicit perspective links open their table view. Teams shows sortable actual team-season statistics. Category changes use Inertia navigation and preserve the existing stats.index route.
+  - View values are documented in docs/ENUMS.md. Invalid explicit view values are rejected through normal request validation.
+  - The UI references in docs/UI_DESIGN.md govern this surface. The homepage is unchanged. Replace the reference Top Performers area with the two team-goals panels; do not add a Top Performers panel to /stats.
+  - Read regular-season nhl_season_stats with positive games played and canonical player identities. Default to the newest stored season with positive games; an explicit season selects that season. Distinguish skaters and goalies, and never invent missing rows or rates.
+  - The hero is the points leader. The Category Leaders grid displays goals, assists, power-play points (PPP), SOG, hits and blocks, in that order. The season strip retains points, goals, assists, SOG, points per game and hits. Rank each metric independently, with points and NHL identity breaking ties. Hero ranks count strictly better values and therefore preserve tied ranks.
+  - The Goalies view has its own three category cards, ranked independently by season Quality Starts, GSAx and EVSV%. Rank only goalies with a non-null metric, breaking ties by games played and NHL identity. EVSV% uses EV saves divided by EV shots faced. GSAx uses the same season goal model as xGF and equals scored goalie-facing xGA minus actual season goals allowed; require every faced attempt scored, every counted game covered and the fact goal total equal to season GA. Exclude empty nets and shootouts. Incomplete GSAx is unavailable, never zero-filled or estimated.
+  - The Goalies hero follows the Quality Starts card's leader, using that goalie's actual image, identity, team and latest stored sweater number. Show QS%, GSAx, EVSV% and Saves with goalie-only tied ranks; QS% is quality starts divided by starts, and missing or zero starts have no rate or rank. Saves is the stored total. Hero selection remains based on Quality Starts count. If no goalie is eligible, show the empty hero state rather than a skater fallback. Other views retain the points-leader hero.
+  - Compute rates from totals and their matching denominators. Goalie GAA is GA times 3600 divided by TOI seconds; save percentage is saves divided by shots faced. Missing or zero denominators remain unavailable. Positive GP is the only workload eligibility threshold; no unapproved additional minimum is imposed.
+  - Compare category production per game with the same player's previous-season production per game. Missing or zero previous rates have no percentage comparison. Miniature histories use the actual last five imported boxscore appearances for that metric; never draw fabricated trend bars.
+  - Team GF, GA, GP and wins use each team's own completed game results, once per game, separately from opponent totals and player sums. Goal-rate differences compare against the previous season. Team points, assists, SOG, hits and PP goals use actual team-game boxscore aggregates and remain unavailable until every counted team game has boxscore coverage. Player trades cannot transfer historical team production through current-roster sums.
+  - Advanced Corsi uses stored EV on-ice summaries. On-ice xGF reads existing scored goal expectations from the season's latest draft goal model, matching the existing season-stats model selection. Deduplicate player-attempt links and withhold incomplete scoring coverage; never score or backfill attempts during a page read.
+  - Rookie eligibility is not inferred from prospect status or an incomplete career history. Without stored authoritative rookie eligibility, the panel explicitly reports unavailable data.
+  - Reuse the homepage's existing completed-night lines and player comparisons through statsHighlights without requesting editorial feeds. CF% line rankings retain the five-minute shared 5v5 minimum and position ordering remains owned by the shared lineup read model.
+  - Shared public leader facts may be cached for five minutes by season. Do not cache private perspectives, league ownership or user-specific payloads in that cache. No imports, queue jobs, writes, new database tables or predictions are triggered by the dashboard read.
+public_interface:
+  - GET /stats named stats.index
+  - Existing /api/stats payload contract
+  - NhlStatsDashboardPayload::build
+  - NhlDashboardPayload::statsHighlights
+  - Stats/Index and Stats/Table Inertia components
+example_usage: |
+  return Inertia::render('Stats/Index', [
+      ...$existingPerspectiveProps,
+      'view' => 'leaders',
+      'leaders' => app(NhlStatsDashboardPayload::class)->build(),
+  ]);

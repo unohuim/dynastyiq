@@ -1515,6 +1515,7 @@ export function renderStatsDesktop(
     }
 
     const showOwnerColumn = settings?.ownerColumn === true;
+    const darkTable = settings?.dashboardTable === true;
 
     // ----- state (persisted via WeakMap) -----
     const prev = desktopState.get(container) || {};
@@ -1526,7 +1527,8 @@ export function renderStatsDesktop(
     desktopState.set(container, state);
 
     // --- Build display headings with Rk first, Type second ---
-    const srcHeadings = Array.isArray(headings) ? [...headings] : [];
+    const srcHeadings = (Array.isArray(headings) ? [...headings] : []).filter(heading =>
+        !(darkTable && settings?.dashboardGoalies && ["type", "pos_type"].includes(String(heading?.key).toLowerCase())));
     const typeOrigIdx = srcHeadings.findIndex((h) =>
         ["type", "pos_type"].includes(String(h?.key || "").toLowerCase())
     );
@@ -1555,13 +1557,14 @@ export function renderStatsDesktop(
 
     const gridCols = displayHeadings
         .map((_, i) => {
-            if (i === rkIdx) return "44px";
-            if (i === typeIdx) return "36px";
-            if (i === teamIdx) return "76px";
+            if (i === rkIdx) return darkTable ? "36px" : "44px";
+            if (i === typeIdx) return darkTable ? "28px" : "36px";
+            if (i === teamIdx) return darkTable ? "68px" : "76px";
             if (i === leagueIdx) return "72px";
-            if (i === playerIdx) return "190px";
+            if (i === playerIdx) return darkTable ? "230px" : "190px";
+            if (darkTable && ['sv_pct', 'gaa', 'pts_pg'].includes(displayHeadings[i].key)) return "112px";
             if (i === ownerIdx) return "180px";
-            return "72px";
+            return darkTable ? "64px" : "72px";
         })
         .join(" ");
 
@@ -1587,15 +1590,19 @@ export function renderStatsDesktop(
     container.innerHTML = "";
     const scrollWrap = document.createElement("div");
     scrollWrap.className = "w-full overflow-x-auto px-4 pb-2 sm:px-6";
+    if (darkTable) scrollWrap.className = "stats-dark-scroll w-full overflow-x-auto";
 
     const wrapper = document.createElement("div");
     wrapper.className =
         "min-w-max border border-gray-200 bg-white shadow-sm relative";
+    if (darkTable) wrapper.className = "stats-dark-table min-w-max relative overflow-hidden rounded-lg border border-[#233342] bg-[#101923]";
 
     // Controls bar (sticky)
     const controls = document.createElement("div");
     controls.className =
         "sticky top-0 z-50 flex items-center gap-5 border-b border-gray-200 bg-white/95 px-6 py-5 backdrop-blur";
+    const dashboardFilters = settings?.filterBarTarget instanceof HTMLElement;
+    if (dashboardFilters) controls.className = "stats-filterbar-secondary-controls";
 
     // Name filter input
     const searchWrap = document.createElement("label");
@@ -1623,6 +1630,8 @@ export function renderStatsDesktop(
     const nameInput = document.createElement("input");
     nameInput.type = "text";
     nameInput.placeholder = "Filter by name…";
+    if (dashboardFilters) nameInput.placeholder = "Search players…";
+    nameInput.setAttribute("aria-label", "Search players");
     nameInput.value = state.nameFilter;
     nameInput.className =
         "h-full min-w-0 flex-1 border-0 bg-transparent px-4 text-sm text-gray-700 " +
@@ -1632,6 +1641,7 @@ export function renderStatsDesktop(
 
     // Team dropdown
     const teamGroup = document.createElement("div");
+    teamGroup.dataset.filterGroup = "team";
     teamGroup.className = "w-52 shrink-0 border-l border-gray-200 pl-6";
     const teamLabel = document.createElement("div");
     teamLabel.className = "mb-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500";
@@ -1645,6 +1655,7 @@ export function renderStatsDesktop(
         modelValue: state.teamFilter,
         placeholder: "All Teams",
         ariaLabel: "Team",
+        dark: dashboardFilters,
         triggerClass: "h-8 w-full border-0 border-b border-gray-300 bg-transparent px-0 pb-1 text-left text-sm text-gray-950 focus:border-indigo-600 focus:outline-none focus:ring-0 inline-flex items-center justify-between gap-3",
         onChange: (value) => {
             state.teamFilter = value || "";
@@ -1654,11 +1665,14 @@ export function renderStatsDesktop(
     }));
     controls.appendChild(teamGroup);
 
-    const positionButtons = desktopPositionButtons(settings?.positionButtons);
+    const positionButtons = dashboardFilters
+        ? (settings?.dashboardGoalies ? [] : desktopPositionButtons(settings?.positionButtons).filter(position => position !== "G"))
+        : desktopPositionButtons(settings?.positionButtons);
     if (positionButtons.length > 0 && typeof settings?.onPositionToggle === "function") {
         const selectedPos = Array.isArray(settings?.selectedPos) ? settings.selectedPos.map(String) : [];
         const selectedPosTypes = Array.isArray(settings?.selectedPosTypes) ? settings.selectedPosTypes.map(String) : [];
         const positionGroup = document.createElement("div");
+        positionGroup.dataset.filterGroup = "position";
         positionGroup.className = "shrink-0";
         const positionLabel = document.createElement("div");
         positionLabel.className = "mb-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-gray-500";
@@ -1674,6 +1688,7 @@ export function renderStatsDesktop(
             const button = document.createElement("button");
             button.type = "button";
             button.textContent = value;
+            button.setAttribute("aria-pressed", String(active));
             button.className = [
                 "h-8 min-w-10 border-r border-gray-200 px-3 text-[12px] font-semibold transition-colors last:border-r-0",
                 active
@@ -1691,6 +1706,7 @@ export function renderStatsDesktop(
 
     if (settings?.canSlice !== false && typeof settings?.onSliceChange === "function") {
         const sliceGroup = document.createElement("div");
+        sliceGroup.dataset.filterGroup = "slice";
         sliceGroup.className = "ml-auto shrink-0 border-l border-gray-200 pl-6";
         const sliceLabel = document.createElement("div");
         sliceLabel.className = "mb-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-gray-500";
@@ -1707,6 +1723,7 @@ export function renderStatsDesktop(
             const button = document.createElement("button");
             button.type = "button";
             button.textContent = option.label;
+            button.setAttribute("aria-pressed", String(active));
             button.className = [
                 "h-8 min-w-16 border-b-2 px-3 text-[12px] transition-colors",
                 active
@@ -1731,6 +1748,7 @@ export function renderStatsDesktop(
             modelValue: state.leagueFilter,
             placeholder: "All Leagues",
             ariaLabel: "League",
+            dark: dashboardFilters,
             triggerClass: "h-8 w-40 border-0 border-b border-gray-300 bg-transparent px-0 pb-1 text-left text-sm text-gray-950 focus:border-indigo-600 focus:outline-none focus:ring-0 inline-flex items-center justify-between gap-3",
             onChange: (value) => {
                 state.leagueFilter = value || "";
@@ -1744,13 +1762,14 @@ export function renderStatsDesktop(
     const headerRow = document.createElement("div");
     headerRow.className =
         "grid text-xs font-semibold bg-gray-100 text-gray-700 px-4 py-2 border-b border-gray-200";
+    if (darkTable) headerRow.className = "stats-dark-header grid border-b border-[#29404f] bg-[#142230] px-4 py-3 text-[10px] font-semibold uppercase text-slate-300";
     headerRow.style.position = "sticky";
     headerRow.style.zIndex = "20";
     headerRow.style.gridTemplateColumns = gridCols;
 
     // dynamic sticky offset so it always sits below the controls bar
     const updateHeaderOffset = () => {
-        const h = controls.offsetHeight || 0;
+        const h = dashboardFilters ? 0 : controls.offsetHeight || 0;
         headerRow.style.top = `${h}px`;
     };
 
@@ -1769,6 +1788,7 @@ export function renderStatsDesktop(
                     settings.sortDirection === "asc" ? "↑" : "↓";
                 th.appendChild(arrow);
                 th.classList.add("text-gray-900");
+                if (darkTable) th.classList.add("text-sky-300");
             }
             th.addEventListener("click", () => {
                 const same = settings.sortKey === key;
@@ -1780,6 +1800,17 @@ export function renderStatsDesktop(
                             : "desc",
                 });
             });
+            if (darkTable) {
+                th.setAttribute("role", "button");
+                th.setAttribute("tabindex", "0");
+                th.setAttribute("aria-label", `Sort by ${label}`);
+                th.addEventListener("keydown", (event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        th.click();
+                    }
+                });
+            }
         }
 
         headerRow.appendChild(th);
@@ -1869,6 +1900,8 @@ export function renderStatsDesktop(
                     playerIdx: playerRowsState.playerIdx,
                     ownerIdx: playerRowsState.ownerIdx,
                     sortKey: playerRowsState.sortKey,
+                    dark: darkTable,
+                    statBarMaximums: settings.statBarMaximums,
                 }),
             });
 
@@ -1897,7 +1930,15 @@ export function renderStatsDesktop(
     });
 
     // mount
-    wrapper.appendChild(controls);
+    if (dashboardFilters) {
+        const positionGroup = controls.querySelector('[data-filter-group="position"]');
+        if (positionGroup) positionGroup.className = "stats-filterbar-quick-position";
+        const report = settings.filterSearchTarget?.querySelector('.stats-filterbar-report');
+        settings.filterSearchTarget?.replaceChildren(searchWrap, ...(positionGroup ? [positionGroup] : []), ...(report ? [report] : []));
+        settings.filterSearchTarget?.classList.toggle('stats-filterbar-search-only', !positionGroup);
+        settings.filterBarTarget.replaceChildren(controls);
+    }
+    else wrapper.appendChild(controls);
     wrapper.appendChild(headerRow);
     wrapper.appendChild(bodyWrap);
     scrollWrap.appendChild(wrapper);

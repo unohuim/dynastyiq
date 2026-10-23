@@ -10,6 +10,7 @@ export const mountStatsSelect = ({
   placeholder = 'Select',
   ariaLabel = 'Select option',
   triggerClass = '',
+  dark = false,
 } = {}) => {
   const mount = document.createElement('div');
   const app = createApp({
@@ -20,6 +21,7 @@ export const mountStatsSelect = ({
         placeholder,
         ariaLabel,
         triggerClass,
+        dark,
         onChange,
       });
     },

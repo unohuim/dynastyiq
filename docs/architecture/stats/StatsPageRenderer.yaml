@@ -2,6 +2,8 @@ name: Stats Page Renderer
 type: Frontend UI Pattern
 location:
   - resources/js/pages/Stats/Index.vue
+  - resources/js/pages/Stats/Table.vue
+  - resources/js/pages/Stats/LeaderList.vue
   - resources/js/pages/Stats/Mobile/PlayerCardList.vue
   - resources/js/pages/Stats/Mobile/PlayerCard.vue
   - resources/js/pages/Stats/Desktop/PlayerRows.vue
@@ -26,11 +28,15 @@ when_not_to_use:
   - Admin import UI.
   - Backend stat aggregation.
 rules:
-  - Stats/Index.vue owns the /stats Inertia page shell.
+  - Stats/Index.vue owns the /stats Leaders landing and category navigation; its dashboard contract is defined in NhlStatsDashboard.yaml. Stats/Table.vue retains the existing perspective-driven renderer for Skaters and Goalies.
   - The first Inertia migration pass may mount the existing StatsPage renderer for parity.
   - Vue mobile card components may own mobile player-card list rendering below the existing stats shell.
   - Vue desktop row components may own desktop row rendering below the existing stats shell.
-  - StatsPage owns remaining /stats browser rendering below the Inertia compatibility shell until migrated.
+  - StatsPage owns remaining Skaters and Goalies table rendering below Stats/Table.vue until migrated.
+  - Stats/Table opts into the approved dashboard filter-bar design. The shell owns both filter rows; the desktop renderer supplies its existing local search/team controls to the shell without changing their state or filtering rules. Other stats consumers retain their existing controls.
+  - Dashboard filter visibility is local shell state. Search and Position are the default quick controls; the full filters replace them through the persistent toggle without resetting filter selections or duplicating search state. Inactive controls are inert and aria-hidden.
+  - The active Skaters or Goalies tab scopes the Report selector to matching visible perspectives. Canonical goalie report slugs contain the goalies segment, including prospects-goalies; filtering the selector does not replace backend perspective authorization or change other stats consumers.
+  - The public dashboard table opts into graphite rows and factual rate bars. Skater pts_pg is derived from matching point totals and games before any per-game or per-60 slicing; it is not divided again when the slice changes. Missing or zero-GP rates remain unavailable. Presentation scales never change numeric stats or prediction inputs.
   - Shared utilities should remain inside the StatsPage module unless they become intentionally generic.
   - New or materially touched rendering must comply with docs/UI_DESIGN.md where feasible.
 public_interface:

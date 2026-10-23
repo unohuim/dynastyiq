@@ -1,7 +1,7 @@
 <script setup>
-import { computed } from 'vue';
+import { computed, ref, watch } from 'vue';
 import PlayerAvatar from './PlayerAvatar.vue';
-import { formatStatValue, statValueForKey, teamBg } from '../../../components/StatsPage/stats-utils.js';
+import { formatStatValue, statValueForKey, statsDashboardMetricBar, teamBg, teamLogoUrl } from '../../../components/StatsPage/stats-utils.js';
 
 const BORDER_COLOUR_F = '#7CCCF2';
 const BORDER_COLOUR_D = '#FAE919';
@@ -9,6 +9,8 @@ const BORDER_COLOUR_G = '#fecaca';
 const TXT_COLOUR_POS = '#606971';
 
 const props = defineProps({
+  dark: { type: Boolean, default: false },
+  statBarMaximums: { type: Object, default: () => ({}) },
   row: {
     type: Object,
     required: true,
@@ -59,7 +61,11 @@ const props = defineProps({
   },
 });
 
-const rowClasses = computed(() => `grid h-12 border-t px-4 py-2 text-sm transition-colors ${props.rowClass}`);
+const rowClasses = computed(() => props.dark ? 'stats-dark-row grid h-12 items-center border-t border-[#233342] px-4 py-1.5 text-xs text-slate-200 transition-colors hover:bg-[#193247] motion-reduce:transition-none' : `grid h-12 border-t px-4 py-2 text-sm transition-colors ${props.rowClass}`);
+const metricBar = key => props.dark ? statsDashboardMetricBar(props.row, key, props.statBarMaximums) : null;
+const teamLogo = computed(() => props.row?.team_logo_url || props.row?.team_logo || teamLogoUrl(props.row?.team));
+const teamLogoFailed = ref(false);
+watch(teamLogo, () => { teamLogoFailed.value = false; });
 
 function isOwnerColumn(key) {
   return String(key) === '__owner';
@@ -108,7 +114,7 @@ function displayPosition(raw) {
 }
 
 function positionColor() {
-  return TXT_COLOUR_POS;
+  return props.dark ? '#cbd5e1' : TXT_COLOUR_POS;
 }
 
 function positionClasses(rawType) {
@@ -177,9 +183,11 @@ function cellValue(row, key) {
       <div v-else-if="index === teamIdx" class="flex items-center justify-center text-gray-500">
         <div
           v-if="row?.league_roster_placeholder !== true && String(row?.team ?? '').trim() !== ''"
-          class="inline-flex h-7 items-center justify-center rounded-md px-3 text-xs font-semibold tracking-wide text-white shadow-sm"
+          class="inline-flex h-7 items-center justify-center rounded-md text-xs font-semibold tracking-wide text-white shadow-sm"
+          :class="dark ? 'gap-1 px-1.5' : 'px-3'"
           :style="{ background: teamBg(row?.team) }"
         >
+          <img v-if="dark && teamLogo && !teamLogoFailed" :src="teamLogo" alt="" class="h-5 w-5 shrink-0 object-contain" loading="lazy" @error="teamLogoFailed = true" />
           {{ row?.team ?? '-' }}
         </div>
       </div>
@@ -196,6 +204,7 @@ function cellValue(row, key) {
           <div class="flex h-5 w-5 items-center justify-center">
             <div
               :class="positionClasses(row?.pos_type ?? row?.type)"
+              data-position-label
               :style="{ borderColor: positionBorderColor(row?.pos_type ?? row?.type), color: positionColor(row?.pos_type ?? row?.type) }"
             >
               {{ positionText(row, heading.key) }}
@@ -210,7 +219,7 @@ function cellValue(row, key) {
 
       <div
         v-else-if="index === playerIdx"
-        class="flex min-w-0 items-center justify-start gap-2 overflow-hidden whitespace-nowrap pr-2 text-gray-700"
+        class="stats-player-name flex min-w-0 items-center justify-start gap-2 overflow-hidden whitespace-nowrap pr-2 text-gray-700"
         :title="String(cellValue(row, heading.key) ?? '')"
       >
         <template v-if="row?.league_roster_placeholder === true">
@@ -227,6 +236,14 @@ function cellValue(row, key) {
           {{ cellValue(row, heading.key) }}
           </span>
         </template>
+      </div>
+
+      <div
+        v-else-if="dark && ['sv_pct', 'gaa', 'pts_pg'].includes(heading.key)"
+        class="flex flex-col justify-center gap-1 px-2 tabular-nums"
+      >
+        <span class="text-xs font-semibold text-slate-100">{{ metricBar(heading.key)?.display ?? '—' }}</span>
+        <svg v-if="metricBar(heading.key)" viewBox="0 0 100 5" preserveAspectRatio="none" class="h-1 w-full" aria-hidden="true" :data-stat-bar="heading.key"><title>{{ metricBar(heading.key).description }}</title><rect width="100" height="5" rx="2.5" class="fill-slate-600/70" /><rect :width="metricBar(heading.key).width" height="5" rx="2.5" :class="metricBar(heading.key).color" /></svg>
       </div>
 
       <div

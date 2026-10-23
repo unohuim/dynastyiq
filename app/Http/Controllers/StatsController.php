@@ -36,9 +36,21 @@ class StatsController extends BaseController
     /**
      * Render the public stats page through the staged Inertia/Vue shell.
      */
-    public function index(Request $request): InertiaResponse
+    public function index(Request $request, \App\Services\NhlStatsDashboardPayload $leaders): InertiaResponse
     {
-        return Inertia::render('Stats/Index', $this->statsPageProps($request));
+        $request->validate(['view' => ['sometimes', 'in:leaders,skaters,goalies,teams']]);
+        $view = (string) $request->query('view', $request->filled('perspective')
+            ? (str_starts_with((string) $request->query('perspective'), 'goalies') ? 'goalies' : 'skaters') : 'leaders');
+        if (in_array($view, ['skaters', 'goalies'], true) && ! $request->filled('perspective')) {
+            $request->query->set('perspective', $view);
+        }
+        $season = $request->query('season_id', $request->query('season'));
+
+        return Inertia::render('Stats/Index', [
+            ...$this->statsPageProps($request),
+            'view' => $view,
+            'leaders' => $leaders->build(is_string($season) ? $season : null),
+        ]);
     }
 
     /**

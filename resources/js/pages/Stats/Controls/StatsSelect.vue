@@ -16,6 +16,7 @@ import {
 const EMPTY_VALUE = '__stats_select_empty__';
 
 const props = defineProps({
+  dark: { type: Boolean, default: false },
   modelValue: {
     type: [String, Number],
     default: '',
@@ -102,6 +103,7 @@ const updateValue = (value) => {
         align="start"
         :side-offset="6"
         class="z-[1000] max-h-72 min-w-[var(--reka-select-trigger-width)] overflow-hidden rounded-md border border-gray-200 bg-white shadow-lg ring-1 ring-black/5 data-[state=open]:animate-in data-[state=closed]:animate-out"
+        :class="dark ? 'stats-filterbar-menu' : ''"
       >
         <SelectViewport class="p-1">
           <SelectItem

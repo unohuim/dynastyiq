@@ -89,6 +89,7 @@ export class StatsPageShell {
       loading: Boolean(this.config.initialLoading),
       error: '',
       isFilterDrawerOpen: false,
+      isDesktopFiltersOpen: false,
       isDraftYearDropdownOpen: false,
       draftYearDropdownRect: null,
       isMobile: this.isMobile(),
@@ -164,7 +165,11 @@ export class StatsPageShell {
   }
 
   perspectiveOptions() {
-    return this.perspectives.map((perspective) => ({
+    const view = this.config.reportView;
+    const perspectives = ['skaters', 'goalies'].includes(view)
+      ? this.perspectives.filter(perspective => /(^|-)goalies($|-)/i.test(perspective.slug || '') === (view === 'goalies'))
+      : this.perspectives;
+    return perspectives.map((perspective) => ({
       label: perspective.name || perspective.slug,
       value: perspective.slug || perspective.name,
     }));
@@ -613,6 +618,8 @@ export class StatsPageShell {
   }
 
   renderControls() {
+    const secondaryControls = this.desktopFilterRow?.firstElementChild;
+    const quickControls = this.desktopSearchRow ? [...this.desktopSearchRow.children].filter(node => !node.classList.contains('stats-filterbar-report')) : [];
     this.controlsEl.innerHTML = '';
     this.removeDraftYearDropdownPortal();
 
@@ -626,6 +633,12 @@ export class StatsPageShell {
     }
 
     this.controlsEl.appendChild(this.renderDesktopControls());
+    if (secondaryControls && this.desktopFilterRow) this.desktopFilterRow.replaceChildren(secondaryControls);
+    if (this.desktopSearchRow && quickControls.length) {
+      const report = this.desktopSearchRow.querySelector('.stats-filterbar-report');
+      this.desktopSearchRow.replaceChildren(...quickControls, report);
+      this.desktopSearchRow.classList.toggle('stats-filterbar-search-only', !this.desktopSearchRow.querySelector('[data-filter-group="position"]'));
+    }
   }
 
   renderMobileControls() {
@@ -862,10 +875,18 @@ export class StatsPageShell {
   }
 
   renderDesktopControls() {
+    const dashboard = this.config.dashboardFilters === true;
     const outer = createElement('div', 'px-4 pt-3 sm:px-6');
     const panel = createElement('div', 'relative z-50 mb-3 overflow-visible border border-gray-200 bg-white shadow-sm');
     const row = createElement('div', 'flex min-h-[86px] items-stretch');
     const iconBlock = createElement('div', 'flex w-24 shrink-0 items-center justify-center bg-indigo-600 text-white');
+    if (dashboard) {
+      outer.className = 'stats-filterbar-wrap';
+      panel.className = 'stats-filterbar';
+      row.className = 'stats-filterbar-primary';
+      panel.setAttribute('aria-label', 'Statistics filters');
+      panel.setAttribute('role', 'region');
+    }
     iconBlock.innerHTML = `
       <svg viewBox="0 0 64 64" aria-hidden="true" class="h-12 w-12" fill="none" stroke="currentColor" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="29" cy="13" r="5"/>
@@ -879,7 +900,7 @@ export class StatsPageShell {
         <path d="m50 52 7 2"/>
       </svg>
     `;
-    row.appendChild(iconBlock);
+    if (!dashboard) row.appendChild(iconBlock);
 
     const controls = createElement(
       'div',
@@ -895,10 +916,13 @@ export class StatsPageShell {
     ));
 
     if (this.supportsDateRange()) {
-      const periodGroup = this.renderDesktopControlGroup('Season Mode', this.renderSegmented([
+      const periodOptions = [
         { label: 'Season', value: 'season' },
         { label: 'Range', value: 'range' },
-      ], this.state.period, (value) => this.setPeriod(value), 'underline'));
+      ];
+      const periodGroup = this.renderDesktopControlGroup('Season Mode', dashboard
+        ? this.renderDesktopSelect(periodOptions, this.state.period, (value) => this.setPeriod(value), 'Season Mode', controlSelectClass)
+        : this.renderSegmented(periodOptions, this.state.period, (value) => this.setPeriod(value), 'underline'));
       controls.appendChild(periodGroup);
     }
     if (this.state.period === 'range') {
@@ -907,7 +931,7 @@ export class StatsPageShell {
     } else {
       controls.appendChild(this.renderDesktopControlGroup(
         'Season',
-        this.renderDesktopSelect(this.availableSeasons().map((season) => ({ label: season, value: season })), this.state.seasonId, (value) => this.setSeason(value), 'Season', controlSelectClass),
+        this.renderDesktopSelect(this.availableSeasons().map((season) => ({ label: dashboard && /^\d{8}$/.test(String(season)) ? `${String(season).slice(0, 4)}–${String(season).slice(6)}` : season, value: season })), this.state.seasonId, (value) => this.setSeason(value), 'Season', controlSelectClass),
       ));
     }
     if (this.draftYearOptions().length > 0) {
@@ -924,13 +948,63 @@ export class StatsPageShell {
 
     row.appendChild(controls);
     panel.appendChild(row);
+    if (dashboard) {
+      controls.className = 'stats-filterbar-primary-controls';
+      this.desktopFilterRow = createElement('div', 'stats-filterbar-secondary');
+      const expanded = createElement('div', 'stats-filterbar-expanded');
+      expanded.id = 'stats-expanded-filters';
+      expanded.append(row, this.desktopFilterRow);
+      this.desktopSearchRow = createElement('div', 'stats-filterbar-default');
+      const report = controls.firstElementChild;
+      report.classList.add('stats-filterbar-report');
+      this.desktopSearchRow.appendChild(report);
+      const viewport = createElement('div', 'stats-filterbar-viewport');
+      viewport.append(this.desktopSearchRow, expanded);
+      const toggle = createElement('button', 'stats-filterbar-toggle');
+      toggle.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="h-3 w-3" aria-hidden="true"><path d="M4 4h16l-6 7v7l-4 2v-9z"/></svg><span>Filters</span>';
+      toggle.type = 'button';
+      toggle.setAttribute('aria-controls', expanded.id);
+      toggle.addEventListener('click', () => this.toggleDesktopFilters());
+      expanded.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && this.state.isDesktopFiltersOpen && !this.state.isDraftYearDropdownOpen) {
+          this.toggleDesktopFilters();
+          toggle.focus();
+        }
+      });
+      panel.replaceChildren(viewport, toggle);
+      this.desktopFilterPanel = panel;
+      this.updateDesktopFilterVisibility();
+    }
     outer.appendChild(panel);
 
     return outer;
   }
 
+  toggleDesktopFilters() {
+    this.state.isDesktopFiltersOpen = !this.state.isDesktopFiltersOpen;
+    this.state.isDraftYearDropdownOpen = false;
+    this.removeDraftYearDropdownPortal();
+    this.desktopFilterPanel?.querySelector('[data-draft-year-dropdown] button')?.setAttribute('aria-expanded', 'false');
+    this.updateDesktopFilterVisibility();
+  }
+
+  updateDesktopFilterVisibility() {
+    const panel = this.desktopFilterPanel;
+    if (!panel) return;
+    const open = this.state.isDesktopFiltersOpen;
+    panel.dataset.expanded = String(open);
+    const expanded = panel.querySelector('.stats-filterbar-expanded');
+    const quick = panel.querySelector('.stats-filterbar-default');
+    expanded.inert = !open;
+    quick.inert = open;
+    expanded.setAttribute('aria-hidden', String(!open));
+    quick.setAttribute('aria-hidden', String(open));
+    panel.querySelector('.stats-filterbar-toggle').setAttribute('aria-expanded', String(open));
+  }
+
   renderDesktopControlGroup(label, control) {
     const group = createElement('div', 'flex min-w-0 flex-col justify-center border-r border-gray-200 px-7 py-4 last:border-r-0');
+    if (this.config.dashboardFilters === true) group.className = 'stats-filterbar-group';
     group.appendChild(createElement('div', 'mb-2 text-[11px] font-semibold uppercase tracking-[0.20em] text-gray-500', label));
     group.appendChild(control);
 
@@ -957,6 +1031,7 @@ export class StatsPageShell {
       placeholder: label,
       ariaLabel: label,
       triggerClass: `${triggerClass} inline-flex items-center justify-between gap-3 text-left`,
+      dark: this.config.dashboardFilters === true,
     });
   }
 
@@ -1042,6 +1117,7 @@ export class StatsPageShell {
     }
 
     const menu = createElement('div', 'fixed z-[1000] max-h-72 w-44 origin-top-right overflow-y-auto rounded-md bg-white py-1 shadow-lg ring-1 ring-black/5 focus:outline-none');
+    if (this.config.dashboardFilters === true) menu.classList.add('stats-filterbar-menu');
     menu.dataset.draftYearDropdown = 'true';
     menu.dataset.draftYearDropdownPortal = 'true';
     menu.setAttribute('role', 'menu');
@@ -1111,6 +1187,7 @@ export class StatsPageShell {
           : 'h-8 rounded px-3 text-sm font-medium text-gray-600 hover:bg-white hover:text-gray-900',
       option.label);
       button.type = 'button';
+      button.setAttribute('aria-pressed', String(active));
       button.addEventListener('click', () => onChange(option.value));
       wrapper.appendChild(button);
     });
@@ -1142,6 +1219,10 @@ export class StatsPageShell {
     this.syncColumnGroupSort();
     const renderSettings = {
       ...this.settings,
+      filterBarTarget: this.config.dashboardFilters === true ? this.desktopFilterRow : null,
+      filterSearchTarget: this.config.dashboardFilters === true ? this.desktopSearchRow : null,
+      dashboardTable: this.config.dashboardFilters === true,
+      dashboardGoalies: this.config.dashboardFilters === true && (this.config.reportView === 'goalies' || this.state.perspective.startsWith('goalies')),
       leagueProspectMode: this.payload?.meta?.leagueProspectMode || '',
       resource: this.settings.resource || this.resource,
       teamAggregate: this.settings.teamAggregate === true || this.resource === 'teams',
@@ -1159,11 +1240,31 @@ export class StatsPageShell {
       onNhleLensChange: this.onNhleLensChange,
       onLeagueFantasyTeamFilterChange: this.onLeagueFantasyTeamFilterChange,
     };
-    const activeHeadings = leagueRosterHeadings(
+    let activeHeadings = leagueRosterHeadings(
       this.prospectHeadings(this.activeHeadings(), renderSettings),
       renderSettings,
     );
-    const rows = this.locallySlicedRows(this.locallyFilteredRows(), activeHeadings);
+    let sourceRows = this.locallyFilteredRows();
+    if (renderSettings.dashboardTable && !renderSettings.dashboardGoalies) {
+      const pointsIndex = activeHeadings.findIndex(heading => ['pts', 'points'].includes(heading.key));
+      if (pointsIndex !== -1) {
+        if (!activeHeadings.some(heading => heading.key === 'pts_pg')) {
+          activeHeadings = [...activeHeadings];
+          activeHeadings.splice(pointsIndex + 1, 0, { key: 'pts_pg', label: 'PTS/GP', type: 'float' });
+        }
+        sourceRows = sourceRows.map(row => {
+          const totals = row.__slice_totals || {};
+          const points = totals.pts ?? totals.points ?? statValueForKey(row, activeHeadings[pointsIndex].key);
+          const games = Number(totals.gp ?? statValueForKey(row, 'gp'));
+          const rate = points != null && Number.isFinite(Number(points)) && games > 0 ? Number(points) / games : null;
+          return { ...row, stats: { ...row.stats, pts_pg: rate }, pts_pg: rate };
+        });
+      }
+    }
+    renderSettings.statBarMaximums = Object.fromEntries(['gaa', 'pts_pg'].map(key => [key,
+      Math.max(0, ...sourceRows.map(row => Number(statValueForKey(row, key))).filter(Number.isFinite)),
+    ]));
+    const rows = this.locallySlicedRows(sourceRows, activeHeadings);
     const sorted = renderSettings.teamAggregate === true
       ? rows
       : sortData(rows, this.settings.sortKey, this.settings.sortDirection);

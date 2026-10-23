@@ -4,6 +4,27 @@ const HYDRATED_ROW_FALLBACK_KEYS = new Set([
     'fantasy_pts_per_game',
 ]);
 
+/** Describe actual rate bars; goalie GAA is inverted so longer always means better. */
+export function statsDashboardMetricBar(row, key, maximums = {}) {
+    if (!['sv_pct', 'gaa', 'pts_pg'].includes(key)) return null;
+    const raw = statValueForKey(row, key);
+    if (raw === null || raw === undefined || raw === '' || !Number.isFinite(Number(raw))) return null;
+    const value = Number(raw);
+    const maximum = Number(maximums[key]);
+    const fraction = key === 'sv_pct' ? (value > 1 ? value / 100 : value)
+        : key === 'gaa' ? (maximum > 0 ? 1 - value / maximum : 1)
+            : (maximum > 0 ? value / maximum : 0);
+    const width = Math.max(0, Math.min(1, fraction)) * 100;
+    return {
+        width,
+        display: key === 'sv_pct' ? (value > 1 ? value / 100 : value).toFixed(3) : value.toFixed(2),
+        color: key !== 'gaa' ? 'stats-rate-sky' : width >= 66.67 ? 'stats-rate-green' : width >= 33.33 ? 'stats-rate-yellow' : 'stats-rate-orange',
+        description: key === 'sv_pct' ? 'Save percentage out of 100%.'
+            : key === 'gaa' ? 'Lower GAA fills more of the bar, relative to the highest GAA in this report.'
+                : 'Points per game relative to the highest rate in this report.',
+    };
+}
+
 const hasMeaningfulStatValue = (value) => value !== undefined
     && value !== null
     && value !== ''
@@ -252,4 +273,12 @@ const teamGradients = {
 
 export function teamBg(teamAbbrev) {
     return teamGradients[teamAbbrev] || 'linear-gradient(to bottom, #e5e7eb, #9ca3af)';
+}
+
+/** Official NHL logo for a known NHL abbreviation; other leagues retain text badges. */
+export function teamLogoUrl(teamAbbrev) {
+    const team = String(teamAbbrev ?? '').trim().toUpperCase();
+
+    return Object.hasOwn(teamGradients, team) || team === 'UTA'
+        ? `https://assets.nhle.com/logos/nhl/svg/${team}_light.svg` : null;
 }

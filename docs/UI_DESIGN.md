@@ -23,6 +23,59 @@ three-card tablet/desktop layout. On mobile, Last Night’s Top Lines appears
 immediately below Last Night’s Top Performers; tablet and desktop retain their
 existing panel order.
 
+For the /stats Leaders landing, `docs/designs/stats-leaders-design.png` is the
+authoritative visual reference: dark navy surface, large player hero, yellow
+category-navigation underline, cyan links, compact leader cards and tables. Replace
+its Top Performers area with the paired goal-rate panels from
+`docs/designs/teams-by-goals-section.png`. This approved dark statistics design is
+specific to /stats; it does not recolour the homepage or unrelated application
+surfaces. Category tables retain their existing interactions. On mobile, stack
+panels without horizontal document overflow. Use real stored images and statistics,
+with honest empty states when the required imports or eligibility are unavailable.
+
+The Skaters and Goalies filter bar follows the updated
+`docs/designs/filter-bar.png`: one compact desktop row of Season Mode,
+Season/Dates, Drafted, Game Type, Team and Slice. Use a dark navy
+surface, flat selectors, muted labels, vertical dividers and blue selected Slice
+segments. Preserve filter behavior and the mobile filter drawer, adapting widths
+without document overflow.
+The bar spans its container without outer padding or a decorative blue icon;
+use the existing graphite shell colour for the component's surrounding space.
+Skaters and Goalies use an approximately half-height hero with a single row of
+Goals, Assists and PPP category leaders for Skaters; Goalies instead shows Quality
+Starts, GSAx and EVSV%, ranked separately. Display GSAx with two decimals and EVSV%
+as a percentage. Keep the full hero on the Leaders view.
+The Goalies hero features the season Quality Starts leader with their own photo,
+name, team, sweater number and QS%, GSAx, EVSV% and Saves. QS% is quality starts
+divided by starts. Fill the goalie hero's width with its photo backdrop and frame
+the clear goalie image at a suitable zoom level with the helmet and head visible
+near the top; preserve image proportions. Rankings compare goalies
+only; keep unavailable values honest and never fall back to a skater hero.
+Their filter bar uses 9–10px text, tight vertical spacing and compact 20-pixel
+controls.
+On desktop, default to Search, Position and Report, with a right-aligned Filters
+toggle and a filter icon before its label. Position exists only beside Search:
+Skaters offers SKT, F, W, C and D; Goalies omits Position entirely. Report is visible
+in the default row rather than duplicated among expanded filters.
+Report options follow the active tab: Skaters excludes goalie reports and Goalies
+includes only goalie reports, including their advanced and prospect variants.
+The full filter row replaces that quick row with a 500ms right-to-left sliding
+transition; keep the toggle visible and blue while expanded. Toggling back restores
+the quick row and retains all selections. Hidden panels are inert and excluded
+from accessibility navigation; reduced-motion preferences remove the animation.
+
+Stats player lists take visual inspiration from `docs/designs/players-list-dark.png`:
+graphite rows, subtle alternating shades and separators, clear light text, larger
+portraits and a blue hover highlight. Omit stars. Preserve existing columns and
+sorting while adding a skater PTS/GP column. Place official team logos to the left
+of abbreviations inside stats-table team badges, using 20px logos beside the 12px
+abbreviation text. Omit the goalie position badge and its column/spacing beside
+the avatar; retain Skaters' position badges. Show rate bars beneath goalie SV% and
+GAA and skater PTS/GP, including compact equivalents in the mobile cards. SV% uses
+the full 0–100% scale; PTS/GP uses the report's highest rate; GAA is inverted relative
+to the report's highest GAA so longer means better. Keep actual numbers visible,
+explain the scale on hover, and never fabricate a bar for missing data.
+
 The default desktop dashboard overview should fit above the fold, with a compact
 performers/signings/injuries row. Shorter viewports may scroll panel contents;
 explicitly expanded content remains accessible through normal page scrolling.

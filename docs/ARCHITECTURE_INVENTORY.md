@@ -4157,3 +4157,12 @@ Opponent-team aggregates remain distinct from player sums.
 **Authority:** `docs/architecture/stats/NhlCustomGamePrediction.yaml`
 
 **End of ARCHITECTURE_INVENTORY**
+
+
+## NHL Statistics Leaders Dashboard
+
+The public /stats landing presents real season leaders, team goal rates and
+completed-night comparisons in the approved dark design. Stats/LeaderList.vue
+provides local metric tabs and sortable factual rows. Stats/Table.vue preserves
+the existing Skaters/Goalies renderer; Teams has a sortable results table.
+Authority: `docs/architecture/stats/NhlStatsDashboard.yaml`.

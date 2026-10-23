@@ -2,6 +2,8 @@
 import PlayerRow from './PlayerRow.vue';
 
 defineProps({
+  dark: { type: Boolean, default: false },
+  statBarMaximums: { type: Object, default: () => ({}) },
   rows: {
     type: Array,
     default: () => [],
@@ -55,5 +57,7 @@ defineProps({
     :player-idx="playerIdx"
     :owner-idx="ownerIdx"
     :sort-key="sortKey"
+    :dark="dark"
+    :stat-bar-maximums="statBarMaximums"
   />
 </template>
