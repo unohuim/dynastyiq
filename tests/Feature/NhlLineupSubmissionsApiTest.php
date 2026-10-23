@@ -651,3 +651,78 @@ it('continues accepting unknown players where the existing peer rules permit the
     'regular season fourth line' => [2, 'Player 10 -', 'Unknown Skater -'],
     'regular season third pair' => [2, 'Player 17 -', 'Unknown Skater -'],
 ]);
+
+
+it('accepts game-specific API lineups well before the automatic evidence window', function (int $daysAhead, bool $image): void {
+    $date = now()->addDays($daysAhead)->toDateString();
+    NhlGame::query()->whereKey(2026010088)->update(['game_date' => $date, 'start_time_utc' => $date.' 23:00:00']);
+    $body = $this->body;
+    if ($image) {
+        unset($body['text']);
+        $body['image'] = ($this->image)();
+        $text = $this->text;
+        $this->mock(NhlLineupImageOcr::class, function ($mock) use ($text): void {
+            $mock->shouldReceive('extractUpload')->once()->andReturn(['status' => 'ok', 'text' => $text]);
+        });
+    }
+    $response = $this->withToken($this->token)->post('/api/nhl-lineups', $body, ['Accept' => 'application/json'])
+        ->assertCreated()->assertJsonPath('success', true)->assertJsonPath('lineup.manual_override', true)
+        ->assertJsonCount(20, 'lineup.players')->assertJsonPath('starting_goalie.nhl_player_id', 8488019);
+    $observation = NhlLineupObservation::query()->findOrFail($response->json('submission_id'));
+    expect($observation->provider_published_at->equalTo(now()))->toBeTrue()
+        ->and($observation->isEligibleForGameDate($date))->toBeTrue();
+    $this->assertDatabaseHas('nhl_current_lineups', [
+        'nhl_game_id' => 2026010088, 'team_abbrev' => 'TOR', 'nhl_lineup_observation_id' => $observation->id,
+    ]);
+    ApiClient::query()->create(['name' => 'Future reader', 'token_hash' => ApiClient::hashToken('future-read'), 'scopes' => ['nhl-stats:read']]);
+    $this->withToken('future-read')->getJson('/api/nhl/lineups/2026010088')->assertOk()
+        ->assertJsonPath('game.teams.home.lineup_status', 'manual')
+        ->assertJsonCount(20, 'game.teams.home.players')
+        ->assertJsonPath('game.teams.home.starting_goalie.nhl_player_id', 8488019);
+    $this->getJson('/api/nhl-anticipated-lineups?nhl_game_id=2026010088')->assertOk()
+        ->assertJsonPath('anticipated_lineups.0.manual_override', true)->assertJsonCount(20, 'anticipated_lineups.0.players');
+    // Removing manual attribution restores the ordinary date restriction.
+    $observation->raw_evidence = [...$observation->raw_evidence, 'manual_override' => false];
+    expect($observation->isEligibleForGameDate($date))->toBeFalse();
+})->with([
+    'text one week early' => [7, false],
+    'text one year early' => [365, false],
+    'image one week early' => [7, true],
+    'image one year early' => [365, true],
+]);
+
+it('accepts and updates an early future-game lineup through DynastyIQ manual text submissions', function (int $daysAhead): void {
+    $date = now()->addDays($daysAhead)->toDateString();
+    NhlGame::query()->whereKey(2026010088)->update(['game_date' => $date, 'start_time_utc' => $date.' 23:00:00']);
+    $user = User::factory()->create();
+    $role = Role::query()->create(['name' => 'Super Admin', 'slug' => 'super-admin', 'level' => 99]);
+    $user->roles()->attach($role->id, ['organization_id' => null]);
+    $this->actingAs($user)->postJson('/games/2026010088/lineup', ['team_abbrev' => 'TOR', 'text' => $this->text])
+        ->assertOk()->assertJsonPath('lineup.manual_override', true)->assertJsonCount(20, 'lineup.players');
+    $first = NhlLineupObservation::query()->latest('id')->firstOrFail();
+    $this->postJson('/games/2026010088/lineup', [
+        'team_abbrev' => 'TOR', 'text' => str_replace("Starter Goalie\nBackup Goalie", "Backup Goalie\nStarter Goalie", $this->text),
+    ])->assertOk()->assertJsonPath('lineup.manual_override', true);
+    $latest = NhlLineupObservation::query()->latest('id')->firstOrFail();
+    expect($latest->id)->toBeGreaterThan($first->id)
+        ->and($latest->raw_evidence['submitted_by_user_id'])->toBe($user->id);
+    $this->assertDatabaseHas('nhl_current_lineups', ['nhl_game_id' => 2026010088, 'nhl_lineup_observation_id' => $latest->id]);
+    ApiClient::query()->create(['name' => 'UI future reader', 'token_hash' => ApiClient::hashToken('ui-future-read'), 'scopes' => ['nhl-stats:read']]);
+    $this->withToken('ui-future-read')->getJson('/api/nhl/lineups/2026010088')->assertOk()
+        ->assertJsonPath('game.teams.home.lineup_status', 'manual')
+        ->assertJsonPath('game.teams.home.starting_goalie.nhl_player_id', 8488020);
+})->with(['week ahead' => [7], 'year ahead' => [365]]);
+
+it('keeps early manual source attribution visible for legacy current-lineup rows', function (): void {
+    $date = now()->addDays(7)->toDateString();
+    NhlGame::query()->whereKey(2026010088)->update(['game_date' => $date, 'start_time_utc' => $date.' 23:00:00']);
+    $response = $this->withToken($this->token)->postJson('/api/nhl-lineups', $this->body)->assertCreated();
+    $current = \App\Models\NhlCurrentLineup::query()->where('nhl_game_id', 2026010088)->firstOrFail();
+    $current->components()->delete();
+    ApiClient::query()->create(['name' => 'Legacy reader', 'token_hash' => ApiClient::hashToken('legacy-future-read'), 'scopes' => ['nhl-stats:read']]);
+    $this->withToken('legacy-future-read')->getJson('/api/nhl-anticipated-lineups?nhl_game_id=2026010088')->assertOk()
+        ->assertJsonPath('anticipated_lineups.0.manual_override', true)
+        ->assertJsonCount(1, 'anticipated_lineups.0.sources')
+        ->assertJsonPath('anticipated_lineups.0.sources.0.platform', 'manual');
+    $this->assertDatabaseHas('nhl_current_lineups', ['nhl_lineup_observation_id' => $response->json('submission_id')]);
+});

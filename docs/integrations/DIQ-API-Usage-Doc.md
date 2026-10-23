@@ -266,6 +266,13 @@ game/team, whether submitted through DynastyIQ or any authorized partner key.
 Save order is server-controlled (observation id breaks timestamp ties); supplied
 publication timestamps or claimed submitter identities cannot change it.
 
+Validated manual submissions may target any existing scheduled game, including
+games weeks or a year ahead. Their submission timestamps do not need to fall
+within the automated reports’ day-before-game freshness window. The same rule
+applies to DynastyIQ manual submissions and authorized partner text, image and
+post-URL submissions. Stored timestamps retain the actual submission time; the
+latest valid manual submission still replaces the earlier lineup for that game/team.
+
 ### Separate Write Key And Environment
 
 In DynastyIQ **Admin → API Keys**, create a key named `gner8 Lineups Write` with

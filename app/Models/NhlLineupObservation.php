@@ -47,11 +47,17 @@ class NhlLineupObservation extends Model
     {
         $timestamp = $this->provider_published_at ?? $this->observed_at;
 
-        if ($timestamp === null || $timestamp->lt(self::evidenceCutoff($gameDate))) {
+        if ($timestamp === null) {
             return false;
         }
-        if (data_get($this->raw_evidence, 'manual_override', false)
-            || data_get($this->raw_evidence, 'official', false)) {
+        // Explicit manual submissions target this game even when entered well in advance.
+        if (data_get($this->raw_evidence, 'manual_override', false)) {
+            return true;
+        }
+        if ($timestamp->lt(self::evidenceCutoff($gameDate))) {
+            return false;
+        }
+        if (data_get($this->raw_evidence, 'official', false)) {
             return true;
         }
 

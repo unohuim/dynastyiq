@@ -480,9 +480,10 @@ class NhlAnticipatedLineupImporter
         $observations = NhlLineupObservation::query()->with('players')
             ->where('nhl_game_id', $gameId)->where('team_id', $teamId)
             ->where('completeness', 'full')
-            ->where(fn ($query) => $query->where('provider_published_at', '>=', $eligibleFrom)
-                ->orWhere(fn ($fallback) => $fallback->whereNull('provider_published_at')
-                    ->where('observed_at', '>=', $eligibleFrom)))
+            ->where(fn ($query) => $query->where('raw_evidence->manual_override', true)
+                ->orWhere(fn ($fresh) => $fresh->where('provider_published_at', '>=', $eligibleFrom)
+                    ->orWhere(fn ($fallback) => $fallback->whereNull('provider_published_at')
+                        ->where('observed_at', '>=', $eligibleFrom))))
             ->orderByRaw('COALESCE(provider_published_at, observed_at) DESC')->latest('id')->get();
         $observations = $observations->filter(fn (NhlLineupObservation $observation): bool =>
             $observation->isEligibleForGameDate((string) $gameDate)

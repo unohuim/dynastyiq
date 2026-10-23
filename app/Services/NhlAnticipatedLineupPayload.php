@@ -372,9 +372,10 @@ class NhlAnticipatedLineupPayload
         return NhlLineupObservation::query()->with('source')
             ->where('nhl_game_id', $row->nhl_game_id)->where('team_id', $row->team_id)
             ->where('structure_hash', $row->structure_hash)
-            ->where(fn ($query) => $query->where('provider_published_at', '>=', $cutoff)
-                ->orWhere(fn ($fallback) => $fallback->whereNull('provider_published_at')
-                    ->where('observed_at', '>=', $cutoff)))
+            ->where(fn ($query) => $query->where('raw_evidence->manual_override', true)
+                ->orWhere(fn ($fresh) => $fresh->where('provider_published_at', '>=', $cutoff)
+                    ->orWhere(fn ($fallback) => $fallback->whereNull('provider_published_at')
+                        ->where('observed_at', '>=', $cutoff))))
             ->get()->unique('source_id');
     }
 
