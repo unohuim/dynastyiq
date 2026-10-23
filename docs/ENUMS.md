@@ -2943,7 +2943,7 @@ Existing explicit `perspective` links retain the matching table view.
 
 Dashboard metric keys: `points`, `goals`, `assists`, `ppg` (player points/game),
 `pts_pg` (the stats table's player points/game, derived from unsliced totals),
-`sog`, `hits`, `ppp` (power-play points), `blocks`, `toi` (seconds/game), `gaa`, `sv_pct`, `quality_starts`, `quality_start_pct` (quality starts/starts, percentage), `saves` (total), `gsax` (goals saved above expected), `ev_sv_pct` (EV saves/shots faced, percentage), `shutouts`, `wins`, `xgf`,
+`sog`, `hits`, `ppp` (power-play points), `blocks`, `pim` (penalty minutes), `toi` (seconds/game), `gaa`, `sv_pct`, `quality_starts`, `quality_start_pct` (quality starts/starts, percentage), `saves` (total), `gsax` (goals saved above expected), `ev_sv_pct` (EV saves/shots faced, percentage), `shutouts`, `wins`, `xgf`,
 `corsi`, `cf_pct`, `gf_pg`, `ga_pg`, `ppg_pg` (team PP goals/game), `up`, `down`,
 `breakout`, `gf`, `shifts`, and `toi_seconds`. These are browser read-model keys,
 not new persisted stat types or prediction-engine settings.

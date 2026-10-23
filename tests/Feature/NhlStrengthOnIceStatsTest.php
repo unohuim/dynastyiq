@@ -1284,7 +1284,8 @@ it('defaults the stats page to skaters instead of the first visible perspective 
         ->assertInertia(fn (Assert $page): Assert => $page
             ->component('Stats/Index')
             ->where('selectedPerspective', 'skaters')
-            ->where('initialPayload.data.0.name', 'Season Skater'));
+            ->missing('initialPayload')
+            ->reloadOnly('initialPayload', fn (Assert $reload) => $reload->where('initialPayload.data.0.name', 'Season Skater')));
 });
 
 it('uses official boxscore toi for stats page per-60 rate calculations', function (): void {

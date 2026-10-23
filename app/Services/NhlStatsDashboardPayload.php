@@ -17,34 +17,35 @@ class NhlStatsDashboardPayload
     }
 
     /** Return season leaders and current completed-night highlights for the stats landing. */
-    public function build(?string $season = null): array
+    public function build(?string $season = null, string $view = 'leaders'): array
     {
         $season = $season !== null && preg_match('/^\d{8}$/', $season)
             ? $season : (string) DB::table('nhl_season_stats')->where('game_type', 2)->where('gp', '>', 0)->max('season_id');
-        $facts = Cache::remember('nhl:stats:leaders:v7:'.$season, 300, fn (): array => $this->seasonFacts($season));
+        $facts = Cache::remember('nhl:stats:leaders:v9:'.$view.':'.$season, 300, fn (): array => $this->seasonFacts($season, $view));
 
-        return [...$facts, ...$this->dashboard->statsHighlights()];
+        return $view === 'leaders' ? [...$facts, ...$this->dashboard->statsHighlights()] : $facts;
     }
 
     /** Normalize actual season totals and rates; missing denominators remain unavailable. */
-    private function seasonFacts(string $season): array
+    private function seasonFacts(string $season, string $view): array
     {
         $previousSeason = preg_match('/^\d{8}$/', $season) ? (string) ((int) $season - 10001) : '';
         $prior = DB::table('nhl_season_stats')->where('season_id', $previousSeason)->where('game_type', 2)
             ->where('gp', '>', 0)->get()->keyBy('nhl_player_id');
-        $onIce = DB::table('nhl_player_game_strength_summaries as s')
+        $onIce = $view !== 'leaders' ? collect() : DB::table('nhl_player_game_strength_summaries as s')
             ->join('nhl_games as g', 'g.nhl_game_id', '=', 's.nhl_game_id')
             ->where('g.season_id', $season)->where('g.game_type', 2)->where('s.strength', 'EV')
             ->whereIn('g.game_state', ['OFF', 'FINAL'])->groupBy('s.nhl_player_id')
             ->selectRaw('s.nhl_player_id, SUM(s.satf) AS cf, SUM(s.sata) AS ca')->get()->keyBy('nhl_player_id');
-        $expected = $this->expectedFor($season);
-        $against = $this->expectedAgainst($season);
+        $model = in_array($view, ['leaders', 'goalies'], true) ? $this->goalModelId($season) : null;
+        $expected = $view === 'leaders' ? $this->expectedFor($season, $model) : collect();
+        $against = $model !== null ? $this->expectedAgainst($season, $model) : collect();
         $rows = DB::table('nhl_season_stats as s')->join('players as p', 'p.nhl_id', '=', 's.nhl_player_id')
             ->leftJoin('nhl_teams as t', 't.nhl_id', '=', 's.nhl_team_id')
             ->where('s.season_id', $season)->where('s.game_type', 2)->where('s.gp', '>', 0)
             ->get(['s.*', 'p.full_name', 'p.first_name', 'p.last_name', 'p.position', 'p.is_goalie',
                 'p.head_shot_url', 'p.hero_image_url', 'p.team_abbrev as player_team', 't.abbrev as team']);
-        $players = $rows->map(function (object $row) use ($prior, $onIce, $expected, $against): array {
+        $players = $rows->map(function (object $row) use ($prior, $onIce, $expected, $against, $model): array {
             $old = $prior->get($row->nhl_player_id);
             $ice = $onIce->get($row->nhl_player_id);
             $gp = (int) $row->gp;
@@ -53,9 +54,18 @@ class NhlStatsDashboardPayload
             $faced = $against->get($row->nhl_player_id);
             $completeGoalieScoring = $goalie && $faced !== null && (int) $faced->games === $gp
                 && (int) $faced->goals_against === (int) $row->ga && $faced->xga !== null;
+            $gsaxReason = match (true) {
+                ! $goalie => null,
+                $model === null => 'No scored xG data is available for this season.',
+                $faced === null => 'No goalie-facing attempts are available for this season.',
+                $faced->xga === null => $faced->scored_attempts.' of '.$faced->attempts.' attempts have xG scores.',
+                (int) $faced->games !== $gp => 'Goalie data covers '.$faced->games.' of '.$gp.' appearances.',
+                (int) $faced->goals_against !== (int) $row->ga => 'Imported goals allowed do not match the season total.',
+                default => null,
+            };
             $stats = ['points' => (int) $row->pts, 'goals' => (int) $row->g, 'assists' => (int) $row->a,
                 'ppg' => (float) $row->pts / $gp, 'sog' => (int) $row->sog, 'hits' => (int) $row->h,
-                'ppp' => (int) $row->ppp, 'blocks' => (int) $row->b,
+                'ppp' => (int) $row->ppp, 'blocks' => (int) $row->b, 'pim' => (int) $row->pim,
                 'toi' => $row->toi !== null ? (float) $row->toi / $gp : null,
                 'gaa' => $goalie && $row->toi > 0 ? (float) $row->ga * 3600 / $row->toi : null,
                 'sv_pct' => $goalie && $row->sa > 0 ? (float) $row->sv / $row->sa * 100 : null,
@@ -81,17 +91,22 @@ class NhlStatsDashboardPayload
                 'position' => $row->position, 'goalie' => $goalie, 'gp' => $gp,
                 'avatar' => $row->head_shot_url, 'hero' => $row->hero_image_url,
                 'logo' => $team ? 'https://assets.nhle.com/logos/nhl/svg/'.$team.'_light.svg' : null,
-                'stats' => $stats, 'deltas' => $deltas, 'url' => 'https://www.nhl.com/player/'.$row->nhl_player_id];
+                'stats' => $stats, 'deltas' => $deltas, 'gsax_reason' => $gsaxReason,
+                'url' => 'https://www.nhl.com/player/'.$row->nhl_player_id];
         });
         $skaters = $players->where('goalie', false)->values();
         $goalies = $players->where('goalie', true)->values();
         $goalieCategories = collect(['quality_starts' => 'Quality Starts', 'gsax' => 'GSAx', 'ev_sv_pct' => 'EVSV%'])
-            ->map(function (string $label, string $key) use ($goalies): array {
+            ->map(function (string $label, string $key) use ($goalies, $model): array {
                 $leader = $goalies->filter(fn (array $player): bool => $player['stats'][$key] !== null)
                     ->sort(fn (array $a, array $b): int => $b['stats'][$key] <=> $a['stats'][$key]
                         ?: $b['gp'] <=> $a['gp'] ?: $a['id'] <=> $b['id'])->first();
 
-                return ['key' => $key, 'label' => $label, 'player' => $leader];
+                return ['key' => $key, 'label' => $label, 'player' => $leader,
+                    'unavailable_label' => $key === 'gsax' ? ($model === null ? 'No scored xG' : 'Incomplete data') : 'Unavailable',
+                    'unavailable_reason' => $key === 'gsax' ? ($model === null
+                        ? 'No scored xG data is available for this season.'
+                        : 'No goalie has complete scored attempts matching their season appearances and goals allowed.') : null];
             })->values()->all();
         $categories = collect(['points' => 'Points', 'goals' => 'Goals', 'assists' => 'Assists', 'ppg' => 'P/GP', 'sog' => 'SOG', 'hits' => 'Hits', 'ppp' => 'PPP', 'blocks' => 'Blocks'])
             ->map(function (string $label, string $key) use ($skaters): array {
@@ -134,15 +149,14 @@ class NhlStatsDashboardPayload
         }
 
         return ['season' => $season, 'hero' => $hero, 'goalie_hero' => $goalieHero, 'categories' => $categories->all(),
-            'skaters' => $skaters->all(), 'goalies' => $goalies->all(), 'goalie_categories' => $goalieCategories,
+            'skaters' => $view === 'leaders' ? $skaters->all() : [], 'goalies' => $view === 'leaders' ? $goalies->all() : [], 'goalie_categories' => $goalieCategories,
             'rookies' => [], 'rookie_note' => 'Rookie eligibility is not available in the stored stats.',
-            'teams' => $this->teams($season, $previousSeason)];
+            'teams' => in_array($view, ['leaders', 'teams'], true) ? $this->teams($season, $previousSeason) : []];
     }
 
     /** Read scored on-ice xGF from one existing goal model, deduplicating linked attempts. */
-    private function expectedFor(string $season): Collection
+    private function expectedFor(string $season, ?int $model): Collection
     {
-        $model = $this->goalModelId($season);
         if ($model === null) {
             return collect();
         }
@@ -164,24 +178,25 @@ class NhlStatsDashboardPayload
             ->get()->keyBy('nhl_id');
     }
 
-    /** Select the same stored season goal model used by the existing stats read model. */
+    /** Select a stored goal model actually scoring completed games in the displayed season. */
     private function goalModelId(string $season): ?int
     {
-        $id = DB::table('nhl_expected_goals_models')->where('training_season_id', $season)
-            ->where('prediction_target', 'goal')->where('status', 'draft')
-            ->orderByDesc('trained_at')->orderByDesc('id')->value('id');
+        $id = DB::table('nhl_expected_goals_models as m')->where('m.prediction_target', 'goal')
+            ->whereExists(function ($query) use ($season): void {
+                $query->selectRaw('1')->from('nhl_shot_attempt_predictions as p')
+                    ->join('nhl_shot_attempts_facts as f', 'f.id', '=', 'p.shot_attempt_fact_id')
+                    ->join('nhl_games as g', 'g.nhl_game_id', '=', 'f.nhl_game_id')
+                    ->whereColumn('p.expected_goals_model_id', 'm.id')->where('p.prediction_target', 'goal')
+                    ->where('p.is_scored', true)->whereNotNull('p.xg')->where('f.season_id', $season)
+                    ->where('g.game_type', 2)->whereIn('g.game_state', ['OFF', 'FINAL']);
+            })->orderByDesc('m.trained_at')->orderByDesc('m.id')->value('m.id');
 
         return $id === null ? null : (int) $id;
     }
 
     /** Sum scored goalie-facing expectations, withholding partially scored attempt sets. */
-    private function expectedAgainst(string $season): Collection
+    private function expectedAgainst(string $season, int $model): Collection
     {
-        $model = $this->goalModelId($season);
-        if ($model === null) {
-            return collect();
-        }
-
         return DB::table('nhl_shot_attempts_facts as f')
             ->join('nhl_games as g', 'g.nhl_game_id', '=', 'f.nhl_game_id')
             ->leftJoin('nhl_shot_attempt_predictions as p', function ($join) use ($model): void {
@@ -193,7 +208,7 @@ class NhlStatsDashboardPayload
             ->where(fn ($query) => $query->whereNull('f.is_empty_net')->orWhere('f.is_empty_net', false))
             ->where(fn ($query) => $query->whereNull('f.period_type')->orWhere('f.period_type', '!=', 'SO'))
             ->groupBy('f.goalie_player_id')
-            ->selectRaw('f.goalie_player_id, COUNT(DISTINCT f.nhl_game_id) AS games,
+            ->selectRaw('f.goalie_player_id, COUNT(DISTINCT f.nhl_game_id) AS games, COUNT(*) AS attempts, COUNT(p.xg) AS scored_attempts,
                 SUM(CASE WHEN f.is_goal THEN 1 ELSE 0 END) AS goals_against,
                 CASE WHEN COUNT(p.xg) = COUNT(*) THEN SUM(p.xg) ELSE NULL END AS xga')
             ->get()->keyBy('goalie_player_id');

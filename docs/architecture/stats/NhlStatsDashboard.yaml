@@ -6,6 +6,8 @@ location:
   - resources/js/pages/Stats/Index.vue
   - resources/js/pages/Stats/LeaderList.vue
   - resources/js/pages/Stats/Table.vue
+  - resources/js/pages/Stats/LoadingState.vue
+  - resources/js/pages/Stats/CategoryNav.vue
   - docs/designs/stats-leaders-design.png
   - docs/designs/teams-by-goals-section.png
 purpose: Present factual season leaders and completed-night comparisons without replacing the existing perspective-driven stats pipeline.
@@ -16,7 +18,8 @@ when_not_to_use:
   - Calculating game predictions or importing missing statistics.
   - Replacing partner stats APIs, perspective permissions or private fantasy scopes.
 rules:
-  - The default /stats view is Leaders. Explicit Skaters and Goalies views retain the existing stats renderer, filters, permissions, perspective-driven payload and API. Existing explicit perspective links open their table view. Teams shows sortable actual team-season statistics. Category changes use Inertia navigation and preserve the existing stats.index route.
+  - The default /stats view is Leaders. Explicit Skaters and Goalies views retain the existing stats renderer, filters, permissions, perspective-driven payload and API. Existing explicit perspective links open their table view. Teams shows sortable actual team-season statistics. Category changes use Inertia navigation and preserve the existing stats.index route. Browser URLs retain the active view when table filters change.
+  - Initial page requests resolve only page configuration and selected season. Leader facts and Skaters/Goalies initialPayload use separate rescued Inertia deferred groups, so either can render without waiting for the other. Leaders and Teams do not build the unused player table. Immediate navigation skeletons, independent loading placeholders and retryable errors belong to the page, not shared global state. Completed payloads preserve their existing shape and perspective authorization.
   - View values are documented in docs/ENUMS.md. Invalid explicit view values are rejected through normal request validation.
   - The UI references in docs/UI_DESIGN.md govern this surface. The homepage is unchanged. Replace the reference Top Performers area with the two team-goals panels; do not add a Top Performers panel to /stats.
   - Read regular-season nhl_season_stats with positive games played and canonical player identities. Default to the newest stored season with positive games; an explicit season selects that season. Distinguish skaters and goalies, and never invent missing rows or rates.
@@ -26,10 +29,10 @@ rules:
   - Compute rates from totals and their matching denominators. Goalie GAA is GA times 3600 divided by TOI seconds; save percentage is saves divided by shots faced. Missing or zero denominators remain unavailable. Positive GP is the only workload eligibility threshold; no unapproved additional minimum is imposed.
   - Compare category production per game with the same player's previous-season production per game. Missing or zero previous rates have no percentage comparison. Miniature histories use the actual last five imported boxscore appearances for that metric; never draw fabricated trend bars.
   - Team GF, GA, GP and wins use each team's own completed game results, once per game, separately from opponent totals and player sums. Goal-rate differences compare against the previous season. Team points, assists, SOG, hits and PP goals use actual team-game boxscore aggregates and remain unavailable until every counted team game has boxscore coverage. Player trades cannot transfer historical team production through current-roster sums.
-  - Advanced Corsi uses stored EV on-ice summaries. On-ice xGF reads existing scored goal expectations from the season's latest draft goal model, matching the existing season-stats model selection. Deduplicate player-attempt links and withhold incomplete scoring coverage; never score or backfill attempts during a page read.
+  - Advanced Corsi uses stored EV on-ice summaries. xGF and GSAx select the most recently trained goal model that actually has non-null scored goal expectations for completed regular-season games in the displayed season. Its training season may differ, and its status need not be draft. Do not select an unscored model simply because its training season matches. Deduplicate player-attempt links and withhold incomplete scoring coverage; never score or backfill attempts during a page read. Missing GSAx exposes a factual reason distinguishing absent scored season data, absent goalie attempts, incomplete attempt scores, appearance coverage and goal-total mismatches.
   - Rookie eligibility is not inferred from prospect status or an incomplete career history. Without stored authoritative rookie eligibility, the panel explicitly reports unavailable data.
-  - Reuse the homepage's existing completed-night lines and player comparisons through statsHighlights without requesting editorial feeds. CF% line rankings retain the five-minute shared 5v5 minimum and position ordering remains owned by the shared lineup read model.
-  - Shared public leader facts may be cached for five minutes by season. Do not cache private perspectives, league ownership or user-specific payloads in that cache. No imports, queue jobs, writes, new database tables or predictions are triggered by the dashboard read.
+  - Smash Potatoes replaces the old Last Night's Top Lines panel on Leaders. It reuses LeaderList with season skater SOG, hits, blocks and PIM totals, displaying Player, GP and the selected metric with independent ranking tabs. It does not use last-night line combinations or restrict candidates to a particular game day. Reuse existing player comparisons through statsHighlights without requesting editorial feeds.
+  - Shared public leader facts may be cached for five minutes by season and view. Skaters skips goalie xG, advanced on-ice/xGF, team totals and unused highlight work. Goalies skips advanced skater on-ice/xGF and team totals. Table-view leader payloads omit duplicate player lists, which arrive in initialPayload. Do not cache private perspectives, league ownership or user-specific payloads in that cache. No imports, queue jobs, writes, new database tables or predictions are triggered by the dashboard read.
 public_interface:
   - GET /stats named stats.index
   - Existing /api/stats payload contract

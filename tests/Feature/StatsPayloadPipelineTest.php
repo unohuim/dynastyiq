@@ -198,7 +198,7 @@ it('renders the stats index through inertia with compatibility props', function 
     $response->assertOk()
         ->assertInertia(fn (Assert $page): Assert => $page
             ->component('Stats/Index')
-            ->has('initialPayload')
+            ->missing('initialPayload')
             ->has('perspectives', 1)
             ->where('selectedPerspective', 'skaters')
             ->where('apiUrl', url('/api/stats'))

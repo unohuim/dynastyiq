@@ -235,7 +235,9 @@ export class StatsPageShell {
   updateUrl(params) {
     if (this.config.syncUrl === false) return;
 
-    window.history.replaceState(null, '', `/stats?${params.toString()}`);
+    const urlParams = new URLSearchParams(params);
+    if (['skaters', 'goalies'].includes(this.config.reportView)) urlParams.set('view', this.config.reportView);
+    window.history.replaceState(null, '', `/stats?${urlParams.toString()}`);
   }
 
   async fetchPayload(options = {}) {

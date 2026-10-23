@@ -45,11 +45,14 @@ class StatsController extends BaseController
             $request->query->set('perspective', $view);
         }
         $season = $request->query('season_id', $request->query('season'));
+        $selectedSeason = is_string($season) && preg_match('/^\d{8}$/', $season) ? $season
+            : (string) DB::table('nhl_season_stats')->where('game_type', 2)->where('gp', '>', 0)->max('season_id');
 
         return Inertia::render('Stats/Index', [
-            ...$this->statsPageProps($request),
+            ...$this->statsPageProps($request, true, in_array($view, ['skaters', 'goalies'], true)),
             'view' => $view,
-            'leaders' => $leaders->build(is_string($season) ? $season : null),
+            'selectedSeason' => $selectedSeason,
+            'leaders' => Inertia::defer(fn (): array => $leaders->build($selectedSeason, $view), 'stats-leaders', rescue: true),
         ]);
     }
 
@@ -58,7 +61,7 @@ class StatsController extends BaseController
      *
      * @return array<string, mixed>
      */
-    private function statsPageProps(Request $request): array
+    private function statsPageProps(Request $request, bool $defer = false, bool $tableView = true): array
     {
         $user = Auth::user();
 
@@ -85,17 +88,21 @@ class StatsController extends BaseController
         $seasonFilter          = $request->query('season_id', $request->query('season'));
         $gameType              = (int) $request->query('game_type', 2);
 
-        if ($selectedPerspectiveId) {
-            [$payload] = $this->buildAndFormatPlayersPayload(
-                $user,
-                $selectedPerspectiveId,
-                is_string($seasonFilter) ? $seasonFilter : null,
-                'total',
-                in_array($gameType, [1, 2, 3], true) ? $gameType : 2,
-                null
-            );
-        } else {
-            $payload = [
+        $buildPayload = function () use ($user, $selectedPerspectiveId, $seasonFilter, $gameType): array {
+            if ($selectedPerspectiveId) {
+                [$payload] = $this->buildAndFormatPlayersPayload(
+                    $user,
+                    $selectedPerspectiveId,
+                    is_string($seasonFilter) ? $seasonFilter : null,
+                    'total',
+                    in_array($gameType, [1, 2, 3], true) ? $gameType : 2,
+                    null
+                );
+
+                return $payload;
+            }
+
+            return [
                 'headings' => [],
                 'data'     => collect(),
                 'settings' => [
@@ -119,10 +126,12 @@ class StatsController extends BaseController
                     'supportsDateRange'  => true,
                 ],
             ];
-        }
+        };
 
         return [
-            'initialPayload' => $payload,
+            'initialPayload' => $defer
+                ? ($tableView ? Inertia::defer($buildPayload, 'stats-table', rescue: true) : Inertia::optional($buildPayload))
+                : $buildPayload(),
             'apiUrl' => url('/api/stats'),
             'connectedLeagues' => $connectedLeagues,
             'perspectives' => $perspectives,

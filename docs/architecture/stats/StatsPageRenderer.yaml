@@ -4,6 +4,8 @@ location:
   - resources/js/pages/Stats/Index.vue
   - resources/js/pages/Stats/Table.vue
   - resources/js/pages/Stats/LeaderList.vue
+  - resources/js/pages/Stats/LoadingState.vue
+  - resources/js/pages/Stats/CategoryNav.vue
   - resources/js/pages/Stats/Mobile/PlayerCardList.vue
   - resources/js/pages/Stats/Mobile/PlayerCard.vue
   - resources/js/pages/Stats/Desktop/PlayerRows.vue
@@ -36,6 +38,7 @@ rules:
   - Stats/Table opts into the approved dashboard filter-bar design. The shell owns both filter rows; the desktop renderer supplies its existing local search/team controls to the shell without changing their state or filtering rules. Other stats consumers retain their existing controls.
   - Dashboard filter visibility is local shell state. Search and Position are the default quick controls; the full filters replace them through the persistent toggle without resetting filter selections or duplicating search state. Inactive controls are inert and aria-hidden.
   - The active Skaters or Goalies tab scopes the Report selector to matching visible perspectives. Canonical goalie report slugs contain the goalies segment, including prospects-goalies; filtering the selector does not replace backend perspective authorization or change other stats consumers.
+  - CategoryNav reports navigation start/finish locally so loading feedback appears before the network response. LoadingState supplies dark accessible skeleton and error/retry states. Independent rescued Deferred boundaries isolate leader facts and player-table failures; mounting the table waits for its own initialPayload only. Reduced-motion preferences suppress skeleton animation.
   - The public dashboard table opts into graphite rows and factual rate bars. Skater pts_pg is derived from matching point totals and games before any per-game or per-60 slicing; it is not divided again when the slice changes. Missing or zero-GP rates remain unavailable. Presentation scales never change numeric stats or prediction inputs.
   - Shared utilities should remain inside the StatsPage module unless they become intentionally generic.
   - New or materially touched rendering must comply with docs/UI_DESIGN.md where feasible.

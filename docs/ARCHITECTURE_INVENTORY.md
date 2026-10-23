@@ -4165,4 +4165,7 @@ The public /stats landing presents real season leaders, team goal rates and
 completed-night comparisons in the approved dark design. Stats/LeaderList.vue
 provides local metric tabs and sortable factual rows. Stats/Table.vue preserves
 the existing Skaters/Goalies renderer; Teams has a sortable results table.
+The shell loads first, with independent rescued deferred groups for leader facts
+and player tables, local navigation skeletons and retry states. GSAx chooses a
+model actually scoring the displayed season and exposes missing-data reasons.
 Authority: `docs/architecture/stats/NhlStatsDashboard.yaml`.

@@ -32,6 +32,10 @@ specific to /stats; it does not recolour the homepage or unrelated application
 surfaces. Category tables retain their existing interactions. On mobile, stack
 panels without horizontal document overflow. Use real stored images and statistics,
 with honest empty states when the required imports or eligibility are unavailable.
+In the Leaders view, replace the reference's Last Night's Top Lines panel with
+Smash Potatoes, using the same reusable tabbed leaderboard format as Advanced
+Leaders. Rank skaters by the selected season's SOG, Hits, Blocks or PIMs totals;
+show rank, Player, GP and the selected stat, rather than last-night lines.
 
 The Skaters and Goalies filter bar follows the updated
 `docs/designs/filter-bar.png`: one compact desktop row of Season Mode,
@@ -63,6 +67,12 @@ The full filter row replaces that quick row with a 500ms right-to-left sliding
 transition; keep the toggle visible and blue while expanded. Toggling back restores
 the quick row and retains all selections. Hidden panels are inert and excluded
 from accessibility navigation; reduced-motion preferences remove the animation.
+Stats category navigation shows immediate graphite loading feedback on selection.
+Keep category navigation usable while leader facts are loading, and load the
+player table independently of hero/dashboard calculations. Use accessible dark
+skeleton rows and explicit error messages with Retry for failed data groups.
+When GSAx is missing, show the actual availability reason rather than a bare dash;
+the goalie category card uses a compact reason with full detail on hover.
 
 Stats player lists take visual inspiration from `docs/designs/players-list-dark.png`:
 graphite rows, subtle alternating shades and separators, clear light text, larger

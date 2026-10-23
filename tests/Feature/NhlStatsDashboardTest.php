@@ -68,11 +68,13 @@ afterEach(function (): void { $this->travelBack(); });
 
 it('lands public stats on the leaders dashboard', function (): void {
     $this->get('/stats')->assertOk()->assertInertia(fn (Assert $page) => $page
-        ->component('Stats/Index')->where('view', 'leaders')->where('leaders.hero.name', 'Alex Leader'));
+        ->component('Stats/Index')->where('view', 'leaders')->missing('leaders')->missing('initialPayload')
+        ->loadDeferredProps('stats-leaders', fn (Assert $reload) => $reload->where('leaders.hero.name', 'Alex Leader')));
 });
 it('allows authenticated users to read the same public leaders', function (): void {
     $this->actingAs(User::factory()->create())->get('/stats')->assertOk()->assertInertia(fn (Assert $page) => $page
-        ->where('view', 'leaders')->where('leaders.hero.stats.points', 8));
+        ->where('view', 'leaders')->missing('leaders')
+        ->loadDeferredProps('stats-leaders', fn (Assert $reload) => $reload->where('leaders.hero.stats.points', 8)));
 });
 it('defaults to the latest positive regular-season stat season', function (): void {
     expect(($this->facts)()['season'])->toBe('20262027');
@@ -152,6 +154,32 @@ it('calculates goalie GSAx as scored xGA minus the matching goals allowed', func
     ($this->goalieScoring)();
     expect(($this->facts)()['goalies'][0]['stats']['gsax'])->toBe(0.5);
 });
+it('uses a model trained in an earlier season when it scores the displayed season', function (): void {
+    ($this->goalieScoring)();
+    DB::table('nhl_expected_goals_models')->update(['training_season_id' => '20252026', 'status' => 'published']);
+    expect(($this->facts)()['goalies'][0]['stats']['gsax'])->toBe(0.5);
+});
+it('ignores a newer same-season model that has no scored attempts for the displayed season', function (): void {
+    ($this->goalieScoring)();
+    DB::table('nhl_expected_goals_models')->update(['training_season_id' => '20252026', 'status' => 'published']);
+    DB::table('nhl_expected_goals_models')->insert(['name' => 'Unscored draft', 'version' => 'fixture-v2',
+        'training_season_id' => '20262027', 'prediction_target' => 'goal', 'status' => 'draft', 'trained_at' => now()]);
+    expect(($this->facts)()['goalies'][0]['stats']['gsax'])->toBe(0.5);
+});
+it('explains missing goalie scores without claiming GSAx is zero', function (): void {
+    $data = ($this->facts)();
+    expect($data['goalie_hero']['stats']['gsax'])->toBeNull()
+        ->and($data['goalie_hero']['gsax_reason'])->toBe('No scored xG data is available for this season.');
+});
+it('exposes the incomplete scoring count as the goalie GSAx reason', function (): void {
+    ($this->goalieScoring)(false);
+    expect(($this->facts)()['goalie_hero']['gsax_reason'])->toBe('1 of 2 attempts have xG scores.');
+});
+it('keeps table-view leader payloads compact and skips unused dashboard rows', function (): void {
+    $data = app(NhlStatsDashboardPayload::class)->build('20262027', 'skaters');
+    expect($data['hero']['id'])->toBe(9000001)->and($data['skaters'])->toBe([])
+        ->and($data['goalies'])->toBe([])->and($data['teams'])->toBe([]);
+});
 it('withholds goalie GSAx when any faced attempt lacks a score', function (): void {
     ($this->goalieScoring)(false);
     expect(($this->facts)()['goalies'][0]['stats']['gsax'])->toBeNull();
@@ -171,6 +199,13 @@ it('reads power-play points and blocks from their own season totals', function (
     $categories = collect(($this->facts)()['categories'])->keyBy('key');
     expect($categories['ppp']['label'])->toBe('PPP')->and($categories['ppp']['player']['stats']['ppp'])->toBe(5)
         ->and($categories['blocks']['label'])->toBe('Blocks')->and($categories['blocks']['player']['stats']['blocks'])->toBe(11);
+});
+it('provides season skater peripheral totals for Smash Potatoes', function (): void {
+    DB::table('nhl_season_stats')->where('nhl_player_id', 9000001)->update(['sog' => 20, 'h' => 14, 'b' => 9, 'pim' => 16]);
+    $skater = ($this->facts)()['skaters'][0];
+    expect($skater['gp'])->toBe(2)->and($skater['stats']['sog'])->toBe(20)
+        ->and($skater['stats']['hits'])->toBe(14)->and($skater['stats']['blocks'])->toBe(9)
+        ->and($skater['stats']['pim'])->toBe(16);
 });
 it('uses the actual points leader identity and stored action photo', function (): void {
     $hero = ($this->facts)()['hero'];
@@ -254,19 +289,27 @@ it('retains explicit historical season selection', function (): void {
 });
 it('keeps the compatibility props available on the new landing', function (): void {
     $this->get('/stats')->assertOk()->assertInertia(fn (Assert $page) => $page
-        ->has('initialPayload')->has('perspectives')->where('apiUrl', url('/api/stats')));
+        ->missing('initialPayload')->has('perspectives')->where('apiUrl', url('/api/stats'))
+        ->reloadOnly('initialPayload', fn (Assert $reload) => $reload->has('initialPayload.headings')->has('initialPayload.data')));
 });
 it('maps the goalies category to the existing public goalie perspective', function (): void {
     Perspective::create(['name' => 'Goalies', 'slug' => 'goalies', 'visibility' => 'public_guest', 'sport' => 'hockey',
         'is_slicable' => true, 'settings' => ['columns' => [], 'filters' => []]]);
     $this->get('/stats?view=goalies')->assertOk()->assertInertia(fn (Assert $page) => $page
-        ->where('view', 'goalies')->where('selectedPerspective', 'goalies'));
+        ->where('view', 'goalies')->where('selectedPerspective', 'goalies')->missing('initialPayload')
+        ->loadDeferredProps('stats-table', fn (Assert $reload) => $reload->has('initialPayload')->missing('leaders')));
 });
 it('preserves existing explicit perspective links as table views', function (): void {
     $this->get('/stats?perspective=skaters')->assertOk()->assertInertia(fn (Assert $page) => $page->where('view', 'skaters'));
 });
 it('provides a distinct teams category without replacing the route', function (): void {
-    $this->get('/stats?view=teams')->assertOk()->assertInertia(fn (Assert $page) => $page->where('view', 'teams')->has('leaders.teams', 2));
+    $this->get('/stats?view=teams')->assertOk()->assertInertia(fn (Assert $page) => $page->where('view', 'teams')->missing('leaders')
+        ->loadDeferredProps('stats-leaders', fn (Assert $reload) => $reload->has('leaders.teams', 2)));
+});
+it('does not build leader facts before returning the initial page shell', function (): void {
+    $this->mock(NhlStatsDashboardPayload::class, fn ($mock) => $mock->shouldNotReceive('build'));
+    $this->get('/stats?view=skaters')->assertOk()->assertInertia(fn (Assert $page) => $page
+        ->where('view', 'skaters')->missing('leaders')->missing('initialPayload')->where('selectedSeason', '20262027'));
 });
 it('rejects an unsupported category value', function (): void {
     $this->getJson('/stats?view=unknown')->assertUnprocessable()->assertJsonValidationErrors('view');

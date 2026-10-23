@@ -174,6 +174,13 @@ describe('stats page prospect controls', () => {
 
     expect(shell.supportsDateRange()).toBe(false);
   });
+  it('preserves the active stats tab in browser URLs without changing API filter parameters', async () => {
+    const shell = await createShell({ config: { reportView: 'goalies' } });
+    const params = new URLSearchParams('perspective=prospects-goalies&season_id=20262027');
+    shell.updateUrl(params);
+    expect(new URL(window.location.href).searchParams.get('view')).toBe('goalies');
+    expect(params.has('view')).toBe(false);
+  });
 
   it('keeps dashboard PTS/GP based on unsliced totals when changing the display slice', async () => {
     const shell = await createShell({ meta: { canSlice: true }, config: { dashboardFilters: true, reportView: 'skaters' } });

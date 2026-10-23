@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { createApp, nextTick } from 'vue';
 import LeaderList from './Stats/LeaderList.vue';
+import LoadingState from './Stats/LoadingState.vue';
 
 let app;
 let props;
@@ -16,6 +17,25 @@ beforeEach(() => {
         tabs: [{ key: 'points', label: 'Points' }, { key: 'gaa', label: 'GAA', low: true, format: 'decimal' }], href: '/stats?view=skaters' };
 });
 afterEach(() => { app?.unmount(); app = null; document.body.innerHTML = ''; });
+
+it('announces loading statistics and keeps placeholder rows out of accessibility navigation', () => {
+    app = createApp(LoadingState, { label: 'goalies' }); app.mount('#leaders');
+    expect(document.querySelector('[role=status]').textContent).toContain('Loading goalies');
+    expect(document.querySelector('[role=status]').getAttribute('aria-busy')).toBe('true');
+    expect(document.querySelector('[aria-hidden=true]')).not.toBeNull();
+});
+it('offers a retry action after a statistics group fails', () => {
+    let retried = false;
+    app = createApp(LoadingState, { label: 'skaters', failed: true, onRetry: () => { retried = true; } }); app.mount('#leaders');
+    expect(document.querySelector('[role=alert]').textContent).toContain('Unable to load skaters');
+    document.querySelector('button').click();
+    expect(retried).toBe(true);
+});
+it('prevents repeated retries while a failed statistics group is already reloading', () => {
+    app = createApp(LoadingState, { label: 'skaters', failed: true, reloading: true }); app.mount('#leaders');
+    expect(document.querySelector('button').disabled).toBe(true);
+    expect(document.querySelector('button').textContent).toBe('Retrying…');
+});
 
 it('sorts the default production metric highest first', () => { mount(); expect(names()).toEqual(['Beta', 'Alpha']); });
 it('limits each leaderboard to five eligible rows', () => {
