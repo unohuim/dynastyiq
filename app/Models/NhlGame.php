@@ -21,6 +21,10 @@ class NhlGame extends Model
 
 
     protected $casts = [
+        'home_pp_goals' => 'integer',
+        'home_pp_opportunities' => 'integer',
+        'away_pp_goals' => 'integer',
+        'away_pp_opportunities' => 'integer',
         'limited_scoring'        => 'boolean',
         'shootout_in_use'        => 'boolean',
         'ot_in_use'              => 'boolean',

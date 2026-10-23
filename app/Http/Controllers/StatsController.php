@@ -45,6 +45,19 @@ class StatsController extends BaseController
         if (in_array($view, ['skaters', 'goalies'], true) && ! $request->filled('perspective')) {
             $request->query->set('perspective', $view);
         }
+        $teamFilters = [];
+        if ($view === 'teams') {
+            $teamFilters = $request->validate([
+                'game_type' => ['sometimes', 'integer', 'in:1,2,3'],
+                'period' => ['sometimes', 'in:season,range'],
+                'from' => ['nullable', 'required_if:period,range', 'date_format:Y-m-d'],
+                'to' => ['nullable', 'required_if:period,range', 'date_format:Y-m-d', 'after_or_equal:from'],
+                'slice' => ['sometimes', 'in:total,pgp,p60'],
+            ]);
+            if (($teamFilters['period'] ?? 'season') !== 'range') {
+                unset($teamFilters['from'], $teamFilters['to']);
+            }
+        }
         $season = $request->query('season_id', $request->query('season'));
         $selectedSeason = is_string($season) && preg_match('/^\d{8}$/', $season) ? $season
             : $leaders->latestPreparedSeason();
@@ -53,7 +66,7 @@ class StatsController extends BaseController
         }
 
         $pageProps = $this->statsPageProps($request, true, in_array($view, ['skaters', 'goalies'], true));
-        $dashboardMissing = ! Cache::has(\App\Services\NhlStatsDashboardPayload::CACHE_PREFIX.$view.':'.$selectedSeason)
+        $dashboardMissing = ! Cache::has($view === 'teams' ? \App\Services\NhlStatsDashboardPayload::TEAM_CACHE_PREFIX.$selectedSeason : \App\Services\NhlStatsDashboardPayload::CACHE_PREFIX.$view.':'.$selectedSeason)
             || ($view === 'leaders' && ! Cache::has('nhl:stats:highlights:v1'));
 
         return Inertia::render('Stats/Index', [
@@ -61,7 +74,7 @@ class StatsController extends BaseController
             'statsCacheMissing' => $dashboardMissing || $pageProps['statsCacheMissing'],
             'view' => $view,
             'selectedSeason' => $selectedSeason,
-            'leaders' => Inertia::defer(fn (): array => $leaders->build($selectedSeason, $view), 'stats-leaders', rescue: true),
+            'leaders' => Inertia::defer(fn (): array => $view === 'teams' ? $leaders->teamView($selectedSeason, $teamFilters) : $leaders->build($selectedSeason, $view), 'stats-leaders', rescue: true),
         ]);
     }
 

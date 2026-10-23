@@ -4218,3 +4218,5 @@ buckets on projections. Ratings remain model-specific and repeatable without
 retraining or replacing Train/Test workflows. Public stats read current ratings
 with legacy backfill compatibility. Authority:
 `docs/architecture/imports/NhlPredictionSeasonSatScoring.yaml`.
+
+- Teams stats: `Stats/Teams.vue` renders the compact team dashboard from retained per-game facts in `NhlStatsDashboardPayload`; the existing right-rail context import persists actual team PP goals/opportunities. See `architecture/stats/NhlStatsDashboard.yaml`, `architecture/stats/StatsPageRenderer.yaml` and `architecture/imports/NhlGameDataImportServices.yaml`.

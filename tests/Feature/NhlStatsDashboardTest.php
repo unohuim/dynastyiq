@@ -901,3 +901,86 @@ it('marks cold page visits for the rewind loading message and clears that flag o
     Cache::forever('nhl:stats:highlights:v1', ['highlights_cache_status' => 'ready']);
     $this->get('/stats')->assertOk()->assertInertia(fn (Assert $page) => $page->where('statsCacheMissing', false));
 });
+
+
+it('prepares Teams standings points and regulation GAA per sixty independently of player points', function (): void {
+    DB::table('nhl_games')->where('nhl_game_id', 2026020001)->update(['period_type' => 'REG']);
+    $facts = app(NhlStatsDashboardPayload::class)->teamView('20262027');
+    $teams = collect($facts['teams'])->keyBy('team');
+    expect($teams['TOR']['points'])->toBe(2)->and($teams['MTL']['points'])->toBe(0)
+        ->and($teams['TOR']['gaa'])->toBe(2.0)->and($teams['TOR']['win_pct'])->toBe(100.0)
+        ->and(array_column($facts['team_categories'], 'label'))->toBe(['W%', 'GAA', 'Corsi%'])
+        ->and($facts)->not->toHaveKey('team_games');
+});
+
+it('uses actual overtime elapsed time for Teams GAA and awards the losing standings point', function (): void {
+    DB::table('nhl_games')->where('nhl_game_id', 2026020001)->update(['period_type' => 'OT']);
+    DB::table('play_by_plays')->insert(['nhl_game_id' => 2026020001, 'period_type' => 'OT',
+        'period' => 4, 'type_desc_key' => 'goal', 'seconds_in_game' => 3720]);
+    $teams = collect(app(NhlStatsDashboardPayload::class)->teamView('20262027')['teams'])->keyBy('team');
+    expect($teams['TOR']['gaa'])->toBe(2 * 3600 / 3720)->and($teams['MTL']['points'])->toBe(1);
+});
+
+it('excludes the shootout deciding goal from GAA while retaining displayed scoreboard totals', function (): void {
+    DB::table('nhl_games')->where('nhl_game_id', 2026020001)->update([
+        'period_type' => 'SO', 'home_team_score' => 3, 'away_team_score' => 2,
+    ]);
+    $teams = collect(app(NhlStatsDashboardPayload::class)->teamView('20262027')['teams'])->keyBy('team');
+    expect($teams['MTL']['ga'])->toBe(3)->and($teams['MTL']['gaa'])->toBe(2 * 3600 / 3900)
+        ->and($teams['MTL']['points'])->toBe(1);
+});
+
+it('keeps missing overtime clock and absent stat sources unavailable in Teams', function (): void {
+    DB::table('nhl_games')->where('nhl_game_id', 2026020001)->update(['period_type' => 'OT']);
+    $team = app(NhlStatsDashboardPayload::class)->teamView('20262027')['teams'][0];
+    expect($team['gaa'])->toBeNull()->and($team['sat'])->toBeNull()->and($team['cf_pct'])->toBeNull()
+        ->and($team['pp_pct'])->toBeNull()->and($team['pk_pct'])->toBeNull();
+});
+
+it('persists actual right-rail PP goals and opportunities even without officials', function (): void {
+    $importer = app(\App\Services\NhlGameContextImporter::class);
+    $payload = ['teamGameStats' => [['category' => 'powerPlay', 'homeValue' => '2/5', 'awayValue' => '0/4']]];
+    $importer->importFromPayload(2026020001, $payload);
+    $importer->importFromPayload(2026020001, $payload);
+    $game = \App\Models\NhlGame::findOrFail(2026020001);
+    expect($game->home_pp_goals)->toBe(2)->and($game->home_pp_opportunities)->toBe(5)
+        ->and($game->away_pp_goals)->toBe(0)->and($game->away_pp_opportunities)->toBe(4);
+    $teams = collect(app(NhlStatsDashboardPayload::class)->teamView('20262027')['teams'])->keyBy('team');
+    expect($teams['TOR']['pp_pct'])->toBe(40.0)->and($teams['MTL']['pk_pct'])->toBe(60.0)
+        ->and($teams['MTL']['pp_pct'])->toBe(0.0)->and($teams['TOR']['pk_pct'])->toBe(100.0);
+});
+
+it('treats malformed and absent PP opportunity coverage as unknown rather than zero', function (): void {
+    $importer = app(\App\Services\NhlGameContextImporter::class);
+    $importer->importFromPayload(2026020001, ['teamGameStats' => [
+        ['category' => 'powerPlay', 'homeValue' => '0/0', 'awayValue' => 'invalid'],
+    ]]);
+    $teams = collect(app(NhlStatsDashboardPayload::class)->teamView('20262027')['teams']);
+    expect($teams->pluck('pp_pct')->all())->toBe([null, null]);
+    $importer->importFromPayload(2026020001, ['teamGameStats' => []]);
+    expect(\App\Models\NhlGame::findOrFail(2026020001)->home_pp_opportunities)->toBeNull();
+});
+
+it('reuses prepared game facts for Teams date and game-type filtering without querying sources', function (): void {
+    $service = app(NhlStatsDashboardPayload::class);
+    $service->refreshCachedFacts('20262027', 'teams');
+    DB::enableQueryLog();
+    DB::flushQueryLog();
+    $same = $service->teamView('20262027', ['from' => '2026-10-22', 'to' => '2026-10-22']);
+    $empty = $service->teamView('20262027', ['from' => '2026-10-23']);
+    $playoffs = $service->teamView('20262027', ['game_type' => 3]);
+    $queries = DB::getQueryLog();
+    DB::disableQueryLog();
+    expect($same['teams'])->toHaveCount(2)->and($empty['teams'])->toBe([])
+        ->and($playoffs['teams'])->toBe([])->and($queries)->toBe([]);
+});
+
+it('pools actual Teams PP numerators and denominators across games instead of averaging percentages', function (): void {
+    DB::table('nhl_games')->where('nhl_game_id', 2026020001)->update(['home_pp_goals' => 2, 'home_pp_opportunities' => 5]);
+    DB::table('nhl_games')->insert(['nhl_game_id' => 2026020002, 'season_id' => '20262027', 'game_type' => 2,
+        'game_date' => '2026-10-23', 'game_state' => 'FINAL', 'home_team_id' => 10, 'home_team_abbrev' => 'TOR',
+        'away_team_id' => 8, 'away_team_abbrev' => 'MTL', 'home_team_score' => 1, 'away_team_score' => 2,
+        'home_pp_goals' => 0, 'home_pp_opportunities' => 1]);
+    $teams = collect(app(NhlStatsDashboardPayload::class)->teamView('20262027')['teams'])->keyBy('team');
+    expect($teams['TOR']['pp_pct'])->toEqualWithDelta(2 / 6 * 100, 0.000001)->and($teams['MTL']['pk_pct'])->toBe((1 - 2 / 6) * 100);
+});

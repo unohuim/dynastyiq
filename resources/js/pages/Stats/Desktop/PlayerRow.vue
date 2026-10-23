@@ -183,11 +183,11 @@ function cellValue(row, key) {
       <div v-else-if="index === teamIdx" class="flex items-center justify-center text-gray-500">
         <div
           v-if="row?.league_roster_placeholder !== true && String(row?.team ?? '').trim() !== ''"
-          class="inline-flex h-7 items-center justify-center rounded-md text-xs font-semibold tracking-wide text-white shadow-sm"
+          class="inline-flex h-8 items-center justify-center rounded-md text-xs font-semibold tracking-wide text-white shadow-sm"
           :class="dark ? 'gap-1 px-1.5' : 'px-3'"
           :style="{ background: teamBg(row?.team) }"
         >
-          <img v-if="dark && teamLogo && !teamLogoFailed" :src="teamLogo" alt="" class="h-5 w-5 shrink-0 object-contain" loading="lazy" @error="teamLogoFailed = true" />
+          <img v-if="dark && teamLogo && !teamLogoFailed" :src="teamLogo" alt="" class="h-7 w-7 shrink-0 object-contain" loading="lazy" @error="teamLogoFailed = true" />
           {{ row?.team ?? '-' }}
         </div>
       </div>

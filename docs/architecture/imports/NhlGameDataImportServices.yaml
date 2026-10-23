@@ -45,6 +45,7 @@ when_not_to_use:
   - Tracking import progress state.
   - Discovering games.
 rules:
+  - NhlGameContextImporter also promotes right-rail teamGameStats category powerPlay homeValue and awayValue goals/opportunities pairs into nullable nhl_games home/away PP goals and opportunities. It persists these independently of gameInfo availability, preserves officials/staff import count semantics, and leaves absent or malformed pairs unknown. Historical games acquire these totals through the existing right-rail context refresh stage, not migration backfills.
   - Stage services own transformation behavior only.
   - Stage ordering belongs to NhlImportOrchestrator.
   - Progress persistence belongs to NhlImportProgressRepo.

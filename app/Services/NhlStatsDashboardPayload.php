@@ -14,6 +14,7 @@ use InvalidArgumentException;
 class NhlStatsDashboardPayload
 {
     public const CACHE_PREFIX = 'nhl:stats:leaders:v12:';
+    public const TEAM_CACHE_PREFIX = 'nhl:stats:teams:v1:';
 
     /** Reuse the homepage's factual comparisons, independently of its editorial feed. */
     public function __construct(private readonly NhlDashboardPayload $dashboard)
@@ -29,7 +30,7 @@ class NhlStatsDashboardPayload
                 'categories' => [], 'goalie_categories' => [], 'skaters' => [], 'goalies' => [],
                 'rookies' => [], 'teams' => [], 'mobile_leaders' => [], 'player_trends' => []];
         }
-        $key = self::CACHE_PREFIX.$view.':'.$season;
+        $key = $this->cacheKey($season, $view);
         $facts = Cache::get($key);
         if (! is_array($facts)) {
             $facts = Cache::lock($key.':build', 240)->block(180, function () use ($key, $season, $view): array {
@@ -50,7 +51,7 @@ class NhlStatsDashboardPayload
         }
         $facts = $this->seasonFacts($season, $view);
         $facts['prepared_at'] = now()->toIso8601String();
-        if (! Cache::forever(self::CACHE_PREFIX.$view.':'.$season, $facts)) {
+        if (! Cache::forever($this->cacheKey($season, $view), $facts)) {
             throw new \RuntimeException('Public stats cache publication failed.');
         }
         if ($view === 'leaders') {
@@ -58,6 +59,33 @@ class NhlStatsDashboardPayload
             $this->refreshSeasonCatalogue();
         }
 
+        return $facts;
+    }
+
+    /** Version the expanded Teams snapshot without invalidating ready player and Leaders data. */
+    public function cacheKey(string $season, string $view): string
+    {
+        return $view === 'teams' ? self::TEAM_CACHE_PREFIX.$season : self::CACHE_PREFIX.$view.':'.$season;
+    }
+
+    /** Apply team/date selections to prepared game facts without source queries on warm reads. */
+    public function teamView(string $season, array $filters = []): array
+    {
+        $facts = $this->build($season, 'teams');
+        $type = (int) ($filters['game_type'] ?? 2);
+        $rows = collect($facts['team_games'] ?? [])->filter(static function (array $row) use ($type, $filters): bool {
+            return $row['game_type'] === $type
+                && (empty($filters['from']) || $row['date'] >= $filters['from'])
+                && (empty($filters['to']) || $row['date'] <= $filters['to']);
+        });
+        $teams = $this->aggregateTeamRows($rows);
+        $facts['team_categories'] = $this->teamCategories($teams);
+        $facts['team_hero'] = collect($teams)->sortByDesc('win_pct')->first();
+        $facts['team_filters'] = ['game_type' => $type, 'period' => $filters['period'] ?? 'season',
+            'from' => $filters['from'] ?? '', 'to' => $filters['to'] ?? '', 'slice' => $filters['slice'] ?? 'total'];
+        $facts['teams'] = $teams;
+        // Raw per-game facts stay server-side; the browser receives only the selected team rows.
+        unset($facts['team_games']);
         return $facts;
     }
 
@@ -84,6 +112,9 @@ class NhlStatsDashboardPayload
     /** Normalize actual season totals and rates; missing denominators remain unavailable. */
     private function seasonFacts(string $season, string $view): array
     {
+        if ($view === 'teams') {
+            return $this->teamSeasonFacts($season);
+        }
         $previousSeason = preg_match('/^\d{8}$/', $season) ? (string) ((int) $season - 10001) : '';
         $prior = DB::table('nhl_season_stats')->where('season_id', $previousSeason)->where('game_type', 2)
             ->where('gp', '>', 0)->get()->keyBy('nhl_player_id');
@@ -371,6 +402,102 @@ class NhlStatsDashboardPayload
                 SUM(CASE WHEN f.is_goal THEN 1 ELSE 0 END) AS goals_against,
                 CASE WHEN COUNT(p.xg) = COUNT(*) THEN SUM('.$this->historicalGoalExpectation().') ELSE NULL END AS xga')
             ->get()->keyBy('goalie_player_id');
+    }
+
+    /** Prepare per-game team facts once, retaining historical team identity and explicit coverage. */
+    private function teamSeasonFacts(string $season): array
+    {
+        $games = DB::table('nhl_games')->where('season_id', $season)->whereIn('game_type', [1, 2, 3])
+            ->whereIn('game_state', ['OFF', 'FINAL'])->whereNotNull('home_team_score')->whereNotNull('away_team_score')
+            ->orderBy('game_date')->orderBy('nhl_game_id')->get();
+        $ids = $games->pluck('nhl_game_id');
+        $boxes = DB::table('nhl_boxscores')->whereIn('nhl_game_id', $ids)->groupBy('nhl_game_id', 'nhl_team_id')
+            ->selectRaw('nhl_game_id, nhl_team_id, SUM(hits) AS hits, SUM(blocks) AS blocks, SUM(sog) AS sog,
+                SUM(penalty_minutes) AS pim, SUM(saves) AS saves')->get()
+            ->keyBy(static fn (object $row): string => $row->nhl_game_id.':'.$row->nhl_team_id);
+        $summaries = DB::table('nhl_game_summaries')->whereIn('nhl_game_id', $ids)->groupBy('nhl_game_id', 'nhl_team_id')
+            ->selectRaw('nhl_game_id, nhl_team_id, SUM(sat) AS sat, SUM(hdsat) AS hdsat')->get()
+            ->keyBy(static fn (object $row): string => $row->nhl_game_id.':'.$row->nhl_team_id);
+        $attempts = DB::table('nhl_shot_attempts_facts')->whereIn('nhl_game_id', $ids)->where('is_shot_attempt', true)
+            ->where(fn ($q) => $q->whereNull('period_type')->orWhere('period_type', '<>', 'SO'))
+            ->where(fn ($q) => $q->whereNull('is_empty_net')->orWhere('is_empty_net', false))
+            ->groupBy('nhl_game_id', 'team_id')->selectRaw("nhl_game_id, team_id,
+                SUM(CASE WHEN (CASE WHEN UPPER(strength) IN ('EV','PP','PK') THEN UPPER(strength) ELSE UPPER(strength_bucket) END) = 'EV' THEN 1 ELSE 0 END) AS ev_sat")
+            ->get()->keyBy(static fn (object $row): string => $row->nhl_game_id.':'.$row->team_id);
+        $ends = DB::table('play_by_plays')->whereIn('nhl_game_id', $ids)->where('period_type', 'OT')
+            ->whereIn('type_desc_key', ['goal', 'game-end', 'period-end'])->groupBy('nhl_game_id')
+            ->selectRaw('nhl_game_id, MAX(seconds_in_game) AS elapsed')->get()->keyBy('nhl_game_id');
+        $rows = [];
+        foreach ($games as $game) {
+            $outcome = is_string($game->game_outcome) ? json_decode($game->game_outcome, true) : (array) $game->game_outcome;
+            $last = $outcome['lastPeriodType'] ?? $game->period_type;
+            $regulation = (int) ($game->max_regulation_periods ?: 3) * 1200;
+            $seconds = match ($last) {
+                'REG' => $regulation,
+                'SO' => (int) $game->game_type !== 3 ? $regulation + 300 : null,
+                'OT' => $ends->get($game->nhl_game_id)?->elapsed,
+                default => null,
+            };
+            if ($last === 'OT' && ($seconds === null || $seconds < $regulation
+                || ((int) $game->game_type !== 3 && $seconds > $regulation + 300))) {
+                $seconds = null;
+            }
+            foreach (['home' => 'away', 'away' => 'home'] as $side => $opponent) {
+                $teamId = $game->{$side.'_team_id'};
+                $key = $game->nhl_game_id.':'.$teamId;
+                $box = $boxes->get($key);
+                $summary = $summaries->get($key);
+                $for = $attempts->get($key);
+                $against = $attempts->get($game->nhl_game_id.':'.$game->{$opponent.'_team_id'});
+                $won = $game->{$side.'_team_score'} > $game->{$opponent.'_team_score'};
+                $rows[] = ['team' => $game->{$side.'_team_abbrev'},
+                    'name' => trim((string) $game->{$side.'_team_place_name'}.' '.(string) $game->{$side.'_team_common_name'}) ?: $game->{$side.'_team_abbrev'},
+                    'logo' => $game->{$side.'_team_logo'}, 'date' => (string) $game->game_date, 'game_type' => (int) $game->game_type,
+                    'wins' => $won ? 1 : 0,
+                    'points' => (int) $game->game_type === 2 ? ($won ? 2 : (in_array($last, ['OT', 'SO'], true) ? 1 : ($last === 'REG' ? 0 : null))) : null,
+                    'gf' => (int) $game->{$side.'_team_score'}, 'ga' => (int) $game->{$opponent.'_team_score'},
+                    'gaa_ga' => (int) $game->{$opponent.'_team_score'} - ($last === 'SO' && ! $won ? 1 : 0),
+                    'toi_total_seconds' => $seconds === null ? null : (int) $seconds,
+                    'hits' => $box ? (int) $box->hits : null, 'blocks' => $box ? (int) $box->blocks : null,
+                    'sog' => $box ? (int) $box->sog : null, 'pim' => $box ? (int) $box->pim : null, 'saves' => $box ? (int) $box->saves : null,
+                    'sat' => $summary ? (int) $summary->sat : null, 'hdsat' => $summary ? (int) $summary->hdsat : null,
+                    'cf' => $for ? (int) $for->ev_sat : null, 'ca' => $against ? (int) $against->ev_sat : null,
+                    'pp_goals' => $game->{$side.'_pp_goals'}, 'pp_opportunities' => $game->{$side.'_pp_opportunities'},
+                    'pk_goals_against' => $game->{$opponent.'_pp_goals'}, 'pk_opportunities' => $game->{$opponent.'_pp_opportunities'}];
+            }
+        }
+        $teams = $this->aggregateTeamRows(collect($rows)->where('game_type', 2));
+        return ['season' => $season, 'team_games' => $rows, 'teams' => $teams,
+            'team_categories' => $this->teamCategories($teams), 'team_hero' => collect($teams)->sortByDesc('win_pct')->first(),
+            'available_team_seasons' => DB::table('nhl_games')->whereIn('game_state', ['OFF','FINAL'])->distinct()->orderByDesc('season_id')->pluck('season_id')->all()];
+    }
+
+    /** Aggregate complete metric populations; a missing source in any selected game stays unavailable. */
+    private function aggregateTeamRows(Collection $rows): array
+    {
+        return $rows->groupBy('team')->map(function (Collection $games): array {
+            $first = $games->first();
+            $row = ['id' => $first['team'], 'team' => $first['team'], 'name' => $first['name'], 'logo' => $first['logo'], 'gp' => $games->count()];
+            foreach (['wins','points','gf','ga','gaa_ga','toi_total_seconds','hits','blocks','sog','pim','saves','sat','hdsat','cf','ca','pp_goals','pp_opportunities','pk_goals_against','pk_opportunities'] as $key) {
+                $row[$key] = $games->contains(static fn (array $game): bool => $game[$key] === null) ? null : (int) $games->sum($key);
+            }
+            $row['win_pct'] = 100.0 * $row['wins'] / $row['gp'];
+            $row['gaa'] = $row['toi_total_seconds'] > 0 ? $row['gaa_ga'] * 3600.0 / $row['toi_total_seconds'] : null;
+            $row['cf_pct'] = $row['cf'] !== null && $row['ca'] !== null && $row['cf'] + $row['ca'] > 0 ? 100.0 * $row['cf'] / ($row['cf'] + $row['ca']) : null;
+            $row['pp_pct'] = $row['pp_goals'] !== null && $row['pp_opportunities'] > 0 ? 100.0 * $row['pp_goals'] / $row['pp_opportunities'] : null;
+            $row['pk_pct'] = $row['pk_goals_against'] !== null && $row['pk_opportunities'] > 0 ? (1 - $row['pk_goals_against'] / $row['pk_opportunities']) * 100.0 : null;
+            return $row;
+        })->values()->all();
+    }
+
+    /** Select the three team-category leaders independently; lower GAA ranks first. */
+    private function teamCategories(array $teams): array
+    {
+        return collect(['win_pct' => 'W%', 'gaa' => 'GAA', 'cf_pct' => 'Corsi%'])->map(function (string $label, string $key) use ($teams): array {
+            $eligible = collect($teams)->filter(static fn (array $team): bool => $team[$key] !== null);
+            $leader = $key === 'gaa' ? $eligible->sortBy($key)->first() : $eligible->sortByDesc($key)->first();
+            return ['key' => $key, 'label' => $label, 'team' => $leader];
+        })->values()->all();
     }
 
     /** Aggregate team results once per completed game, keeping GF and GA separate. */

@@ -50,8 +50,9 @@ leader cards belong only to the Leaders tab. Leaders uses four compact horizonta
 card rows headed All Skaters, All Goalies, All Teams and All Prospects. Exactly
 three cards fit each row's visible width; remaining cards scroll horizontally
 with native scrolling and a subtle scrollbar. Use one independently selected
-metric leader per card, compact images, single-line truncated names, and factual
-unavailable states. The desktop hero and leader panels keep their existing design.
+metric leader per card, prominent 64px portraits or team logos, bold stat values,
+coloured left-edge accents matching desktop Category Leaders, single-line truncated
+names, and factual unavailable states. Mobile leader cards are 144px tall. The desktop hero and leader panels keep their existing design.
 Metric definitions and the non-NHL Prospects population belong to
 `docs/architecture/stats/NhlStatsDashboard.yaml`.
 
@@ -589,3 +590,13 @@ that's what we're doing now. Stand by." Warm reads retain normal loading feedbac
 The admin season-sync progress distinguishes source rollup from report-cache
 preparation and failures. Visitors use /stats without supplying a season parameter;
 missing default-season metadata is repaired automatically.
+
+Once prepared leader cards are available, suppress the season-leaders loading
+placeholder. Do not show a season-not-prepared message alongside visible cards.
+
+### Teams statistics dashboard
+
+- Teams uses a compact desktop header with three category leaders: W%, GAA and Corsi%. Mobile retains category navigation without the hero.
+- Teams rows show GP, W, PTS, GF, GA, W%, GAA, Corsi%, Hits, Blocks, SAT, HDSAT, Saves, SOG, PIM, PP% and PK%. GAA is per 60 actual game minutes. Percent labels display percent values; missing coverage displays an em dash.
+- The graphite filter bar defaults to Search and All Teams. Its blue Filters toggle replaces quick controls with season, period/date range, game type, team and counting-stat slice controls using a 500ms horizontal transition, suppressed for reduced motion. No player position or goalie reports appear in Teams.
+- Desktop team-abbreviation badges use 28px player-row team logos; Teams badges use 32px logos. Mobile Teams uses compact white rows and all requested metrics; desktop supports horizontal table scrolling.

@@ -2,6 +2,7 @@ name: Stats Page Renderer
 type: Frontend UI Pattern
 location:
   - resources/js/pages/Stats/Index.vue
+  - resources/js/pages/Stats/Teams.vue
   - resources/js/pages/Stats/Table.vue
   - resources/js/pages/Stats/LeaderList.vue
   - resources/js/pages/Stats/LoadingState.vue
@@ -30,6 +31,7 @@ when_not_to_use:
   - Admin import UI.
   - Backend stat aggregation.
 rules:
+  - Stats/Teams.vue renders the compact team table, local search/team filtering and collapsible season/date/game-type/slice controls. Warm filter requests aggregate the prepared season game snapshot without querying source facts. Per-game/per-sixty slices change counting stats only; GP, W, standings PTS, percentages and GAA retain their meanings. Null metrics sort after numeric values.
   - Stats/Index.vue owns the /stats Leaders landing and category navigation; its dashboard contract is defined in NhlStatsDashboard.yaml. Stats/Table.vue retains the existing perspective-driven renderer for Skaters and Goalies.
   - The first Inertia migration pass may mount the existing StatsPage renderer for parity.
   - Vue mobile card components may own mobile player-card list rendering below the existing stats shell.

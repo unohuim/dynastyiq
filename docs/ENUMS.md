@@ -1710,6 +1710,8 @@ This boolean grouping choice is independent of the existing `display` values
 - `pgp`: Per-game-played rate.
 - `p60`: Per-60-minute rate.
 
+Teams uses the same slice values for GF, GA, Hits, Blocks, SAT, HDSAT, Saves, SOG and PIM. GP, W, standings PTS, GAA and percentages retain their unsliced meanings. Its period selector supports the existing `season` and `range` values only.
+
 ### Stats Resource
 
 **Name:** Stats resource

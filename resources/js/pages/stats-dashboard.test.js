@@ -5,6 +5,7 @@ import LeaderList from './Stats/LeaderList.vue';
 import LoadingState from './Stats/LoadingState.vue';
 import LeaderCardRow from './Stats/LeaderCardRow.vue';
 import CategoryNav from './Stats/CategoryNav.vue';
+import Teams from './Stats/Teams.vue';
 import { readFileSync } from 'node:fs';
 
 let app;
@@ -140,6 +141,9 @@ it('renders the individual leader and metric value in each mobile card', () => {
     expect(document.querySelector('li').textContent).toContain('A. Leader');
     expect(document.querySelector('li a').getAttribute('aria-label')).toBe('G: 12, Alex Leader');
     expect(document.querySelector('li img').getAttribute('loading')).toBe('lazy');
+    expect(document.querySelector('li img').classList.contains('h-16')).toBe(true);
+    expect(document.querySelector('li a').classList.contains('border-l-amber-400')).toBe(true);
+    expect(document.querySelector('li a').classList.contains('h-[144px]')).toBe(true);
 });
 
 it('opens an external leader destination in a new tab', () => {
@@ -188,6 +192,7 @@ it('keeps mobile category navigation while replacing the desktop hero and leader
     expect(source).toContain("statsCacheMissing ? rewindMessage : ''");
     expect(source).toContain("the previous user didn't rewind, so that's what we're doing now. Stand by.");
     expect(source).not.toContain('Season statistics are not prepared yet.');
+    expect(source).toContain('v-if="!hasLeaderCards" label="season leaders"');
     expect(source).toContain('class="hidden space-y-3 sm:block"');
     expect(source).toContain('<LeaderCardRow v-for="row in leaders.mobile_leaders || []"');
 });
@@ -208,9 +213,10 @@ it('links the Prospects category to the existing full report and marks it active
 it('retains full player reports and separates mobile team rows from the desktop table', () => {
     const source = readFileSync(new URL('./Stats/Index.vue', import.meta.url), 'utf8');
     expect(source).toContain('<StatsTable :key="view + selectedPerspective"');
-    expect(source).toContain('aria-label="Mobile team statistics"');
-    expect(source).toContain('<li v-for="team in sortedTeams"');
-    expect(source).toContain('<div class="hidden overflow-x-auto sm:block"><table');
+    const teams = readFileSync(new URL('./Stats/Teams.vue', import.meta.url), 'utf8');
+    expect(source).toContain('<Teams v-else-if=');
+    expect(teams).toContain('<li v-for="team in teams"');
+    expect(teams).toContain('<div class="hidden overflow-x-auto sm:block"><table');
     expect(source).toContain("['Leaders', 'Skaters', 'Goalies', 'Prospects', 'Teams']");
 });
 
@@ -220,4 +226,52 @@ it('displays the exact rewind message while missing stats are calculated', () =>
     app = createApp(LoadingState, { label: 'season leaders', message }); app.mount('#leaders');
     expect(document.querySelector('[role="status"] p').textContent).toBe(message);
     expect(document.querySelector('[role="status"]').getAttribute('aria-busy')).toBe('true');
+});
+
+
+const mountTeams = (overrides = {}) => {
+    app = createApp(Teams, { season: '20262027', seasons: ['20262027'], rows: [
+        { team: 'TOR', name: 'Toronto Maple Leafs', logo: '/tor.svg', gp: 2, points: 4, wins: 2, gf: 8, gaa: 2.5, win_pct: 100, cf_pct: 52, toi_total_seconds: 7440 },
+        { team: 'MTL', name: 'Montreal Canadiens', logo: '/mtl.svg', gp: 2, points: 1, wins: 0, gf: 3, gaa: null, win_pct: 0, cf_pct: null, toi_total_seconds: null },
+    ], ...overrides });
+    app.mount('#leaders');
+};
+it('renders every requested Teams column without duplicate hits or blocks', () => {
+    mountTeams();
+    expect([...document.querySelectorAll('thead th')].map(node => node.textContent.trim().replace(/ [↓↑]$/, '')))
+        .toEqual(['Team', 'GP', 'W', 'PTS', 'GF', 'GA', 'W%', 'GAA', 'Corsi%', 'Hits', 'Blocks', 'SAT', 'HDSAT', 'Saves', 'SOG', 'PIM', 'PP%', 'PK%']);
+});
+it('filters prepared Teams rows immediately by name or abbreviation', async () => {
+    mountTeams();
+    const input = document.querySelector('#team-search');
+    input.value = 'mtl'; input.dispatchEvent(new Event('input')); await nextTick();
+    expect(document.querySelectorAll('tbody tr')).toHaveLength(1);
+    expect(document.querySelector('tbody').textContent).toContain('Montreal Canadiens');
+});
+it('shows Teams unavailable rates as dashes and sorts them after numeric GAA', async () => {
+    mountTeams();
+    [...document.querySelectorAll('thead button')].find(node => node.textContent.trim() === 'GAA').click(); await nextTick();
+    expect(document.querySelector('tbody tr').textContent).toContain('Toronto');
+    expect(document.querySelectorAll('tbody tr')[1].textContent).toContain('—');
+});
+it('slices Teams counting stats per game while retaining GP, standings and percentages', () => {
+    mountTeams({ filters: { slice: 'pgp' } });
+    const values = [...document.querySelector('tbody tr').querySelectorAll('td')].map(node => node.textContent.trim());
+    expect(values.slice(1, 8)).toEqual(['2', '2', '4', '4.00', '—', '100.0%', '2.50']);
+    expect(document.querySelector('thead').textContent).toContain('GF/GP');
+});
+it('uses actual Teams elapsed time for per-sixty counting-stat presentation', () => {
+    mountTeams({ filters: { slice: 'p60' } });
+    expect(document.querySelector('tbody tr').querySelectorAll('td')[4].textContent).toBe((8 * 3600 / 7440).toFixed(2));
+    expect(document.querySelector('thead').textContent).toContain('GF/60');
+});
+it('opens Teams filters with one toggle and no player-position or goalie report controls', async () => {
+    mountTeams();
+    const toggle = [...document.querySelectorAll('button')].find(node => node.textContent.includes('Filters'));
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    toggle.click(); await nextTick();
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    const source = readFileSync(new URL('./Stats/Teams.vue', import.meta.url), 'utf8');
+    expect(source).toContain('aria-label="Game type"');
+    expect(source).not.toContain('aria-label="Position"');
 });

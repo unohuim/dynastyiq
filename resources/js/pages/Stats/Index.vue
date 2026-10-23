@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue';
 import { Deferred, Head, Link, router } from '@inertiajs/vue3';
 import StatsTable from './Table.vue';
+import Teams from './Teams.vue';
 import LeaderList from './LeaderList.vue';
 import LeaderCardRow from './LeaderCardRow.vue';
 import CategoryNav from './CategoryNav.vue';
@@ -20,6 +21,8 @@ const compactHero = computed(() => ['skaters', 'goalies'].includes(props.view));
 const categories = computed(() => props.view === 'goalies' ? (props.leaders.goalie_categories ?? []) : (compactHero.value ? ['goals', 'assists', 'ppp'] : ['goals', 'assists', 'ppp', 'sog', 'hits', 'blocks']).map(key => (props.leaders.categories ?? []).find(category => category.key === key)).filter(Boolean));
 const stripCategories = computed(() => ['points', 'goals', 'assists', 'sog', 'ppg', 'hits'].map(key => (props.leaders.categories ?? []).find(category => category.key === key)).filter(Boolean));
 const season = computed(() => props.leaders.season ? `${props.leaders.season.slice(0, 4)}–${props.leaders.season.slice(6)}` : 'Current season');
+const hasLeaderCards = computed(() => (props.leaders.mobile_leaders ?? []).some(row => (row.cards ?? []).length > 0)
+    || (props.leaders.categories ?? []).some(category => category.player != null));
 const rewindMessage = "the previous user didn't rewind, so that's what we're doing now. Stand by.";
 const pendingView = ref(null);
 const failedView = ref(null);
@@ -59,15 +62,6 @@ const goalieTabs = [{ key: 'gaa', label: 'GAA', low: true, format: 'decimal' }, 
 const rookieTabs = [{ key: 'points', label: 'Points' }, { key: 'goals', label: 'Goals' }, { key: 'assists', label: 'Assists' }, { key: 'sog', label: 'SOG' }];
 const advancedTabs = [{ key: 'ppg', label: 'P/GP', format: 'decimal' }, { key: 'xgf', label: 'xGF', format: 'decimal' }, { key: 'corsi', label: 'Corsi' }, { key: 'cf_pct', label: 'CF%', format: 'percent' }, { key: 'toi', label: 'TOI', format: 'time' }];
 const teamTabs = [{ key: 'points', label: 'Points' }, { key: 'goals', label: 'Goals' }, { key: 'assists', label: 'Assists' }, { key: 'sog', label: 'SOG' }, { key: 'hits', label: 'Hits' }];
-const teamSort = ref('points');
-const teamDescending = ref(true);
-const teamColumns = [{ key: 'name', label: 'Team' }, { key: 'gp', label: 'GP' }, { key: 'wins', label: 'W' }, { key: 'gf', label: 'GF' }, { key: 'ga', label: 'GA' }, { key: 'gf_pg', label: 'GF/GP' }, { key: 'ga_pg', label: 'GA/GP' }, { key: 'points', label: 'PTS' }, { key: 'assists', label: 'A' }, { key: 'sog', label: 'SOG' }, { key: 'hits', label: 'Hits' }];
-const sortedTeams = computed(() => [...teamRows.value].sort((a, b) => {
-    const key = teamSort.value;
-    if (a[key] == null || b[key] == null) return (a[key] == null) - (b[key] == null);
-    return (key === 'name' ? a.name.localeCompare(b.name) : a[key] - b[key]) * (teamDescending.value ? -1 : 1);
-}));
-const sortTeams = key => { teamDescending.value = key === teamSort.value ? !teamDescending.value : key !== 'name'; teamSort.value = key; };
 </script>
 
 <template>
@@ -78,9 +72,9 @@ const sortTeams = key => { teamDescending.value = key === teamSort.value ? !team
         </div>
         <Deferred data="leaders">
             <template #fallback>
-                <div class="sm:hidden"><LoadingState label="season leaders" hero :message="statsCacheMissing ? rewindMessage : ''" /></div>
+                <div class="sm:hidden"><LoadingState v-if="!hasLeaderCards" label="season leaders" hero :message="statsCacheMissing ? rewindMessage : ''" /></div>
                 <div class="hidden overflow-hidden rounded-lg border border-[#143144] sm:block">
-                    <LoadingState label="season leaders" hero :message="statsCacheMissing ? rewindMessage : ''" />
+                    <LoadingState v-if="!hasLeaderCards" label="season leaders" hero :message="statsCacheMissing ? rewindMessage : ''" />
                     <CategoryNav :links="navLinks" :view="pendingView || activeView" @start="startVisit" @finish="finishVisit" @failed="failVisit" />
                 </div>
             </template>
@@ -91,7 +85,19 @@ const sortTeams = key => { teamDescending.value = key === teamSort.value ? !team
                     <CategoryNav :links="navLinks" :view="pendingView || activeView" @start="startVisit" @finish="finishVisit" @failed="failVisit" />
                 </div>
             </template>
-        <section class="hidden min-w-0 overflow-hidden rounded-lg border border-[#143144] bg-[#03131f] sm:grid lg:grid-cols-[1.6fr_1fr]" :class="compactHero ? 'stats-hero-compact lg:h-[128px]' : 'lg:h-[236px]'" aria-label="Statistics leaders">
+        <section v-if="view === 'teams'" class="hidden overflow-hidden rounded-lg border border-[#143144] bg-[#03131f] sm:block" aria-label="Team statistics leaders">
+            <div class="flex min-h-[92px] items-center gap-4 px-4 py-2">
+                <div class="min-w-0 flex-1"><p class="text-[10px] uppercase tracking-widest text-slate-400">{{ season }}</p><h1 class="text-xl font-bold">Team Statistics</h1></div>
+                <div class="grid flex-[2] grid-cols-3 gap-2">
+                    <div v-for="category in leaders.team_categories ?? []" :key="category.key" class="flex min-w-0 items-center gap-2 rounded border border-[#143144] bg-[#03121c] px-2 py-1">
+                        <img v-if="category.team?.logo" :src="category.team.logo" alt="" class="h-12 w-12 object-contain" />
+                        <div class="min-w-0"><p class="text-[9px] text-slate-400">{{ category.label }}</p><p class="text-lg font-bold">{{ category.team ? `${category.team[category.key].toFixed(category.key === 'gaa' ? 2 : 1)}${category.key === 'gaa' ? '' : '%'}` : '—' }}</p><p class="truncate text-[10px]">{{ category.team?.team || 'Unavailable' }}</p></div>
+                    </div>
+                </div>
+            </div>
+            <CategoryNav :links="navLinks" :view="pendingView || activeView" @start="startVisit" @finish="finishVisit" @failed="failVisit" />
+        </section>
+        <section v-else class="hidden min-w-0 overflow-hidden rounded-lg border border-[#143144] bg-[#03131f] sm:grid lg:grid-cols-[1.6fr_1fr]" :class="compactHero ? 'stats-hero-compact lg:h-[128px]' : 'lg:h-[236px]'" aria-label="Statistics leaders">
             <div class="relative isolate flex min-w-0 flex-col overflow-hidden lg:min-h-0" :class="compactHero ? 'min-h-0' : 'min-h-[248px]'">
                 <img v-if="view === 'goalies' && (hero?.hero || hero?.avatar)" :src="hero.hero || hero.avatar" alt="" class="absolute inset-0 -z-20 h-full w-full object-cover object-top opacity-30 blur-sm" />
                 <img v-if="hero?.hero || hero?.avatar" :src="hero.hero || hero.avatar" alt="" class="absolute inset-0 -z-20 h-full w-full opacity-75" :class="view === 'goalies' ? (hero?.hero ? 'stats-goalie-hero-photo' : 'object-contain object-top') : 'object-cover object-top'" />
@@ -129,32 +135,7 @@ const sortTeams = key => { teamDescending.value = key === teamSort.value ? !team
                 <LeaderList title="Team Leaders" :rows="teamRows" :tabs="teamTabs" entity="Team" :href="href('teams')" />
             </div>
         </div>
-        <section v-else-if="view === 'teams' && !pendingView" class="overflow-hidden rounded-lg border border-[#143144] bg-[#041724] sm:p-4"><h2 class="mb-3 hidden text-lg font-bold sm:block">Team statistics · {{ season }}</h2>
-            <div class="sm:hidden" aria-label="Mobile team statistics">
-                <div class="flex items-center justify-between gap-2 border-b border-[#143144] px-3 py-2 text-xs">
-                    <h2 class="font-semibold">All Teams</h2>
-                    <label class="flex min-w-0 items-center gap-2 text-slate-400">Sort
-                        <select :value="teamSort" class="min-w-0 rounded border border-[#28516a] bg-[#101923] px-2 py-1 text-xs text-slate-100 focus-visible:ring-2 focus-visible:ring-sky-400" @change="sortTeams($event.target.value)">
-                            <option v-for="column in teamColumns" :key="column.key" :value="column.key">{{ column.label }}</option>
-                        </select>
-                    </label>
-                    <button type="button" class="rounded px-2 py-1 text-sky-300 focus-visible:ring-2 focus-visible:ring-sky-400" :aria-label="teamDescending ? 'Sort ascending' : 'Sort descending'" @click="teamDescending = !teamDescending">{{ teamDescending ? '↓' : '↑' }}</button>
-                </div>
-                <ul class="divide-y divide-[#233342] bg-[#101923] font-stats tabular-nums">
-                    <li v-for="team in sortedTeams" :key="team.id" class="flex min-w-0 items-center gap-2 px-2 py-2">
-                        <span class="w-7 shrink-0 text-center text-[10px] font-bold text-slate-400">{{ team.team }}</span>
-                        <img v-if="team.logo" :src="team.logo" alt="" class="h-8 w-8 shrink-0 object-contain" loading="lazy" />
-                        <div class="min-w-0 flex-1">
-                            <div class="flex items-center justify-between gap-2 text-xs"><span class="truncate font-semibold uppercase">{{ team.name }}</span><span class="shrink-0"><span class="text-[9px] text-slate-400">PTS</span> <b>{{ team.points ?? '—' }}</b></span></div>
-                            <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[9px]">
-                                <span v-for="column in teamColumns.filter(column => !['name', 'points'].includes(column.key))" :key="column.key" class="whitespace-nowrap"><span class="text-slate-400">{{ column.label }}</span> {{ team[column.key] == null ? '—' : column.key.endsWith('_pg') ? team[column.key].toFixed(2) : team[column.key] }}</span>
-                            </div>
-                        </div>
-                    </li>
-                </ul>
-                <p v-if="!sortedTeams.length" class="px-3 py-6 text-center text-xs text-slate-400">No completed team results for this season.</p>
-            </div>
-            <div class="hidden overflow-x-auto sm:block"><table class="w-full text-left text-xs tabular-nums"><thead class="border-b border-[#143144] text-slate-400"><tr><th v-for="column in teamColumns" :key="column.key" class="whitespace-nowrap p-2" :aria-sort="teamSort === column.key ? teamDescending ? 'descending' : 'ascending' : 'none'"><button type="button" class="rounded hover:text-sky-300 focus-visible:ring-2 focus-visible:ring-sky-400" @click="sortTeams(column.key)">{{ column.label }} <span v-if="teamSort === column.key">{{ teamDescending ? '↓' : '↑' }}</span></button></th></tr></thead><tbody><tr v-for="team in sortedTeams" :key="team.id" class="border-b border-[#143144]/60"><td v-for="column in teamColumns" :key="column.key" class="whitespace-nowrap p-2"><span v-if="column.key === 'name'" class="flex items-center gap-2"><img v-if="team.logo" :src="team.logo" alt="" class="h-6 w-6 object-contain" />{{ team.name }}</span><template v-else>{{ team[column.key] === null ? '—' : column.key.endsWith('_pg') ? team[column.key].toFixed(2) : team[column.key] }}</template></td></tr></tbody></table><p v-if="!sortedTeams.length" class="py-8 text-sm text-slate-400">No completed team results for this season.</p></div></section>
+        <Teams v-else-if="view === 'teams' && !pendingView" :rows="leaders.teams ?? []" :filters="leaders.team_filters ?? {}" :seasons="leaders.available_team_seasons ?? []" :season="leaders.season || selectedSeason" />
         </Deferred>
         <p v-if="seamlessTableSwitch" role="status" class="sr-only">Loading {{ pendingView }}…</p>
         <LoadingState v-if="pendingView && !seamlessTableSwitch" :label="pendingView" />

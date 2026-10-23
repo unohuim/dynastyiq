@@ -1489,6 +1489,10 @@ Migrations remain the **sole source of truth**.
 | Name | Type | Nullable | Notes |
 | --- | --- | --- | --- |
 | nhl_game_id | unsignedBigInteger | No | Primary key; source NHL game ID |
+| home_pp_goals | unsignedSmallInteger | Yes | Actual home PP goals from right-rail teamGameStats.powerPlay numerator |
+| home_pp_opportunities | unsignedSmallInteger | Yes | Actual home PP opportunities from the same goals/opportunities pair |
+| away_pp_goals | unsignedSmallInteger | Yes | Actual away PP goals from right-rail teamGameStats.powerPlay numerator |
+| away_pp_opportunities | unsignedSmallInteger | Yes | Actual away PP opportunities from the same pair; missing coverage stays NULL |
 | season_id | string | No | NHL season ID |
 | game_type | integer | No | NHL game type |
 | game_date | date | No | Game date |
