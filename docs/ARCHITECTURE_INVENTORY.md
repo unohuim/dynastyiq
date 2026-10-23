@@ -259,11 +259,19 @@ php artisan api-client:create partner-app --scope=nhl-reference:read --scope=nhl
 
 ### Scheduled Process Manager
 
+Game Import rows support run-scoped Pause, Resume and Cancel for discovery,
+Full and scoped processing. Admission stops during Pause; cancellation fences
+uncommitted database work and leaves workers alive. Durable checkpoints and
+generations prevent stale jobs from reviving a restarted run. Authority:
+`docs/architecture/imports/NhlGameImportRunControl.yaml`.
+
 Scheduled process timing is incrementally centralized in `ScheduledProcessManager`
 and `scheduled_processes`, covering NHL game discovery and model-specific pregame
 context updates. The Games Import Pipeline and SAT Model rows expose their own
 toggle and settings drawer. Pregame updates create durable context runs and use the
-existing bounded orchestrator; `GamesDiscovered` starts game processing after commit.
+existing bounded orchestrator; `GamesDiscovered` starts opted-in scheduled game
+processing after commit. Manual UI and CLI discoveries remain Ready for an
+explicit processing selection; their payload disables automatic Full processing.
 Canonical authority:
 `docs/architecture/application/ScheduledProcessManager.yaml` and
 `docs/architecture/imports/NhlDiscoveryPipeline.yaml`.
@@ -722,6 +730,10 @@ $factor = NhleLeagueFactor::query()
 **Purpose:**
 Determine and persist DynastyIQ prospect flags from local draft evidence and imported legacy stats instead of provider caller context.
 Prospects must be NHL-drafted, younger than 26 on the September 15 evaluation cutoff, under the NHL regular-season games-played limit, and active in current non-NHL legacy stats.
+The default drafting mode retains that activity requirement. Reporting passes
+`for_drafting: false` to accept NHL activity in the same evaluation window too.
+Rookie Leaders uses the service's bulk eligibility method without changing stored
+drafting flags. Authority: `docs/architecture/imports/ProspectEligibility.yaml`.
 
 **When to Use:**
 Recomputing `players.is_prospect`, recomputing `stats.is_prospect` after NHL landing stats imports, or building future prospect-label audits.
@@ -733,6 +745,7 @@ Award-specific Calder eligibility modeling, stats row import replacement, or NHL
 **Public Interface:**
 - `ProspectEligibilityService::isProspect()`
 - `ProspectEligibilityService::evaluationSeasonIds()`
+- `ProspectEligibilityService::eligibleNhlPlayerIds()`
 - `nhl:isprospects`
 
 **Example Usage:**

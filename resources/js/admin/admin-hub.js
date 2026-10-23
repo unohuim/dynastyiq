@@ -120,6 +120,7 @@ export default function adminHub(options = {}) {
             refreshingSchedule: false,
             processing: false,
             processingRuns: {},
+            controllingRuns: {},
             syncingSeason: false,
             emptyingGames: false,
             scanningDuplicatePbp: false,
@@ -1735,6 +1736,9 @@ export default function adminHub(options = {}) {
         },
 
         gameImportBadgeText(run) {
+            if (['pausing', 'paused', 'cancelled'].includes(run.status)) {
+                return run.status.toUpperCase();
+            }
             if (this.isDuplicatePbpRepairRun(run)) {
                 return this.duplicatePbpRepairBadgeText(run);
             }
@@ -1751,6 +1755,9 @@ export default function adminHub(options = {}) {
         },
 
         gameImportBadgeClass(run) {
+            if (['pausing', 'paused', 'cancelled'].includes(run.status)) {
+                return this.gameImportStatusClass(run.status);
+            }
             if (this.isDuplicatePbpRepairRun(run)) {
                 return this.duplicatePbpRepairBadgeClass(run);
             }
@@ -1846,6 +1853,12 @@ export default function adminHub(options = {}) {
         },
 
         gameImportStatusClass(status) {
+            if (['pausing', 'paused'].includes(status)) {
+                return 'bg-amber-100 text-amber-800';
+            }
+            if (status === 'cancelled') {
+                return 'bg-gray-200 text-gray-700';
+            }
             if (status === 'completed') {
                 return 'bg-green-100 text-green-700';
             }
@@ -1862,6 +1875,9 @@ export default function adminHub(options = {}) {
         },
 
         discoveryBadgeText(run) {
+            if (['pausing', 'paused', 'cancelled'].includes(run.status)) {
+                return run.status.toUpperCase();
+            }
             const progress = run.progress ?? {};
             const facts = run.facts ?? {};
             const failed = Number(progress.failed_stage_rows) || 0;
@@ -2400,6 +2416,9 @@ export default function adminHub(options = {}) {
         },
 
         canProcessGameImportRun(run) {
+            if (['pausing', 'paused', 'cancelled'].includes(run.status)) {
+                return false;
+            }
             const discoveredGames = Number(run?.facts?.discovered_game_count || 0);
             const visibleGames = Array.isArray(run?.games) ? run.games.length : 0;
 
@@ -2486,6 +2505,9 @@ export default function adminHub(options = {}) {
         },
 
         canRerunGameImportRun(run) {
+            if (['pausing', 'paused'].includes(run?.status)) {
+                return false;
+            }
             if (!run?.id) {
                 return false;
             }
@@ -2508,7 +2530,31 @@ export default function adminHub(options = {}) {
         },
 
         canDeleteGameImportRun(run) {
-            return Boolean(run?.id) && ['completed', 'failed'].includes(run?.status);
+            return Boolean(run?.id) && ['completed', 'failed', 'cancelled'].includes(run?.status);
+        },
+
+        canControlGameImportRun(run, action) {
+            if (!['discover', 'process'].includes(run?.action)) return false;
+            const status = ['pausing', 'paused', 'cancelled'].includes(run.status) ? run.status : (run.stored_status ?? run.status);
+            if (action === 'pause') return ['queued', 'running'].includes(status);
+            if (action === 'resume') return status === 'paused';
+            return ['queued', 'running', 'pausing', 'paused'].includes(status);
+        },
+
+        async controlGameImportRun(run, action) {
+            if (!this.canControlGameImportRun(run, action) || this.gameImports.controllingRuns[run.id]) return;
+            this.gameImports.controllingRuns = { ...this.gameImports.controllingRuns, [run.id]: action };
+            this.gameImports.error = '';
+            try {
+                await this.sendGameImportRequest(`${this.gameImportDeleteUrl}/${run.id}/${action}`, {});
+                await this.loadGameImports({ background: true });
+            } catch (error) {
+                this.gameImports.error = error.message ?? 'Unable to update this run.';
+            } finally {
+                const pending = { ...this.gameImports.controllingRuns };
+                delete pending[run.id];
+                this.gameImports.controllingRuns = pending;
+            }
         },
 
         gameImportDeleteBusy(run) {

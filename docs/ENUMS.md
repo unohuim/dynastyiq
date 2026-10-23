@@ -156,6 +156,7 @@ Horizon assigns twenty-five workers to `projections`, five workers to `default`,
 
 ## Scheduled process keys and discovery work scheduling
 
+- `nhl_game_import_runs.payload.auto_process`: boolean; true opts a discovery into automatic Full processing. Manual UI and CLI discovery writes false. With the field absent, only the existing `scheduled_process: nhl-game-discovery` marker qualifies as a legacy scheduled opt-in.
 - `scheduled_processes.key`: `nhl-game-discovery` and
   `nhl-pregame-context-model-{model_run_id}` identify supported scheduled work.
 - `nhl_pregame_context_runs.options.trigger`: `auto_sync` identifies a scheduled
@@ -890,6 +891,9 @@ These values describe training-only age, S1-to-S2 rate movement, S1-to-S2 opport
 - `running`
 - `completed`
 - `failed`
+- `pausing`
+- `paused`
+- `cancelled`
 
 **Semantic meaning:**
 
@@ -897,6 +901,14 @@ These values describe training-only age, S1-to-S2 rate movement, S1-to-S2 opport
 - `running`: Related NHL import progress rows are scheduled, running, or partially completed, or a season sync job is actively rolling up stats.
 - `completed`: Related NHL import progress rows are all completed, or a season sync job completed successfully.
 - `failed`: At least one related NHL import progress row is in error, or a season sync job failed.
+- `pausing`: Admission is stopped while already-claimed discovery/import work finishes.
+- `paused`: No live claims remain; unfinished work can be resumed from checkpoints.
+- `cancelled`: Operator-cancelled terminal run. Pending/running stage rows use existing `skipped` status with a cancellation reason. Completed results remain available; restart is an explicit rerun.
+
+`nhl_game_import_runs.payload.run_control` stores a generation, expiring active
+claims and completed-work keys. Resume and explicit reruns rotate the generation;
+worker updates must not revive a cancelled run or cross generations. These controls
+apply to discovery and game-processing runs, not unrelated orchestration actions.
 
 ---
 

@@ -42,6 +42,9 @@ class NhlImportOrchestrator
     /** Daily entry point: scan tracker and dispatch eligible jobs. */
     public function processScheduled(string $gameDate, ?int $runId = null): void
     {
+        if (! app(NhlGameImportRunControl::class)->canAdvance($runId)) {
+            return;
+        }
         if ($this->repo->runningExistsForDate($gameDate, $runId)) {
             return;
         }
@@ -59,11 +62,17 @@ class NhlImportOrchestrator
                 }
             }
         }
+        if ($runId !== null) {
+            $this->markRunCompletedIfDone($runId);
+        }
     }
 
     /** Fill configured active game slots for one discovery run. */
     public function fillActiveGameSlotsForRun(int $runId): int
     {
+        if (! app(NhlGameImportRunControl::class)->canAdvance($runId)) {
+            return 0;
+        }
         $lock = Cache::lock("nhl-import-run-fill:{$runId}", 30);
 
         if (! $lock->get()) {
@@ -104,7 +113,12 @@ class NhlImportOrchestrator
     /** Claim a (game_id, type) for work: scheduled → running. */
     public function claim(int $gameId, string $type, ?int $runId = null): bool
     {
-        return $this->repo->claim($gameId, $type, $runId);
+        return DB::transaction(function () use ($gameId, $type, $runId): bool {
+            if ($runId !== null) {
+                NhlGameImportRun::query()->whereKey($runId)->lockForUpdate()->first();
+            }
+            return app(NhlGameImportRunControl::class)->canAdvance($runId) && $this->repo->claim($gameId, $type, $runId);
+        });
     }
 
     /** Verify it’s running (used by jobs as a guard). */
@@ -144,10 +158,10 @@ class NhlImportOrchestrator
     }
 
     /** Jobs call this on success; centralizes status/metrics and advancement. */
-    public function onSuccess(int $gameId, string $type, array $meta = []): void
+    public function onSuccess(int $gameId, string $type, array $meta = [], ?int $runId = null): void
     {
         $items = (int) ($meta['items_count'] ?? 0);
-        $runId = $this->runIdForStage($gameId, $type);
+        $runId ??= $this->runIdForStage($gameId, $type);
         $this->repo->markCompleted($gameId, $type, $items, $runId, true);
         $this->clearTroubleshootingDirectoryAfterSuccessfulStage($gameId, $type);
         $this->seasonSummary($gameId, $type);
@@ -209,6 +223,9 @@ class NhlImportOrchestrator
     /** Check if next stage exists (scheduled) and dependencies are completed. */
     public function readyFor(int $gameId, string $type, ?int $runId = null): bool
     {
+        if (! app(NhlGameImportRunControl::class)->canAdvance($runId)) {
+            return false;
+        }
         $deps = NhlImportStages::dependenciesFor($type);
 
         if (!$this->repo->scheduledExists($gameId, $type, $runId)) {
@@ -221,23 +238,43 @@ class NhlImportOrchestrator
     /** Claim and dispatch the appropriate job. */
     public function dispatchJob(int $gameId, string $type, ?int $runId = null): bool
     {
+        if ($runId === null) {
+            $owner = DB::table('nhl_import_progress as p')->leftJoin('nhl_game_import_runs as r', 'r.id', '=', 'p.run_id')
+                ->where('p.game_id', $gameId)->where('p.import_type', $type)->where('p.status', 'scheduled')
+                ->where(fn ($query) => $query->whereNull('p.run_id')->orWhereIn('r.status', ['queued', 'running']))
+                ->orderBy('p.id')->first(['p.run_id']);
+            if ($owner === null) {
+                return false;
+            }
+            $runId = $owner->run_id === null ? null : (int) $owner->run_id;
+        }
+        if (! app(NhlGameImportRunControl::class)->canAdvance($runId)) {
+            return false;
+        }
         $jobClass = NhlImportStages::jobClassFor($type);
 
         if (! $jobClass) {
             return false;
         }
 
-        if (! $this->sourcePreflightAllows($gameId, $type, $type === NhlImportStages::PBP, $runId)) {
+        try {
+            return DB::transaction(function () use ($gameId, $type, $runId, $jobClass): bool {
+                $allowed = $this->sourcePreflightAllows($gameId, $type, $type === NhlImportStages::PBP, $runId);
+                if (! app(NhlGameImportRunControl::class)->canAdvance($runId)) {
+                    throw new \App\Exceptions\NhlGameImportRunCancelled();
+                }
+                if (! $allowed || ! $this->claim($gameId, $type, $runId)) {
+                    return false;
+                }
+                dispatch((new $jobClass($gameId, $runId))->afterCommit());
+                if (! app(NhlGameImportRunControl::class)->canAdvance($runId)) {
+                    throw new \App\Exceptions\NhlGameImportRunCancelled();
+                }
+                return true;
+            });
+        } catch (\App\Exceptions\NhlGameImportRunCancelled) {
             return false;
         }
-
-        if (! $this->repo->claim($gameId, $type, $runId)) {
-            return false;
-        }
-
-        dispatch(new $jobClass($gameId, $runId));
-
-        return true;
     }
 
     private function dispatchFirstReadyStageForGame(int $gameId, int $runId): bool
@@ -297,7 +334,7 @@ class NhlImportOrchestrator
 
         if ($lock->get()) { // 10 min lock
             try {
-                dispatch(new SeasonSumJob($seasonId));
+                dispatch((new SeasonSumJob($seasonId))->afterCommit());
             } finally {
                 $lock->release();
             }
@@ -405,7 +442,8 @@ class NhlImportOrchestrator
 
         $run = NhlGameImportRun::query()->find($runId);
 
-        if (! $run || $run->status === NhlGameImportRun::STATUS_COMPLETED) {
+        if (! $run || $run->status === NhlGameImportRun::STATUS_COMPLETED
+            || in_array($run->status, NhlGameImportRunControl::CONTROLLED, true)) {
             return;
         }
 
@@ -423,11 +461,11 @@ class NhlImportOrchestrator
 
         $payload['completed_at'] = now()->toIso8601String();
 
-        $run->forceFill([
+        app(NhlGameImportRunControl::class)->saveWorkerRun($run, [
             'status' => NhlGameImportRun::STATUS_COMPLETED,
             'payload' => $payload,
             'updated_at' => now(),
-        ])->save();
+        ]);
 
         broadcast(new NhlGameImportStatusUpdated('processing-completed', $runId));
     }
@@ -474,11 +512,11 @@ class NhlImportOrchestrator
             $payload['post_process_enrichment_completed_at'] = now()->toIso8601String();
             $payload['completed_at'] = now()->toIso8601String();
 
-            $run->forceFill([
+            app(NhlGameImportRunControl::class)->saveWorkerRun($run, [
                 'status' => NhlGameImportRun::STATUS_COMPLETED,
                 'payload' => $payload,
                 'updated_at' => now(),
-            ])->save();
+            ]);
 
             broadcast(new NhlGameImportStatusUpdated('processing-completed', (int) $run->id));
 
@@ -499,11 +537,11 @@ class NhlImportOrchestrator
         $payload['post_process_enrichment_job_count'] = count($jobs);
         $payload['post_process_enrichment_scopes'] = ['shots', 'faceoffs', 'refs_staff'];
 
-        $run->forceFill([
+        app(NhlGameImportRunControl::class)->saveWorkerRun($run, [
             'status' => NhlGameImportRun::STATUS_RUNNING,
             'payload' => $payload,
             'updated_at' => now(),
-        ])->save();
+        ]);
 
         $batch = Bus::batch($jobs)
             ->then(function (Batch $batch) use ($runId): void {
@@ -519,10 +557,10 @@ class NhlImportOrchestrator
         $payload = $run->payload ?? [];
         $payload['post_process_enrichment_batch_id'] = $batch->id;
 
-        $run->forceFill([
+        app(NhlGameImportRunControl::class)->saveWorkerRun($run, [
             'payload' => $payload,
             'updated_at' => now(),
-        ])->save();
+        ]);
 
         broadcast(new NhlGameImportStatusUpdated('post-process-enrichment-queued', $runId));
     }
@@ -545,7 +583,7 @@ class NhlImportOrchestrator
     {
         $run = NhlGameImportRun::query()->find($runId);
 
-        if (! $run) {
+        if (! app(NhlGameImportRunControl::class)->acceptsBatchCallback($run, 'post_process_enrichment_batch_id', $batchId, true)) {
             return;
         }
 
@@ -569,11 +607,11 @@ class NhlImportOrchestrator
         $payload['refs_staff_assignment_game_count'] = self::refsStaffAssignmentGameCount($gameIds);
         $payload['completed_at'] = now()->toIso8601String();
 
-        $run->forceFill([
+        app(NhlGameImportRunControl::class)->saveWorkerRun($run, [
             'status' => NhlGameImportRun::STATUS_COMPLETED,
             'payload' => $payload,
             'updated_at' => now(),
-        ])->save();
+        ]);
 
         broadcast(new NhlGameImportStatusUpdated('processing-completed', $runId));
     }
@@ -582,7 +620,7 @@ class NhlImportOrchestrator
     {
         $run = NhlGameImportRun::query()->find($runId);
 
-        if (! $run) {
+        if (! app(NhlGameImportRunControl::class)->acceptsBatchCallback($run, 'post_process_enrichment_batch_id', $batchId)) {
             return;
         }
 
@@ -591,12 +629,12 @@ class NhlImportOrchestrator
         $payload['post_process_enrichment_failed_at'] = now()->toIso8601String();
         $payload['post_process_enrichment_last_error'] = mb_substr($throwable->getMessage(), 0, 1000);
 
-        $run->forceFill([
+        app(NhlGameImportRunControl::class)->saveWorkerRun($run, [
             'status' => NhlGameImportRun::STATUS_FAILED,
             'payload' => $payload,
             'last_error' => $payload['post_process_enrichment_last_error'],
             'updated_at' => now(),
-        ])->save();
+        ]);
 
         Log::error('NHL full post-process enrichment batch failed.', [
             'run_id' => $runId,

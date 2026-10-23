@@ -6,7 +6,6 @@ namespace App\Services;
 
 use App\Models\Player;
 use App\Models\PlayerExternalIdentity;
-use App\Models\Stat;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Carbon;
 
@@ -17,32 +16,40 @@ final class ProspectEligibilityService
 {
     /**
      * Determine prospect eligibility from local draft evidence and legacy stats rows.
+     * Drafting requires non-NHL games; reporting also accepts NHL games in the same window.
      */
-    public function isProspect(int $nhlPlayerId, ?CarbonInterface $asOf = null): bool
+    public function isProspect(int $nhlPlayerId, ?CarbonInterface $asOf = null, bool $for_drafting = true): bool
     {
-        $player = Player::query()
-            ->where('nhl_id', $nhlPlayerId)
-            ->first();
+        return in_array($nhlPlayerId, $this->eligibleNhlPlayerIds([$nhlPlayerId], $asOf, $for_drafting), true);
+    }
 
-        if (! $player instanceof Player || $player->id === null) {
-            return false;
+    /**
+     * Evaluate a list with the same rules without issuing eligibility queries per player.
+     *
+     * @param array<int, int> $nhlPlayerIds
+     * @return array<int, int>
+     */
+    public function eligibleNhlPlayerIds(array $nhlPlayerIds, ?CarbonInterface $asOf = null, bool $for_drafting = true): array
+    {
+        if ($nhlPlayerIds === []) {
+            return [];
         }
-
-        if (! $this->hasDraftEvidence($player)) {
-            return false;
-        }
-
         $asOf ??= Carbon::now();
 
-        if (! $this->isYoungerThanTwentySixOnCutoff($player, $asOf)) {
-            return false;
-        }
-
-        if ($this->careerNhlRegularSeasonGamesPlayed($player) > 25) {
-            return false;
-        }
-
-        return $this->hasCurrentEvaluationSeasonNonNhlStats($player, $asOf);
+        return Player::query()->whereIn('nhl_id', $nhlPlayerIds)
+            ->with(['externalIdentities' => fn ($query) => $query->whereIn('provider', [
+                PlayerExternalIdentity::PROVIDER_NHL_DRAFT, PlayerExternalIdentity::PROVIDER_NHL,
+            ])])
+            ->withSum(['stats as prospect_career_gp' => fn ($query) => $query
+                ->where('league_abbrev', 'NHL')->where('game_type_id', 2)], 'gp')
+            ->withExists(['stats as prospect_window_games' => fn ($query) => $query
+                ->whereIn('season_id', $this->evaluationSeasonIds($asOf))->where('gp', '>', 0)
+                ->when($for_drafting, fn ($stats) => $stats->where('league_abbrev', '<>', 'NHL'))])
+            ->get()
+            ->filter(fn (Player $player): bool => $this->hasDraftEvidence($player)
+                && $this->isYoungerThanTwentySixOnCutoff($player, $asOf)
+                && (int) $player->prospect_career_gp <= 25 && (bool) $player->prospect_window_games)
+            ->map(fn (Player $player): int => (int) $player->nhl_id)->values()->all();
     }
 
     /**
@@ -69,13 +76,7 @@ final class ProspectEligibilityService
 
     private function hasDraftEvidence(Player $player): bool
     {
-        return PlayerExternalIdentity::query()
-            ->where('player_id', $player->id)
-            ->where(function ($query): void {
-                $query->where('provider', PlayerExternalIdentity::PROVIDER_NHL_DRAFT)
-                    ->orWhere('provider', PlayerExternalIdentity::PROVIDER_NHL);
-            })
-            ->get()
+        return $player->externalIdentities
             ->contains(function (PlayerExternalIdentity $identity): bool {
                 if ($identity->provider === PlayerExternalIdentity::PROVIDER_NHL_DRAFT) {
                     return true;
@@ -85,15 +86,6 @@ final class ProspectEligibilityService
 
                 return is_array($draftDetails) && $draftDetails !== [];
             });
-    }
-
-    private function careerNhlRegularSeasonGamesPlayed(Player $player): int
-    {
-        return (int) Stat::query()
-            ->where('player_id', $player->id)
-            ->where('league_abbrev', 'NHL')
-            ->where('game_type_id', 2)
-            ->sum('gp');
     }
 
     private function isYoungerThanTwentySixOnCutoff(Player $player, CarbonInterface $asOf): bool
@@ -116,16 +108,6 @@ final class ProspectEligibilityService
         $year = (int) $asOf->format('Y');
 
         return Carbon::create($year, 9, 15)->startOfDay();
-    }
-
-    private function hasCurrentEvaluationSeasonNonNhlStats(Player $player, CarbonInterface $asOf): bool
-    {
-        return Stat::query()
-            ->where('player_id', $player->id)
-            ->where('league_abbrev', '<>', 'NHL')
-            ->whereIn('season_id', $this->evaluationSeasonIds($asOf))
-            ->where('gp', '>', 0)
-            ->exists();
     }
 
     private function seasonId(int $startYear): string

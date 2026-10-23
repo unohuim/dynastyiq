@@ -323,7 +323,21 @@ it('excludes unplayed future games from team totals', function (): void {
 });
 it('does not infer rookie eligibility from the prospect flag', function (): void {
     $this->player->update(['is_prospect' => true]);
-    expect(($this->facts)()['rookies'])->toBe([])->and(($this->facts)()['rookie_note'])->toContain('not available');
+    expect(($this->facts)()['rookies'])->toBe([])->and(($this->facts)()['rookie_note'])->toContain('No eligible rookie skaters');
+});
+it('lists an NHL-only eligible rookie using the non-drafting service mode', function (): void {
+    $this->player->update(['dob' => '2005-01-01', 'is_prospect' => false]);
+    \App\Models\PlayerExternalIdentity::query()->create([
+        'player_id' => $this->player->id, 'provider' => 'nhl_draft', 'provider_player_id' => 'rookie-fixture',
+    ]);
+    \App\Models\Stat::query()->create([
+        'player_id' => $this->player->id, 'season_id' => '20262027', 'league_abbrev' => 'NHL',
+        'team_name' => 'Toronto Maple Leafs', 'game_type_id' => 2, 'gp' => 2,
+    ]);
+    $this->get('/stats')->assertOk()->assertInertia(fn (Assert $page) => $page
+        ->loadDeferredProps('stats-leaders', fn (Assert $reload) => $reload
+            ->where('leaders.rookies.0.id', 9000001)->where('leaders.rookies.0.stats.points', 8)));
+    expect(app(\App\Services\ProspectEligibilityService::class)->isProspect(9000001))->toBeFalse();
 });
 it('withholds xGF when no scored goal model is available', function (): void {
     expect(($this->facts)()['hero']['stats']['xgf'])->toBeNull();

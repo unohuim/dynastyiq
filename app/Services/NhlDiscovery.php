@@ -29,7 +29,11 @@ class NhlDiscovery
             [$start, $end] = [$end, $start];
         }
 
+        $completed = $runId === null ? [] : (\App\Models\NhlGameImportRun::query()->find($runId)?->payload['discovery_completed_dates'] ?? []);
         for ($cursor = $start->copy(); $cursor->gte($end); $cursor->subDay()) {
+            if (in_array($cursor->toDateString(), $completed, true)) {
+                continue;
+            }
             NhlDiscoverDayJob::dispatch($cursor->toDateString(), $runId);
         }
     }

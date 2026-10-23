@@ -16,12 +16,17 @@ class DiscoveredGameProcessing
     {
         $ready = DB::transaction(function () use ($runId): bool {
             $run = NhlGameImportRun::query()->whereKey($runId)->lockForUpdate()->first();
-            if (! $run || $run->action !== 'discover' || $run->status === 'failed') {
+            if (! $run || $run->action !== 'discover'
+                || in_array($run->status, ['failed', 'pausing', 'paused', 'cancelled'], true)) {
                 return false;
             }
             $payload = $run->payload ?? [];
-            if (count(array_unique($payload['discovery_completed_dates'] ?? [])) < $run->date_count
-                || in_array($payload['process_scope'] ?? null, ['shots', 'faceoffs'], true)
+            // Preserve already-queued scheduler runs; unmarked manual discoveries never opt in.
+            $autoProcess = $payload['auto_process']
+                ?? (($payload['scheduled_process'] ?? null) === ScheduledProcessManager::NHL_DISCOVERY);
+            if ($autoProcess !== true
+                || count(array_unique($payload['discovery_completed_dates'] ?? [])) < $run->date_count
+                || ($payload['process_scope'] ?? null) !== null
                 || ($run->status === 'completed' && isset($payload['processing_started_at']))) {
                 return false;
             }

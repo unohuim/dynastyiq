@@ -1039,6 +1039,13 @@ export default {
                                             </div>
                                         </div>
                                         <div class="flex flex-wrap items-center justify-end gap-1.5 text-xs text-gray-600 sm:text-right">
+                                            <button v-for="action in ['pause', 'resume', 'cancel'].filter(action => canControlGameImportRun(run, action))" :key="action" type="button"
+                                                :disabled="Boolean(gameImports.controllingRuns[run.id])" :aria-label="`${action} ${gameImportTitle(run)}`"
+                                                class="rounded-md border px-2 py-1 text-[11px] font-semibold transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 motion-reduce:transition-none disabled:cursor-wait disabled:opacity-60"
+                                                :class="action === 'cancel' ? 'border-red-200 text-red-700 hover:bg-red-50' : 'border-gray-300 text-gray-700 hover:bg-gray-50'"
+                                                @click="controlGameImportRun(run, action)">
+                                                {{ gameImports.controllingRuns[run.id] === action ? 'Updating…' : action === 'pause' ? 'Pause' : action === 'resume' ? 'Resume' : 'Cancel' }}
+                                            </button>
                                             <template v-if="canProcessGameImportRun(run)">
                                                 <div class="relative">
                                                     <button

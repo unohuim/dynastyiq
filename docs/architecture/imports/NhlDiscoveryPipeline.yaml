@@ -26,8 +26,9 @@ rules:
   - Discovery must seed import progress rows from NhlImportStages instead of maintaining its own stage list.
   - Command-line discovery must record an admin-visible nhl_game_import_runs row before dispatching so CLI and UI discovery share the same orchestration ledger.
   - Discovery jobs must write nhl_import_progress.run_id when an admin-visible run created the discovery work.
+  - Discovery coordinators and day jobs obey NhlGameImportRunControl.yaml. Resume retains resolved discovery dates and only dispatches unfinished dates. A paused completed discovery waits for Resume before emitting processing readiness, and cancellation cannot be overwritten by late date completions.
   - The final distinct resolved discovery date emits GamesDiscovered after its transaction commits. Duplicate date delivery must not emit readiness twice or reopen a processing-completed run. Failed discovery runs must not be revived by later date completions.
-  - A queued default-queue listener delegates readiness to DiscoveredGameProcessing, which verifies complete discovery and pending run-owned work before asking NhlImportOrchestrator to fill its existing game slots. Repeated events do not reset stages or duplicate completed processing.
+  - A queued default-queue listener delegates readiness to DiscoveredGameProcessing, which requires automatic-processing opt-in, complete discovery and pending run-owned work before asking NhlImportOrchestrator to fill its existing game slots. Scheduled discoveries opt in; manual UI and command-line discoveries, including manual reruns, remain Ready for the operator's selected processing scope. Test the persisted opt-in before changing run state. Already queued scheduler-origin runs without the new flag retain automatic processing through their existing scheduled_process marker; an explicit false always wins. Repeated events do not reset stages or duplicate completed processing.
   - Discovery job failures mark active discovery parents failed so automatic scheduling does not remain blocked indefinitely by an abandoned running parent.
 public_interface:
   - NhlDiscoverCommand

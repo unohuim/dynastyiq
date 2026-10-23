@@ -18,6 +18,7 @@ use Illuminate\Support\Facades\DB;
 
 class NhlDiscoverDayJob implements ShouldQueue
 {
+    use \App\Jobs\Concerns\ControlsNhlGameImportRun;
     use Dispatchable;
     use InteractsWithQueue;
     use Queueable;
@@ -34,6 +35,13 @@ class NhlDiscoverDayJob implements ShouldQueue
     {
         $this->date = $date;
         $this->runId = $runId;
+        $this->captureRunGeneration();
+    }
+
+    /** Guard each individual discovery day, including jobs queued before Pause. */
+    public function middleware(): array
+    {
+        return [new \App\Jobs\Middleware\ControlNhlGameImportRun()];
     }
 
     public function handle(NhlDiscoverGames $service): void
@@ -81,6 +89,9 @@ class NhlDiscoverDayJob implements ShouldQueue
     /** A failed discovery day must not strand the parent as perpetually active. */
     public function failed(?\Throwable $exception): void
     {
+        if (! $this->canReportRunFailure()) {
+            return;
+        }
         if ($this->runId !== null) {
             NhlGameImportRun::query()->whereKey($this->runId)->whereIn('status', ['queued', 'running'])
                 ->update(['status' => 'failed']);
@@ -102,7 +113,7 @@ class NhlDiscoverDayJob implements ShouldQueue
                 ->lockForUpdate()
                 ->first();
 
-            if (! $run || $run->action !== NhlGameImportRun::ACTION_DISCOVER || $run->status === 'failed') {
+            if (! $run || $run->action !== NhlGameImportRun::ACTION_DISCOVER || in_array($run->status, ['failed', 'cancelled'], true)) {
                 return false;
             }
 
@@ -129,6 +140,10 @@ class NhlDiscoverDayJob implements ShouldQueue
                 $payload['completed_at'] = now()->toIso8601String();
                 $updates['status'] = NhlGameImportRun::STATUS_COMPLETED;
                 $updates['payload'] = $payload;
+            }
+
+            if (in_array($run->status, ['pausing', 'paused'], true)) {
+                $updates['status'] = $run->status;
             }
 
             $run->forceFill($updates)->save();

@@ -36,7 +36,7 @@ beforeEach(function (): void {
     $this->run = fn (array $attributes = []) => NhlGameImportRun::query()->create([
         'action' => 'discover', 'mode' => 'range', 'status' => 'completed',
         'start_date' => '2026-10-09', 'end_date' => '2026-10-09', 'date_count' => 1,
-        'payload' => ['discovery_completed_dates' => ['2026-10-09']], ...$attributes,
+        'payload' => ['discovery_completed_dates' => ['2026-10-09'], 'auto_process' => true], ...$attributes,
     ]);
 });
 
@@ -105,6 +105,7 @@ it('dispatches yesterday and the prior two dates without today', function (): vo
     Bus::assertDispatched(NhlDiscoveryJob::class, fn ($job) => $job->start->toDateString() === '2026-10-09'
         && $job->end->toDateString() === '2026-10-07' && $job->afterCommit === true);
     $this->assertDatabaseHas('nhl_game_import_runs', ['date_count' => 3, 'start_date' => '2026-10-09', 'end_date' => '2026-10-07']);
+    expect(NhlGameImportRun::query()->latest('id')->first()->payload['auto_process'])->toBeTrue();
     expect($this->process->fresh()->last_dispatched_at)->not->toBeNull();
 });
 
@@ -174,8 +175,94 @@ it('starts only committed discovered runs through the existing orchestrator', fu
     expect($run->fresh()->status)->toBe('running')->and($run->fresh()->payload['processing_started_at'])->not->toBeNull();
 });
 
+it('leaves unmarked manual discoveries ready despite pending full-stage rows', function (): void {
+    $run = ($this->run)(['payload' => ['discovery_completed_dates' => ['2026-10-09']]]);
+    DB::table('nhl_import_progress')->insert(['run_id' => $run->id, 'game_id' => '2026020001',
+        'game_date' => '2026-10-09', 'season_id' => '20262027', 'import_type' => 'pbp', 'status' => 'scheduled']);
+    $this->mock(NhlImportOrchestrator::class)->shouldNotReceive('fillActiveGameSlotsForRun');
+    (new StartDiscoveredGameProcessing())->handle(new GamesDiscovered($run->id));
+    expect($run->fresh()->status)->toBe('completed')->and($run->fresh()->payload)->not->toHaveKey('processing_started_at');
+});
+
+it('keeps automatic processing explicitly disabled even for a scheduler-origin run', function (): void {
+    $run = ($this->run)(['payload' => ['auto_process' => false, 'scheduled_process' => 'nhl-game-discovery',
+        'discovery_completed_dates' => ['2026-10-09']]]);
+    DB::table('nhl_import_progress')->insert(['run_id' => $run->id, 'game_id' => '2026020001',
+        'game_date' => '2026-10-09', 'season_id' => '20262027', 'import_type' => 'pbp', 'status' => 'scheduled']);
+    $this->mock(NhlImportOrchestrator::class)->shouldNotReceive('fillActiveGameSlotsForRun');
+    app(DiscoveredGameProcessing::class)->start($run->id);
+    expect($run->fresh()->status)->toBe('completed');
+});
+
+it('allows already queued scheduler discoveries carrying the existing scheduler marker', function (): void {
+    $run = ($this->run)(['payload' => ['scheduled_process' => 'nhl-game-discovery',
+        'discovery_completed_dates' => ['2026-10-09']]]);
+    DB::table('nhl_import_progress')->insert(['run_id' => $run->id, 'game_id' => '2026020001',
+        'game_date' => '2026-10-09', 'season_id' => '20262027', 'import_type' => 'pbp', 'status' => 'scheduled']);
+    $this->mock(NhlImportOrchestrator::class)->shouldReceive('fillActiveGameSlotsForRun')->once()->with($run->id)->andReturn(1);
+    app(DiscoveredGameProcessing::class)->start($run->id);
+    expect($run->fresh()->status)->toBe('running');
+});
+
+it('stores manual UI discovery as opt-out and exposes that through status reads', function (): void {
+    Event::fake([\App\Events\NhlGameImportStatusUpdated::class]);
+    $response = $this->actingAs($this->admin)->postJson(route('admin.nhl-game-imports.discover'), ['date' => '2026-10-09'])
+        ->assertAccepted()->assertJsonPath('run.payload.auto_process', false);
+    $runId = $response->json('run.id');
+    expect(NhlGameImportRun::query()->findOrFail($runId)->payload['auto_process'])->toBeFalse();
+    $this->getJson(route('admin.nhl-game-imports.status'))->assertOk()
+        ->assertJsonPath('runs.0.id', $runId)->assertJsonPath('runs.0.payload.auto_process', false);
+});
+
+it('clears automatic processing on a manual rerun of a scheduler discovery', function (): void {
+    Event::fake([\App\Events\NhlGameImportStatusUpdated::class]);
+    $run = ($this->run)(['payload' => ['auto_process' => true, 'scheduled_process' => 'nhl-game-discovery',
+        'discovery_completed_dates' => ['2026-10-09']]]);
+    $this->actingAs($this->admin)->postJson(route('admin.nhl-game-imports.discover'), ['run_id' => $run->id])
+        ->assertAccepted()->assertJsonPath('run.payload.auto_process', false);
+    expect($run->fresh()->payload['auto_process'])->toBeFalse()
+        ->and($run->fresh()->payload)->not->toHaveKey('scheduled_process');
+});
+
+it('keeps command-line discoveries manual until processing is requested', function (): void {
+    Event::fake([\App\Events\NhlGameImportStatusUpdated::class]);
+    $this->artisan('nhl:discover', ['--date' => '2026-10-09'])->assertExitCode(0);
+    expect(NhlGameImportRun::query()->latest('id')->first()->payload['auto_process'])->toBeFalse();
+    Bus::assertDispatched(NhlDiscoveryJob::class);
+});
+
+it('does not promote a scoped processing run into full imports', function (): void {
+    $run = ($this->run)(['payload' => ['auto_process' => true, 'process_scope' => 'refs_staff',
+        'discovery_completed_dates' => ['2026-10-09']]]);
+    DB::table('nhl_import_progress')->insert(['run_id' => $run->id, 'game_id' => '2026020001',
+        'game_date' => '2026-10-09', 'season_id' => '20262027', 'import_type' => 'pbp', 'status' => 'scheduled']);
+    $this->mock(NhlImportOrchestrator::class)->shouldNotReceive('fillActiveGameSlotsForRun');
+    app(DiscoveredGameProcessing::class)->start($run->id);
+    expect($run->fresh()->status)->toBe('completed');
+});
+
+it('queues only Shots after a manual discovery remains ready', function (): void {
+    Event::fake([\App\Events\NhlGameImportStatusUpdated::class]);
+    $run = ($this->run)(['payload' => ['auto_process' => false, 'discovery_completed_dates' => ['2026-10-09']]]);
+    DB::table('nhl_games')->insert([
+        'nhl_game_id' => 2026020001, 'season_id' => '20262027', 'game_date' => '2026-10-09',
+        'game_type' => 2, 'game_state' => 'OFF',
+    ]);
+    DB::table('play_by_plays')->insert(['nhl_game_id' => 2026020001, 'type_desc_key' => 'shot-on-goal']);
+    DB::table('nhl_import_progress')->insert(['run_id' => $run->id, 'game_id' => '2026020001',
+        'game_date' => '2026-10-09', 'season_id' => '20262027', 'import_type' => 'pbp', 'status' => 'scheduled']);
+    $this->mock(NhlImportOrchestrator::class)->shouldNotReceive('fillActiveGameSlotsForRun');
+    (new StartDiscoveredGameProcessing())->handle(new GamesDiscovered($run->id));
+    $this->actingAs($this->admin)->postJson(route('admin.nhl-game-imports.process-shots'), ['run_id' => $run->id])
+        ->assertAccepted()->assertJsonPath('run.payload.process_scope', 'shots');
+    Bus::assertBatched(fn ($batch) => count($batch->jobs) === 1
+        && collect($batch->jobs)->every(fn ($job) => $job instanceof \App\Jobs\BuildNhlShotAttemptFactsJob));
+    Bus::assertNotDispatched(\App\Jobs\NhlOrchestratorJob::class);
+    expect($run->fresh()->status)->toBe('completed')->and($run->fresh()->payload)->not->toHaveKey('processing_started_at');
+});
+
 it('ignores repeated processing events after terminal processing', function (): void {
-    $run = ($this->run)(['payload' => ['discovery_completed_dates' => ['2026-10-09'], 'processing_started_at' => '2026-10-10T07:00:00Z']]);
+    $run = ($this->run)(['payload' => ['auto_process' => true, 'discovery_completed_dates' => ['2026-10-09'], 'processing_started_at' => '2026-10-10T07:00:00Z']]);
     $this->mock(NhlImportOrchestrator::class)->shouldNotReceive('fillActiveGameSlotsForRun');
     app(DiscoveredGameProcessing::class)->start($run->id);
     expect($run->fresh()->status)->toBe('completed');

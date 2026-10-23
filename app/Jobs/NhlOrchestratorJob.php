@@ -13,6 +13,7 @@ use Illuminate\Queue\SerializesModels;
 
 class NhlOrchestratorJob implements ShouldQueue
 {
+    use \App\Jobs\Concerns\ControlsNhlGameImportRun;
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
     public const TAG_IMPORT = 'nhl-import-date';
@@ -27,6 +28,13 @@ class NhlOrchestratorJob implements ShouldQueue
     {
         $this->gameDate = $gameDate;
         $this->runId = $runId;
+        $this->captureRunGeneration();
+    }
+
+    /** Fence run-owned coordinators while preserving unscoped legacy invocations. */
+    public function middleware(): array
+    {
+        return [new \App\Jobs\Middleware\ControlNhlGameImportRun()];
     }
 
     /**

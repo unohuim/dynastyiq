@@ -25,6 +25,7 @@ use Throwable;
 abstract class BaseNhlJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+    use \App\Jobs\Concerns\ControlsNhlGameImportRun;
 
     /** @var int */
     public int $gameId;
@@ -48,6 +49,7 @@ abstract class BaseNhlJob implements ShouldQueue
     {
         $this->gameId = $gameId;
         $this->runId = $runId;
+        $this->captureRunGeneration();
     }
 
     /**
@@ -68,6 +70,7 @@ abstract class BaseNhlJob implements ShouldQueue
     public function middleware(): array
     {
         return [
+            new \App\Jobs\Middleware\ControlNhlGameImportRun(),
             (new WithoutOverlapping("nhl-game-import:{$this->gameId}"))
                 ->shared()
                 ->releaseAfter(30)
@@ -108,7 +111,7 @@ abstract class BaseNhlJob implements ShouldQueue
 
             $orchestrator->onSuccess($this->gameId, $this->stageName(), [
                 'items_count' => $count,
-            ]);
+            ], $this->runId);
 
             return;
         } catch (Throwable $e) {
@@ -130,7 +133,7 @@ abstract class BaseNhlJob implements ShouldQueue
      */
     private function recordImportFailure(Throwable $throwable): void
     {
-        if ($this->failureRecorded) {
+        if ($this->failureRecorded || ! $this->canReportRunFailure()) {
             return;
         }
 

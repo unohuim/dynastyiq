@@ -21,6 +21,7 @@ use Throwable;
  */
 class RefreshNhlGameContextJob implements ShouldQueue
 {
+    use \App\Jobs\Concerns\ControlsNhlGameImportRun;
     use Batchable;
     use Queueable;
     use InteractsWithQueue;
@@ -44,6 +45,7 @@ class RefreshNhlGameContextJob implements ShouldQueue
     public function __construct(public int $nhlGameId, public ?int $runId = null)
     {
         $this->afterCommit = true;
+        $this->captureRunGeneration();
     }
 
     /**
@@ -54,6 +56,7 @@ class RefreshNhlGameContextJob implements ShouldQueue
     public function middleware(): array
     {
         return [
+            new \App\Jobs\Middleware\ControlNhlGameImportRun(),
             (new WithoutOverlapping('nhl-game-context:' . $this->nhlGameId))
                 ->expireAfter(300),
         ];
@@ -82,6 +85,9 @@ class RefreshNhlGameContextJob implements ShouldQueue
 
     public function failed(Throwable $exception): void
     {
+        if (! $this->canReportRunFailure()) {
+            return;
+        }
         $message = mb_substr($exception->getMessage(), 0, 1000);
 
         if ($this->runId) {
@@ -98,12 +104,12 @@ class RefreshNhlGameContextJob implements ShouldQueue
                 $payload['refs_staff_last_error'] = $message;
                 $payload['refs_staff_failed_game_ids'] = $failedGameIds;
 
-                $run->forceFill([
+                app(\App\Services\NhlGameImportRunControl::class)->saveWorkerRun($run, [
                     'status' => NhlGameImportRun::STATUS_FAILED,
                     'payload' => $payload,
                     'last_error' => $message,
                     'updated_at' => now(),
-                ])->save();
+                ]);
 
                 broadcast(new NhlGameImportStatusUpdated('refs-staff-job-failed', $run->id, $this->nhlGameId));
             }

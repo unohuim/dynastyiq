@@ -1,0 +1,39 @@
+name: NHL Game Import Run Control
+type: Durable Run Admission And Commit Fence
+location:
+  - app/Services/NhlGameImportRunControl.php
+  - app/Exceptions/NhlGameImportRunCancelled.php
+  - app/Jobs/Concerns/ControlsNhlGameImportRun.php
+  - app/Jobs/Middleware/ControlNhlGameImportRun.php
+  - app/Http/Controllers/Admin/NhlGameImportRunControlController.php
+  - app/Models/NhlGameImportRun.php
+  - resources/js/admin/admin-hub.js
+  - resources/js/pages/Admin/Dashboard.vue
+purpose: Pause, resume and cancel run-owned Discovery, Full, Shots, Faceoffs and Refs/Staff work without stopping queue workers or deleting completed results.
+when_to_use:
+  - Controlling queued or running NHL discovery and game-processing runs.
+  - Preventing obsolete queued jobs and callbacks from reviving cancelled or restarted work.
+when_not_to_use:
+  - Terminating queue workers or clearing a shared queue.
+  - Controlling season sync, schedule refresh, repair or model-building runs.
+rules:
+  - Admin Pause, Resume and Cancel endpoints share the existing authenticated super-admin and lifecycle authorization. Controls are scoped by persisted run identity, not date ranges or queue names.
+  - Pause stops admission immediately. Previously admitted jobs may finish and checkpoint their results. The run remains Pausing until its live claims drain, then becomes Paused. Resume waits for live claims to finish; expired claims may be reclaimed after their job timeout and grace period.
+  - Discovery date checkpoints, completed stage rows and successful scoped-game checkpoints survive Pause. Resume queues unfinished work and preserves the original batch callbacks and queue; skipped paused queue messages do not count as completed source work.
+  - Cancel emits a fast run-generation signal and persists the terminal cancelled state. Pending/running progress rows become skipped with an explicit operator-cancellation reason; completed rows and imported results are retained. Owned batches are cancelled and queued messages drain without performing source work.
+  - Active transformations run inside a database transaction with a final cancellation/generation check under the run row lock. Cancel rolls back uncommitted database work at that check; it does not terminate PHP workers or interrupt an external HTTP request or SQL statement already executing. Provider payload files are not transactional and may remain as source evidence.
+  - Jobs capture the run generation at dispatch. Resume and explicit reruns issue a new generation so older queued jobs cannot write to the restarted run. An initial generation supports jobs serialized before control deployment.
+  - Worker callbacks must preserve Pausing/Paused states and live claim metadata. Cancelled runs, obsolete generations and obsolete batch callbacks must reject worker updates. Completion callbacks must not finish a resumed batch while it still has pending work.
+  - The orchestrator checks admission before claiming additional stages. Already claimed stages may complete during Pause; their successors wait for Resume. Run-scoped completion must identify the actual owning run instead of selecting another run's same-game stage.
+  - Control state and checkpoints use the existing run payload. Lifecycle values remain canonical in docs/ENUMS.md; no new progress-status enum values or database tables are introduced.
+  - UI state comes from the authoritative status endpoint after each control action and existing broadcast invalidations. Controls show local busy/error feedback, and lifecycle states take precedence over inferred coverage status. Cancelled runs retain explicit rerun and terminal deletion actions.
+  - A paused scheduled discovery continues to reserve its automatic scheduling slot. Manual discoveries remain manual after Resume; opt-in to automatic Full remains governed by NhlDiscoveryPipeline.
+public_interface:
+  - POST /admin/nhl-game-imports/{run}/pause
+  - POST /admin/nhl-game-imports/{run}/resume
+  - POST /admin/nhl-game-imports/{run}/cancel
+  - NhlGameImportRunControl
+  - ControlNhlGameImportRun
+example_usage: |
+  $run = app(NhlGameImportRunControl::class)->pause($runId);
+  // Claimed jobs finish; new jobs wait for explicit Resume.

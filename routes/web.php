@@ -364,6 +364,12 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                     ->name('admin.scheduled-processes.discovery.update');
                 Route::get('/nhl-game-imports/status', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'status'])
                     ->name('admin.nhl-game-imports.status');
+                Route::post('/nhl-game-imports/{run}/pause', [\App\Http\Controllers\Admin\NhlGameImportRunControlController::class, 'pause'])
+                    ->whereNumber('run')->name('admin.nhl-game-imports.pause');
+                Route::post('/nhl-game-imports/{run}/resume', [\App\Http\Controllers\Admin\NhlGameImportRunControlController::class, 'resume'])
+                    ->whereNumber('run')->name('admin.nhl-game-imports.resume');
+                Route::post('/nhl-game-imports/{run}/cancel', [\App\Http\Controllers\Admin\NhlGameImportRunControlController::class, 'cancel'])
+                    ->whereNumber('run')->name('admin.nhl-game-imports.cancel');
                 Route::get('/nhl-game-imports/source-gaps', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'sourceGaps'])
                     ->name('admin.nhl-game-imports.source-gaps');
                 Route::post('/nhl-game-imports/source-gaps/{gameId}/rerun', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'rerunSourceGap'])

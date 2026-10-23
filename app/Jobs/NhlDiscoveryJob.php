@@ -18,6 +18,7 @@ use Illuminate\Support\Carbon;
  */
 class NhlDiscoveryJob implements ShouldQueue
 {
+    use \App\Jobs\Concerns\ControlsNhlGameImportRun;
     use Dispatchable;
     use InteractsWithQueue;
     use Queueable;
@@ -48,6 +49,13 @@ class NhlDiscoveryJob implements ShouldQueue
         $this->start = $start instanceof Carbon ? $start->copy()->startOfDay() : Carbon::parse((string) $start)->startOfDay();
         $this->end   = $end   instanceof Carbon ? $end->copy()->startOfDay()   : Carbon::parse((string) $end)->startOfDay();
         $this->runId = $runId;
+        $this->captureRunGeneration();
+    }
+
+    /** Apply the run's Pause, Cancel and generation fence to discovery dispatch. */
+    public function middleware(): array
+    {
+        return [new \App\Jobs\Middleware\ControlNhlGameImportRun()];
     }
 
     public function handle(NhlDiscovery $discovery): void
@@ -79,6 +87,9 @@ class NhlDiscoveryJob implements ShouldQueue
     /** Release the automatic schedule's active-run guard after a discovery failure. */
     public function failed(?\Throwable $exception): void
     {
+        if (! $this->canReportRunFailure()) {
+            return;
+        }
         if ($this->runId !== null) {
             NhlGameImportRun::query()->whereKey($this->runId)->whereIn('status', ['queued', 'running'])
                 ->update(['status' => 'failed']);

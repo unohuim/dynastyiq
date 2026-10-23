@@ -101,6 +101,69 @@ const loadAdminHub = async () => {
     return (await import('./admin-hub.js')).default;
 };
 
+describe('game import run controls', () => {
+    beforeEach(() => { vi.restoreAllMocks(); global.window = {}; });
+
+    it('offers Pause and Cancel for a running discovery', async () => {
+        const hub = (await loadAdminHub())();
+        const run = { id: 7, action: 'discover', status: 'running' };
+        expect(hub.canControlGameImportRun(run, 'pause')).toBe(true);
+        expect(hub.canControlGameImportRun(run, 'cancel')).toBe(true);
+        expect(hub.canControlGameImportRun(run, 'resume')).toBe(false);
+    });
+
+    it('offers Resume and Cancel for a paused import', async () => {
+        const hub = (await loadAdminHub())();
+        const run = { id: 7, action: 'process', status: 'paused' };
+        expect(hub.canControlGameImportRun(run, 'resume')).toBe(true);
+        expect(hub.canControlGameImportRun(run, 'cancel')).toBe(true);
+        expect(hub.canControlGameImportRun(run, 'pause')).toBe(false);
+    });
+
+    it('waits for claimed jobs to drain before offering Resume', async () => {
+        const hub = (await loadAdminHub())();
+        expect(hub.canControlGameImportRun({ action: 'discover', status: 'pausing' }, 'resume')).toBe(false);
+    });
+
+    it('does not offer controls for terminal or unrelated runs', async () => {
+        const hub = (await loadAdminHub())();
+        expect(hub.canControlGameImportRun({ action: 'discover', status: 'cancelled' }, 'cancel')).toBe(false);
+        expect(hub.canControlGameImportRun({ action: 'process', status: 'completed' }, 'pause')).toBe(false);
+        expect(hub.canControlGameImportRun({ action: 'season-sync', status: 'running' }, 'pause')).toBe(false);
+    });
+
+    it('uses the stored running state when existing fact coverage looks complete', async () => {
+        const hub = (await loadAdminHub())();
+        expect(hub.canControlGameImportRun({ action: 'process', status: 'completed', stored_status: 'running' }, 'pause')).toBe(true);
+    });
+
+    it('sends a control request and refreshes authoritative progress', async () => {
+        const hub = (await loadAdminHub())();
+        hub.sendGameImportRequest = vi.fn().mockResolvedValue({});
+        hub.loadGameImports = vi.fn().mockResolvedValue();
+        await hub.controlGameImportRun({ id: 7, action: 'discover', status: 'running' }, 'pause');
+        expect(hub.sendGameImportRequest).toHaveBeenCalledWith('/admin/nhl-game-imports/7/pause', {});
+        expect(hub.loadGameImports).toHaveBeenCalledWith({ background: true });
+        expect(hub.gameImports.controllingRuns).toEqual({});
+    });
+
+    it('clears busy feedback and exposes a failed control request', async () => {
+        const hub = (await loadAdminHub())();
+        hub.sendGameImportRequest = vi.fn().mockRejectedValue(new Error('Run unavailable'));
+        await hub.controlGameImportRun({ id: 7, action: 'discover', status: 'running' }, 'cancel');
+        expect(hub.gameImports.error).toBe('Run unavailable');
+        expect(hub.gameImports.controllingRuns).toEqual({});
+    });
+
+    it('prevents duplicate requests while the same run is updating', async () => {
+        const hub = (await loadAdminHub())();
+        hub.gameImports.controllingRuns[7] = 'pause';
+        hub.sendGameImportRequest = vi.fn();
+        await hub.controlGameImportRun({ id: 7, action: 'discover', status: 'running' }, 'pause');
+        expect(hub.sendGameImportRequest).not.toHaveBeenCalled();
+    });
+});
+
 describe('admin-hub import listeners', () => {
     beforeEach(() => {
         vi.restoreAllMocks();

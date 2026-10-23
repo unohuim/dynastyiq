@@ -183,6 +183,7 @@ class NhlDiscoverCommand extends Command
      */
     private function queueDiscoveryRun(Carbon $start, Carbon $end, string $mode, array $payload): void
     {
+        $payload['auto_process'] = false;
         $run = NhlGameImportRun::create([
             'action' => NhlGameImportRun::ACTION_DISCOVER,
             'mode' => $mode,

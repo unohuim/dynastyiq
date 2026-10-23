@@ -21,6 +21,7 @@ use Throwable;
  */
 class BuildNhlFaceoffFactsJob implements ShouldQueue
 {
+    use \App\Jobs\Concerns\ControlsNhlGameImportRun;
     use Batchable;
     use Queueable;
     use InteractsWithQueue;
@@ -44,6 +45,7 @@ class BuildNhlFaceoffFactsJob implements ShouldQueue
     public function __construct(public int $nhlGameId, public ?int $runId = null)
     {
         $this->afterCommit = true;
+        $this->captureRunGeneration();
     }
 
     /**
@@ -52,6 +54,7 @@ class BuildNhlFaceoffFactsJob implements ShouldQueue
     public function middleware(): array
     {
         return [
+            new \App\Jobs\Middleware\ControlNhlGameImportRun(),
             (new WithoutOverlapping('nhl-faceoff-facts:' . $this->nhlGameId))
                 ->expireAfter(300),
         ];
@@ -80,6 +83,9 @@ class BuildNhlFaceoffFactsJob implements ShouldQueue
 
     public function failed(Throwable $exception): void
     {
+        if (! $this->canReportRunFailure()) {
+            return;
+        }
         $message = mb_substr($exception->getMessage(), 0, 1000);
 
         if ($this->runId) {
@@ -96,12 +102,12 @@ class BuildNhlFaceoffFactsJob implements ShouldQueue
                 $payload['faceoff_fact_last_error'] = $message;
                 $payload['faceoff_fact_failed_game_ids'] = $failedGameIds;
 
-                $run->forceFill([
+                app(\App\Services\NhlGameImportRunControl::class)->saveWorkerRun($run, [
                     'status' => NhlGameImportRun::STATUS_FAILED,
                     'payload' => $payload,
                     'last_error' => $message,
                     'updated_at' => now(),
-                ])->save();
+                ]);
 
                 broadcast(new NhlGameImportStatusUpdated('faceoff-facts-job-failed', $run->id, $this->nhlGameId));
             }

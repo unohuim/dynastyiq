@@ -72,6 +72,7 @@ class NhlGameImportController extends Controller
             fn (NhlGameImportRun $run): bool => in_array($run->status, [
                 NhlGameImportRun::STATUS_QUEUED,
                 NhlGameImportRun::STATUS_RUNNING,
+                NhlGameImportRun::STATUS_PAUSING,
             ], true)
         );
         $total = $orchestrationRuns->count();
@@ -319,9 +320,11 @@ class NhlGameImportController extends Controller
         if (in_array($run->status, [
             NhlGameImportRun::STATUS_QUEUED,
             NhlGameImportRun::STATUS_RUNNING,
+            NhlGameImportRun::STATUS_PAUSING,
+            NhlGameImportRun::STATUS_PAUSED,
         ], true)) {
             throw ValidationException::withMessages([
-                'run_id' => 'Only completed or failed NHL game import runs can be removed.',
+                'run_id' => 'Only completed, failed or cancelled NHL game import runs can be removed.',
             ]);
         }
 
@@ -355,6 +358,7 @@ class NhlGameImportController extends Controller
         $range = $rerunSourceRun
             ? $this->rerunRangeFromRun($rerunSourceRun)
             : $this->normalizeDateSelection($input, true);
+        $range['payload']['auto_process'] = false;
 
         $activeRun = $rerunSourceRun
             ? null
@@ -493,11 +497,14 @@ class NhlGameImportController extends Controller
     ): JsonResponse {
         $input = $this->validatedInput($request);
         $discoveryRun = $this->discoveryRunFromInput($input);
+        if ($discoveryRun && in_array($discoveryRun->status, ['pausing', 'paused'], true)) {
+            throw ValidationException::withMessages(['run_id' => 'Resume or cancel this paused run before starting another process.']);
+        }
         $range = $discoveryRun
             ? $this->rangeFromRun($discoveryRun)
             : $this->normalizeDateSelection($input, false);
         $dates = $this->dateStrings($range['start'], $range['end']);
-        $reprocessExisting = $request->boolean('reprocess_existing');
+        $reprocessExisting = $request->boolean('reprocess_existing') || $discoveryRun?->status === 'cancelled';
         $activeRun = $this->activeRunForRange(
             $range['start']->toDateString(),
             $range['end']->toDateString(),
@@ -560,6 +567,9 @@ class NhlGameImportController extends Controller
             }
 
             $payload = $discoveryRun->payload ?? [];
+            if ($reprocessExisting || $discoveryRun->status === 'cancelled') {
+                $payload = app(\App\Services\NhlGameImportRunControl::class)->freshPayload($payload);
+            }
             $payload['processing_started_at'] = now()->toIso8601String();
             $payload['processing_requested_by'] = $request->user()?->id;
             $payload['reprocess_existing'] = $reprocessExisting;
@@ -576,8 +586,14 @@ class NhlGameImportController extends Controller
         if ($discoveryRun) {
             $orchestrator->fillActiveGameSlotsForRun($run->id);
         } else {
+            // Give legacy unowned pending work the same durable control identity as UI discovery runs.
+            $bounds = [$range['start']->toDateString(), $range['end']->toDateString()];
+            sort($bounds);
+            DB::table('nhl_import_progress')->whereNull('run_id')->whereBetween('game_date', $bounds)
+                ->whereIn('status', ['scheduled', 'completed', 'skipped', 'error'])
+                ->update(['run_id' => $run->id, 'updated_at' => now()]);
             foreach ($dates as $date) {
-                NhlOrchestratorJob::dispatch($date);
+                NhlOrchestratorJob::dispatch($date, $run->id);
             }
         }
 
@@ -1211,6 +1227,9 @@ class NhlGameImportController extends Controller
     private function serializeRun(NhlGameImportRun $run): array
     {
         $progress = $this->progressForRun($run);
+        if (in_array($run->status, \App\Services\NhlGameImportRunControl::CONTROLLED, true)) {
+            $progress['status'] = app(\App\Services\NhlGameImportRunControl::class)->settledStatus($run);
+        }
 
         return [
             'id' => $run->id,
@@ -1703,7 +1722,7 @@ class NhlGameImportController extends Controller
         Request $request,
         ?NhlGameImportRun $sourceRun
     ): NhlGameImportRun {
-        $payload = $range['payload'];
+        $payload = app(\App\Services\NhlGameImportRunControl::class)->freshPayload($range['payload']);
 
         if ($sourceRun) {
             $payload['rerun_from_run_id'] = $sourceRun->id;
@@ -2020,7 +2039,7 @@ class NhlGameImportController extends Controller
     {
         $run = NhlGameImportRun::query()->find($runId);
 
-        if (! $run) {
+        if (! app(\App\Services\NhlGameImportRunControl::class)->acceptsBatchCallback($run, 'shot_fact_batch_id', $batchId, true)) {
             return;
         }
 
@@ -2035,11 +2054,11 @@ class NhlGameImportController extends Controller
         $payload['shot_fact_unprocessable_game_count'] = $shotFactCounts['unprocessable_game_count'];
         $payload['shot_fact_processed_game_count'] = $shotFactCounts['processed_game_count'];
 
-        $run->forceFill([
+        app(\App\Services\NhlGameImportRunControl::class)->saveWorkerRun($run, [
             'status' => NhlGameImportRun::STATUS_COMPLETED,
             'payload' => $payload,
             'updated_at' => now(),
-        ])->save();
+        ]);
 
         broadcast(new NhlGameImportStatusUpdated('shot-facts-completed', $runId));
     }
@@ -2100,7 +2119,7 @@ class NhlGameImportController extends Controller
     {
         $run = NhlGameImportRun::query()->find($runId);
 
-        if (! $run) {
+        if (! app(\App\Services\NhlGameImportRunControl::class)->acceptsBatchCallback($run, 'shot_fact_batch_id', $batchId)) {
             return;
         }
 
@@ -2109,12 +2128,12 @@ class NhlGameImportController extends Controller
         $payload['shot_fact_failed_at'] = now()->toIso8601String();
         $payload['shot_fact_last_error'] = mb_substr($throwable->getMessage(), 0, 1000);
 
-        $run->forceFill([
+        app(\App\Services\NhlGameImportRunControl::class)->saveWorkerRun($run, [
             'status' => NhlGameImportRun::STATUS_FAILED,
             'payload' => $payload,
             'last_error' => $payload['shot_fact_last_error'],
             'updated_at' => now(),
-        ])->save();
+        ]);
 
         Log::error('NHL shot attempt facts batch failed.', [
             'run_id' => $runId,
@@ -2188,7 +2207,7 @@ class NhlGameImportController extends Controller
     {
         $run = NhlGameImportRun::query()->find($runId);
 
-        if (! $run) {
+        if (! app(\App\Services\NhlGameImportRunControl::class)->acceptsBatchCallback($run, 'faceoff_fact_batch_id', $batchId, true)) {
             return;
         }
 
@@ -2201,11 +2220,11 @@ class NhlGameImportController extends Controller
             ->distinct()
             ->count('nhl_game_id');
 
-        $run->forceFill([
+        app(\App\Services\NhlGameImportRunControl::class)->saveWorkerRun($run, [
             'status' => NhlGameImportRun::STATUS_COMPLETED,
             'payload' => $payload,
             'updated_at' => now(),
-        ])->save();
+        ]);
 
         broadcast(new NhlGameImportStatusUpdated('faceoff-facts-completed', $runId));
     }
@@ -2214,7 +2233,7 @@ class NhlGameImportController extends Controller
     {
         $run = NhlGameImportRun::query()->find($runId);
 
-        if (! $run) {
+        if (! app(\App\Services\NhlGameImportRunControl::class)->acceptsBatchCallback($run, 'faceoff_fact_batch_id', $batchId)) {
             return;
         }
 
@@ -2223,12 +2242,12 @@ class NhlGameImportController extends Controller
         $payload['faceoff_fact_failed_at'] = now()->toIso8601String();
         $payload['faceoff_fact_last_error'] = mb_substr($throwable->getMessage(), 0, 1000);
 
-        $run->forceFill([
+        app(\App\Services\NhlGameImportRunControl::class)->saveWorkerRun($run, [
             'status' => NhlGameImportRun::STATUS_FAILED,
             'payload' => $payload,
             'last_error' => $payload['faceoff_fact_last_error'],
             'updated_at' => now(),
-        ])->save();
+        ]);
 
         Log::error('NHL faceoff facts batch failed.', [
             'run_id' => $runId,
@@ -2242,7 +2261,7 @@ class NhlGameImportController extends Controller
     {
         $run = NhlGameImportRun::query()->find($runId);
 
-        if (! $run) {
+        if (! app(\App\Services\NhlGameImportRunControl::class)->acceptsBatchCallback($run, 'refs_staff_batch_id', $batchId, true)) {
             return;
         }
 
@@ -2257,11 +2276,11 @@ class NhlGameImportController extends Controller
             ->count('nhl_game_id');
         $payload['refs_staff_assignment_game_count'] = self::refsStaffAssignmentGameCount($gameIds);
 
-        $run->forceFill([
+        app(\App\Services\NhlGameImportRunControl::class)->saveWorkerRun($run, [
             'status' => NhlGameImportRun::STATUS_COMPLETED,
             'payload' => $payload,
             'updated_at' => now(),
-        ])->save();
+        ]);
 
         broadcast(new NhlGameImportStatusUpdated('refs-staff-completed', $runId));
     }
@@ -2270,7 +2289,7 @@ class NhlGameImportController extends Controller
     {
         $run = NhlGameImportRun::query()->find($runId);
 
-        if (! $run) {
+        if (! app(\App\Services\NhlGameImportRunControl::class)->acceptsBatchCallback($run, 'refs_staff_batch_id', $batchId)) {
             return;
         }
 
@@ -2279,12 +2298,12 @@ class NhlGameImportController extends Controller
         $payload['refs_staff_failed_at'] = now()->toIso8601String();
         $payload['refs_staff_last_error'] = mb_substr($throwable->getMessage(), 0, 1000);
 
-        $run->forceFill([
+        app(\App\Services\NhlGameImportRunControl::class)->saveWorkerRun($run, [
             'status' => NhlGameImportRun::STATUS_FAILED,
             'payload' => $payload,
             'last_error' => $payload['refs_staff_last_error'],
             'updated_at' => now(),
-        ])->save();
+        ]);
 
         Log::error('NHL refs and staff batch failed.', [
             'run_id' => $runId,

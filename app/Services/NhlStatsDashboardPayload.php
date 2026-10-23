@@ -12,7 +12,7 @@ use Illuminate\Support\Facades\DB;
 /** Read public season leaders from stored NHL results without imports or predictions. */
 class NhlStatsDashboardPayload
 {
-    public const CACHE_PREFIX = 'nhl:stats:leaders:v10:';
+    public const CACHE_PREFIX = 'nhl:stats:leaders:v11:';
 
     /** Reuse the homepage's factual comparisons, independently of its editorial feed. */
     public function __construct(private readonly NhlDashboardPayload $dashboard)
@@ -98,6 +98,9 @@ class NhlStatsDashboardPayload
                 'url' => 'https://www.nhl.com/player/'.$row->nhl_player_id];
         });
         $skaters = $players->where('goalie', false)->values();
+        $rookieIds = $view === 'leaders'
+            ? app(ProspectEligibilityService::class)->eligibleNhlPlayerIds($skaters->pluck('id')->all(), for_drafting: false)
+            : [];
         $goalies = $players->where('goalie', true)->values();
         $goalieCategories = collect(['quality_starts' => 'Quality Starts', 'gsax' => 'GSAx', 'ev_sv_pct' => 'EVSV%'])
             ->map(function (string $label, string $key) use ($goalies, $model): array {
@@ -153,7 +156,7 @@ class NhlStatsDashboardPayload
 
         return ['season' => $season, 'hero' => $hero, 'goalie_hero' => $goalieHero, 'categories' => $categories->all(),
             'skaters' => $view === 'leaders' ? $skaters->all() : [], 'goalies' => $view === 'leaders' ? $goalies->all() : [], 'goalie_categories' => $goalieCategories,
-            'rookies' => [], 'rookie_note' => 'Rookie eligibility is not available in the stored stats.',
+            'rookies' => $skaters->whereIn('id', $rookieIds)->values()->all(), 'rookie_note' => 'No eligible rookie skaters have season stats yet.',
             'teams' => in_array($view, ['leaders', 'teams'], true) ? $this->teams($season, $previousSeason) : []];
     }
 
