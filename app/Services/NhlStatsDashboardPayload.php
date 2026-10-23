@@ -24,11 +24,18 @@ class NhlStatsDashboardPayload
     public function build(?string $season = null, string $view = 'leaders'): array
     {
         $season = $season !== null && preg_match('/^\d{8}$/', $season) ? $season : $this->latestPreparedSeason();
-        $facts = Cache::get(self::CACHE_PREFIX.$view.':'.$season);
-        if (! is_array($facts)) {
-            return ['season' => $season, 'cache_status' => 'missing', 'hero' => null, 'goalie_hero' => null,
+        if ($season === '') {
+            return ['season' => '', 'cache_status' => 'ready', 'hero' => null, 'goalie_hero' => null,
                 'categories' => [], 'goalie_categories' => [], 'skaters' => [], 'goalies' => [],
-                'rookies' => [], 'teams' => [], 'mobile_leaders' => []];
+                'rookies' => [], 'teams' => [], 'mobile_leaders' => [], 'player_trends' => []];
+        }
+        $key = self::CACHE_PREFIX.$view.':'.$season;
+        $facts = Cache::get($key);
+        if (! is_array($facts)) {
+            $facts = Cache::lock($key.':build', 240)->block(180, function () use ($key, $season, $view): array {
+                $prepared = Cache::get($key);
+                return is_array($prepared) ? $prepared : $this->refreshCachedFacts($season, $view);
+            });
         }
         $facts['cache_status'] = 'ready';
 
@@ -46,17 +53,26 @@ class NhlStatsDashboardPayload
         if (! Cache::forever(self::CACHE_PREFIX.$view.':'.$season, $facts)) {
             throw new \RuntimeException('Public stats cache publication failed.');
         }
+        if ($view === 'leaders') {
+            // The publisher must make /stats usable even if coordinator metadata is missing.
+            $this->refreshSeasonCatalogue();
+        }
 
         return $facts;
     }
 
-    /** Resolve the default season from prepared metadata without scanning source stats on page requests. */
+    /** Resolve the default season, repairing missing catalogue metadata on demand. */
     public function latestPreparedSeason(): string
     {
-        return (string) Cache::get(self::CACHE_PREFIX.'latest-season', '');
+        $season = Cache::get(self::CACHE_PREFIX.'latest-season');
+        if ($season === null) {
+            $this->refreshSeasonCatalogue();
+            $season = Cache::get(self::CACHE_PREFIX.'latest-season', '');
+        }
+        return (string) $season;
     }
 
-    /** Refresh the public season catalogue only from a background preparation entrypoint. */
+    /** Publish current-season metadata during background preparation or a cold page visit. */
     public function refreshSeasonCatalogue(): void
     {
         $season = (string) DB::table('nhl_season_stats')->where('game_type', 2)->where('gp', '>', 0)->max('season_id');

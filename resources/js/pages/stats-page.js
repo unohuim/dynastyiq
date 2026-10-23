@@ -1213,7 +1213,7 @@ export class StatsPageShell {
     }
 
     if (this.payload?.meta?.cache_status === 'missing') {
-      const message = createElement('div', 'p-4 text-sm text-slate-300', 'This season report is not prepared yet. Please check back shortly.');
+      const message = createElement('div', 'p-4 text-sm text-slate-300', "the previous user didn't rewind, so that's what we're doing now. Stand by.");
       message.setAttribute('role', 'status');
       const retry = createElement('button', 'ml-2 rounded px-2 py-1 text-sky-300 focus-visible:ring-2 focus-visible:ring-sky-400', 'Check again');
       retry.type = 'button';

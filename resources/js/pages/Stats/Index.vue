@@ -13,12 +13,14 @@ const props = defineProps({
     selectedPerspective: { type: String, default: '' }, mobileBreakpoint: { type: Number, default: 640 },
     view: { type: String, default: 'leaders' }, leaders: { type: Object, default: () => ({}) },
     selectedSeason: { type: String, default: '' },
+    statsCacheMissing: { type: Boolean, default: false },
 });
 const hero = computed(() => props.view === 'goalies' ? props.leaders.goalie_hero : props.leaders.hero);
 const compactHero = computed(() => ['skaters', 'goalies'].includes(props.view));
 const categories = computed(() => props.view === 'goalies' ? (props.leaders.goalie_categories ?? []) : (compactHero.value ? ['goals', 'assists', 'ppp'] : ['goals', 'assists', 'ppp', 'sog', 'hits', 'blocks']).map(key => (props.leaders.categories ?? []).find(category => category.key === key)).filter(Boolean));
 const stripCategories = computed(() => ['points', 'goals', 'assists', 'sog', 'ppg', 'hits'].map(key => (props.leaders.categories ?? []).find(category => category.key === key)).filter(Boolean));
 const season = computed(() => props.leaders.season ? `${props.leaders.season.slice(0, 4)}–${props.leaders.season.slice(6)}` : 'Current season');
+const rewindMessage = "the previous user didn't rewind, so that's what we're doing now. Stand by.";
 const pendingView = ref(null);
 const failedView = ref(null);
 const seamlessTableSwitch = computed(() => ['skaters', 'goalies'].includes(props.view)
@@ -76,9 +78,9 @@ const sortTeams = key => { teamDescending.value = key === teamSort.value ? !team
         </div>
         <Deferred data="leaders">
             <template #fallback>
-                <div class="sm:hidden"><LoadingState label="season leaders" hero /></div>
+                <div class="sm:hidden"><LoadingState label="season leaders" hero :message="statsCacheMissing ? rewindMessage : ''" /></div>
                 <div class="hidden overflow-hidden rounded-lg border border-[#143144] sm:block">
-                    <LoadingState label="season leaders" hero />
+                    <LoadingState label="season leaders" hero :message="statsCacheMissing ? rewindMessage : ''" />
                     <CategoryNav :links="navLinks" :view="pendingView || activeView" @start="startVisit" @finish="finishVisit" @failed="failVisit" />
                 </div>
             </template>
@@ -89,10 +91,6 @@ const sortTeams = key => { teamDescending.value = key === teamSort.value ? !team
                     <CategoryNav :links="navLinks" :view="pendingView || activeView" @start="startVisit" @finish="finishVisit" @failed="failVisit" />
                 </div>
             </template>
-        <div v-if="leaders.cache_status === 'missing' || (view === 'leaders' && leaders.highlights_cache_status === 'missing')" role="status" class="rounded-lg border border-[#28516a] bg-[#041724] p-4 text-sm text-slate-300">
-            Season statistics are not prepared yet. Please check back shortly.
-            <button type="button" class="ml-2 rounded text-sky-300 hover:text-sky-200 focus-visible:ring-2 focus-visible:ring-sky-400" @click="reload('leaders')">Check again</button>
-        </div>
         <section class="hidden min-w-0 overflow-hidden rounded-lg border border-[#143144] bg-[#03131f] sm:grid lg:grid-cols-[1.6fr_1fr]" :class="compactHero ? 'stats-hero-compact lg:h-[128px]' : 'lg:h-[236px]'" aria-label="Statistics leaders">
             <div class="relative isolate flex min-w-0 flex-col overflow-hidden lg:min-h-0" :class="compactHero ? 'min-h-0' : 'min-h-[248px]'">
                 <img v-if="view === 'goalies' && (hero?.hero || hero?.avatar)" :src="hero.hero || hero.avatar" alt="" class="absolute inset-0 -z-20 h-full w-full object-cover object-top opacity-30 blur-sm" />
@@ -162,13 +160,9 @@ const sortTeams = key => { teamDescending.value = key === teamSort.value ? !team
         <LoadingState v-if="pendingView && !seamlessTableSwitch" :label="pendingView" />
         <LoadingState v-if="failedView" :label="failedView" failed @retry="router.visit(href(failedView))" />
         <Deferred v-if="['skaters', 'goalies'].includes(view) && (!pendingView || seamlessTableSwitch)" data="initialPayload">
-            <template #fallback><LoadingState :label="view" /></template>
+            <template #fallback><LoadingState :label="view" :message="statsCacheMissing ? rewindMessage : ''" /></template>
             <template #rescue="{ reloading }"><LoadingState :label="view" failed :reloading="reloading" @retry="reload('initialPayload')" /></template>
-        <div v-if="initialPayload?.meta?.cache_status === 'missing'" role="status" class="rounded-lg border border-[#28516a] bg-[#041724] p-4 text-sm text-slate-300">
-            This season report is not prepared yet. Please check back shortly.
-            <button type="button" class="ml-2 rounded text-sky-300 hover:text-sky-200 focus-visible:ring-2 focus-visible:ring-sky-400" @click="reload('initialPayload')">Check again</button>
-        </div>
-        <section v-else class="-mx-3 overflow-hidden bg-white text-slate-900 sm:mx-0 sm:rounded-lg sm:bg-[#101923]" :aria-label="`${activeView === 'prospects' ? 'Prospect' : view === 'goalies' ? 'Goalie' : 'Skater'} statistics`"><StatsTable :key="view + selectedPerspective" :report-view="view" :initial-payload="initialPayload" :api-url="apiUrl" :connected-leagues="connectedLeagues" :perspectives="perspectives" :selected-perspective="selectedPerspective" :mobile-breakpoint="mobileBreakpoint" /></section>
+        <section class="-mx-3 overflow-hidden bg-white text-slate-900 sm:mx-0 sm:rounded-lg sm:bg-[#101923]" :aria-label="`${activeView === 'prospects' ? 'Prospect' : view === 'goalies' ? 'Goalie' : 'Skater'} statistics`"><StatsTable :key="view + selectedPerspective" :report-view="view" :initial-payload="initialPayload" :api-url="apiUrl" :connected-leagues="connectedLeagues" :perspectives="perspectives" :selected-perspective="selectedPerspective" :mobile-breakpoint="mobileBreakpoint" /></section>
         </Deferred>
     </main>
 </template>

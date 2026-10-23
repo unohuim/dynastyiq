@@ -3,7 +3,7 @@ import { Link } from '@inertiajs/vue3';
 defineProps({ links: { type: Array, required: true }, view: { type: String, required: true } });
 defineEmits(['start', 'finish', 'failed']);
 const tableViews = ['skaters', 'goalies', 'prospects'];
-const tableProps = ['view', 'selectedSeason', 'leaders', 'initialPayload', 'apiUrl', 'connectedLeagues', 'perspectives', 'selectedPerspective', 'mobileBreakpoint'];
+const tableProps = ['view', 'selectedSeason', 'leaders', 'initialPayload', 'apiUrl', 'connectedLeagues', 'perspectives', 'selectedPerspective', 'mobileBreakpoint', 'statsCacheMissing'];
 </script>
 
 <template>

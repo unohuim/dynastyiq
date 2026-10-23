@@ -48,19 +48,33 @@ class NhlDashboardPayload
     /** Share existing factual dashboard comparisons without fetching editorial feeds. */
     public function statsHighlights(): array
     {
-        return Cache::get('nhl:stats:highlights:v1', ['highlights_cache_status' => 'missing']);
+        $key = 'nhl:stats:highlights:v1';
+        $prepared = Cache::get($key);
+        if (! is_array($prepared)) {
+            $prepared = Cache::lock($key.':build', 240)->block(180, function () use ($key): array {
+                $existing = Cache::get($key);
+                if (is_array($existing)) {
+                    return $existing;
+                }
+                $this->refreshStatsHighlights();
+                return Cache::get($key);
+            });
+        }
+        return $prepared;
     }
 
-    /** Prepare every comparison used by Leaders outside of public page requests. */
+    /** Prepare only the trend comparisons used by Leaders, during sync or cold-cache recovery. */
     public function refreshStatsHighlights(): void
     {
         $slate = Carbon::now('America/Toronto');
         if ($slate->hour < 11) {
             $slate->subDay();
         }
-        $facts = $this->facts($slate->toDateString());
+        $results = $this->recentResults($slate->toDateString());
         $prepared = [
-            ...collect($facts)->only(['performance_date', 'team_trends', 'player_trends', 'line_combinations'])->all(),
+            'performance_date' => $results['performance_date'],
+            'team_trends' => $this->teamTrends($results['finished'], $results['boxscores']),
+            'player_trends' => $this->playerTrends($results['finished'], $results['boxscores']),
             'highlights_cache_status' => 'ready', 'highlights_prepared_at' => now()->toIso8601String(),
         ];
         if (! Cache::forever('nhl:stats:highlights:v1', $prepared)) {
@@ -70,6 +84,31 @@ class NhlDashboardPayload
 
     /** Cache shared facts separately from editorial feeds and request-specific searches. */
     private function facts(string $date): array
+    {
+        $results = $this->recentResults($date);
+        $completeDay = $results['complete_day'];
+        $finished = $results['finished'];
+        $boxscores = $results['boxscores'];
+        $performanceDate = $results['performance_date'];
+        $dayBoxes = $completeDay === null ? collect() : $boxscores->whereIn('nhl_game_id', $completeDay->pluck('nhl_game_id'));
+
+        return [
+            'slate_date' => $date, 'performance_date' => $performanceDate,
+            'performers' => $this->performers($dayBoxes, $completeDay ?? collect()),
+            'line_combinations' => $this->lineCombinations($completeDay ?? collect()),
+            'transactions' => $this->transactions(), 'injuries' => $this->injuries(),
+            'team_trends' => $this->teamTrends($finished, $boxscores),
+            'player_trends' => $this->playerTrends($finished, $boxscores),
+            'updated_at' => now()->toIso8601String(),
+        ];
+    }
+
+    /**
+     * Read the shared recent results needed by homepage facts and independent trend preparation.
+     *
+     * @return array{complete_day:Collection|null,finished:Collection,boxscores:Collection,performance_date:string|null}
+     */
+    private function recentResults(string $date): array
     {
         $cutoff = Carbon::parse($date);
         $schedule = NhlGame::query()->whereBetween('game_date', [$cutoff->copy()->subDays(120)->toDateString(), $date])
@@ -85,17 +124,8 @@ class NhlDashboardPayload
             ->leftJoin('players as p', 'p.nhl_id', '=', 'b.nhl_player_id')
             ->whereIn('b.nhl_game_id', $finished->pluck('nhl_game_id'))->where('b.toi_seconds', '>', 0)
             ->select(['b.*', 'p.full_name', 'p.head_shot_url'])->get();
-        $dayBoxes = $completeDay === null ? collect() : $boxscores->whereIn('nhl_game_id', $completeDay->pluck('nhl_game_id'));
-
-        return [
-            'slate_date' => $date, 'performance_date' => $performanceDate,
-            'performers' => $this->performers($dayBoxes, $completeDay ?? collect()),
-            'line_combinations' => $this->lineCombinations($completeDay ?? collect()),
-            'transactions' => $this->transactions(), 'injuries' => $this->injuries(),
-            'team_trends' => $this->teamTrends($finished, $boxscores),
-            'player_trends' => $this->playerTrends($finished, $boxscores),
-            'updated_at' => now()->toIso8601String(),
-        ];
+        return ['complete_day' => $completeDay, 'finished' => $finished, 'boxscores' => $boxscores,
+            'performance_date' => $performanceDate];
     }
 
     /** Retain every qualifying performance; fill to four real cards when fewer qualify. */

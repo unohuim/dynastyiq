@@ -623,12 +623,10 @@ it('does not add a minimum GP threshold to prospect rate leaders or include pros
 });
 
 
-it('returns an honest missing state without calculating or queueing public leaders', function (): void {
-    DB::enableQueryLog();
+it('builds and retains missing Leaders during the requesting visit', function (): void {
     $facts = app(NhlStatsDashboardPayload::class)->build('20262027');
-    expect($facts['cache_status'])->toBe('missing')->and($facts['hero'])->toBeNull();
-    expect(DB::getQueryLog())->toBe([]);
-    DB::disableQueryLog();
+    expect($facts['cache_status'])->toBe('ready')->and($facts['hero']['name'])->toBe('Alex Leader')
+        ->and(Cache::has(NhlStatsDashboardPayload::CACHE_PREFIX.'leaders:20262027'))->toBeTrue();
     Bus::assertNothingDispatched();
 });
 
@@ -642,11 +640,13 @@ it('reads prepared leaders without touching source statistics', function (): voi
     DB::disableQueryLog();
 });
 
-it('resolves the default season solely from prepared metadata', function (): void {
+it('repairs missing default-season metadata and reuses it on later requests', function (): void {
     Cache::forget(NhlStatsDashboardPayload::CACHE_PREFIX.'latest-season');
+    expect(app(NhlStatsDashboardPayload::class)->latestPreparedSeason())->toBe('20262027')
+        ->and(Cache::get(NhlStatsDashboardPayload::CACHE_PREFIX.'latest-season'))->toBe('20262027');
     DB::enableQueryLog();
-    expect(app(NhlStatsDashboardPayload::class)->latestPreparedSeason())->toBe('');
-    expect(DB::getQueryLog())->toBe([]);
+    expect(app(NhlStatsDashboardPayload::class)->latestPreparedSeason())->toBe('20262027')
+        ->and(DB::getQueryLog())->toBe([]);
     DB::disableQueryLog();
 });
 
@@ -680,13 +680,12 @@ it('publishes complete report slices and serves the prepared table through HTTP'
     expect($pgp['data'][0]['pts'])->toBe(4.0);
 });
 
-it('returns a missing report without performing hockey queries or scheduling work', function (): void {
+it('builds a missing public report on demand and caches all slices', function (): void {
     $perspective = ($this->publicReport)();
-    DB::enableQueryLog();
-    [$payload] = app(StatsPayloadBuilder::class)->readPreparedSeasonPayload(($this->reportInput)($perspective));
-    expect($payload['meta']['cache_status'])->toBe('missing')->and($payload['data'])->toBe([]);
-    expect(DB::getQueryLog())->toBe([]);
-    DB::disableQueryLog();
+    $builder = app(StatsPayloadBuilder::class);
+    [$payload] = $builder->readPreparedSeasonPayload(($this->reportInput)($perspective));
+    expect($payload['meta']['cache_status'])->toBe('ready')->and($payload['data'][0]['pts'])->toBe(8);
+    expect(array_keys(Cache::get($builder->preparedKey($perspective, '20262027', 2))))->toBe(['total', 'pgp', 'p60']);
     Bus::assertNothingDispatched();
 });
 
@@ -712,7 +711,7 @@ it('tracks the preparation batch on its originating season sync', function (): v
         'start_date' => '2026-09-01', 'end_date' => '2027-08-31', 'payload' => ['season' => '20262027']]);
     (new QueueNhlStatsDashboardRefresh())->handle(new NhlSeasonStatsSynced('20262027', 2, $run->id));
     Bus::assertBatched(fn ($batch): bool => $batch->name === 'Public stats · 20262027'
-        && count($batch->jobs) >= 5 && $batch->options['queue'] === 'projections');
+        && count($batch->jobs) >= 5 && $batch->options['queue'] === 'projections' && $batch->options['allowFailures'] === true);
 });
 
 it('queues preparation when ratings or imported player histories change', function (): void {
@@ -788,7 +787,8 @@ it('queues a cache rebuild without importing season data', function (): void {
 it('reads retained highlights without rebuilding homepage facts on a stats visit', function (): void {
     $dashboard = new NhlDashboardPayload(app(\App\Services\NhlDashboardNews::class));
     DB::enableQueryLog();
-    expect($dashboard->statsHighlights())->toBe(['highlights_cache_status' => 'missing']);
+    // This test exercises the warm read; cold reads are covered separately.
+
     $prepared = ['highlights_cache_status' => 'ready', 'player_trends' => [['name' => 'Prepared Player']]];
     Cache::forever('nhl:stats:highlights:v1', $prepared);
     expect($dashboard->statsHighlights())->toBe($prepared)->and(DB::getQueryLog())->toBe([]);
@@ -839,4 +839,65 @@ it('normalizes absent or malformed legacy settings to an empty array during prep
         expect(array_keys($bundle))->toBe(['total', 'pgp', 'p60'])
             ->and($bundle['total']['meta']['cache_status'])->toBe('ready');
     }
+});
+
+
+it('repairs missing default-season metadata when the Leaders publisher completes', function (): void {
+    Cache::forget(NhlStatsDashboardPayload::CACHE_PREFIX.'latest-season');
+    (new RefreshNhlStatsDashboardJob('20262027', 'leaders'))->handle(app(NhlStatsDashboardPayload::class));
+    expect(Cache::get(NhlStatsDashboardPayload::CACHE_PREFIX.'latest-season'))->toBe('20262027');
+    $this->get('/stats')->assertOk()->assertInertia(fn (Assert $page) => $page
+        ->where('selectedSeason', '20262027')
+        ->loadDeferredProps('stats-leaders', fn (Assert $reload) => $reload
+            ->where('leaders.cache_status', 'ready')->where('leaders.hero.name', 'Alex Leader')));
+});
+
+it('prepares missing trend data while retaining the existing Leaders snapshot', function (): void {
+    $dashboard = new NhlDashboardPayload(app(\App\Services\NhlDashboardNews::class));
+    app()->instance(NhlDashboardPayload::class, $dashboard);
+    (new RefreshNhlStatsDashboardJob('20262027', 'leaders'))->handle(app(NhlStatsDashboardPayload::class));
+    Cache::forget('nhl:stats:highlights:v1');
+    $this->get('/stats')->assertOk()->assertInertia(fn (Assert $page) => $page
+        ->where('statsCacheMissing', true)
+        ->loadDeferredProps('stats-leaders', fn (Assert $reload) => $reload
+            ->where('leaders.cache_status', 'ready')->where('leaders.highlights_cache_status', 'ready')
+            ->where('leaders.hero.name', 'Alex Leader')->has('leaders.mobile_leaders', 4)));
+    expect(Cache::has('nhl:stats:highlights:v1'))->toBeTrue();
+});
+
+
+it('post-sync trend preparation avoids unrelated homepage calculations and serves Player Trends', function (): void {
+    for ($day = 17; $day <= 22; $day++) {
+        $gameId = $day === 22 ? 2026020001 : 2026020100 + $day;
+        if ($day !== 22) {
+            DB::table('nhl_games')->insert(['nhl_game_id' => $gameId, 'season_id' => '20262027', 'game_type' => 2,
+                'game_date' => '2026-10-'.$day, 'game_state' => 'OFF', 'home_team_id' => 10, 'away_team_id' => 8,
+                'home_team_abbrev' => 'TOR', 'away_team_abbrev' => 'MTL', 'home_team_score' => 3, 'away_team_score' => 1]);
+        }
+        DB::table('nhl_boxscores')->insert(['nhl_game_id' => $gameId, 'nhl_player_id' => 9000001,
+            'nhl_team_id' => 10, 'position' => 'C', 'toi_seconds' => 1200, 'points' => $day - 16]);
+    }
+    ($this->facts)();
+    $dashboard = new NhlDashboardPayload(app(\App\Services\NhlDashboardNews::class));
+    app()->instance(NhlDashboardPayload::class, $dashboard);
+    DB::listen(function (\Illuminate\Database\Events\QueryExecuted $query): void {
+        foreach (['nhl_shot_attempt', 'nhl_player_injuries', 'nhl_player_transactions'] as $table) {
+            if (str_contains($query->sql, $table)) {
+                throw new \RuntimeException('Unrelated homepage calculation');
+            }
+        }
+    });
+    (new RefreshNhlStatsDashboardJob('20262027', 'highlights'))->handle(app(NhlStatsDashboardPayload::class));
+    $this->get('/stats')->assertOk()->assertInertia(fn (Assert $page) => $page
+        ->loadDeferredProps('stats-leaders', fn (Assert $reload) => $reload
+            ->where('leaders.player_trends.0.name', 'Alex Leader')
+            ->where('leaders.player_trends.0.current', 4)->where('leaders.player_trends.0.previous', 1)));
+    Http::assertNothingSent();
+});
+
+it('marks cold page visits for the rewind loading message and clears that flag once prepared', function (): void {
+    $this->get('/stats')->assertOk()->assertInertia(fn (Assert $page) => $page->where('statsCacheMissing', true));
+    ($this->facts)();
+    Cache::forever('nhl:stats:highlights:v1', ['highlights_cache_status' => 'ready']);
+    $this->get('/stats')->assertOk()->assertInertia(fn (Assert $page) => $page->where('statsCacheMissing', false));
 });

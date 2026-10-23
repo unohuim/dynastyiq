@@ -807,7 +807,7 @@ describe('stats page prospect controls', () => {
   it('shows preparation status instead of empty player results for an unprepared report', async () => {
     const shell = await createShell({ mobile: true, meta: { cache_status: 'missing' } });
     shell.renderContent();
-    expect(shell.contentEl.querySelector('[role="status"]')?.textContent).toContain('not prepared yet');
+    expect(shell.contentEl.querySelector('[role="status"]')?.textContent).toContain("the previous user didn't rewind, so that's what we're doing now. Stand by.");
     expect(shell.contentEl.querySelector('button')?.textContent).toBe('Check again');
     expect(shell.contentEl.querySelector('[data-vue-stats-mobile-card-list]')).toBeNull();
   });

@@ -63,7 +63,7 @@ final class StatsPayloadBuilder
     }
 
     /**
-     * Read a prepared public report and apply selections to its already-calculated rows.
+     * Reuse or build a public report snapshot, then apply selections to its calculated rows.
      *
      * @return array{0:array<string,mixed>,1:array<int,mixed>,2:string,3:array<string,float>}
      */
@@ -72,15 +72,22 @@ final class StatsPayloadBuilder
         if (($input->perspective->visibility ?? null) !== 'public_guest') {
             throw new \InvalidArgumentException('Only guest-visible reports can read public snapshots.');
         }
-        $season = (string) ($input->seasonFilter ?: Cache::get(\App\Services\NhlStatsDashboardPayload::CACHE_PREFIX.'latest-season', ''));
+        $season = (string) ($input->seasonFilter ?: app(\App\Services\NhlStatsDashboardPayload::class)->latestPreparedSeason());
         $gameType = $this->isProspectsPerspective($input->perspective) ? 2 : (int) ($input->gameType ?? 2);
         $bundle = Cache::get($this->preparedKey($input->perspective, $season, $gameType));
         $slice = $input->canSlice ? $input->slice : 'total';
         $payload = $bundle[$slice] ?? null;
         if (! is_array($payload)) {
-            return [['headings' => [], 'data' => [], 'settings' => ['resource' => 'players', 'slice' => $slice],
-                'meta' => ['season' => $season, 'game_type' => $gameType, 'cache_status' => 'missing',
-                    'availableSeasons' => [], 'filterSchema' => [], 'appliedFilters' => []]], [], $season, []];
+            $key = $this->preparedKey($input->perspective, $season, $gameType);
+            $bundle = Cache::lock($key.':build', 240)->block(180, function () use ($key, $input, $season, $gameType, $slice): array {
+                $existing = Cache::get($key);
+                if (is_array($existing) && isset($existing[$slice])) {
+                    return $existing;
+                }
+                $this->refreshPreparedSeasonPayload($input->perspective, $season, $gameType);
+                return Cache::get($key);
+            });
+            $payload = $bundle[$slice];
         }
         $filters = $input->filterSet;
         $totalRows = collect($bundle['total']['data']);

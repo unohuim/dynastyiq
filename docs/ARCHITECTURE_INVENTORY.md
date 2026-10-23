@@ -4189,8 +4189,8 @@ and retains it until the next source refresh. Guest-visible season reports are
 included; private and custom-range payloads retain their separate pipeline.
 
 Public season dashboards, retained highlights and guest-visible table bundles now
-prepare together. Public reads expose missing snapshots without aggregation; admin
-season sync tracks the preparation batch. `nhl:stats-cache --all` queues deployment
+prepare together. Cold public visits build and retain missing snapshots immediately; admin
+season sync tracks preparation, including independent Player Trends publication. `nhl:stats-cache --all` queues deployment
 preparation for stored seasons.
 
 **Authority:** `docs/architecture/stats/NhlStatsCacheRefresh.yaml`.

@@ -68,7 +68,7 @@ class QueueNhlStatsDashboardRefresh implements ShouldQueueAfterCommit
         if ($existingBatch !== null && $existingBatch->totalJobs > 0) {
             return;
         }
-        Bus::batch($jobs)->name('Public stats · '.$season)->onQueue('projections')
+        Bus::batch($jobs)->name('Public stats · '.$season)->onQueue('projections')->allowFailures()
             ->before(static function (Batch $batch) use ($runId): void {
                 self::recordBatch($runId, $batch, 'building');
             })

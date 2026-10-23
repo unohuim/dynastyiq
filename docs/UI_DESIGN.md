@@ -582,8 +582,10 @@ If a UI element feels "cool", "flashy", or "impressive", it is probably wrong fo
 Clarity, calmness, and restraint win.
 
 
-Public season statistics read prepared snapshots. When a dashboard, trend snapshot
-or table is not prepared, show a clear compact status and a keyboard-accessible
-Check again action. Do not disguise unavailable preparation as zero statistics or
-run expensive source calculations while a visitor waits. The admin season-sync
-progress distinguishes source rollup from report-cache preparation and failures.
+Public season statistics reuse prepared snapshots. On a cache miss, calculate,
+cache and display the missing data during the same visit. While that deferred
+request is calculating, display exactly: "the previous user didn't rewind, so
+that's what we're doing now. Stand by." Warm reads retain normal loading feedback.
+The admin season-sync progress distinguishes source rollup from report-cache
+preparation and failures. Visitors use /stats without supplying a season parameter;
+missing default-season metadata is repaired automatically.

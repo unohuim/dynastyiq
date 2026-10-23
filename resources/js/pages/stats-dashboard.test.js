@@ -185,9 +185,9 @@ it('keeps mobile category navigation while replacing the desktop hero and leader
     expect(source).toContain('bg-[#03131f] sm:hidden');
     expect(source).toContain('sm:grid lg:grid-cols-[1.6fr_1fr]');
     expect(source).toContain('aria-label="Mobile season leaders"');
-    expect(source).toContain("leaders.cache_status === 'missing'");
-    expect(source).toContain("initialPayload?.meta?.cache_status === 'missing'");
-    expect(source).toContain('Check again');
+    expect(source).toContain("statsCacheMissing ? rewindMessage : ''");
+    expect(source).toContain("the previous user didn't rewind, so that's what we're doing now. Stand by.");
+    expect(source).not.toContain('Season statistics are not prepared yet.');
     expect(source).toContain('class="hidden space-y-3 sm:block"');
     expect(source).toContain('<LeaderCardRow v-for="row in leaders.mobile_leaders || []"');
 });
@@ -212,4 +212,12 @@ it('retains full player reports and separates mobile team rows from the desktop 
     expect(source).toContain('<li v-for="team in sortedTeams"');
     expect(source).toContain('<div class="hidden overflow-x-auto sm:block"><table');
     expect(source).toContain("['Leaders', 'Skaters', 'Goalies', 'Prospects', 'Teams']");
+});
+
+
+it('displays the exact rewind message while missing stats are calculated', () => {
+    const message = "the previous user didn't rewind, so that's what we're doing now. Stand by.";
+    app = createApp(LoadingState, { label: 'season leaders', message }); app.mount('#leaders');
+    expect(document.querySelector('[role="status"] p').textContent).toBe(message);
+    expect(document.querySelector('[role="status"]').getAttribute('aria-busy')).toBe('true');
 });

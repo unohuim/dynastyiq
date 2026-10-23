@@ -27,6 +27,7 @@ use Illuminate\Http\Request;
 use Illuminate\Routing\Controller as BaseController;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Carbon;
 use Inertia\Inertia;
 use Inertia\Response as InertiaResponse;
@@ -51,8 +52,13 @@ class StatsController extends BaseController
             $request->query->set('season_id', $selectedSeason);
         }
 
+        $pageProps = $this->statsPageProps($request, true, in_array($view, ['skaters', 'goalies'], true));
+        $dashboardMissing = ! Cache::has(\App\Services\NhlStatsDashboardPayload::CACHE_PREFIX.$view.':'.$selectedSeason)
+            || ($view === 'leaders' && ! Cache::has('nhl:stats:highlights:v1'));
+
         return Inertia::render('Stats/Index', [
-            ...$this->statsPageProps($request, true, in_array($view, ['skaters', 'goalies'], true)),
+            ...$pageProps,
+            'statsCacheMissing' => $dashboardMissing || $pageProps['statsCacheMissing'],
             'view' => $view,
             'selectedSeason' => $selectedSeason,
             'leaders' => Inertia::defer(fn (): array => $leaders->build($selectedSeason, $view), 'stats-leaders', rescue: true),
@@ -132,7 +138,13 @@ class StatsController extends BaseController
             ];
         };
 
+        $tableMissing = $tableView && $first?->visibility === 'public_guest'
+            && ! Cache::has(app(StatsPayloadBuilder::class)->preparedKey(
+                $first, (string) $seasonFilter, str_starts_with((string) $selectedSlug, 'prospects') ? 2 : $gameType,
+            ));
+
         return [
+            'statsCacheMissing' => $tableMissing,
             'initialPayload' => $defer
                 ? ($tableView ? Inertia::defer($buildPayload, 'stats-table', rescue: true) : Inertia::optional($buildPayload))
                 : $buildPayload(),
