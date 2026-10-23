@@ -803,3 +803,40 @@ it('fails preparation when the cache store rejects publication', function (): vo
     expect(fn () => app(NhlStatsDashboardPayload::class)->refreshCachedFacts('20262027', 'skaters'))
         ->toThrow(\RuntimeException::class, 'Public stats cache publication failed.');
 });
+
+
+it('prepares legacy JSON-string settings and serves all slices through the public API', function (): void {
+    $perspective = ($this->publicReport)();
+    $builder = app(StatsPayloadBuilder::class);
+    $builder->refreshPreparedSeasonPayload($perspective, '20262027', 2);
+    $arrayBundle = Cache::get($builder->preparedKey($perspective, '20262027', 2));
+
+    $encoded = json_encode($perspective->settings, JSON_THROW_ON_ERROR);
+    $perspective->update(['settings' => $encoded]);
+    $perspective->refresh();
+    expect($perspective->settings)->toBeString();
+
+    (new RefreshNhlStatsDashboardJob('20262027', 'table', $perspective->id))
+        ->handle(app(NhlStatsDashboardPayload::class));
+    expect(Cache::get($builder->preparedKey($perspective, '20262027', 2)))->toBe($arrayBundle)
+        ->and($perspective->fresh()->settings)->toBe($encoded);
+
+    foreach (['total' => 8, 'pgp' => 4, 'p60' => 12] as $slice => $points) {
+        $this->getJson('/api/stats?perspective=skaters&season_id=20262027&slice='.$slice)->assertOk()
+            ->assertJsonPath('meta.cache_status', 'ready')
+            ->assertJsonPath('data.0.pts', $points);
+    }
+});
+
+it('normalizes absent or malformed legacy settings to an empty array during preparation', function (): void {
+    $perspective = ($this->publicReport)();
+    $builder = app(StatsPayloadBuilder::class);
+    foreach ([null, 'invalid-json', '"unexpected scalar"'] as $settings) {
+        $perspective->update(['settings' => $settings]);
+        $perspective->refresh();
+        $builder->refreshPreparedSeasonPayload($perspective, '20262027', 2);
+        $bundle = Cache::get($builder->preparedKey($perspective, '20262027', 2));
+        expect(array_keys($bundle))->toBe(['total', 'pgp', 'p60'])
+            ->and($bundle['total']['meta']['cache_status'])->toBe('ready');
+    }
+});

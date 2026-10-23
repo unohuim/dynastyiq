@@ -40,10 +40,16 @@ final class StatsPayloadBuilder
         if ($perspective->visibility !== 'public_guest') {
             throw new \InvalidArgumentException('Only guest-visible reports can enter the public cache.');
         }
+        // Legacy seeded rows can contain a JSON string even after Eloquent's array cast.
+        $settings = $perspective->settings;
+        if (is_string($settings)) {
+            $settings = json_decode($settings, true);
+        }
+        $settings = is_array($settings) ? $settings : [];
         $slices = [];
         foreach (['total', 'pgp', 'p60'] as $slice) {
             [$payload] = $this->buildSeasonPayload(new SeasonStatsPayloadRequest(
-                null, $perspective, $perspective->settings ?? [], (bool) $perspective->is_slicable,
+                null, $perspective, $settings, (bool) $perspective->is_slicable,
                 $season, $slice, $gameType, null, StatsFilterSet::fromRequest(null),
             ), freshSchema: true);
             $payload['data'] = collect($payload['data'])->values()->all();
