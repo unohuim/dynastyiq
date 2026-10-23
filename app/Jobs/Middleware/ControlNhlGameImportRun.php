@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Jobs\Middleware;
 
 use App\Exceptions\NhlGameImportRunCancelled;
+use App\Jobs\NhlOrchestratorJob;
 use App\Services\NhlGameImportRunControl;
 use Closure;
 use Illuminate\Support\Facades\DB;
@@ -28,11 +29,18 @@ class ControlNhlGameImportRun
         }
 
         try {
-            DB::transaction(function () use ($job, $next, $control, $key, $token): void {
+            if ($job instanceof NhlOrchestratorJob) {
+                // Each stage admission already owns its own short transaction and cancellation fence.
+                // Do not retain a parent lock while coordinating claims for other games.
                 $next($job);
-                $successful = ! isset($job->job) || (! $job->job->isReleased() && ! $job->job->hasFailed());
-                $control->finish($job->runId, $job->runGeneration, $key, $token, $successful);
-            });
+                DB::transaction(fn () => $control->finish($job->runId, $job->runGeneration, $key, $token, false), 3);
+            } else {
+                DB::transaction(function () use ($job, $next, $control, $key, $token): void {
+                    $next($job);
+                    $successful = ! isset($job->job) || (! $job->job->isReleased() && ! $job->job->hasFailed());
+                    $control->finish($job->runId, $job->runGeneration, $key, $token, $successful);
+                });
+            }
         } catch (NhlGameImportRunCancelled) {
             // Cancellation is an operator action, not a queue failure.
         } finally {

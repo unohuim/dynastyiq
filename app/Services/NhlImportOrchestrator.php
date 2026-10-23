@@ -113,12 +113,23 @@ class NhlImportOrchestrator
     /** Claim a (game_id, type) for work: scheduled → running. */
     public function claim(int $gameId, string $type, ?int $runId = null): bool
     {
-        return DB::transaction(function () use ($gameId, $type, $runId): bool {
-            if ($runId !== null) {
-                NhlGameImportRun::query()->whereKey($runId)->lockForUpdate()->first();
-            }
-            return app(NhlGameImportRunControl::class)->canAdvance($runId) && $this->repo->claim($gameId, $type, $runId);
-        });
+        try {
+            return DB::transaction(function () use ($gameId, $type, $runId): bool {
+                if (! app(NhlGameImportRunControl::class)->canAdvance($runId) || ! $this->repo->claim($gameId, $type, $runId)) {
+                    return false;
+                }
+                // Workers take progress first, then the parent metadata fence, in that order.
+                if ($runId !== null) {
+                    NhlGameImportRun::query()->whereKey($runId)->lock('for no key update')->first();
+                    if (! app(NhlGameImportRunControl::class)->canAdvance($runId)) {
+                        throw new \App\Exceptions\NhlGameImportRunCancelled();
+                    }
+                }
+                return true;
+            }, DB::transactionLevel() === 0 ? 3 : 1);
+        } catch (\App\Exceptions\NhlGameImportRunCancelled) {
+            return false;
+        }
     }
 
     /** Verify it’s running (used by jobs as a guard). */
@@ -163,9 +174,11 @@ class NhlImportOrchestrator
         $items = (int) ($meta['items_count'] ?? 0);
         $runId ??= $this->runIdForStage($gameId, $type);
         $this->repo->markCompleted($gameId, $type, $items, $runId, true);
-        $this->clearTroubleshootingDirectoryAfterSuccessfulStage($gameId, $type);
-        $this->seasonSummary($gameId, $type);
-        $this->advance($gameId, $type, $runId);
+        DB::afterCommit(function () use ($gameId, $type, $runId): void {
+            $this->clearTroubleshootingDirectoryAfterSuccessfulStage($gameId, $type);
+            $this->seasonSummary($gameId, $type);
+            $this->advance($gameId, $type, $runId);
+        });
     }
 
     /** Jobs call this on failure. */
@@ -202,7 +215,7 @@ class NhlImportOrchestrator
             $failureCategory,
             $retryable
         );
-        $this->continueRunOrDate($gameId, $type, $runId);
+        DB::afterCommit(fn () => $this->continueRunOrDate($gameId, $type, $runId));
     }
 
     /** Enforce canonical NHL stage order. */

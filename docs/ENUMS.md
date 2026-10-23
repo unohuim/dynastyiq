@@ -893,6 +893,7 @@ These values describe training-only age, S1-to-S2 rate movement, S1-to-S2 opport
 - `failed`
 - `pausing`
 - `paused`
+- `cancelling`
 - `cancelled`
 
 **Semantic meaning:**
@@ -903,10 +904,13 @@ These values describe training-only age, S1-to-S2 rate movement, S1-to-S2 opport
 - `failed`: At least one related NHL import progress row is in error, or a season sync job failed.
 - `pausing`: Admission is stopped while already-claimed discovery/import work finishes.
 - `paused`: No live claims remain; unfinished work can be resumed from checkpoints.
+- `cancelling`: Cancellation is fenced while unfinished progress rows are cleaned up. Admission, Resume, rerun and deletion are blocked; Cancel may be retried if cleanup fails.
 - `cancelled`: Operator-cancelled terminal run. Pending/running stage rows use existing `skipped` status with a cancellation reason. Completed results remain available; restart is an explicit rerun.
 
 `nhl_game_import_runs.payload.run_control` stores a generation, expiring active
-claims and completed-work keys. Resume and explicit reruns rotate the generation;
+claims and completed-work keys. A temporary `resume_pending` flag keeps a run
+paused while abandoned progress is reset, preventing concurrent Resume requests.
+Resume and explicit reruns rotate the generation;
 worker updates must not revive a cancelled run or cross generations. These controls
 apply to discovery and game-processing runs, not unrelated orchestration actions.
 

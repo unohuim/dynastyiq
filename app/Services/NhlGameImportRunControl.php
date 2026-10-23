@@ -12,6 +12,7 @@ use App\Jobs\BuildNhlShotAttemptFactsJob;
 use App\Jobs\NhlDiscoveryJob;
 use App\Jobs\RefreshNhlGameContextJob;
 use App\Models\NhlGameImportRun;
+use Closure;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -22,7 +23,7 @@ use Throwable;
 /** Durable controls and commit fencing shared by discovery and game import jobs. */
 class NhlGameImportRunControl
 {
-    public const CONTROLLED = ['pausing', 'paused', 'cancelled'];
+    public const CONTROLLED = ['pausing', 'paused', 'cancelling', 'cancelled'];
 
     /** Resolve the persisted generation, retaining compatibility with existing queued jobs. */
     public function generationFor(int $runId): string
@@ -50,8 +51,8 @@ class NhlGameImportRunControl
     /** Atomically admit work before any provider call or database transformation. */
     public function claim(int $runId, string $generation, string $key, int $timeout): ?string
     {
-        return DB::transaction(function () use ($runId, $generation, $key, $timeout): ?string {
-            $run = NhlGameImportRun::query()->lockForUpdate()->find($runId);
+        return $this->metadataTransaction(function () use ($runId, $generation, $key, $timeout): ?string {
+            $run = NhlGameImportRun::query()->lock('for no key update')->find($runId);
             if ($run === null || $this->generation($run) !== $generation
                 || ! in_array($run->status, ['queued', 'running'], true) || $this->signalled($runId, $generation)) {
                 return null;
@@ -70,8 +71,8 @@ class NhlGameImportRunControl
     /** Fence the final commit, retaining successful work as a Resume checkpoint. */
     public function finish(int $runId, string $generation, string $key, string $token, bool $successful): void
     {
-        $run = NhlGameImportRun::query()->lockForUpdate()->find($runId);
-        if ($run === null || $this->generation($run) !== $generation || $run->status === 'cancelled'
+        $run = NhlGameImportRun::query()->lock('for no key update')->find($runId);
+        if ($run === null || $this->generation($run) !== $generation || in_array($run->status, ['cancelling', 'cancelled'], true)
             || $this->signalled($runId, $generation)) {
             throw new NhlGameImportRunCancelled();
         }
@@ -87,8 +88,8 @@ class NhlGameImportRunControl
     /** Release a claim after errors or cancellation without reopening a terminal run. */
     public function release(int $runId, string $generation, string $token): void
     {
-        DB::transaction(function () use ($runId, $generation, $token): void {
-            $run = NhlGameImportRun::query()->lockForUpdate()->find($runId);
+        $this->metadataTransaction(function () use ($runId, $generation, $token): void {
+            $run = NhlGameImportRun::query()->lock('for no key update')->find($runId);
             if ($run === null || $this->generation($run) !== $generation) {
                 return;
             }
@@ -104,7 +105,7 @@ class NhlGameImportRunControl
     /** Pause admission while previously admitted work drains. */
     public function pause(int $runId): NhlGameImportRun
     {
-        $run = DB::transaction(function () use ($runId): NhlGameImportRun {
+        $run = $this->metadataTransaction(function () use ($runId): NhlGameImportRun {
             $run = $this->controllable($runId);
             if (! in_array($run->status, ['queued', 'running'], true)) {
                 throw ValidationException::withMessages(['run' => 'Only queued or running runs can be paused.']);
@@ -123,7 +124,7 @@ class NhlGameImportRunControl
     {
         $existing = NhlGameImportRun::query()->findOrFail($runId);
         if (! in_array($existing->action, ['discover', 'process'], true)
-            || ! in_array($existing->status, ['queued', 'running', 'pausing', 'paused'], true)) {
+            || ! in_array($existing->status, ['queued', 'running', 'pausing', 'paused', 'cancelling', 'cancelled'], true)) {
             throw ValidationException::withMessages(['run' => 'Only active or paused runs can be cancelled.']);
         }
         try {
@@ -131,14 +132,31 @@ class NhlGameImportRunControl
         } catch (Throwable) {
             // The durable cancelled state remains the commit fence when cache is unavailable.
         }
-        $run = DB::transaction(function () use ($runId): NhlGameImportRun {
+        $run = $this->metadataTransaction(function () use ($runId): NhlGameImportRun {
             $run = $this->controllable($runId);
+            if ($run->status === 'cancelled') {
+                return $run;
+            }
+            if (! in_array($run->status, ['queued', 'running', 'pausing', 'paused', 'cancelling'], true)) {
+                throw ValidationException::withMessages(['run' => 'Only active or paused runs can be cancelled.']);
+            }
             $payload = $run->payload ?? [];
             $payload['run_control']['active'] = [];
-            $run->update(['status' => 'cancelled', 'payload' => $payload]);
-            DB::table('nhl_import_progress')->where('run_id', $runId)->whereIn('status', ['scheduled', 'running'])
-                ->update(['status' => 'skipped', 'last_error' => 'Cancelled by operator.', 'updated_at' => now()]);
+            unset($payload['run_control']['resume_pending']);
+            $run->update(['status' => 'cancelling', 'payload' => $payload]);
             return $run;
+        });
+        // Never hold the parent metadata lock while waiting for a worker's progress rows.
+        $this->metadataTransaction(function () use ($run): void {
+            $this->progressForGeneration($run, 'cancelling')->whereIn('status', ['scheduled', 'running'])
+                ->update(['status' => 'skipped', 'last_error' => 'Cancelled by operator.', 'updated_at' => now()]);
+        });
+        $run = $this->metadataTransaction(function () use ($run, $runId): NhlGameImportRun {
+            $current = $this->controllable($runId);
+            if ($current->status === 'cancelling' && $this->generation($current) === $this->generation($run)) {
+                $current->update(['status' => 'cancelled']);
+            }
+            return $current;
         });
         foreach ($this->batchKeys() as $key) {
             if ($id = data_get($run->payload, $key)) {
@@ -153,26 +171,55 @@ class NhlGameImportRunControl
     public function resume(int $runId): NhlGameImportRun
     {
         $resumedBatch = false;
-        $run = DB::transaction(function () use ($runId, &$resumedBatch): NhlGameImportRun {
+        $run = $this->metadataTransaction(function () use ($runId): NhlGameImportRun {
             $run = $this->controllable($runId);
             $payload = $run->payload ?? [];
-            if (! in_array($run->status, ['pausing', 'paused'], true) || $this->active($payload) !== []) {
+            if (! in_array($run->status, ['pausing', 'paused'], true) || $this->active($payload) !== []
+                || ! empty($payload['run_control']['resume_pending'])) {
                 throw ValidationException::withMessages(['run' => 'Wait until claimed work finishes before resuming a paused run.']);
             }
             $payload['run_control']['active'] = [];
             $payload['run_control']['generation'] = (string) Str::uuid();
-            $run->update(['status' => 'running', 'payload' => $payload]);
-            DB::table('nhl_import_progress')->where('run_id', $runId)->where('status', 'running')
-                ->update(['status' => 'scheduled', 'updated_at' => now()]);
-            // Add replacement work before releasing the run lock, fencing old batch callbacks.
-            $resumedBatch = $this->resumeBatch($run);
+            $payload['run_control']['resume_pending'] = true;
+            $run->update(['status' => 'paused', 'payload' => $payload]);
             return $run;
         });
+        $generation = $this->generation($run);
+        try {
+            $this->metadataTransaction(function () use ($run): void {
+                $this->progressForGeneration($run, 'paused')->where('status', 'running')
+                    ->update(['status' => 'scheduled', 'updated_at' => now()]);
+            });
+            $run = $this->metadataTransaction(function () use ($runId, $generation, &$resumedBatch): NhlGameImportRun {
+                $run = $this->controllable($runId);
+                if ($run->status !== 'paused' || $this->generation($run) !== $generation
+                    || empty($run->payload['run_control']['resume_pending']) || $this->signalled($runId, $generation)) {
+                    throw ValidationException::withMessages(['run' => 'This run changed while Resume was being prepared.']);
+                }
+                $payload = $run->payload ?? [];
+                unset($payload['run_control']['resume_pending']);
+                $run->update(['status' => 'running', 'payload' => $payload]);
+                // Only batch metadata and queue admission remain under this short parent lock.
+                $resumedBatch = $this->resumeBatch($run);
+                return $run;
+            }, false);
+        } catch (Throwable $exception) {
+            $this->metadataTransaction(function () use ($runId, $generation): void {
+                $current = $this->controllable($runId);
+                if ($this->generation($current) === $generation && $current->status === 'paused') {
+                    $payload = $current->payload ?? [];
+                    unset($payload['run_control']['resume_pending']);
+                    $current->update(['payload' => $payload]);
+                }
+            });
+            throw $exception;
+        }
         $payload = $run->payload ?? [];
         if ($run->action === 'discover' && empty($payload['processing_started_at'])) {
             if (count($payload['discovery_completed_dates'] ?? []) >= $run->date_count) {
-                $run->update(['status' => 'completed']);
-                GamesDiscovered::dispatch($runId);
+                if ($this->saveWorkerRun($run, ['status' => 'completed'])) {
+                    GamesDiscovered::dispatch($runId);
+                }
             } else {
                 NhlDiscoveryJob::dispatch($run->start_date, $run->end_date, $runId);
             }
@@ -188,9 +235,10 @@ class NhlGameImportRunControl
     /** Save callback progress without overwriting Pause, Cancel, or a newer run generation. */
     public function saveWorkerRun(NhlGameImportRun $snapshot, array $updates): bool
     {
-        return DB::transaction(function () use ($snapshot, $updates): bool {
-            $run = NhlGameImportRun::query()->lockForUpdate()->find($snapshot->id);
-            if ($run === null || $run->status === 'cancelled' || $this->generation($run) !== $this->generation($snapshot)) {
+        return $this->metadataTransaction(function () use ($snapshot, $updates): bool {
+            $run = NhlGameImportRun::query()->lock('for no key update')->find($snapshot->id);
+            if ($run === null || in_array($run->status, ['cancelling', 'cancelled'], true)
+                || $this->generation($run) !== $this->generation($snapshot)) {
                 return false;
             }
             if (isset($updates['payload'])) {
@@ -207,7 +255,7 @@ class NhlGameImportRunControl
     /** Ignore callbacks from replaced batches or batches with resumed work still pending. */
     public function acceptsBatchCallback(?NhlGameImportRun $run, string $key, string $batchId, bool $completed = false): bool
     {
-        if ($run === null || $run->status === 'cancelled') {
+        if ($run === null || in_array($run->status, ['cancelling', 'cancelled'], true)) {
             return false;
         }
         $current = data_get($run->payload, $key);
@@ -280,7 +328,7 @@ class NhlGameImportRunControl
     /** Load only the supported discovery and game-processing run types under lock. */
     private function controllable(int $runId): NhlGameImportRun
     {
-        $run = NhlGameImportRun::query()->lockForUpdate()->findOrFail($runId);
+        $run = NhlGameImportRun::query()->lock('for no key update')->findOrFail($runId);
         if (! in_array($run->action, ['discover', 'process'], true)) {
             throw ValidationException::withMessages(['run' => 'Controls apply to discovery and game import runs.']);
         }
@@ -362,5 +410,24 @@ class NhlGameImportRunControl
             RefreshNhlGameContextJob::class => 'refs_staff',
             default => $class,
         };
+    }
+
+    /** Filter cleanup by lifecycle and generation without locking the parent row. */
+    private function progressForGeneration(NhlGameImportRun $run, string $status): \Illuminate\Database\Query\Builder
+    {
+        $generation = $this->generation($run);
+        return DB::table('nhl_import_progress')->where('run_id', $run->id)
+            ->whereExists(function ($query) use ($run, $status, $generation): void {
+                $query->selectRaw('1')->from('nhl_game_import_runs as controlled')
+                    ->whereColumn('controlled.id', 'nhl_import_progress.run_id')
+                    ->where('controlled.id', $run->id)->where('controlled.status', $status)
+                    ->whereRaw("COALESCE(controlled.payload->'run_control'->>'generation', 'initial') = ?", [$generation]);
+            });
+    }
+
+    /** Retry short bookkeeping only; an enclosing worker/provider transaction is never replayed here. */
+    private function metadataTransaction(Closure $callback, bool $retry = true): mixed
+    {
+        return DB::transaction($callback, $retry && DB::transactionLevel() === 0 ? 3 : 1);
     }
 }

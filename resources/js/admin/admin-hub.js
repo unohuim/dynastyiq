@@ -1736,7 +1736,7 @@ export default function adminHub(options = {}) {
         },
 
         gameImportBadgeText(run) {
-            if (['pausing', 'paused', 'cancelled'].includes(run.status)) {
+            if (['pausing', 'paused', 'cancelling', 'cancelled'].includes(run.status)) {
                 return run.status.toUpperCase();
             }
             if (this.isDuplicatePbpRepairRun(run)) {
@@ -1755,7 +1755,7 @@ export default function adminHub(options = {}) {
         },
 
         gameImportBadgeClass(run) {
-            if (['pausing', 'paused', 'cancelled'].includes(run.status)) {
+            if (['pausing', 'paused', 'cancelling', 'cancelled'].includes(run.status)) {
                 return this.gameImportStatusClass(run.status);
             }
             if (this.isDuplicatePbpRepairRun(run)) {
@@ -1856,7 +1856,7 @@ export default function adminHub(options = {}) {
             if (['pausing', 'paused'].includes(status)) {
                 return 'bg-amber-100 text-amber-800';
             }
-            if (status === 'cancelled') {
+            if (['cancelling', 'cancelled'].includes(status)) {
                 return 'bg-gray-200 text-gray-700';
             }
             if (status === 'completed') {
@@ -1875,7 +1875,7 @@ export default function adminHub(options = {}) {
         },
 
         discoveryBadgeText(run) {
-            if (['pausing', 'paused', 'cancelled'].includes(run.status)) {
+            if (['pausing', 'paused', 'cancelling', 'cancelled'].includes(run.status)) {
                 return run.status.toUpperCase();
             }
             const progress = run.progress ?? {};
@@ -2416,7 +2416,7 @@ export default function adminHub(options = {}) {
         },
 
         canProcessGameImportRun(run) {
-            if (['pausing', 'paused', 'cancelled'].includes(run.status)) {
+            if (['pausing', 'paused', 'cancelling', 'cancelled'].includes(run.status)) {
                 return false;
             }
             const discoveredGames = Number(run?.facts?.discovered_game_count || 0);
@@ -2505,7 +2505,7 @@ export default function adminHub(options = {}) {
         },
 
         canRerunGameImportRun(run) {
-            if (['pausing', 'paused'].includes(run?.status)) {
+            if (['pausing', 'paused', 'cancelling'].includes(run?.status)) {
                 return false;
             }
             if (!run?.id) {
@@ -2535,10 +2535,10 @@ export default function adminHub(options = {}) {
 
         canControlGameImportRun(run, action) {
             if (!['discover', 'process'].includes(run?.action)) return false;
-            const status = ['pausing', 'paused', 'cancelled'].includes(run.status) ? run.status : (run.stored_status ?? run.status);
+            const status = ['pausing', 'paused', 'cancelling', 'cancelled'].includes(run.status) ? run.status : (run.stored_status ?? run.status);
             if (action === 'pause') return ['queued', 'running'].includes(status);
             if (action === 'resume') return status === 'paused';
-            return ['queued', 'running', 'pausing', 'paused'].includes(status);
+            return ['queued', 'running', 'pausing', 'paused', 'cancelling'].includes(status);
         },
 
         async controlGameImportRun(run, action) {

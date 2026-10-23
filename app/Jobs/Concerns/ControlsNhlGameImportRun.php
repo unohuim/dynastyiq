@@ -26,7 +26,7 @@ trait ControlsNhlGameImportRun
             return true;
         }
         $run = \App\Models\NhlGameImportRun::query()->find($this->runId);
-        return $run !== null && $run->status !== 'cancelled'
+        return $run !== null && ! in_array($run->status, ['cancelling', 'cancelled'], true)
             && app(NhlGameImportRunControl::class)->generationFor($this->runId) === $this->runGeneration;
     }
 }

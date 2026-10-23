@@ -25,6 +25,7 @@ class NhlGameImportRun extends Model
     public const STATUS_PAUSING = 'pausing';
     public const STATUS_PAUSED = 'paused';
     public const STATUS_CANCELLED = 'cancelled';
+    public const STATUS_CANCELLING = 'cancelling';
 
     public const MODE_DATE = 'date';
     public const MODE_SEASON = 'season';

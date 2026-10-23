@@ -26,7 +26,8 @@ when_not_to_use:
   - Synchronous request-time imports.
 rules:
   - The orchestrator owns NHL import stage advancement.
-  - Run-owned jobs and callbacks obey the admission, checkpoint and commit-fence contract in NhlGameImportRunControl.yaml. Pausing/Paused/Cancelled runs cannot claim new stages or be reopened by inferred progress; Pause permits already admitted work to finish.
+  - Run-owned jobs and callbacks obey the admission, checkpoint and commit-fence contract in NhlGameImportRunControl.yaml. Pausing/Paused/Cancelling/Cancelled runs cannot claim new stages or be reopened by inferred progress; Pause permits already admitted work to finish.
+  - Stage checkpoints commit with source writes; successor scheduling, run refill and cleanup follow that commit. Claims lock progress before the parent metadata fence, and orchestration-only coordinator jobs must not retain a whole-job transaction across multiple claims.
   - Canonical stage order, dependencies, job mappings, and stale-timeout config keys must come from NhlImportStages.
   - Jobs must report success and failure through the orchestrator or repository contract.
   - Jobs must attempt raw provider troubleshooting export before marking a game stage failed.

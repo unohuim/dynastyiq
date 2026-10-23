@@ -5,6 +5,7 @@ declare(strict_types=1);
 use App\Jobs\BuildNhlShotAttemptFactsJob;
 use App\Jobs\Middleware\ControlNhlGameImportRun;
 use App\Jobs\NhlDiscoveryJob;
+use App\Jobs\NhlOrchestratorJob;
 use App\Models\NhlGameImportRun;
 use App\Models\Role;
 use App\Models\User;
@@ -208,7 +209,8 @@ it('keeps a paused run paused when its batch is unavailable', function (): void 
         'process_scope' => 'shots', 'shot_fact_batch_id' => 'missing', 'shot_fact_game_ids' => [2026020001],
     ]]);
     $this->actingAs($this->admin)->postJson(($this->url)('resume'))->assertUnprocessable();
-    expect($this->run->fresh()->status)->toBe('paused');
+    expect($this->run->fresh()->status)->toBe('paused')
+        ->and(data_get($this->run->fresh()->payload, 'run_control.resume_pending', false))->toBeFalse();
 });
 
 it('rejects controls for unrelated orchestration types', function (): void {
@@ -224,4 +226,148 @@ it('rejects Pause and Cancel for a completed run', function (): void {
 
 it('returns not found for an unknown run', function (): void {
     $this->actingAs($this->admin)->postJson('/admin/nhl-game-imports/999999/pause')->assertNotFound();
+});
+
+it('allows run bookkeeping while two discovery writers retain parent foreign key locks', function (): void {
+    if (DB::connection()->getDriverName() !== 'pgsql') {
+        $this->markTestSkipped('This regression exercises PostgreSQL foreign-key row locks.');
+    }
+
+    // Independent sessions are essential: savepoints on one connection cannot reproduce this conflict.
+    $connectionConfig = config('database.connections.'.config('database.default'));
+    config(['database.connections.import_lock_writer_a' => $connectionConfig, 'database.connections.import_lock_writer_b' => $connectionConfig]);
+    $writerA = DB::connection('import_lock_writer_a');
+    $writerB = DB::connection('import_lock_writer_b');
+    $runId = null;
+    $baseline = DB::transactionLevel();
+    try {
+        // Commit this isolated fixture so both writer sessions can reference it.
+        $runId = $writerA->table('nhl_game_import_runs')->insertGetId([
+            'action' => 'discover', 'mode' => 'range', 'status' => 'running', 'date_count' => 2,
+            'start_date' => '2026-10-22', 'end_date' => '2026-10-21',
+            'payload' => '{}', 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        foreach ([$writerA, $writerB] as $index => $writer) {
+            $writer->beginTransaction();
+            $writer->table('nhl_import_progress')->insert([
+                'run_id' => $runId, 'game_id' => 2026020001 + $index, 'season_id' => '20262027',
+                'game_date' => '2026-10-22', 'import_type' => 'pbp', 'status' => 'scheduled',
+            ]);
+        }
+
+        DB::beginTransaction();
+        // A bounded safety timeout turns the previous incompatible FOR UPDATE into a deterministic failure.
+        DB::statement("SET LOCAL lock_timeout = '1000ms'");
+        $token = $this->control->claim($runId, 'initial', 'concurrent-discovery', 180);
+        expect($token)->not->toBeNull();
+        $this->control->finish($runId, 'initial', 'concurrent-discovery', $token, true);
+        expect(data_get(NhlGameImportRun::findOrFail($runId)->payload, 'run_control.active'))->toBe([]);
+    } finally {
+        while (DB::transactionLevel() > $baseline) {
+            DB::rollBack();
+        }
+        foreach ([$writerA, $writerB] as $writer) {
+            if ($writer->transactionLevel() > 0) {
+                $writer->rollBack();
+            }
+        }
+        if ($runId !== null) {
+            $writerA->table('nhl_game_import_runs')->where('id', $runId)->delete();
+        }
+        DB::purge('import_lock_writer_a');
+        DB::purge('import_lock_writer_b');
+    }
+});
+
+it('can retry cancellation after progress cleanup was interrupted', function (): void {
+    ($this->progress)('running');
+    $this->run->update(['status' => 'cancelling']);
+    $this->actingAs($this->admin)->postJson(($this->url)('cancel'))->assertOk()->assertJsonPath('run.status', 'cancelled');
+    $this->assertDatabaseHas('nhl_import_progress', ['run_id' => $this->run->id, 'status' => 'skipped']);
+    $this->getJson(route('admin.nhl-game-imports.status'))->assertOk()->assertJsonPath('runs.0.status', 'cancelled');
+});
+
+it('handles repeated cancellation without resetting completed results', function (): void {
+    $completed = ($this->progress)('completed');
+    $this->control->cancel($this->run->id);
+    $this->control->cancel($this->run->id);
+    expect($this->run->fresh()->status)->toBe('cancelled')
+        ->and(DB::table('nhl_import_progress')->where('id', $completed)->value('status'))->toBe('completed');
+});
+
+it('blocks admission and late completion while cancellation cleanup is pending', function (): void {
+    $snapshot = $this->run->fresh();
+    $this->run->update(['status' => 'cancelling']);
+    expect($this->control->canAdvance($this->run->id))->toBeFalse()
+        ->and($this->control->claim($this->run->id, 'initial', 'fixture', 180))->toBeNull()
+        ->and($this->control->saveWorkerRun($snapshot, ['status' => 'completed']))->toBeFalse()
+        ->and($this->control->acceptsBatchCallback($this->run->fresh(), 'shot_fact_batch_id', 'fixture'))->toBeFalse();
+});
+
+it('rejects Resume and deletion while cancellation cleanup is pending', function (): void {
+    $this->run->update(['status' => 'cancelling']);
+    $this->actingAs($this->admin)->postJson(($this->url)('resume'))->assertUnprocessable();
+    $this->deleteJson('/admin/nhl-game-imports/'.$this->run->id)->assertUnprocessable();
+    expect($this->run->fresh()->status)->toBe('cancelling');
+    Bus::assertNothingDispatched();
+});
+
+it('rejects a second Resume while progress reset is pending', function (): void {
+    $this->run->update(['status' => 'paused', 'payload' => ['run_control' => ['generation' => 'resume-fixture', 'resume_pending' => true]]]);
+    $this->actingAs($this->admin)->postJson(($this->url)('resume'))->assertUnprocessable();
+    expect($this->control->generationFor($this->run->id))->toBe('resume-fixture');
+    Bus::assertNothingDispatched();
+});
+
+it('keeps Cancel authoritative when it arrives during Resume progress cleanup', function (): void {
+    ($this->progress)('running');
+    $this->run->update(['status' => 'paused']);
+    $interrupted = false;
+    DB::listen(function (\Illuminate\Database\Events\QueryExecuted $query) use (&$interrupted): void {
+        if ($interrupted || ! str_starts_with($query->sql, 'update "nhl_import_progress"') || ! in_array('scheduled', $query->bindings, true)) {
+            return;
+        }
+        $interrupted = true;
+        $current = $this->run->fresh();
+        expect($current->status)->toBe('paused')->and(data_get($current->payload, 'run_control.resume_pending'))->toBeTrue();
+        $this->control->cancel($this->run->id);
+    });
+    $this->actingAs($this->admin)->postJson(($this->url)('resume'))->assertUnprocessable();
+    expect($interrupted)->toBeTrue()->and($this->run->fresh()->status)->toBe('cancelled');
+    Bus::assertNothingDispatched();
+});
+
+it('coordinates stages without retaining a whole-job transaction', function (): void {
+    $baseline = DB::transactionLevel();
+    $calls = 0;
+    $job = new NhlOrchestratorJob('2026-10-22', $this->run->id);
+    (new ControlNhlGameImportRun())->handle($job, function () use ($baseline, &$calls): void {
+        $calls++;
+        expect(DB::transactionLevel())->toBe($baseline);
+    });
+    expect($calls)->toBe(1)->and(data_get($this->run->fresh()->payload, 'run_control.active'))->toBe([]);
+});
+
+it('retains atomic database writes for actual transformation jobs', function (): void {
+    $baseline = DB::transactionLevel();
+    $progress = ($this->progress)('running');
+    (new ControlNhlGameImportRun())->handle(($this->work)(), function () use ($baseline, $progress): void {
+        expect(DB::transactionLevel())->toBe($baseline + 1);
+        DB::table('nhl_import_progress')->where('id', $progress)->update(['items_count' => 9]);
+    });
+    expect((int) DB::table('nhl_import_progress')->where('id', $progress)->value('items_count'))->toBe(9);
+});
+
+it('does not replay provider work when its transaction fails', function (): void {
+    $calls = 0;
+    $progress = ($this->progress)('running');
+    expect(function () use (&$calls, $progress): void {
+        (new ControlNhlGameImportRun())->handle(($this->work)(), function () use (&$calls, $progress): void {
+            $calls++;
+            DB::table('nhl_import_progress')->where('id', $progress)->update(['items_count' => 99]);
+            throw new RuntimeException('Provider transformation failed.');
+        });
+    })->toThrow(RuntimeException::class, 'Provider transformation failed.');
+    expect($calls)->toBe(1)
+        ->and((int) DB::table('nhl_import_progress')->where('id', $progress)->value('items_count'))->toBe(1);
 });

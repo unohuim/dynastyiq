@@ -73,6 +73,7 @@ class NhlGameImportController extends Controller
                 NhlGameImportRun::STATUS_QUEUED,
                 NhlGameImportRun::STATUS_RUNNING,
                 NhlGameImportRun::STATUS_PAUSING,
+                NhlGameImportRun::STATUS_CANCELLING,
             ], true)
         );
         $total = $orchestrationRuns->count();
@@ -322,6 +323,7 @@ class NhlGameImportController extends Controller
             NhlGameImportRun::STATUS_RUNNING,
             NhlGameImportRun::STATUS_PAUSING,
             NhlGameImportRun::STATUS_PAUSED,
+            NhlGameImportRun::STATUS_CANCELLING,
         ], true)) {
             throw ValidationException::withMessages([
                 'run_id' => 'Only completed, failed or cancelled NHL game import runs can be removed.',
@@ -497,7 +499,7 @@ class NhlGameImportController extends Controller
     ): JsonResponse {
         $input = $this->validatedInput($request);
         $discoveryRun = $this->discoveryRunFromInput($input);
-        if ($discoveryRun && in_array($discoveryRun->status, ['pausing', 'paused'], true)) {
+        if ($discoveryRun && in_array($discoveryRun->status, ['pausing', 'paused', 'cancelling'], true)) {
             throw ValidationException::withMessages(['run_id' => 'Resume or cancel this paused run before starting another process.']);
         }
         $range = $discoveryRun
@@ -1722,6 +1724,9 @@ class NhlGameImportController extends Controller
         Request $request,
         ?NhlGameImportRun $sourceRun
     ): NhlGameImportRun {
+        if (in_array($run->status, ['pausing', 'paused', 'cancelling'], true)) {
+            throw ValidationException::withMessages(['run_id' => 'Wait for cancellation to finish, or resume/cancel this paused run before rerunning it.']);
+        }
         $payload = app(\App\Services\NhlGameImportRunControl::class)->freshPayload($range['payload']);
 
         if ($sourceRun) {
@@ -1827,7 +1832,7 @@ class NhlGameImportController extends Controller
     {
         return NhlGameImportRun::query()
             ->whereIn('action', [NhlGameImportRun::ACTION_DISCOVER, NhlGameImportRun::ACTION_PROCESS])
-            ->whereIn('status', [NhlGameImportRun::STATUS_QUEUED, NhlGameImportRun::STATUS_RUNNING])
+            ->whereIn('status', [NhlGameImportRun::STATUS_QUEUED, NhlGameImportRun::STATUS_RUNNING, NhlGameImportRun::STATUS_CANCELLING])
             ->whereDate('start_date', $startDate)
             ->whereDate('end_date', $endDate)
             ->when($exceptRunId, fn ($query) => $query->where('id', '!=', $exceptRunId))

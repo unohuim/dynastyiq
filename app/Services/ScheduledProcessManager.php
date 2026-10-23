@@ -43,7 +43,7 @@ class ScheduledProcessManager
                     }
                     // Do not start another automatic run while its predecessor is active.
                     if (NhlGameImportRun::query()->where('payload->scheduled_process', self::NHL_DISCOVERY)
-                        ->whereIn('status', ['queued', 'running', 'pausing', 'paused'])->exists()) {
+                        ->whereIn('status', ['queued', 'running', 'pausing', 'paused', 'cancelling'])->exists()) {
                         return;
                     }
                     $today = $now->setTimezone($process->timezone)->startOfDay();

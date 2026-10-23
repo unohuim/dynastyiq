@@ -125,6 +125,23 @@ describe('game import run controls', () => {
         expect(hub.canControlGameImportRun({ action: 'discover', status: 'pausing' }, 'resume')).toBe(false);
     });
 
+    it('allows retrying cancellation while blocking restart and deletion during cleanup', async () => {
+        const hub = (await loadAdminHub())();
+        const run = { id: 7, action: 'process', status: 'cancelling' };
+        expect(hub.canControlGameImportRun(run, 'cancel')).toBe(true);
+        expect(hub.canControlGameImportRun(run, 'pause')).toBe(false);
+        expect(hub.canControlGameImportRun(run, 'resume')).toBe(false);
+        expect(hub.canRerunGameImportRun(run)).toBe(false);
+        expect(hub.canDeleteGameImportRun(run)).toBe(false);
+    });
+
+    it('keeps cancellation authoritative when stale stored coverage suggests running', async () => {
+        const hub = (await loadAdminHub())();
+        const run = { id: 7, action: 'discover', status: 'cancelling', stored_status: 'running' };
+        expect(hub.canControlGameImportRun(run, 'pause')).toBe(false);
+        expect(hub.canControlGameImportRun(run, 'cancel')).toBe(true);
+    });
+
     it('does not offer controls for terminal or unrelated runs', async () => {
         const hub = (await loadAdminHub())();
         expect(hub.canControlGameImportRun({ action: 'discover', status: 'cancelled' }, 'cancel')).toBe(false);

@@ -264,6 +264,9 @@ Full and scoped processing. Admission stops during Pause; cancellation fences
 uncommitted database work and leaves workers alive. Durable checkpoints and
 generations prevent stale jobs from reviving a restarted run. Authority:
 `docs/architecture/imports/NhlGameImportRunControl.yaml`.
+Parent locks remain compatible with progress foreign-key locks. Cancel/Resume
+separate lifecycle fences from progress cleanup, and stage successors wait for
+source writes to commit.
 
 Scheduled process timing is incrementally centralized in `ScheduledProcessManager`
 and `scheduled_processes`, covering NHL game discovery and model-specific pregame

@@ -110,10 +110,10 @@ class NhlDiscoverDayJob implements ShouldQueue
         $completed = DB::transaction(function (): bool {
             $run = NhlGameImportRun::query()
                 ->whereKey($this->runId)
-                ->lockForUpdate()
+                ->lock('for no key update')
                 ->first();
 
-            if (! $run || $run->action !== NhlGameImportRun::ACTION_DISCOVER || in_array($run->status, ['failed', 'cancelled'], true)) {
+            if (! $run || $run->action !== NhlGameImportRun::ACTION_DISCOVER || in_array($run->status, ['failed', 'cancelling', 'cancelled'], true)) {
                 return false;
             }
 

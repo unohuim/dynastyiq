@@ -15,9 +15,9 @@ class DiscoveredGameProcessing
     public function start(int $runId): void
     {
         $ready = DB::transaction(function () use ($runId): bool {
-            $run = NhlGameImportRun::query()->whereKey($runId)->lockForUpdate()->first();
+            $run = NhlGameImportRun::query()->whereKey($runId)->lock('for no key update')->first();
             if (! $run || $run->action !== 'discover'
-                || in_array($run->status, ['failed', 'pausing', 'paused', 'cancelled'], true)) {
+                || in_array($run->status, ['failed', 'pausing', 'paused', 'cancelling', 'cancelled'], true)) {
                 return false;
             }
             $payload = $run->payload ?? [];
