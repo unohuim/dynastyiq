@@ -45,7 +45,7 @@ when_not_to_use:
   - Tracking import progress state.
   - Discovering games.
 rules:
-  - NhlGameContextImporter also promotes right-rail teamGameStats category powerPlay homeValue and awayValue goals/opportunities pairs into nullable nhl_games home/away PP goals and opportunities. It persists these independently of gameInfo availability, preserves officials/staff import count semantics, and leaves absent or malformed pairs unknown. Historical games acquire these totals through the existing right-rail context refresh stage, not migration backfills.
+  - ImportNhlBoxscore supplements player boxscores with actual team PP goals/opportunities from right-rail teamGameStats powerPlay pairs. It persists those totals independently of officials availability and player-row counts. Missing or malformed pairs remain unknown; an unavailable supplement retains existing totals. Historical missing totals also fill automatically through the same parser during Teams cache preparation after season sync or on a cold read; ordinary Boxscore imports continue refreshing their own game totals. Refs and Staff owns only officials/coaches context for their SAT profiles and never writes team PP totals.
   - Stage services own transformation behavior only.
   - Stage ordering belongs to NhlImportOrchestrator.
   - Progress persistence belongs to NhlImportProgressRepo.

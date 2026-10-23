@@ -35,6 +35,7 @@ beforeEach(function (): void {
     Cache::forever(NhlStatsDashboardPayload::CACHE_PREFIX.'latest-season', '20262027');
     Bus::fake();
     Http::preventStrayRequests();
+    $this->mock(\App\Services\NhlRightRailService::class)->shouldReceive('payloads')->andReturn([])->byDefault();
     User::factory()->create();
     $this->mock(NhlDashboardPayload::class, function ($mock): void {
         $mock->shouldReceive('statsHighlights')->andReturn([
@@ -937,11 +938,13 @@ it('keeps missing overtime clock and absent stat sources unavailable in Teams', 
         ->and($team['pp_pct'])->toBeNull()->and($team['pk_pct'])->toBeNull();
 });
 
-it('persists actual right-rail PP goals and opportunities even without officials', function (): void {
-    $importer = app(\App\Services\NhlGameContextImporter::class);
+it('imports actual team PP goals and opportunities through Boxscores independently of officials', function (): void {
     $payload = ['teamGameStats' => [['category' => 'powerPlay', 'homeValue' => '2/5', 'awayValue' => '0/4']]];
-    $importer->importFromPayload(2026020001, $payload);
-    $importer->importFromPayload(2026020001, $payload);
+    $this->mock(\App\Services\NhlRightRailService::class)->shouldReceive('payload')->with(2026020001)->twice()->andReturn($payload);
+    $importer = Mockery::mock(\App\Services\ImportNhlBoxscore::class)->makePartial();
+    $importer->shouldReceive('getAPIData')->with('nhl', 'boxscore', ['gameId' => 2026020001])->twice()->andReturn(['playerByGameStats' => []]);
+    expect($importer->import(2026020001))->toBe(0);
+    $importer->import(2026020001);
     $game = \App\Models\NhlGame::findOrFail(2026020001);
     expect($game->home_pp_goals)->toBe(2)->and($game->home_pp_opportunities)->toBe(5)
         ->and($game->away_pp_goals)->toBe(0)->and($game->away_pp_opportunities)->toBe(4);
@@ -950,15 +953,46 @@ it('persists actual right-rail PP goals and opportunities even without officials
         ->and($teams['MTL']['pp_pct'])->toBe(0.0)->and($teams['TOR']['pk_pct'])->toBe(100.0);
 });
 
-it('treats malformed and absent PP opportunity coverage as unknown rather than zero', function (): void {
-    $importer = app(\App\Services\NhlGameContextImporter::class);
-    $importer->importFromPayload(2026020001, ['teamGameStats' => [
-        ['category' => 'powerPlay', 'homeValue' => '0/0', 'awayValue' => 'invalid'],
-    ]]);
+it('treats malformed and absent PP opportunity coverage as unknown during Boxscore processing', function (): void {
+    $source = $this->mock(\App\Services\NhlRightRailService::class);
+    $source->shouldReceive('payloads')->andReturn([]);
+    $source->shouldReceive('payload')->with(2026020001)->twice()->andReturn(
+        ['teamGameStats' => [['category' => 'powerPlay', 'homeValue' => '0/0', 'awayValue' => 'invalid']]],
+        ['teamGameStats' => []],
+    );
+    $importer = Mockery::mock(\App\Services\ImportNhlBoxscore::class)->makePartial();
+    $importer->shouldReceive('getAPIData')->twice()->andReturn(['playerByGameStats' => []]);
+    $importer->import(2026020001);
     $teams = collect(app(NhlStatsDashboardPayload::class)->teamView('20262027')['teams']);
     expect($teams->pluck('pp_pct')->all())->toBe([null, null]);
-    $importer->importFromPayload(2026020001, ['teamGameStats' => []]);
+    $importer->import(2026020001);
     expect(\App\Models\NhlGame::findOrFail(2026020001)->home_pp_opportunities)->toBeNull();
+});
+
+it('keeps Refs and Staff imports from changing team PP totals', function (): void {
+    DB::table('nhl_games')->where('nhl_game_id', 2026020001)->update(['home_pp_goals' => 1, 'home_pp_opportunities' => 3]);
+    app(\App\Services\NhlGameContextImporter::class)->importFromPayload(2026020001, [
+        'teamGameStats' => [['category' => 'powerPlay', 'homeValue' => '2/5', 'awayValue' => '0/4']],
+    ]);
+    $game = \App\Models\NhlGame::findOrFail(2026020001);
+    expect($game->home_pp_goals)->toBe(1)->and($game->home_pp_opportunities)->toBe(3)
+        ->and($game->away_pp_opportunities)->toBeNull();
+});
+
+it('retains stored PP totals when the right-rail supplement is unavailable during Boxscore processing', function (): void {
+    DB::table('nhl_games')->where('nhl_game_id', 2026020001)->update(['home_pp_goals' => 1, 'home_pp_opportunities' => 3]);
+    $this->mock(\App\Services\NhlRightRailService::class)->shouldReceive('payload')->with(2026020001)->once()->andReturnNull();
+    $importer = Mockery::mock(\App\Services\ImportNhlBoxscore::class)->makePartial();
+    $importer->shouldReceive('getAPIData')->once()->andReturn([
+        'homeTeam' => ['id' => 10],
+        'playerByGameStats' => ['homeTeam' => ['forwards' => [
+            ['playerId' => 9000001, 'goals' => 1, 'sog' => 3, 'toi' => '12:00'],
+        ]]],
+    ]);
+    expect($importer->import(2026020001))->toBe(1);
+    expect(DB::table('nhl_boxscores')->where('nhl_game_id', 2026020001)->where('nhl_player_id', 9000001)->value('goals'))->toBe(1);
+    $game = \App\Models\NhlGame::findOrFail(2026020001);
+    expect($game->home_pp_goals)->toBe(1)->and($game->home_pp_opportunities)->toBe(3);
 });
 
 it('reuses prepared game facts for Teams date and game-type filtering without querying sources', function (): void {
@@ -983,4 +1017,145 @@ it('pools actual Teams PP numerators and denominators across games instead of av
         'home_pp_goals' => 0, 'home_pp_opportunities' => 1]);
     $teams = collect(app(NhlStatsDashboardPayload::class)->teamView('20262027')['teams'])->keyBy('team');
     expect($teams['TOR']['pp_pct'])->toEqualWithDelta(2 / 6 * 100, 0.000001)->and($teams['MTL']['pk_pct'])->toBe((1 - 2 / 6) * 100);
+});
+
+
+it('automatically fills missing Teams PP totals on a cold stats read and reuses the finished cache', function (): void {
+    $this->app->forgetInstance(\App\Services\NhlRightRailService::class);
+    Http::fake(['*/gamecenter/2026020001/right-rail' => Http::response([
+        'teamGameStats' => [['category' => 'powerPlay', 'homeValue' => '2/5', 'awayValue' => '0/4']],
+    ])]);
+    $service = app(NhlStatsDashboardPayload::class);
+    $cold = $service->teamView('20262027');
+    $warm = $service->teamView('20262027');
+    $teams = collect($cold['teams'])->keyBy('team');
+    expect($teams['TOR']['pp_pct'])->toBe(40.0)->and($teams['MTL']['pk_pct'])->toBe(60.0)
+        ->and($cold['team_pp_complete'])->toBeTrue()->and($warm['teams'])->toBe($cold['teams']);
+    Http::assertSentCount(1);
+    expect(DB::table('nhl_boxscores')->count())->toBe(0)
+        ->and(DB::table('nhl_game_officials')->count())->toBe(0);
+});
+
+it('fills missing PP totals in the same Teams publisher queued after Season Sync', function (): void {
+    $source = $this->mock(\App\Services\NhlRightRailService::class);
+    $source->shouldReceive('payloads')->with([2026020001])->once()->andReturn([
+        2026020001 => ['teamGameStats' => [['category' => 'powerPlay', 'homeValue' => '1/4', 'awayValue' => '0/3']]],
+    ]);
+    (new RefreshNhlStatsDashboardJob('20262027', 'teams'))->handle(app(NhlStatsDashboardPayload::class));
+    $cached = Cache::get(NhlStatsDashboardPayload::TEAM_CACHE_PREFIX.'20262027');
+    expect($cached['team_pp_complete'])->toBeTrue()
+        ->and(collect($cached['teams'])->firstWhere('team', 'TOR')['pp_pct'])->toBe(25.0);
+});
+
+it('only fetches completed games missing PP inputs in the selected season and preserves stored fields', function (): void {
+    DB::table('nhl_games')->where('nhl_game_id', 2026020001)->update(['home_pp_goals' => 0, 'home_pp_opportunities' => 3]);
+    DB::table('nhl_games')->insert([
+        ['nhl_game_id' => 2026020002, 'season_id' => '20262027', 'game_type' => 2, 'game_date' => '2026-10-22',
+            'game_state' => 'OFF', 'home_team_score' => 2, 'away_team_score' => 1,
+            'home_pp_goals' => 0, 'home_pp_opportunities' => 0, 'away_pp_goals' => 0, 'away_pp_opportunities' => 0],
+        ['nhl_game_id' => 2026020003, 'season_id' => '20262027', 'game_type' => 2, 'game_date' => '2026-10-24',
+            'game_state' => 'FUT', 'home_team_score' => null, 'away_team_score' => null,
+            'home_pp_goals' => null, 'home_pp_opportunities' => null, 'away_pp_goals' => null, 'away_pp_opportunities' => null],
+        ['nhl_game_id' => 2025020001, 'season_id' => '20252026', 'game_type' => 2, 'game_date' => '2025-10-22',
+            'game_state' => 'OFF', 'home_team_score' => 2, 'away_team_score' => 1,
+            'home_pp_goals' => null, 'home_pp_opportunities' => null, 'away_pp_goals' => null, 'away_pp_opportunities' => null],
+    ]);
+    $source = $this->mock(\App\Services\NhlRightRailService::class);
+    $source->shouldReceive('payloads')->with([2026020001])->once()->andReturn([
+        2026020001 => ['teamGameStats' => [['category' => 'powerPlay', 'homeValue' => '2/5', 'awayValue' => '0/4']]],
+    ]);
+    app(\App\Services\ImportNhlBoxscore::class)->refreshMissingTeamPowerPlayTotals('20262027');
+    $game = \App\Models\NhlGame::findOrFail(2026020001);
+    expect($game->home_pp_goals)->toBe(0)->and($game->home_pp_opportunities)->toBe(3)
+        ->and($game->away_pp_opportunities)->toBe(4);
+});
+
+it('does not fetch any PP source when completed games already contain all four totals including zeros', function (): void {
+    DB::table('nhl_games')->where('nhl_game_id', 2026020001)->update([
+        'home_pp_goals' => 0, 'home_pp_opportunities' => 0, 'away_pp_goals' => 0, 'away_pp_opportunities' => 0,
+    ]);
+    $this->mock(\App\Services\NhlRightRailService::class)->shouldNotReceive('payloads');
+    $service = app(NhlStatsDashboardPayload::class);
+    expect($service->teamView('20262027')['team_pp_complete'])->toBeTrue();
+    $this->travel(6)->minutes();
+    expect(Cache::has($service->cacheKey('20262027', 'teams')))->toBeTrue();
+});
+
+it('keeps cold Teams data usable on provider failure and retries missing PP totals after the short cache interval', function (): void {
+    $this->app->forgetInstance(\App\Services\NhlRightRailService::class);
+    Http::fake(['*/gamecenter/2026020001/right-rail' => Http::sequence()->push([], 503)->push([
+        'teamGameStats' => [['category' => 'powerPlay', 'homeValue' => '1/2', 'awayValue' => '0/4']],
+    ])]);
+    $service = app(NhlStatsDashboardPayload::class);
+    $first = $service->teamView('20262027');
+    expect($first['team_pp_complete'])->toBeFalse()->and($first['teams'])->toHaveCount(2)
+        ->and(collect($first['teams'])->firstWhere('team', 'TOR')['pp_pct'])->toBeNull();
+    expect($service->teamView('20262027')['team_pp_complete'])->toBeFalse();
+    Http::assertSentCount(1);
+    $this->travel(6)->minutes();
+    $retried = $service->teamView('20262027');
+    expect($retried['team_pp_complete'])->toBeTrue()
+        ->and(collect($retried['teams'])->firstWhere('team', 'TOR')['pp_pct'])->toBe(50.0);
+    Http::assertSentCount(2);
+});
+
+it('records malformed pooled source payloads without inventing opportunities', function (): void {
+    $this->app->forgetInstance(\App\Services\NhlRightRailService::class);
+    Http::fake(['*/right-rail' => Http::response('null', 200, ['Content-Type' => 'application/json'])]);
+    $facts = app(NhlStatsDashboardPayload::class)->teamView('20262027');
+    expect($facts['team_pp_complete'])->toBeFalse()
+        ->and(\App\Models\NhlGame::findOrFail(2026020001)->home_pp_opportunities)->toBeNull()
+        ->and(DB::table('nhl_game_source_statuses')->where('nhl_game_id', 2026020001)->value('reason'))->toBe('right_rail_invalid_payload');
+});
+
+
+it('builds and caches complete Teams statistics on the deferred stats request for guests and members', function (bool $authenticated): void {
+    if ($authenticated) {
+        $this->actingAs(User::query()->firstOrFail());
+    }
+    $this->app->forgetInstance(\App\Services\NhlRightRailService::class);
+    Http::fake(['*/right-rail' => Http::response([
+        'teamGameStats' => [['category' => 'powerPlay', 'homeValue' => '1/4', 'awayValue' => '0/3']],
+    ])]);
+    $this->get('/stats?view=teams&season_id=20262027')->assertOk()->assertInertia(fn (Assert $page) => $page
+        ->missing('leaders')->loadDeferredProps('stats-leaders', fn (Assert $reload) => $reload
+            ->where('leaders.team_pp_complete', true)->has('leaders.teams', 2)));
+    expect(Cache::has(NhlStatsDashboardPayload::TEAM_CACHE_PREFIX.'20262027'))->toBeTrue();
+    Http::assertSentCount(1);
+})->with([false, true]);
+
+it('keeps other Teams source results when one pooled game request fails', function (): void {
+    DB::table('nhl_games')->insert(['nhl_game_id' => 2026020002, 'season_id' => '20262027', 'game_type' => 2,
+        'game_date' => '2026-10-23', 'game_state' => 'OFF', 'home_team_id' => 10, 'away_team_id' => 8,
+        'home_team_abbrev' => 'TOR', 'away_team_abbrev' => 'MTL', 'home_team_score' => 1, 'away_team_score' => 2]);
+    $this->app->forgetInstance(\App\Services\NhlRightRailService::class);
+    Http::fake([
+        '*/2026020001/right-rail' => Http::response([], 503),
+        '*/2026020002/right-rail' => Http::response(['teamGameStats' => [
+            ['category' => 'powerPlay', 'homeValue' => '1/4', 'awayValue' => '0/3'],
+        ]]),
+    ]);
+    $facts = app(NhlStatsDashboardPayload::class)->teamView('20262027');
+    expect($facts['team_pp_complete'])->toBeFalse()
+        ->and(\App\Models\NhlGame::findOrFail(2026020001)->home_pp_goals)->toBeNull()
+        ->and(\App\Models\NhlGame::findOrFail(2026020002)->home_pp_goals)->toBe(1);
+    Http::assertSentCount(2);
+});
+
+it('bounds slow PP preparation and retains completed batches for the next automatic attempt', function (): void {
+    foreach (range(2, 9) as $number) {
+        DB::table('nhl_games')->insert(['nhl_game_id' => 2026020000 + $number, 'season_id' => '20262027', 'game_type' => 2,
+            'game_date' => '2026-10-23', 'game_state' => 'OFF', 'home_team_id' => 10, 'away_team_id' => 8,
+            'home_team_abbrev' => 'TOR', 'away_team_abbrev' => 'MTL', 'home_team_score' => 1, 'away_team_score' => 2]);
+    }
+    $this->app->forgetInstance(\App\Services\NhlRightRailService::class);
+    Http::fake(function () {
+        $this->travel(12)->seconds();
+        return Http::response(['teamGameStats' => [['category' => 'powerPlay', 'homeValue' => '1/4', 'awayValue' => '0/3']]]);
+    });
+    $facts = app(NhlStatsDashboardPayload::class)->teamView('20262027');
+    expect($facts['team_pp_complete'])->toBeFalse()
+        ->and(DB::table('nhl_games')->whereNotNull('home_pp_opportunities')->count())->toBe(8)
+        ->and(\App\Models\NhlGame::findOrFail(2026020009)->home_pp_opportunities)->toBeNull();
+    Http::assertSentCount(8);
 });

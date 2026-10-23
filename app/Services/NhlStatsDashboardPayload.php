@@ -14,7 +14,7 @@ use InvalidArgumentException;
 class NhlStatsDashboardPayload
 {
     public const CACHE_PREFIX = 'nhl:stats:leaders:v12:';
-    public const TEAM_CACHE_PREFIX = 'nhl:stats:teams:v1:';
+    public const TEAM_CACHE_PREFIX = 'nhl:stats:teams:v2:';
 
     /** Reuse the homepage's factual comparisons, independently of its editorial feed. */
     public function __construct(private readonly NhlDashboardPayload $dashboard)
@@ -51,7 +51,12 @@ class NhlStatsDashboardPayload
         }
         $facts = $this->seasonFacts($season, $view);
         $facts['prepared_at'] = now()->toIso8601String();
-        if (! Cache::forever($this->cacheKey($season, $view), $facts)) {
+        $key = $this->cacheKey($season, $view);
+        // Provider failures leave PP unavailable; retry those cold snapshots instead of retaining gaps forever.
+        $published = $view === 'teams' && ! ($facts['team_pp_complete'] ?? false)
+            ? Cache::put($key, $facts, now()->addMinutes(5))
+            : Cache::forever($key, $facts);
+        if (! $published) {
             throw new \RuntimeException('Public stats cache publication failed.');
         }
         if ($view === 'leaders') {
@@ -407,6 +412,7 @@ class NhlStatsDashboardPayload
     /** Prepare per-game team facts once, retaining historical team identity and explicit coverage. */
     private function teamSeasonFacts(string $season): array
     {
+        app(ImportNhlBoxscore::class)->refreshMissingTeamPowerPlayTotals($season);
         $games = DB::table('nhl_games')->where('season_id', $season)->whereIn('game_type', [1, 2, 3])
             ->whereIn('game_state', ['OFF', 'FINAL'])->whereNotNull('home_team_score')->whereNotNull('away_team_score')
             ->orderBy('game_date')->orderBy('nhl_game_id')->get();
@@ -468,6 +474,8 @@ class NhlStatsDashboardPayload
         }
         $teams = $this->aggregateTeamRows(collect($rows)->where('game_type', 2));
         return ['season' => $season, 'team_games' => $rows, 'teams' => $teams,
+            'team_pp_complete' => ! $games->contains(static fn (object $game): bool => $game->home_pp_goals === null
+                || $game->home_pp_opportunities === null || $game->away_pp_goals === null || $game->away_pp_opportunities === null),
             'team_categories' => $this->teamCategories($teams), 'team_hero' => collect($teams)->sortByDesc('win_pct')->first(),
             'available_team_seasons' => DB::table('nhl_games')->whereIn('game_state', ['OFF','FINAL'])->distinct()->orderByDesc('season_id')->pluck('season_id')->all()];
     }

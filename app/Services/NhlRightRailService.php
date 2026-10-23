@@ -6,6 +6,9 @@ namespace App\Services;
 
 use App\Models\NhlGameSourceStatus;
 use App\Traits\HasAPITrait;
+use Illuminate\Http\Client\Pool;
+use Illuminate\Http\Client\Response;
+use Illuminate\Support\Facades\Http;
 
 /**
  * Fetches NHL gamecenter right-rail payloads and records non-blocking source status.
@@ -49,6 +52,57 @@ class NhlRightRailService
             return null;
         }
 
+        $this->recordPayload($gameId, $url, $payload);
+
+        return $payload;
+    }
+
+    /**
+     * Fetch missing Teams inputs in bounded parallel groups without importing refs or player rows.
+     *
+     * @param array<int,int> $gameIds
+     * @return iterable<int,array<string,mixed>|null>
+     */
+    public function payloads(array $gameIds): iterable
+    {
+        $deadline = now()->addSeconds(90);
+        foreach (array_chunk(array_values(array_unique($gameIds)), 8) as $chunk) {
+            // Keep slow providers inside the existing preparation request/job budget.
+            if (now()->greaterThanOrEqualTo($deadline)) {
+                return;
+            }
+            $responses = Http::pool(function (Pool $pool) use ($chunk): array {
+                $requests = [];
+                foreach ($chunk as $gameId) {
+                    $requests[] = $pool->as((string) $gameId)->acceptJson()->connectTimeout(3)->timeout(10)
+                        ->get($this->getApiUrl('nhl', 'right_rail', ['gameId' => $gameId]));
+                }
+                return $requests;
+            });
+            foreach ($chunk as $gameId) {
+                $url = $this->getApiUrl('nhl', 'right_rail', ['gameId' => $gameId]);
+                $response = $responses[(string) $gameId] ?? null;
+                if (! $response instanceof Response || ! $response->successful()) {
+                    $this->storeSourceStatus($gameId, NhlGameSourceStatus::STATUS_UNAVAILABLE, $url,
+                        'right_rail_fetch_failed', ['http_status' => $response instanceof Response ? $response->status() : null]);
+                    yield $gameId => null;
+                    continue;
+                }
+                $payload = $response->json();
+                if (! is_array($payload)) {
+                    $this->storeSourceStatus($gameId, NhlGameSourceStatus::STATUS_EMPTY, $url, 'right_rail_invalid_payload');
+                    yield $gameId => null;
+                    continue;
+                }
+                $this->recordPayload($gameId, $url, $payload);
+                yield $gameId => $payload;
+            }
+        }
+    }
+
+    /** Record the same source audit for single-game imports and pooled Teams preparation. */
+    private function recordPayload(int $gameId, string $url, array $payload): void
+    {
         $details = $this->sourceDetails($payload);
         $hasPayload = ($details['report_count'] ?? 0) > 0 || (bool) ($details['has_game_info'] ?? false);
 
@@ -59,8 +113,6 @@ class NhlRightRailService
             $hasPayload ? null : 'right_rail_missing_context',
             $details
         );
-
-        return $payload;
     }
 
     /**

@@ -43,9 +43,6 @@ class NhlGameContextImporter
     public function importFromPayload(int $gameId, array $payload): int
     {
         $game = NhlGame::query()->find($gameId);
-        if ($game !== null) {
-            $this->persistTeamPowerPlay($game, $payload);
-        }
         $gameInfo = $payload['gameInfo'] ?? [];
 
         if (! is_array($gameInfo) || $gameInfo === []) {
@@ -79,21 +76,6 @@ class NhlGameContextImporter
 
             return $count;
         });
-    }
-
-    /** Persist the provider's actual goals/opportunities pair; absent data stays unknown. */
-    private function persistTeamPowerPlay(NhlGame $game, array $payload): void
-    {
-        $powerPlay = collect(is_array($payload['teamGameStats'] ?? null) ? $payload['teamGameStats'] : [])
-            ->firstWhere('category', 'powerPlay');
-        $values = [];
-        foreach (['home', 'away'] as $side) {
-            $raw = $powerPlay[$side.'Value'] ?? null;
-            $matched = is_string($raw) && preg_match('/^\s*(\d+)\s*\/\s*(\d+)\s*$/', $raw, $parts) === 1;
-            $values[$side.'_pp_goals'] = $matched ? (int) $parts[1] : null;
-            $values[$side.'_pp_opportunities'] = $matched ? (int) $parts[2] : null;
-        }
-        $game->fill($values)->save();
     }
 
     /**

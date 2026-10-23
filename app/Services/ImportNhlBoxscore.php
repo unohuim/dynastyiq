@@ -3,10 +3,13 @@
 namespace App\Services;
 
 use App\Models\NhlBoxscore;
+use App\Models\NhlGame;
 use App\Models\NhlGameSummary;
 use App\Traits\HasAPITrait;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 
 class ImportNhlBoxscore
 {
@@ -24,6 +27,9 @@ class ImportNhlBoxscore
 
         if (is_array($response)) {
             app(NhlStartingGoalieSelector::class)->lockBoxscoreStarters((int) $nhlGameId, $response);
+            if ($response !== []) {
+                $this->persistTeamPowerPlay((int) $nhlGameId);
+            }
         }
 
         if (empty($response['playerByGameStats'])) {
@@ -132,6 +138,71 @@ class ImportNhlBoxscore
         }
 
         return $playerCount;
+    }
+
+    /** Supplement Boxscores with actual team goals/opportunities; unavailable fetches retain prior totals. */
+    private function persistTeamPowerPlay(int $gameId): void
+    {
+        $game = NhlGame::query()->find($gameId);
+        if ($game === null) {
+            return;
+        }
+        $payload = app(NhlRightRailService::class)->payload($gameId);
+        if ($payload === null) {
+            return;
+        }
+        $this->persistTeamPowerPlayPayload($game, $payload);
+    }
+
+    /**
+     * Fill completed-game PP inputs before Teams cache publication without rerunning game imports.
+     * Stored values are reused, including games completed by another builder while waiting for the lock.
+     */
+    public function refreshMissingTeamPowerPlayTotals(string $season): void
+    {
+        Cache::lock('nhl:stats:team-pp:'.$season, 240)->block(180, function () use ($season): void {
+            $games = NhlGame::query()->where('season_id', $season)->whereIn('game_type', [1, 2, 3])
+                ->whereIn('game_state', ['OFF', 'FINAL'])->whereNotNull('home_team_score')->whereNotNull('away_team_score')
+                ->where(function ($query): void {
+                    $query->whereNull('home_pp_goals')->orWhereNull('home_pp_opportunities')
+                        ->orWhereNull('away_pp_goals')->orWhereNull('away_pp_opportunities');
+                })->orderBy('nhl_game_id')->get(['nhl_game_id'])->keyBy('nhl_game_id');
+            if ($games->isEmpty()) {
+                return;
+            }
+            foreach (app(NhlRightRailService::class)->payloads($games->keys()->map(static fn ($id): int => (int) $id)->all()) as $gameId => $payload) {
+                if (is_array($payload) && $games->has($gameId)) {
+                    $this->persistTeamPowerPlayPayload($games->get($gameId), $payload, true);
+                }
+            }
+        });
+    }
+
+    /** Persist one provider pair, optionally filling NULL fields atomically without replacing stored totals. */
+    private function persistTeamPowerPlayPayload(NhlGame $game, array $payload, bool $missingOnly = false): void
+    {
+        $powerPlay = collect(is_array($payload['teamGameStats'] ?? null) ? $payload['teamGameStats'] : [])
+            ->firstWhere('category', 'powerPlay');
+        $values = [];
+        foreach (['home', 'away'] as $side) {
+            $raw = $powerPlay[$side.'Value'] ?? null;
+            $matched = is_string($raw) && preg_match('/^\s*(\d+)\s*\/\s*(\d+)\s*$/', $raw, $parts) === 1;
+            $values[$side.'_pp_goals'] = $matched ? (int) $parts[1] : null;
+            $values[$side.'_pp_opportunities'] = $matched ? (int) $parts[2] : null;
+        }
+        if ($missingOnly) {
+            $updates = [];
+            foreach ($values as $field => $value) {
+                if ($value !== null) {
+                    $updates[$field] = DB::raw('COALESCE('.$field.', '.(int) $value.')');
+                }
+            }
+            if ($updates !== []) {
+                NhlGame::query()->whereKey($game->getKey())->update($updates);
+            }
+            return;
+        }
+        $game->fill($values)->save();
     }
 
     /**

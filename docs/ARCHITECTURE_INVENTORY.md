@@ -4219,4 +4219,4 @@ retraining or replacing Train/Test workflows. Public stats read current ratings
 with legacy backfill compatibility. Authority:
 `docs/architecture/imports/NhlPredictionSeasonSatScoring.yaml`.
 
-- Teams stats: `Stats/Teams.vue` renders the compact team dashboard from retained per-game facts in `NhlStatsDashboardPayload`; the existing right-rail context import persists actual team PP goals/opportunities. See `architecture/stats/NhlStatsDashboard.yaml`, `architecture/stats/StatsPageRenderer.yaml` and `architecture/imports/NhlGameDataImportServices.yaml`.
+- Teams stats: `Stats/Teams.vue` renders the compact team dashboard from retained per-game facts in `NhlStatsDashboardPayload`; Boxscore processing supplements its player imports with actual team PP goals/opportunities from right-rail data, while Teams cache preparation automatically fills only missing completed-game totals through the same parser; Refs and Staff remains scoped to officials/coaches context. See `architecture/stats/NhlStatsDashboard.yaml`, `architecture/stats/StatsPageRenderer.yaml` and `architecture/imports/NhlGameDataImportServices.yaml`.

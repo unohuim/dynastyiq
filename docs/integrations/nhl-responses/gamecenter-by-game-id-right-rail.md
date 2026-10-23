@@ -19,7 +19,8 @@ Current DynastyIQ consumers:
 
 - `NhlRightRailService` stores right-rail source status details and exposes the raw payload to focused consumers.
 - `NhlHtmlPbpReportLocator` reads `gameReports` URLs from the right-rail payload.
-- `NhlGameContextImporter` persists `gameInfo` referees, linesmen, and head coaches as game-scoped context assignments. It also persists `teamGameStats` category `powerPlay` home/away goals/opportunities pairs in nullable `nhl_games` PP totals, independently of officials availability.
+- `NhlGameContextImporter` persists only `gameInfo` referees, linesmen, and head coaches as game-scoped context assignments for their SAT profiles.
+- `ImportNhlBoxscore` fetches the right-rail supplement during Boxscore processing and persists `teamGameStats` category `powerPlay` home/away goals/opportunities pairs in nullable `nhl_games` PP totals, independently of officials availability. Teams cache preparation also fills missing totals through this parser after season sync or on a cache miss, using bounded pooled requests without rerunning player imports.
 
 ## Sample Source
 
