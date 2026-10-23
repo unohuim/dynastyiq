@@ -1830,6 +1830,9 @@ per continuation, reusing those references for ranks and deltas. Snapshot and
 comparison checkpoints make failed work retryable without rebuilding saved games.
 Both stages have configurable bounded concurrency and visible day progress. Fully
 paused batched runs upgrade on resume while retaining completed snapshots.
+Resume can cancel Pausing; delivery leases and a bounded watchdog recover abandoned
+checkpoint claims without resetting completed dates. League entity pages reuse
+unchanged player values between cutoffs, and PostgreSQL attaches comparisons in bulk.
 `NhlPregameLeagueResults` shares result calculations with the builder and keeps
 league peer staging in temporary SQL tables rather than PHP memory or JSON.
 

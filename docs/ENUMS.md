@@ -183,7 +183,7 @@ Horizon assigns twenty-five workers to `projections`, five workers to `default`,
   work is marked `stopped`, and a new Build Pregame action creates a fresh run.
 - Run-game `state`: `pending`, `ready`, `processing`, `complete`, `blocked`,
   `failed`, or `stopped`. Stopping a run marks every unfinished game `stopped`.
-- `nhl_pregame_context_runs.options.pipeline_version`: `results_league_v3` selects checkpointed league populations with persisted ranking references, followed by one-game context continuations.
+- `nhl_pregame_context_runs.options.pipeline_version`: `results_league_v3` selects checkpointed league entity pages with persisted ranking references, followed by one-game context continuations. Run-day claim tokens identify delivery ownership; they are opaque UUIDs rather than lifecycle values. Resume may cancel a pending Pause without changing this pipeline.
   `results_league_v2` retains the earlier league-first, whole-day context jobs until an explicit paused/failed-run upgrade.
   `results_league_v1` retains the previous independent context, league, and comparison jobs until paused-run upgrade.
   `game_day_batch_v1` retains the earlier context-dependent league stage; absent values retain the legacy per-game loader.

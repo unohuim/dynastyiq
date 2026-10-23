@@ -6,5 +6,7 @@ return [
     'context_concurrency' => (int) env('NHL_PREGAME_CONTEXT_CONCURRENCY', 2),
     'league_concurrency' => (int) env('NHL_PREGAME_LEAGUE_CONCURRENCY', 4),
     'player_batch_size' => 8,
+    'league_entity_page_size' => 32,
+    'claim_grace_seconds' => 120,
     'league_lookahead_days' => (int) env('NHL_PREGAME_LEAGUE_LOOKAHEAD_DAYS', 8),
 ];

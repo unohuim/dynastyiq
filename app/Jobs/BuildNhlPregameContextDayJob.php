@@ -47,7 +47,7 @@ class BuildNhlPregameContextDayJob implements ShouldQueue
     {
         $run = NhlPregameContextRun::query()->find($this->runId);
         $day = NhlPregameContextRunDay::query()->whereKey($this->runDayId)->where('run_id', $this->runId)->first();
-        if ($run === null || $day === null) {
+        if ($run === null || $day === null || data_get($run->options, 'pipeline_version') === NhlPregameContextOrchestrator::CHECKPOINT_PIPELINE) {
             return;
         }
         if ($run->status === NhlPregameContextRun::STATUS_FAILED && $day->context_state === NhlPregameContextRunDay::STATE_PROCESSING) {
@@ -161,6 +161,9 @@ class BuildNhlPregameContextDayJob implements ShouldQueue
     /** Mark the day and its unfinished game rows failed after final queue failure. */
     public function failed(Throwable $exception): void
     {
+        if (data_get(NhlPregameContextRun::find($this->runId)?->options, 'pipeline_version') === NhlPregameContextOrchestrator::CHECKPOINT_PIPELINE) {
+            return;
+        }
         $day = NhlPregameContextRunDay::query()->whereKey($this->runDayId)->where('run_id', $this->runId)->first();
         if ($day !== null) {
             NhlPregameContextRunGame::query()->where('run_id', $this->runId)->whereDate('game_date', $day->game_date)

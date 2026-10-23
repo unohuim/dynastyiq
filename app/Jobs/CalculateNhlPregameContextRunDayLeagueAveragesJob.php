@@ -46,7 +46,7 @@ class CalculateNhlPregameContextRunDayLeagueAveragesJob implements ShouldQueue
     {
         $run = NhlPregameContextRun::query()->find($this->runId);
         $day = NhlPregameContextRunDay::query()->whereKey($this->runDayId)->where('run_id', $this->runId)->first();
-        if ($run === null || $day === null) {
+        if ($run === null || $day === null || data_get($run->options, 'pipeline_version') === NhlPregameContextOrchestrator::CHECKPOINT_PIPELINE) {
             return;
         }
         if ($run->status === NhlPregameContextRun::STATUS_FAILED && $day->league_state === NhlPregameContextRunDay::STATE_PROCESSING) {
@@ -105,6 +105,10 @@ class CalculateNhlPregameContextRunDayLeagueAveragesJob implements ShouldQueue
     /** Mark league work failed after its final queue attempt. */
     public function failed(Throwable $exception): void
     {
+        if (get_class($this) === self::class
+            && data_get(NhlPregameContextRun::find($this->runId)?->options, 'pipeline_version') === NhlPregameContextOrchestrator::CHECKPOINT_PIPELINE) {
+            return;
+        }
         NhlPregameContextRunDay::query()->whereKey($this->runDayId)
             ->where('league_state', NhlPregameContextRunDay::STATE_PROCESSING)->update([
             'league_state' => NhlPregameContextRunDay::STATE_FAILED,

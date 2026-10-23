@@ -27,34 +27,27 @@ class NhlPregameContextBuilder
      *
      * @return \Generator<int,array{entity_id:int,metric_key:string,window_key:string,strength:string,value:float}>
      */
-    public function leagueResultRows(NhlPregameContextRun $run, object $targetGame, string $entityType, ?Closure $isStopped = null): \Generator
+    public function leagueResultRows(NhlPregameContextRun $run, object $targetGame, string $entityType, ?Closure $isStopped = null, ?Collection $entities = null): \Generator
     {
         $cutoff = now()->parse($targetGame->start_time_utc);
         $training = array_map('strval', data_get($run->options, 'train_season_ids', []));
         $upcoming = [];
         $schedule = DB::table('nhl_games')->where('season_id', $targetGame->season_id)
-            ->where('game_type', 2)->where('start_time_utc', '>=', $cutoff)
-            ->orderBy('start_time_utc')->orderBy('nhl_game_id')
-            ->get(['nhl_game_id', 'season_id', 'game_date', 'start_time_utc', 'home_team_id', 'away_team_id']);
-        foreach ($schedule as $game) {
-            foreach (['home', 'away'] as $venue) {
-                $teamId = (int) $game->{$venue.'_team_id'};
-                if ($teamId > 0 && ! isset($upcoming[$teamId])) {
-                    $upcoming[$teamId] = ['game' => $game, 'side' => [
-                        'team_id' => $teamId,
-                        'opponent_id' => (int) $game->{($venue === 'home' ? 'away' : 'home').'_team_id'},
-                        'venue' => $venue,
-                    ]];
-                }
-            }
+            ->where('game_type', 2)->where('start_time_utc', '>=', $cutoff);
+        $columns = ['nhl_game_id', 'season_id', 'game_date', 'start_time_utc', 'home_team_id', 'away_team_id'];
+        $home = (clone $schedule)->select($columns)->selectRaw("home_team_id AS team_id, away_team_id AS opponent_id, 'home' AS venue");
+        $away = (clone $schedule)->select($columns)->selectRaw("away_team_id AS team_id, home_team_id AS opponent_id, 'away' AS venue");
+        $ranked = DB::query()->fromSub($home->unionAll($away), 'schedule')->select('schedule.*')
+            ->selectRaw('ROW_NUMBER() OVER (PARTITION BY team_id ORDER BY start_time_utc, nhl_game_id) AS next_rank');
+        foreach (DB::query()->fromSub($ranked, 'upcoming')->where('next_rank', 1)->where('team_id', '>', 0)->get() as $game) {
+            $upcoming[(int) $game->team_id] = ['game' => $game, 'side' => [
+                'team_id' => (int) $game->team_id, 'opponent_id' => (int) $game->opponent_id, 'venue' => $game->venue,
+            ]];
         }
 
         if ($entityType === 'team') {
-            $teams = DB::table('nhl_games')->whereIn('season_id', $run->season_ids)
-                ->where('game_type', 2)->whereIn('game_state', ['OFF', 'FINAL'])
-                ->where('start_time_utc', '<', $cutoff)->get(['home_team_id', 'away_team_id'])
-                ->flatMap(fn (object $game): array => [$game->home_team_id, $game->away_team_id])->filter()->unique()->sort();
-            foreach ($teams as $teamId) {
+            foreach (($entities ?? $this->leagueEntities($run, $targetGame, 'team')) as $team) {
+                $teamId = (int) $team->entity_id;
                 $this->assertRunNotStopped($isStopped);
                 $next = $upcoming[$teamId] ?? null;
                 if ($next !== null) {
@@ -72,15 +65,7 @@ class NhlPregameContextBuilder
             throw new RuntimeException('League peers must be teams or players.');
         }
 
-        $appearances = DB::table('nhl_game_summaries as summary')
-            ->join('nhl_games as game', 'game.nhl_game_id', '=', 'summary.nhl_game_id')
-            ->whereIn('game.season_id', $run->season_ids)->where('game.game_type', 2)
-            ->whereIn('game.game_state', ['OFF', 'FINAL'])->where('game.start_time_utc', '<', $cutoff)
-            ->where('summary.toi', '>', 0)
-            ->select(['summary.nhl_player_id', 'summary.nhl_team_id'])
-            ->selectRaw('ROW_NUMBER() OVER (PARTITION BY summary.nhl_player_id ORDER BY game.start_time_utc DESC, game.nhl_game_id DESC) AS appearance_rank');
-        $players = DB::query()->fromSub($appearances, 'prior_appearance')->where('appearance_rank', 1)
-            ->orderBy('nhl_player_id')->get(['nhl_player_id', 'nhl_team_id']);
+        $players = $entities ?? $this->leagueEntities($run, $targetGame, 'player');
         foreach ($players->chunk(max(1, (int) config('nhl-pregame.player_batch_size', 8))) as $batch) {
             $this->assertRunNotStopped($isStopped);
             [$histories, $exposures, $attempts] = $this->loadPlayerResultInputs($batch->pluck('nhl_player_id')->all(), $cutoff);
@@ -103,6 +88,31 @@ class NhlPregameContextBuilder
             }
             unset($histories, $exposures, $attempts);
         }
+    }
+
+    /** Select a stable, bounded page of peers using only appearances before this cutoff. */
+    public function leagueEntities(NhlPregameContextRun $run, object $game, string $entityType, int $afterId = 0, ?int $limit = null): Collection
+    {
+        if ($entityType === 'team') {
+            $games = DB::table('nhl_games')->whereIn('season_id', $run->season_ids)
+                ->where('game_type', 2)->whereIn('game_state', ['OFF', 'FINAL'])
+                ->where('start_time_utc', '<', $game->start_time_utc);
+            $home = (clone $games)->selectRaw('home_team_id AS entity_id');
+            $away = (clone $games)->selectRaw('away_team_id AS entity_id');
+            $query = DB::query()->fromSub($home->union($away), 'teams')->where('entity_id', '>', $afterId)->orderBy('entity_id');
+        } else {
+            $appearances = DB::table('nhl_game_summaries as summary')
+                ->join('nhl_games as game', 'game.nhl_game_id', '=', 'summary.nhl_game_id')
+                ->whereIn('game.season_id', $run->season_ids)->where('game.game_type', 2)
+                ->whereIn('game.game_state', ['OFF', 'FINAL'])->where('game.start_time_utc', '<', $game->start_time_utc)
+                ->where('summary.toi', '>', 0)->where('summary.nhl_player_id', '>', $afterId)
+                ->select(['summary.nhl_player_id', 'summary.nhl_team_id'])
+                ->selectRaw('summary.nhl_player_id AS entity_id, game.start_time_utc AS latest_appearance_at')
+                ->selectRaw('ROW_NUMBER() OVER (PARTITION BY summary.nhl_player_id ORDER BY game.start_time_utc DESC, game.nhl_game_id DESC) AS appearance_rank');
+            $query = DB::query()->fromSub($appearances, 'prior_appearance')->where('appearance_rank', 1)->orderBy('entity_id');
+        }
+
+        return $query->when($limit !== null, fn ($query) => $query->limit($limit))->get();
     }
 
     /** Stream only observed numeric values; missing metric evidence never enters the league population. */

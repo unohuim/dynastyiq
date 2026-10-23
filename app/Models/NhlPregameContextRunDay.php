@@ -22,6 +22,9 @@ class NhlPregameContextRunDay extends Model
     protected $casts = [
         'game_date' => 'date',
         'league_cursor' => 'integer',
+        'league_entity_cursor' => 'integer',
+        'league_claim_expires_at' => 'datetime',
+        'context_claim_expires_at' => 'datetime',
         'league_seconds' => 'float',
         'context_seconds' => 'float',
         'comparison_seconds' => 'float',

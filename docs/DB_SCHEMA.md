@@ -5080,11 +5080,17 @@ stack, or player-evaluation records.
   lookups. The league stage writes these with the shared averages; context reads
   them without recomputing league histories. Values are removed after all games
   for the owning date commit comparisons; shared average rows remain.
-- Run-day `league_cursor` checkpoints completed cutoff/entity populations.
+- Run-day `league_cursor` checkpoints completed cutoff/entity populations and
+  `league_entity_cursor` checkpoints entity pages within the current population.
+  League/context claim tokens and expiry timestamps fence individual deliveries;
+  abandoned claims can be reassigned without resetting committed game or league work.
   Run-game `snapshot_completed_at` and `comparisons_completed_at` separate durable
   snapshot and comparison completion. Day and game work durations retain context
   and comparison seconds; days also retain league seconds. New schema columns
   have empty/default values and the migration performs no historical aggregation.
+- The PostgreSQL `ix_nhl_saf_pregame_shooter` partial covering index supports
+  shooter/game historical shot reads. Its migration builds the index concurrently;
+  it does not change source shot facts or rebuild context snapshots.
 - Context windows include the model's Train seasons, last game, L5/L10/L20,
   LSeason, opponent L5/L10, and supported schedule/current-season windows.
   Team L5/L10/L20/LSeason and head-to-head windows include available goals,

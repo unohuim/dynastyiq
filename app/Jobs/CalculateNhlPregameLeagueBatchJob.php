@@ -21,6 +21,15 @@ class CalculateNhlPregameLeagueBatchJob extends CalculateNhlPregameContextRunDay
     // Lock-contention releases may retry; a real exception or timeout fails immediately.
     public int $tries = 0;
     public int $maxExceptions = 1;
+    public int $timeout = 180;
+    public ?string $claimToken = null;
+
+    /** Capture the exact dispatch lease; older serialized jobs retain a null legacy token. */
+    public function __construct(int $runId, int $runDayId, ?string $claimToken = null)
+    {
+        parent::__construct($runId, $runDayId);
+        $this->claimToken = $claimToken;
+    }
 
     /** Keep duplicate deliveries from advancing the same cursor concurrently. */
     public function middleware(): array
@@ -35,11 +44,12 @@ class CalculateNhlPregameLeagueBatchJob extends CalculateNhlPregameContextRunDay
         $run = NhlPregameContextRun::query()->find($this->runId);
         $day = NhlPregameContextRunDay::query()->whereKey($this->runDayId)->where('run_id', $this->runId)->first();
         if ($run === null || $day === null || data_get($run->options, 'pipeline_version') !== NhlPregameContextOrchestrator::CHECKPOINT_PIPELINE
-            || $day->league_state !== 'processing') {
+            || ! $this->ownsClaim()) {
             return;
         }
         if (! in_array($run->status, ['running', 'pausing'], true)) {
-            $day->update(['league_state' => $run->status === 'stopped' ? 'stopped' : 'pending']);
+            NhlPregameContextRunDay::query()->whereKey($day->id)->where('league_claim_token', $this->claimToken)
+                ->where('league_state', 'processing')->update(['league_state' => $run->status === 'stopped' ? 'stopped' : 'pending']);
 
             return;
         }
@@ -51,7 +61,7 @@ class CalculateNhlPregameLeagueBatchJob extends CalculateNhlPregameContextRunDay
                     throw new NhlPregameContextRunStopped('Pregame work is no longer active.');
                 }
                 $owner = NhlPregameContextRun::query()->whereKey($run->id)->lock(DB::getDriverName() === 'pgsql' ? 'for no key update' : true)->firstOrFail();
-                if (! in_array($owner->status, ['running', 'pausing'], true)) {
+                if (! in_array($owner->status, ['running', 'pausing'], true) || ! $this->ownsClaim()) {
                     throw new NhlPregameContextRunStopped('Pregame work is no longer active.');
                 }
                 $day->update(['league_state' => $complete ? 'complete' : 'pending',
@@ -59,6 +69,7 @@ class CalculateNhlPregameLeagueBatchJob extends CalculateNhlPregameContextRunDay
             });
         } catch (NhlPregameContextRunStopped) {
             NhlPregameContextRunDay::query()->whereKey($day->id)->where('league_state', 'processing')
+                ->where('league_claim_token', $this->claimToken)
                 ->update(['league_state' => $run->fresh()->status === 'stopped' ? 'stopped' : 'pending']);
 
             return;
@@ -66,13 +77,34 @@ class CalculateNhlPregameLeagueBatchJob extends CalculateNhlPregameContextRunDay
             $this->failed($exception);
 
             throw $exception;
+        } finally {
+            LoadNhlPregameContextRunJob::dispatch($run->id);
         }
-        LoadNhlPregameContextRunJob::dispatch($run->id);
+    }
+
+    /** Ignore obsolete timeout callbacks after a different delivery reclaimed the work. */
+    public function failed(Throwable $exception): void
+    {
+        DB::transaction(function () use ($exception): void {
+            NhlPregameContextRun::query()->whereKey($this->runId)->lock('for no key update')->first();
+            if ($this->ownsClaim()) {
+                parent::failed($exception);
+            }
+        });
+    }
+
+    /** Verify the persisted delivery ownership before work and after acquiring commit fences. */
+    private function ownsClaim(): bool
+    {
+        return app(NhlPregameContextOrchestrator::class)->ownsDayClaim($this->runId, $this->runDayId, 'league', $this->claimToken);
     }
 
     /** Honor the cancellation signal before waiting for any checkpoint locks. */
     private function runStopped(): bool
     {
+        if (! $this->ownsClaim()) {
+            return true;
+        }
         try {
             if (Cache::store('redis')->get(NhlPregameContextRun::stopSignalKey($this->runId))) {
                 return true;

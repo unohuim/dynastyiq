@@ -45,7 +45,7 @@ class CompareNhlPregameContextRunDayJob implements ShouldQueue
     {
         $run = NhlPregameContextRun::query()->find($this->runId);
         $day = NhlPregameContextRunDay::query()->whereKey($this->runDayId)->where('run_id', $this->runId)->first();
-        if ($run === null || $day === null) {
+        if ($run === null || $day === null || data_get($run->options, 'pipeline_version') === NhlPregameContextOrchestrator::CHECKPOINT_PIPELINE) {
             return;
         }
         if ($run->status === NhlPregameContextRun::STATUS_FAILED && $day->comparison_state === NhlPregameContextRunDay::STATE_PROCESSING) {
@@ -93,6 +93,9 @@ class CompareNhlPregameContextRunDayJob implements ShouldQueue
     /** Record final comparison failure, including timeout failures. */
     public function failed(Throwable $exception): void
     {
+        if (data_get(NhlPregameContextRun::find($this->runId)?->options, 'pipeline_version') === NhlPregameContextOrchestrator::CHECKPOINT_PIPELINE) {
+            return;
+        }
         NhlPregameContextRunDay::query()->whereKey($this->runDayId)
             ->where('comparison_state', NhlPregameContextRunDay::STATE_PROCESSING)->update([
             'comparison_state' => NhlPregameContextRunDay::STATE_FAILED,

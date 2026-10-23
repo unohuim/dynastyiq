@@ -20,6 +20,7 @@ use App\Models\NhlPregameContextRunDay;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 /** Coordinates durable, date-ordered pregame-context work without queue flooding. */
@@ -147,11 +148,13 @@ class NhlPregameContextOrchestrator
         $run = $this->latestModelRun($model);
         $nextStatus = DB::transaction(function () use ($run): string {
             $fresh = NhlPregameContextRun::query()->lock(DB::getDriverName() === 'pgsql' ? 'for no key update' : true)->findOrFail($run->id);
-            if ($fresh->status !== NhlPregameContextRun::STATUS_PAUSED
+            if (! in_array($fresh->status, [NhlPregameContextRun::STATUS_PAUSED, NhlPregameContextRun::STATUS_PAUSING], true)
                 && ! ($fresh->status === NhlPregameContextRun::STATUS_FAILED
                     && in_array(data_get($fresh->options, 'pipeline_version'), [self::RESULTS_PIPELINE, self::CHECKPOINT_PIPELINE], true))) {
-                throw ValidationException::withMessages(['pregame' => 'Only a paused Pregame build can be resumed.']);
+                throw ValidationException::withMessages(['pregame' => 'Only a paused or pausing Pregame build can be resumed.']);
             }
+
+            $this->recoverExpiredDayClaims($fresh);
 
             if ($fresh->status === NhlPregameContextRun::STATUS_FAILED) {
                 $busy = $fresh->days()->where(fn ($query) => $query->where('context_state', 'processing')
@@ -164,7 +167,9 @@ class NhlPregameContextOrchestrator
                 $fresh->days()->where('league_state', 'failed')->update(['league_state' => 'pending', 'last_error' => null]);
                 $fresh->update(['last_error' => null]);
             }
-            $this->upgradePausedRun($fresh);
+            if ($fresh->status !== NhlPregameContextRun::STATUS_PAUSING) {
+                $this->upgradePausedRun($fresh);
+            }
 
             $nextStatus = (int) $fresh->total_games > 0
                 ? NhlPregameContextRun::STATUS_RUNNING
@@ -258,7 +263,8 @@ class NhlPregameContextOrchestrator
     /** Upgrade only a fully paused batched run; retain every completed context and game row. */
     private function upgradePausedRun(NhlPregameContextRun $run): void
     {
-        if (! in_array(data_get($run->options, 'pipeline_version'), ['game_day_batch_v1', self::THREE_STAGE_PIPELINE, self::RESULTS_PIPELINE], true)) {
+        $previousPipeline = data_get($run->options, 'pipeline_version');
+        if (! in_array($previousPipeline, ['game_day_batch_v1', self::THREE_STAGE_PIPELINE, self::RESULTS_PIPELINE], true)) {
             return;
         }
         $busy = NhlPregameContextRunDay::query()->where('run_id', $run->id)
@@ -271,16 +277,24 @@ class NhlPregameContextOrchestrator
         $options = $run->options ?? [];
         $options['pipeline_version'] = self::CHECKPOINT_PIPELINE;
         $run->update(['options' => $options]);
-        NhlPregameContextRunDay::query()->where('run_id', $run->id)->update([
-            'context_state' => NhlPregameContextRunDay::STATE_PENDING,
-            'context_started_at' => null, 'context_completed_at' => null,
-            'league_cursor' => 0, 'league_seconds' => 0, 'context_seconds' => 0, 'comparison_seconds' => 0,
-            'league_state' => NhlPregameContextRunDay::STATE_PENDING,
-            'league_started_at' => null, 'league_completed_at' => null,
-            'comparison_state' => NhlPregameContextRunDay::STATE_PENDING,
-            'comparison_started_at' => null, 'comparison_completed_at' => null,
-            'updated_at' => now(),
-        ]);
+        // Completed dates have already consumed their peers; never reset their averages or comparisons.
+        NhlPregameContextRunDay::query()->where('run_id', $run->id)
+            ->where(function ($query) use ($previousPipeline): void {
+                $query->where('context_state', '<>', 'complete')->orWhere('league_state', '<>', 'complete');
+                if ($previousPipeline === self::THREE_STAGE_PIPELINE) {
+                    $query->orWhere('comparison_state', '<>', 'complete');
+                }
+            })
+            ->update([
+                'context_state' => NhlPregameContextRunDay::STATE_PENDING,
+                'context_started_at' => null, 'context_completed_at' => null,
+                'league_cursor' => 0, 'league_entity_cursor' => 0,
+                'league_state' => NhlPregameContextRunDay::STATE_PENDING,
+                'league_started_at' => null, 'league_completed_at' => null,
+                'comparison_state' => NhlPregameContextRunDay::STATE_PENDING,
+                'comparison_started_at' => null, 'comparison_completed_at' => null,
+                'updated_at' => now(),
+            ]);
     }
 
     /** Find the latest context run owned by the selected SAT model. */
@@ -574,6 +588,8 @@ class NhlPregameContextOrchestrator
                     return ['context' => [], 'league' => [], 'comparison' => []];
                 }
 
+                $this->recoverExpiredDayClaims($run);
+
                 $checkpointed = data_get($run->options, 'pipeline_version') === self::CHECKPOINT_PIPELINE;
                 $leagueFirst = $checkpointed || data_get($run->options, 'pipeline_version') === self::RESULTS_PIPELINE;
                 $independent = $leagueFirst || data_get($run->options, 'pipeline_version') === self::THREE_STAGE_PIPELINE;
@@ -625,6 +641,7 @@ class NhlPregameContextOrchestrator
                             'context_state' => NhlPregameContextRunDay::STATE_PROCESSING,
                             'attempts' => DB::raw('attempts + 1'),
                             'context_started_at' => $checkpointed ? ($day->context_started_at ?? now()) : now(),
+                            ...($checkpointed ? $this->dayLease('context') : []),
                         ]);
                         if ($checkpointed) {
                             continue;
@@ -646,12 +663,12 @@ class NhlPregameContextOrchestrator
                 $lookahead = max((int) config('nhl-pregame.league_concurrency', 4), (int) config('nhl-pregame.league_lookahead_days', 8));
                 $preparedDays = $checkpointed ? NhlPregameContextRunDay::query()->where('run_id', $runId)
                     ->where('context_state', '<>', 'complete')->where(fn ($query) => $query->whereIn('league_state', ['complete', 'processing'])
-                        ->orWhere('league_cursor', '>', 0))->count() : 0;
+                        ->orWhere('league_cursor', '>', 0)->orWhere('league_entity_cursor', '>', 0))->count() : 0;
                 while ($availableLeagueSlots > 0) {
                     $leagueDay = NhlPregameContextRunDay::query()->where('run_id', $runId)
                         ->when(! $independent, fn ($query) => $query->where('context_state', NhlPregameContextRunDay::STATE_COMPLETE))
                         ->where('league_state', NhlPregameContextRunDay::STATE_PENDING)
-                        ->when($checkpointed && $preparedDays >= $lookahead, fn ($query) => $query->where('league_cursor', '>', 0))
+                        ->when($checkpointed && $preparedDays >= $lookahead, fn ($query) => $query->where(fn ($partial) => $partial->where('league_cursor', '>', 0)->orWhere('league_entity_cursor', '>', 0)))
                         ->when(! $independent, fn ($query) => $query->whereNotExists(function ($priorDay) use ($runId): void {
                             $priorDay->selectRaw('1')->from('nhl_pregame_context_run_days as prior_day')
                                 ->whereColumn('prior_day.run_id', 'nhl_pregame_context_run_days.run_id')
@@ -664,6 +681,7 @@ class NhlPregameContextOrchestrator
                         $leagueDay->update([
                             'league_state' => NhlPregameContextRunDay::STATE_PROCESSING,
                             'league_started_at' => $checkpointed ? ($leagueDay->league_started_at ?? now()) : now(),
+                            ...($checkpointed ? $this->dayLease('league') : []),
                         ]);
                         if ($checkpointed && (int) $leagueDay->league_cursor === 0) {
                             $preparedDays++;
@@ -720,20 +738,23 @@ class NhlPregameContextOrchestrator
                     'context' => $contextDays->pluck('id')->map(fn (mixed $id): int => (int) $id)->all(),
                     'league' => $leagueDays,
                     'comparison' => $comparisonDays,
+                    'claims' => $checkpointed ? NhlPregameContextRunDay::query()
+                        ->whereIn('id', array_merge($contextDays->pluck('id')->all(), $leagueDays))
+                        ->get(['id', 'league_claim_token', 'context_claim_token'])->keyBy('id')->all() : [],
                 ];
             });
 
             $checkpointed = data_get(NhlPregameContextRun::query()->find($runId)?->options, 'pipeline_version') === self::CHECKPOINT_PIPELINE;
             foreach ($claimed['league'] as $dayId) {
                 if ($checkpointed) {
-                    CalculateNhlPregameLeagueBatchJob::dispatch($runId, $dayId);
+                    CalculateNhlPregameLeagueBatchJob::dispatch($runId, $dayId, $claimed['claims'][$dayId]->league_claim_token);
                 } else {
                     CalculateNhlPregameContextRunDayLeagueAveragesJob::dispatch($runId, $dayId);
                 }
             }
             foreach ($claimed['context'] as $dayId) {
                 if ($checkpointed) {
-                    BuildNhlPregameContextDayBatchJob::dispatch($runId, $dayId);
+                    BuildNhlPregameContextDayBatchJob::dispatch($runId, $dayId, $claimed['claims'][$dayId]->context_claim_token);
                 } else {
                     BuildNhlPregameContextDayJob::dispatch($runId, $dayId);
                 }
@@ -743,6 +764,49 @@ class NhlPregameContextOrchestrator
             }
         } finally {
             $lock->release();
+        }
+        if (NhlPregameContextRun::query()->whereKey($runId)->whereIn('status', ['running', 'pausing'])->exists()
+            && Cache::add('pregame-recovery-watchdog:'.$runId, true, 30)) {
+            LoadNhlPregameContextRunJob::dispatch($runId)->delay(now()->addSeconds(30));
+        }
+    }
+
+    /** Check one immutable delivery token; an expired or replaced delivery cannot commit. */
+    public function ownsDayClaim(int $runId, int $dayId, string $stage, ?string $token): bool
+    {
+        if (! in_array($stage, ['league', 'context'], true)) {
+            return false;
+        }
+
+        return NhlPregameContextRunDay::query()->whereKey($dayId)->where('run_id', $runId)
+            ->where($stage.'_state', 'processing')->where($stage.'_claim_token', $token)
+            ->when($token !== null, fn ($query) => $query->where($stage.'_claim_expires_at', '>', now()))->exists();
+    }
+
+    /** Create a delivery fence with enough time for queue wait, bounded execution, and cleanup. */
+    private function dayLease(string $stage): array
+    {
+        $timeout = $stage === 'league' ? (new CalculateNhlPregameLeagueBatchJob(0, 0))->timeout
+            : (new BuildNhlPregameContextDayBatchJob(0, 0))->timeout;
+
+        return [$stage.'_claim_token' => (string) Str::uuid(),
+            $stage.'_claim_expires_at' => now()->addSeconds($timeout + max(60, (int) config('nhl-pregame.claim_grace_seconds', 120)))];
+    }
+
+    /** Reclaim abandoned checkpoint work under the parent fence without discarding committed pages. */
+    private function recoverExpiredDayClaims(NhlPregameContextRun $run): void
+    {
+        if (data_get($run->options, 'pipeline_version') !== self::CHECKPOINT_PIPELINE) {
+            return;
+        }
+        foreach (['league', 'context'] as $stage) {
+            NhlPregameContextRunDay::query()->where('run_id', $run->id)->where($stage.'_state', 'processing')
+                ->where(function ($query) use ($stage): void {
+                    $query->where($stage.'_claim_expires_at', '<=', now())
+                        ->orWhere(fn ($legacy) => $legacy->whereNull($stage.'_claim_token')
+                            ->where('updated_at', '<=', now()->subSeconds(1800 + max(60, (int) config('nhl-pregame.claim_grace_seconds', 120)))));
+                })->update([$stage.'_state' => 'pending', $stage.'_claim_token' => (string) Str::uuid(),
+                    $stage.'_claim_expires_at' => null, 'updated_at' => now()]);
         }
     }
 
