@@ -4178,6 +4178,17 @@ Opponent-team aggregates remain distinct from player sums.
 **End of ARCHITECTURE_INVENTORY**
 
 
+## NHL Public Stats Cache Refresh
+
+`NhlSeasonStatsSynced` is emitted after committed aggregation from every season
+sync entrypoint. Its queued listener prepares bounded public season/view cache
+refreshes on projections, including following-season comparisons where needed.
+Prediction-season SAT scoring refreshes Leaders/Goalies without evicting ready
+values. Successful publication replaces a complete value and retains it until
+the next source refresh. General player-table payload caching is separate.
+
+**Authority:** `docs/architecture/stats/NhlStatsCacheRefresh.yaml`.
+
 ## NHL Statistics Leaders Dashboard
 
 The public /stats landing presents real season leaders, team goal rates and

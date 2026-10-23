@@ -8,6 +8,7 @@ use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use InvalidArgumentException;
 
 /** Read public season leaders from stored NHL results without imports or predictions. */
 class NhlStatsDashboardPayload
@@ -27,6 +28,18 @@ class NhlStatsDashboardPayload
         $facts = Cache::remember(self::CACHE_PREFIX.$view.':'.$season, 300, fn (): array => $this->seasonFacts($season, $view));
 
         return $view === 'leaders' ? [...$facts, ...$this->dashboard->statsHighlights()] : $facts;
+    }
+
+    /** Publish source-triggered facts only after all calculations succeed, retaining them until refreshed. */
+    public function refreshCachedFacts(string $season, string $view): array
+    {
+        if (! preg_match('/^\d{8}$/', $season) || ! in_array($view, ['leaders', 'skaters', 'goalies', 'teams'], true)) {
+            throw new InvalidArgumentException('Only supported public season views can be cached.');
+        }
+        $facts = $this->seasonFacts($season, $view);
+        Cache::forever(self::CACHE_PREFIX.$view.':'.$season, $facts);
+
+        return $facts;
     }
 
     /** Normalize actual season totals and rates; missing denominators remain unavailable. */

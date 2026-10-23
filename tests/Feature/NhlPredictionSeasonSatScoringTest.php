@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\Events\SatImported;
 use App\Jobs\ScoreNhlPredictionGameSatJob;
+use App\Jobs\RefreshNhlStatsDashboardJob;
 use App\Listeners\QueuePredictionSeasonSatScoring;
 use App\Models\NhlExpectedGoalsModel;
 use App\Models\NhlModelRun;
@@ -13,10 +14,13 @@ use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Cache;
 
 beforeEach(function (): void {
     $this->travelTo(\Illuminate\Support\Carbon::parse('2026-10-23 12:00:00 UTC'));
     Http::preventStrayRequests();
+    config(['cache.default' => 'array']);
+    Cache::flush();
     Bus::fake();
     $this->gameId = 2026020001;
     $this->season = '20262027';
@@ -153,6 +157,10 @@ it('stores both existing probabilities for every eligible SAT including blocked 
         ->and((bool) $scores['goal']->is_scored)->toBeTrue()
         ->and((bool) $scores['shot_on_goal']->is_high_danger)->toBeFalse()
         ->and((int) $scores['goal']->model_run_id)->toBe($run->id);
+    Bus::assertDispatched(RefreshNhlStatsDashboardJob::class, fn ($job): bool =>
+        $job->seasonId === '20262027' && $job->view === 'leaders');
+    Bus::assertDispatched(RefreshNhlStatsDashboardJob::class, fn ($job): bool =>
+        $job->seasonId === '20262027' && $job->view === 'goalies');
 });
 
 it('updates reimported game ratings without duplicates', function (): void {

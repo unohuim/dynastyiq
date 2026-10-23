@@ -127,6 +127,7 @@ export default function adminHub(options = {}) {
             dedupingDuplicatePbpRuns: {},
             rebuildingDuplicatePbpRuns: {},
             error: '',
+            success: '',
             runs: [],
             seasons: [],
             expandedRuns: {},
@@ -1342,12 +1343,14 @@ export default function adminHub(options = {}) {
             };
             this.closeGameImportProcessMenu(run);
             this.gameImports.error = '';
+            this.gameImports.success = '';
 
             try {
-                await this.sendGameImportRequest(
+                const response = await this.sendGameImportRequest(
                     this.gameImportProcessShotsUrl,
                     { run_id: runId }
                 );
+                this.gameImports.success = response?.message ?? 'Shot attempt facts queued.';
 
                 await this.loadGameImports({ background: true, page: 1 });
             } catch (error) {
@@ -1732,7 +1735,8 @@ export default function adminHub(options = {}) {
                     : 'Duplicate PBP Repair';
             }
 
-            return this.formatGameImportRange(run);
+            const scope = { shots: 'Shots', faceoffs: 'Faceoffs', refs_staff: 'Refs and Staff' }[run?.payload?.process_scope];
+            return scope ? `${scope} · ${this.formatGameImportRange(run)}` : this.formatGameImportRange(run);
         },
 
         gameImportBadgeText(run) {
@@ -2162,8 +2166,11 @@ export default function adminHub(options = {}) {
             const processed = Number(payload.shot_fact_processed_game_count)
                 || (run?.status === 'completed' ? Math.max(0, processable - failed) : 0);
             const noEligible = Number(payload.shot_fact_unprocessable_game_count) || Math.max(0, queued - processable);
+            const progress = run?.progress;
             const parts = [
-                `${this.formatNumber(processed)} / ${this.formatNumber(processable)} processable games built`,
+                progress?.total_stage_rows !== undefined
+                    ? `${this.formatNumber(Number(progress.completed_stage_rows) || 0)} / ${this.formatNumber(Number(progress.total_stage_rows) || 0)} games processed`
+                    : `${this.formatNumber(processed)} / ${this.formatNumber(processable)} processable games built`,
             ];
 
             if (noEligible > 0) {

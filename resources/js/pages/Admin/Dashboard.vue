@@ -847,6 +847,12 @@ export default {
                         </Transition>
                     </Teleport>
 
+                    <Transition enter-active-class="transition-opacity duration-200 motion-reduce:transition-none" enter-from-class="opacity-0" leave-active-class="transition-opacity duration-150 motion-reduce:transition-none" leave-to-class="opacity-0">
+                        <div v-if="gameImports.success" role="status" aria-live="polite"
+                            class="border-t border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800"
+                            v-text="gameImports.success"></div>
+                    </Transition>
+
                     <div
                         v-show="gameImports.error"
                         

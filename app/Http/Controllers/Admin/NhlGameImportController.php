@@ -1462,16 +1462,33 @@ class NhlGameImportController extends Controller
     {
         $status = $run->status;
         $total = max(1, (int) $run->queued_jobs);
+        $payload = $run->payload ?? [];
+        $completed = collect(data_get($payload, 'run_control.completed', []))
+            ->filter(fn ($value, $key): bool => $value === true && str_starts_with((string) $key, 'shots:'))->count();
+        $batch = ! empty($payload['shot_fact_batch_id']) ? Bus::findBatch($payload['shot_fact_batch_id']) : null;
+        if (! isset($payload['run_control']) && $batch !== null) {
+            $completed = $batch->processedJobs();
+        }
+        $completed = $status === NhlGameImportRun::STATUS_COMPLETED ? $total : min($total, $completed);
+        $failed = min($total - $completed, max(
+            count($payload['shot_fact_failed_game_ids'] ?? []),
+            $batch?->failedJobs ?? 0,
+            $status === NhlGameImportRun::STATUS_FAILED ? 1 : 0,
+        ));
+        $running = min($total - $completed - $failed, collect(data_get($payload, 'run_control.active', []))
+            ->filter(fn (array $claim): bool => str_starts_with((string) ($claim['key'] ?? ''), 'shots:')
+                && ($claim['expires'] ?? 0) > now()->timestamp)->count());
+        $skipped = $status === NhlGameImportRun::STATUS_CANCELLED ? $total - $completed - $failed : 0;
 
         return [
             'status' => $status,
             'total_stage_rows' => $total,
-            'scheduled_stage_rows' => $status === NhlGameImportRun::STATUS_QUEUED ? $total : 0,
-            'running_stage_rows' => $status === NhlGameImportRun::STATUS_RUNNING ? $total : 0,
-            'completed_stage_rows' => $status === NhlGameImportRun::STATUS_COMPLETED ? $total : 0,
-            'skipped_stage_rows' => 0,
-            'failed_stage_rows' => $status === NhlGameImportRun::STATUS_FAILED ? $total : 0,
-            'percentage' => in_array($status, [NhlGameImportRun::STATUS_COMPLETED, NhlGameImportRun::STATUS_FAILED], true) ? 100 : 0,
+            'scheduled_stage_rows' => max(0, $total - $completed - $running - $failed - $skipped),
+            'running_stage_rows' => $running,
+            'completed_stage_rows' => $completed,
+            'skipped_stage_rows' => $skipped,
+            'failed_stage_rows' => $failed,
+            'percentage' => (int) floor(($completed + $skipped) * 100 / $total),
             'last_error' => $run->last_error,
         ];
     }
@@ -1771,6 +1788,9 @@ class NhlGameImportController extends Controller
      */
     private function duplicateRunKey(NhlGameImportRun $run): string
     {
+        if (in_array(data_get($run->payload, 'process_scope'), ['shots', 'faceoffs', 'refs_staff'], true)) {
+            return 'scope:'.data_get($run->payload, 'process_scope').':'.$this->runRangeKey($run);
+        }
         if (
             $run->action === NhlGameImportRun::ACTION_SEASON_SYNC
             || $run->action === NhlGameImportRun::ACTION_REPAIR

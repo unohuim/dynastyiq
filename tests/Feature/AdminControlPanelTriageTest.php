@@ -2778,6 +2778,11 @@ it('allows super admins to queue shot fact processing for a game import run rang
             && $jobs->pluck('runId')->unique()->values()->all() === [$run->id]
             && $jobs->pluck('nhlGameId')->sort()->values()->all() === [2025020001, 2025020002];
     });
+    $status = $this->getJson(route('admin.nhl-game-imports.status'))->assertOk()->assertJsonPath('has_active_runs', true);
+    $visible = collect($status->json('runs'))->keyBy('id');
+    expect($visible->has($sourceRun->id))->toBeTrue()->and($visible->has($run->id))->toBeTrue()
+        ->and($visible[$run->id]['progress']['total_stage_rows'])->toBe(2)
+        ->and($visible[$run->id]['progress']['completed_stage_rows'])->toBe(0);
     expect(NhlGameImportRun::query()->count())->toBe(2)
         ->and($sourceRun->refresh()->status)->toBe(NhlGameImportRun::STATUS_COMPLETED)
         ->and($sourceRun->payload)->toBe(['start' => '2026-01-17', 'end' => '2026-01-15'])
@@ -3131,6 +3136,69 @@ it('returns paginated NHL players for scoped API clients with head shot urls', f
         ->assertJsonPath('data.0.metadata.current_team_abbreviation', 'EDM')
         ->assertJsonPath('meta.per_page', 1)
         ->assertJsonPath('meta.total', 1);
+});
+
+it('keeps scoped processing visible alongside same-range discovery', function (string $scope): void {
+    $attributes = ['mode' => 'range', 'start_date' => '2026-01-17', 'end_date' => '2026-01-15', 'date_count' => 3];
+    $source = NhlGameImportRun::create([...$attributes, 'action' => 'discover', 'status' => 'completed']);
+    $scoped = NhlGameImportRun::create([...$attributes, 'action' => 'process', 'status' => 'running',
+        'queued_jobs' => 4, 'payload' => ['process_scope' => $scope, 'processing_started_at' => '2026-01-18T12:00:00Z']]);
+    $status = $this->actingAs(($this->makeSuperAdmin)())->getJson(route('admin.nhl-game-imports.status'))
+        ->assertOk()->assertJsonPath('has_active_runs', true);
+    expect(collect($status->json('runs'))->pluck('id')->all())->toContain($source->id, $scoped->id);
+})->with(['shots', 'faceoffs', 'refs_staff']);
+
+it('reports incremental Shots progress from committed run work rather than existing fact coverage', function (): void {
+    $this->travelTo(Carbon::parse('2026-10-23 12:00:00 UTC'));
+    NhlGameImportRun::create(['action' => 'process', 'mode' => 'date', 'status' => 'running',
+        'start_date' => '2026-01-17', 'end_date' => '2026-01-17', 'queued_jobs' => 4,
+        'payload' => ['process_scope' => 'shots', 'shot_fact_processed_game_count' => 4,
+            'run_control' => ['completed' => ['shots:1' => true, 'faceoffs:1' => true],
+                'active' => ['worker' => ['key' => 'shots:2', 'expires' => Carbon::parse('2026-10-23 13:00:00 UTC')->timestamp]]]],
+    ]);
+    $this->actingAs(($this->makeSuperAdmin)())->getJson(route('admin.nhl-game-imports.status'))->assertOk()
+        ->assertJsonPath('has_active_runs', true)->assertJsonPath('runs.0.progress.completed_stage_rows', 1)
+        ->assertJsonPath('runs.0.progress.running_stage_rows', 1)->assertJsonPath('runs.0.progress.scheduled_stage_rows', 2)
+        ->assertJsonPath('runs.0.progress.percentage', 25);
+});
+
+it('does not count paused queue messages as completed Shots work', function (): void {
+    $batch = Mockery::mock(\Illuminate\Bus\Batch::class);
+    $batch->failedJobs = 0;
+    $batch->shouldNotReceive('processedJobs');
+    Bus::shouldReceive('findBatch')->with('paused-shots')->andReturn($batch);
+    NhlGameImportRun::create(['action' => 'process', 'mode' => 'date', 'status' => 'paused',
+        'start_date' => '2026-01-17', 'end_date' => '2026-01-17', 'queued_jobs' => 4,
+        'payload' => ['process_scope' => 'shots', 'shot_fact_batch_id' => 'paused-shots',
+            'run_control' => ['generation' => 'resumed', 'completed' => ['shots:1' => true]]],
+    ]);
+    $this->actingAs(($this->makeSuperAdmin)())->getJson(route('admin.nhl-game-imports.status'))->assertOk()
+        ->assertJsonPath('runs.0.status', 'paused')->assertJsonPath('runs.0.progress.completed_stage_rows', 1)
+        ->assertJsonPath('runs.0.progress.percentage', 25);
+});
+
+it('uses batch progress for older Shots runs without durable work checkpoints', function (): void {
+    $batch = Mockery::mock(\Illuminate\Bus\Batch::class);
+    $batch->failedJobs = 0;
+    $batch->shouldReceive('processedJobs')->once()->andReturn(2);
+    Bus::shouldReceive('findBatch')->with('legacy-shots')->andReturn($batch);
+    NhlGameImportRun::create(['action' => 'process', 'mode' => 'date', 'status' => 'running',
+        'start_date' => '2026-01-17', 'end_date' => '2026-01-17', 'queued_jobs' => 4,
+        'payload' => ['process_scope' => 'shots', 'shot_fact_batch_id' => 'legacy-shots'],
+    ]);
+    $this->actingAs(($this->makeSuperAdmin)())->getJson(route('admin.nhl-game-imports.status'))->assertOk()
+        ->assertJsonPath('runs.0.progress.completed_stage_rows', 2)->assertJsonPath('runs.0.progress.percentage', 50);
+});
+
+it('retains completed Shots work when another game fails', function (): void {
+    NhlGameImportRun::create(['action' => 'process', 'mode' => 'date', 'status' => 'failed',
+        'start_date' => '2026-01-17', 'end_date' => '2026-01-17', 'queued_jobs' => 4,
+        'payload' => ['process_scope' => 'shots', 'shot_fact_failed_game_ids' => [2],
+            'run_control' => ['completed' => ['shots:1' => true]]],
+    ]);
+    $this->actingAs(($this->makeSuperAdmin)())->getJson(route('admin.nhl-game-imports.status'))->assertOk()
+        ->assertJsonPath('runs.0.status', 'failed')->assertJsonPath('runs.0.progress.completed_stage_rows', 1)
+        ->assertJsonPath('runs.0.progress.failed_stage_rows', 1)->assertJsonPath('runs.0.progress.percentage', 25);
 });
 
 it('returns completed shot fact processing runs without processable game rows', function () {

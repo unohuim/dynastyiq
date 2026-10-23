@@ -24,7 +24,7 @@ rules:
   - Existing source facts and trained models are locked while both targets are rated. Duplicate jobs for the same run/game serialize; terminal failures retain model/game context in the failed queue job and application error.
   - Ratings retain existing shootout, empty-net and missing-shooter exclusions. The import event does not introduce new eligibility thresholds or change confidence rules.
   - Existing prediction-season imports can be populated through an explicitly requested Shots reprocess. Registering the listener does not launch an implicit historical backfill.
-  - Successful scoring invalidates cached public leader and goalie facts for the affected season after commit. Public reads remain read-only.
+  - Successful scoring queues replacement public leader and goalie facts for the affected season after commit, following NhlStatsCacheRefresh.yaml. Existing ready cache values remain available during refresh; scoring does not evict them. Public reads remain read-only.
 public_interface:
   - SatImported
   - QueuePredictionSeasonSatScoring

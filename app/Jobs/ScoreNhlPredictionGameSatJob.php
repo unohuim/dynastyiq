@@ -9,13 +9,11 @@ use App\Models\NhlGame;
 use App\Models\NhlModelRun;
 use App\Services\NhlExpectedGoalsBackfiller;
 use App\Services\NhlShotAttemptModelScorer;
-use App\Services\NhlStatsDashboardPayload;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\Middleware\WithoutOverlapping;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use RuntimeException;
@@ -102,7 +100,7 @@ class ScoreNhlPredictionGameSatJob implements ShouldQueue
 
             DB::afterCommit(function (): void {
                 foreach (['leaders', 'goalies'] as $view) {
-                    Cache::forget(NhlStatsDashboardPayload::CACHE_PREFIX.$view.':'.$this->seasonId);
+                    RefreshNhlStatsDashboardJob::dispatch($this->seasonId, $view);
                 }
             });
         });

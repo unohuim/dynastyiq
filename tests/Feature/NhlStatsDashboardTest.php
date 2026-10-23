@@ -5,12 +5,17 @@ declare(strict_types=1);
 use App\Models\Perspective;
 use App\Models\Player;
 use App\Models\User;
+use App\Events\NhlSeasonStatsSynced;
+use App\Jobs\RefreshNhlStatsDashboardJob;
+use App\Listeners\QueueNhlStatsDashboardRefresh;
 use App\Services\NhlDashboardPayload;
 use App\Services\NhlStatsDashboardPayload;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Http;
 use Inertia\Testing\AssertableInertia as Assert;
 
@@ -20,6 +25,7 @@ beforeEach(function (): void {
     $this->travelTo(Carbon::parse('2026-10-23 14:00:00 UTC'));
     config(['cache.default' => 'array']);
     Cache::flush();
+    Bus::fake();
     Http::preventStrayRequests();
     User::factory()->create();
     $this->mock(NhlDashboardPayload::class, function ($mock): void {
@@ -376,4 +382,77 @@ it('does not build leader facts before returning the initial page shell', functi
 });
 it('rejects an unsupported category value', function (): void {
     $this->getJson('/stats?view=unknown')->assertUnprocessable()->assertJsonValidationErrors('view');
+});
+
+it('queues public stats refreshes from the committed season-sync event', function (): void {
+    Queue::fake();
+    NhlSeasonStatsSynced::dispatch('20262027', 2);
+    Queue::assertPushed(\Illuminate\Events\CallQueuedListener::class, fn ($job): bool =>
+        $job->class === QueueNhlStatsDashboardRefresh::class && $job->queue === 'projections');
+});
+
+it('queues each public view for the affected season', function (): void {
+    (new QueueNhlStatsDashboardRefresh())->handle(new NhlSeasonStatsSynced('20262027', 2));
+    Bus::assertDispatchedTimes(RefreshNhlStatsDashboardJob::class, 4);
+    foreach (['leaders', 'skaters', 'goalies', 'teams'] as $view) {
+        Bus::assertDispatched(RefreshNhlStatsDashboardJob::class, fn ($job): bool =>
+            $job->seasonId === '20262027' && $job->view === $view && $job->queue === 'projections' && $job->afterCommit);
+    }
+});
+
+it('refreshes following-season comparisons when previous-season summaries change', function (): void {
+    (new QueueNhlStatsDashboardRefresh())->handle(new NhlSeasonStatsSynced('20252026', 1));
+    Bus::assertDispatchedTimes(RefreshNhlStatsDashboardJob::class, 8);
+    Bus::assertDispatched(RefreshNhlStatsDashboardJob::class, fn ($job): bool => $job->seasonId === '20262027');
+});
+
+it('coalesces repeated queued refreshes for the same public season and view', function (): void {
+    (new QueueNhlStatsDashboardRefresh())->handle(new NhlSeasonStatsSynced('20262027', 2));
+    (new QueueNhlStatsDashboardRefresh())->handle(new NhlSeasonStatsSynced('20262027', 2));
+    Bus::assertDispatchedTimes(RefreshNhlStatsDashboardJob::class, 4);
+});
+
+it('scopes refresh ownership by season and view', function (): void {
+    $one = new RefreshNhlStatsDashboardJob('20262027', 'leaders');
+    $otherView = new RefreshNhlStatsDashboardJob('20262027', 'goalies');
+    $otherSeason = new RefreshNhlStatsDashboardJob('20252026', 'leaders');
+    expect($one->uniqueId())->not->toBe($otherView->uniqueId())->not->toBe($otherSeason->uniqueId())
+        ->and($one)->toBeInstanceOf(\Illuminate\Contracts\Queue\ShouldBeUniqueUntilProcessing::class)
+        ->and($one->middleware()[0])->toBeInstanceOf(\Illuminate\Queue\Middleware\WithoutOverlapping::class);
+});
+
+it('publishes fresh public facts under the existing season and view key', function (): void {
+    $payload = app(NhlStatsDashboardPayload::class);
+    $payload->build('20262027', 'skaters');
+    DB::table('nhl_season_stats')->where('nhl_player_id', 9000001)->update(['pts' => 12]);
+    (new RefreshNhlStatsDashboardJob('20262027', 'skaters'))->handle($payload);
+    $this->get('/stats?view=skaters')->assertOk()->assertInertia(fn (Assert $page) => $page
+        ->loadDeferredProps('stats-leaders', fn (Assert $reload) => $reload->where('leaders.hero.stats.points', 12)));
+    expect(Cache::get(NhlStatsDashboardPayload::CACHE_PREFIX.'skaters:20262027')['hero']['stats']['points'])->toBe(12);
+});
+
+it('retains published season facts beyond the old five-minute expiry', function (): void {
+    $payload = app(NhlStatsDashboardPayload::class);
+    $payload->refreshCachedFacts('20262027', 'skaters');
+    DB::table('nhl_season_stats')->where('nhl_player_id', 9000001)->update(['pts' => 99]);
+    $this->travel(6)->minutes();
+    expect($payload->build('20262027', 'skaters')['hero']['stats']['points'])->toBe(8);
+});
+
+it('keeps the last successful payload when a background refresh fails', function (): void {
+    $payload = app(NhlStatsDashboardPayload::class);
+    $original = $payload->refreshCachedFacts('20262027', 'skaters');
+    DB::listen(function (\Illuminate\Database\Events\QueryExecuted $query): void {
+        if (str_contains($query->sql, 'nhl_season_stats')) {
+            throw new \RuntimeException('Refresh interrupted');
+        }
+    });
+    expect(fn () => $payload->refreshCachedFacts('20262027', 'skaters'))->toThrow(\RuntimeException::class);
+    expect(Cache::get(NhlStatsDashboardPayload::CACHE_PREFIX.'skaters:20262027'))->toBe($original);
+});
+
+it('rejects private or unsupported report names as public cache refresh targets', function (): void {
+    expect(fn () => new RefreshNhlStatsDashboardJob('20262027', 'private-perspective'))->toThrow(\InvalidArgumentException::class);
+    expect(fn () => app(NhlStatsDashboardPayload::class)->refreshCachedFacts('20262027', 'private-perspective'))
+        ->toThrow(\InvalidArgumentException::class);
 });

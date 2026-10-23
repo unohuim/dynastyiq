@@ -34,6 +34,8 @@ rules:
   - Failed NHL game stage jobs must capture Sentry context before progress rows are marked failed.
   - Sentry failure context must include game id, run id, import stage, failure category, retryability, environment, and release when available.
   - Import status values must remain aligned with docs/ENUMS.md.
+  - Admin status keeps Shots, Faceoffs and Refs/Staff processing separate from same-range discovery or Full work. Range deduplication may suppress duplicate runs only within the same processing scope; active scoped runs remain visible to progress polling.
+  - Shots progress counts successfully committed run-owned game checkpoints and live claims, with batch progress as a legacy fallback when checkpoints are absent. Existing shot-fact coverage is not evidence that the current run has finished. The admin UI acknowledges accepted Shots requests immediately and labels the scoped run explicitly.
   - Jobs must only perform work that has already been atomically claimed as running.
   - Game-stage jobs must use a shared per-game overlap lock so different stages or runs cannot mutate the same game import graph concurrently.
   - Scheduled run-aware processing must scope discovery-owned stage rows by nhl_import_progress.run_id when a run id is provided.

@@ -11,16 +11,19 @@ use App\Services\ResolveNhlUnit;
 use App\Services\SumNhlGameUnits;
 use App\Services\SumNhlGameStrengthUnits;
 use App\Services\SumNhlSeasonStats;
+use App\Events\NhlSeasonStatsSynced;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Event;
 use Inertia\Testing\AssertableInertia as Assert;
 
 uses(RefreshDatabase::class);
 
 beforeEach(function (): void {
     Carbon::setTestNow('2026-06-29 12:00:00');
+    Event::fake([NhlSeasonStatsSynced::class]);
     User::factory()->create();
 
     $this->insertGame = static function (int $gameId = 2026020001): void {
@@ -668,6 +671,9 @@ it('rolls goalie fantasy fields into nhl season stats', function (): void {
     ]);
 
     app(SumNhlSeasonStats::class)->sum('20262027');
+
+    Event::assertDispatched(NhlSeasonStatsSynced::class, fn ($event): bool =>
+        $event->seasonId === '20262027' && $event->rowsUpserted > 0);
 
     $row = DB::table('nhl_season_stats')
         ->where('season_id', '20262027')
@@ -1739,4 +1745,35 @@ it('groups prospect stats by player and league while summing same league teams',
 
     expect($filtered->json('data'))->toHaveCount(1)
         ->and($filtered->json('data.0.league'))->toBe('AHL');
+});
+
+it('emits a season sync result even when there are no source summary rows', function (): void {
+    expect(app(SumNhlSeasonStats::class)->sum('20212022'))->toBe(0);
+    Event::assertDispatched(NhlSeasonStatsSynced::class, fn ($event): bool =>
+        $event->seasonId === '20212022' && $event->rowsUpserted === 0);
+});
+
+it('does not publish a season sync event before its enclosing transaction commits', function (): void {
+    DB::beginTransaction();
+    try {
+        app(SumNhlSeasonStats::class)->sum('20212022');
+        Event::assertNotDispatched(NhlSeasonStatsSynced::class);
+        DB::commit();
+    } finally {
+        if (DB::transactionLevel() > 1) {
+            DB::rollBack();
+        }
+    }
+    Event::assertDispatched(NhlSeasonStatsSynced::class);
+});
+
+it('discards the season sync event when its enclosing transaction rolls back', function (): void {
+    DB::beginTransaction();
+    try {
+        app(SumNhlSeasonStats::class)->sum('20212022');
+        Event::assertNotDispatched(NhlSeasonStatsSynced::class);
+    } finally {
+        DB::rollBack();
+    }
+    Event::assertNotDispatched(NhlSeasonStatsSynced::class);
 });

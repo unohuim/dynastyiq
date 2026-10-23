@@ -1,0 +1,34 @@
+name: NHL Public Stats Cache Refresh
+type: Committed Season Event And Queued Public Read Model Refresh
+location:
+  - app/Events/NhlSeasonStatsSynced.php
+  - app/Listeners/QueueNhlStatsDashboardRefresh.php
+  - app/Jobs/RefreshNhlStatsDashboardJob.php
+  - app/Services/SumNhlSeasonStats.php
+  - app/Services/NhlStatsDashboardPayload.php
+  - app/Jobs/ScoreNhlPredictionGameSatJob.php
+  - app/Providers/AppServiceProvider.php
+purpose: Prepare public season leader facts after source processing without evicting the last successful cached view.
+when_to_use:
+  - Completing season-summary aggregation from admin, automatic or command-line entrypoints.
+  - Completing prediction-season SAT scoring that changes public xGF and GSAx facts.
+when_not_to_use:
+  - Sharing private perspectives, league ownership or user-specific report data.
+  - Replacing raw facts, season summaries or the general player-table payload pipeline.
+rules:
+  - SumNhlSeasonStats emits NhlSeasonStatsSynced independently of optional admin run identity. The event carries the affected season and upsert count, including zero for an empty successful source selection.
+  - Season summary chunks commit atomically in stable player/type order. The event is delivered only after the outermost application transaction commits; rolled-back or failed writes cannot trigger publication.
+  - The queued listener and refresh jobs use projections. The listener queues one bounded job per public view and season. A changed previous season also refreshes the following season when it has positive regular-season summaries, preserving player and team comparisons.
+  - Pending season/view jobs coalesce. Publishers serialize per season/view, while a source update during active work may queue a follow-up refresh. Source processing never waits for dashboard calculation.
+  - Refresh computes complete public facts before replacing the existing cache value. Failed refreshes retain the previous successful value. Published facts have no five-minute expiry and remain until replaced or the shared cache is cleared. Web and queue processes must share their configured cache store and prefix.
+  - Prediction-season SAT scoring queues Leaders and Goalies refreshes after both rating targets commit, instead of deleting ready public cache values.
+  - This workflow refreshes existing public season/view fact caches. Existing cold-cache read bootstrap and factual homepage highlights retain their separate behavior. General table payloads, numeric filter schemas and browser filtering remain governed by StatsPayloadPipeline.yaml; this event does not cache private table responses.
+  - Existing stats definitions, scored-model selection, coverage requirements, perspective authorization and response shapes are preserved. No model training, imports, predictions or database migrations are introduced by a cache refresh.
+public_interface:
+  - NhlSeasonStatsSynced
+  - QueueNhlStatsDashboardRefresh
+  - RefreshNhlStatsDashboardJob
+  - NhlStatsDashboardPayload::refreshCachedFacts
+example_usage: |
+  NhlSeasonStatsSynced::dispatch($seasonId, $rowsUpserted);
+  // After commit, projections workers prepare public views and publish complete replacements.

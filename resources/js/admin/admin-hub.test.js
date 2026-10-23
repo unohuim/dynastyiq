@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { parse, compileTemplate } from '@vue/compiler-sfc';
 
@@ -2609,6 +2609,87 @@ describe('admin-hub import listeners', () => {
                 }),
             })
         );
+    });
+});
+
+describe('Shots processing feedback', () => {
+    beforeEach(() => {
+        vi.restoreAllMocks();
+        vi.useFakeTimers();
+        vi.stubGlobal('window', { location: { search: '' } });
+    });
+
+    afterEach(() => {
+        vi.clearAllTimers();
+        vi.useRealTimers();
+        vi.unstubAllGlobals();
+    });
+
+    it('acknowledges accepted Shots before awaiting the status refresh', async () => {
+        const hub = (await loadAdminHub())();
+        hub.sendGameImportRequest = vi.fn().mockResolvedValue({ message: 'Shot attempt facts queued.' });
+        hub.loadGameImports = vi.fn(async () => {
+            expect(hub.gameImports.success).toBe('Shot attempt facts queued.');
+        });
+        await hub.processShotFactsGameImports({ id: 23 });
+        expect(hub.sendGameImportRequest).toHaveBeenCalledWith('/admin/nhl-game-imports/process-shots', { run_id: 23 });
+        expect(hub.loadGameImports).toHaveBeenCalledWith({ background: true, page: 1 });
+        expect(hub.gameImports.processingRuns['23:shots']).toBeUndefined();
+    });
+
+    it('clears an earlier acknowledgment when a new Shots request fails', async () => {
+        const hub = (await loadAdminHub())();
+        hub.gameImports.success = 'Earlier work queued.';
+        hub.sendGameImportRequest = vi.fn().mockRejectedValue(new Error('Unable to queue shots'));
+        hub.loadGameImports = vi.fn();
+        await hub.processShotFactsGameImports({ id: 23 });
+        expect(hub.gameImports.success).toBe('');
+        expect(hub.gameImports.error).toBe('Unable to queue shots');
+        expect(hub.loadGameImports).not.toHaveBeenCalled();
+    });
+
+    it('labels processing scopes separately from the discovery range', async () => {
+        const hub = (await loadAdminHub())();
+        const run = { id: 23, start_date: '2026-01-17', end_date: '2026-01-15' };
+        expect(hub.gameImportTitle({ ...run, payload: { process_scope: 'shots' } })).toContain('Shots ·');
+        expect(hub.gameImportTitle({ ...run, payload: { process_scope: 'faceoffs' } })).toContain('Faceoffs ·');
+        expect(hub.gameImportTitle(run)).not.toContain('Shots');
+    });
+
+    it('shows this Shots runs progress instead of previously built shot coverage', async () => {
+        const hub = (await loadAdminHub())();
+        const text = hub.gameImportSummaryText({ action: 'process', status: 'running',
+            payload: { process_scope: 'shots', shot_fact_game_count: 4, shot_fact_processed_game_count: 4 },
+            progress: { total_stage_rows: 4, completed_stage_rows: 1 },
+        });
+        expect(text).toBe('1 / 4 games processed');
+    });
+
+    it('keeps polling while Shots runs alongside completed discovery', async () => {
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({
+            has_active_runs: true, runs: [
+                { id: 23, action: 'discover', status: 'completed' },
+                { id: 24, action: 'process', status: 'running', payload: { process_scope: 'shots' } },
+            ],
+        }) }));
+        const hub = (await loadAdminHub())();
+        hub.activeTab = 'game-imports';
+        await hub.loadGameImports({ background: true });
+        expect(hub.gameImports.runs).toHaveLength(2);
+        expect(hub.gameImportPoller).not.toBeNull();
+        await vi.advanceTimersByTimeAsync(5000);
+        expect(fetch).toHaveBeenCalledTimes(2);
+        hub.stopGameImportPoll();
+    });
+
+    it('renders the acknowledgment inside the active Vue dashboard with accessible status feedback', () => {
+        const source = readFileSync(new URL('../pages/Admin/Dashboard.vue', import.meta.url), 'utf8');
+        const { descriptor, errors } = parse(source);
+        expect(errors).toEqual([]);
+        const template = descriptor.template.content;
+        expect(template).toContain('v-if="gameImports.success" role="status" aria-live="polite"');
+        expect(template).toContain('v-text="gameImports.success"');
+        expect(compileTemplate({ source: template, filename: 'Dashboard.vue', id: 'shots-feedback' }).errors).toEqual([]);
     });
 });
 

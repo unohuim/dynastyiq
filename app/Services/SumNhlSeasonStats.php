@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Events\NhlSeasonStatsSynced;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -149,6 +150,7 @@ class SumNhlSeasonStats
             ->get();
 
         if ($rows->isEmpty()) {
+            NhlSeasonStatsSynced::dispatch($seasonId, 0);
             return 0;
         }
 
@@ -330,6 +332,8 @@ class SumNhlSeasonStats
         });
 
 
+        // Concurrent season syncs must acquire player/type row locks in the same order.
+        $payload = $payload->sortBy([['nhl_player_id', 'asc'], ['game_type', 'asc']])->values();
         $uniqueBy = ['season_id', 'nhl_player_id', 'game_type'];
         $allCols  = array_keys($payload->first());
         $update   = array_diff($allCols, array_merge($uniqueBy, ['created_at']));
@@ -338,9 +342,12 @@ class SumNhlSeasonStats
         $colsCount = count($allCols);
         $chunkSize = max(1, intdiv($maxParams, $colsCount));
 
-        $payload->chunk($chunkSize)->each(function ($chunk) use ($uniqueBy, $update) {
-            DB::table('nhl_season_stats')->upsert($chunk->all(), $uniqueBy, $update);
-        });
+        DB::transaction(function () use ($payload, $chunkSize, $uniqueBy, $update, $seasonId): void {
+            $payload->chunk($chunkSize)->each(function ($chunk) use ($uniqueBy, $update): void {
+                DB::table('nhl_season_stats')->upsert($chunk->all(), $uniqueBy, $update);
+            });
+            NhlSeasonStatsSynced::dispatch($seasonId, $payload->count());
+        }, 3);
 
         // DB::table('nhl_season_stats')->upsert(
         //     $payload->all(),
