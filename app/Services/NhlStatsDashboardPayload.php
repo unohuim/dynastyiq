@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -11,6 +12,8 @@ use Illuminate\Support\Facades\DB;
 /** Read public season leaders from stored NHL results without imports or predictions. */
 class NhlStatsDashboardPayload
 {
+    public const CACHE_PREFIX = 'nhl:stats:leaders:v10:';
+
     /** Reuse the homepage's factual comparisons, independently of its editorial feed. */
     public function __construct(private readonly NhlDashboardPayload $dashboard)
     {
@@ -21,7 +24,7 @@ class NhlStatsDashboardPayload
     {
         $season = $season !== null && preg_match('/^\d{8}$/', $season)
             ? $season : (string) DB::table('nhl_season_stats')->where('game_type', 2)->where('gp', '>', 0)->max('season_id');
-        $facts = Cache::remember('nhl:stats:leaders:v9:'.$view.':'.$season, 300, fn (): array => $this->seasonFacts($season, $view));
+        $facts = Cache::remember(self::CACHE_PREFIX.$view.':'.$season, 300, fn (): array => $this->seasonFacts($season, $view));
 
         return $view === 'leaders' ? [...$facts, ...$this->dashboard->statsHighlights()] : $facts;
     }
@@ -166,12 +169,17 @@ class NhlStatsDashboardPayload
             ->join('nhl_unit_shifts as s', 's.id', '=', 'e.unit_shift_id')
             ->join('nhl_unit_shift_players as u', 'u.unit_shift_id', '=', 's.id')
             ->join('players as player', 'player.id', '=', 'u.player_id')
-            ->leftJoin('nhl_shot_attempt_predictions as p', function ($join) use ($model): void {
+            ->join('nhl_expected_goals_models as m', fn ($join) => $join->where('m.id', $model))
+            ->leftJoinSub($this->scoredGoalPredictions(), 'p', function ($join) use ($model): void {
                 $join->on('p.shot_attempt_fact_id', '=', 'f.id')->where('p.expected_goals_model_id', $model)
                     ->where('p.prediction_target', 'goal')->where('p.is_scored', true);
             })->where('f.season_id', $season)->where('g.game_type', 2)->whereIn('g.game_state', ['OFF', 'FINAL'])
+            ->where('f.is_shot_attempt', true)
+            ->where(fn ($query) => $query->whereNull('f.is_empty_net')->orWhere('f.is_empty_net', false))
+            ->where(fn ($query) => $query->whereNull('f.period_type')->orWhere('f.period_type', '!=', 'SO'))
             ->whereColumn('s.nhl_game_id', 'f.nhl_game_id')->whereColumn('s.team_id', 'f.team_id')
-            ->whereNotNull('player.nhl_id')->distinct()->select(['player.nhl_id', 'f.id', 'p.xg']);
+            ->whereNotNull('player.nhl_id')->distinct()->select(['player.nhl_id', 'f.id'])
+            ->selectRaw($this->historicalGoalExpectation().' AS xg');
 
         return DB::query()->fromSub($attempts, 'attempts')->groupBy('nhl_id')
             ->selectRaw('nhl_id, CASE WHEN COUNT(xg) = COUNT(*) THEN SUM(xg) ELSE NULL END AS xgf')
@@ -183,7 +191,7 @@ class NhlStatsDashboardPayload
     {
         $id = DB::table('nhl_expected_goals_models as m')->where('m.prediction_target', 'goal')
             ->whereExists(function ($query) use ($season): void {
-                $query->selectRaw('1')->from('nhl_shot_attempt_predictions as p')
+                $query->selectRaw('1')->fromSub($this->scoredGoalPredictions(), 'p')
                     ->join('nhl_shot_attempts_facts as f', 'f.id', '=', 'p.shot_attempt_fact_id')
                     ->join('nhl_games as g', 'g.nhl_game_id', '=', 'f.nhl_game_id')
                     ->whereColumn('p.expected_goals_model_id', 'm.id')->where('p.prediction_target', 'goal')
@@ -194,12 +202,37 @@ class NhlStatsDashboardPayload
         return $id === null ? null : (int) $id;
     }
 
+    /** Prefer current SAT ratings, retaining legacy backfills only where no newer rating exists. */
+    private function scoredGoalPredictions(): Builder
+    {
+        $scores = DB::table('nhl_shot_attempt_model_scores')->where('prediction_target', 'goal')->where('is_scored', true)
+            ->select(['expected_goals_model_id', 'shot_attempt_fact_id', 'prediction_target', 'is_scored', 'probability as xg']);
+        $legacy = DB::table('nhl_shot_attempt_predictions as legacy')->where('legacy.prediction_target', 'goal')
+            ->where('legacy.is_scored', true)
+            ->whereNotExists(function ($query): void {
+                $query->selectRaw('1')->from('nhl_shot_attempt_model_scores as newer')
+                    ->whereColumn('newer.expected_goals_model_id', 'legacy.expected_goals_model_id')
+                    ->whereColumn('newer.shot_attempt_fact_id', 'legacy.shot_attempt_fact_id');
+            })->select(['legacy.expected_goals_model_id', 'legacy.shot_attempt_fact_id', 'legacy.prediction_target', 'legacy.is_scored', 'legacy.xg']);
+
+        return $scores->unionAll($legacy);
+    }
+
+    /** Match existing Train/Test profiles: SOG-trained goal expectations count actual SOG only. */
+    private function historicalGoalExpectation(): string
+    {
+        return "CASE WHEN p.xg IS NULL THEN NULL
+            WHEN m.feature_config->>'sample_mode' = 'sog' AND NOT COALESCE(f.is_shot_on_goal, false) THEN 0
+            ELSE p.xg END";
+    }
+
     /** Sum scored goalie-facing expectations, withholding partially scored attempt sets. */
     private function expectedAgainst(string $season, int $model): Collection
     {
         return DB::table('nhl_shot_attempts_facts as f')
             ->join('nhl_games as g', 'g.nhl_game_id', '=', 'f.nhl_game_id')
-            ->leftJoin('nhl_shot_attempt_predictions as p', function ($join) use ($model): void {
+            ->join('nhl_expected_goals_models as m', fn ($join) => $join->where('m.id', $model))
+            ->leftJoinSub($this->scoredGoalPredictions(), 'p', function ($join) use ($model): void {
                 $join->on('p.shot_attempt_fact_id', '=', 'f.id')->where('p.expected_goals_model_id', $model)
                     ->where('p.prediction_target', 'goal')->where('p.is_scored', true);
             })
@@ -210,7 +243,7 @@ class NhlStatsDashboardPayload
             ->groupBy('f.goalie_player_id')
             ->selectRaw('f.goalie_player_id, COUNT(DISTINCT f.nhl_game_id) AS games, COUNT(*) AS attempts, COUNT(p.xg) AS scored_attempts,
                 SUM(CASE WHEN f.is_goal THEN 1 ELSE 0 END) AS goals_against,
-                CASE WHEN COUNT(p.xg) = COUNT(*) THEN SUM(p.xg) ELSE NULL END AS xga')
+                CASE WHEN COUNT(p.xg) = COUNT(*) THEN SUM('.$this->historicalGoalExpectation().') ELSE NULL END AS xga')
             ->get()->keyBy('goalie_player_id');
     }
 

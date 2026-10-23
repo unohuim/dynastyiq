@@ -159,6 +159,55 @@ it('uses a model trained in an earlier season when it scores the displayed seaso
     DB::table('nhl_expected_goals_models')->update(['training_season_id' => '20252026', 'status' => 'published']);
     expect(($this->facts)()['goalies'][0]['stats']['gsax'])->toBe(0.5);
 });
+it('reads newly imported SAT model ratings when no legacy predictions exist', function (): void {
+    ($this->goalieScoring)();
+    foreach (DB::table('nhl_shot_attempt_predictions')->get() as $prediction) {
+        DB::table('nhl_shot_attempt_model_scores')->insert([
+            'expected_goals_model_id' => $prediction->expected_goals_model_id, 'shot_attempt_fact_id' => $prediction->shot_attempt_fact_id,
+            'play_by_play_id' => $prediction->play_by_play_id, 'nhl_game_id' => $prediction->nhl_game_id,
+            'prediction_target' => 'goal', 'is_scored' => true, 'probability' => $prediction->xg,
+        ]);
+    }
+    DB::table('nhl_shot_attempt_predictions')->delete();
+    expect(($this->facts)()['goalies'][0]['stats']['gsax'])->toBe(0.5);
+});
+it('lets an excluded current SAT rating override an older scored prediction', function (): void {
+    ($this->goalieScoring)();
+    $prediction = DB::table('nhl_shot_attempt_predictions')->first();
+    DB::table('nhl_shot_attempt_model_scores')->insert([
+        'expected_goals_model_id' => $prediction->expected_goals_model_id, 'shot_attempt_fact_id' => $prediction->shot_attempt_fact_id,
+        'play_by_play_id' => $prediction->play_by_play_id, 'nhl_game_id' => $prediction->nhl_game_id,
+        'prediction_target' => 'goal', 'is_scored' => false, 'exclusion_reason' => 'missing_shooter',
+    ]);
+    expect(($this->facts)()['goalies'][0]['stats']['gsax'])->toBeNull();
+});
+it('matches Test profile goal expectations for a SOG-trained model', function (): void {
+    ($this->goalieScoring)();
+    DB::table('nhl_expected_goals_models')->update(['feature_config' => json_encode(['sample_mode' => 'sog'])]);
+    DB::table('nhl_shot_attempts_facts')->where('is_goal', true)->update(['is_shot_on_goal' => true]);
+    expect(($this->facts)()['goalies'][0]['stats']['gsax'])->toEqualWithDelta(-0.2, 0.000001);
+});
+it('uses imported per-attempt ratings for the Advanced Leaders on-ice xGF total', function (): void {
+    ($this->goalieScoring)();
+    $unit = DB::table('nhl_units')->insertGetId(['team_abbrev' => 'TOR', 'unit_type' => 'F']);
+    $shift = DB::table('nhl_unit_shifts')->insertGetId([
+        'unit_id' => $unit, 'nhl_game_id' => 2026020001, 'team_id' => 10, 'team_abbrev' => 'TOR',
+        'period' => 1, 'start_time' => '00:00', 'end_time' => '01:00',
+        'start_game_seconds' => 0, 'end_game_seconds' => 60, 'seconds' => 60,
+    ]);
+    DB::table('nhl_unit_shift_players')->insert(['unit_shift_id' => $shift, 'player_id' => $this->player->id]);
+    DB::table('nhl_shot_attempts_facts')->update(['team_id' => 10]);
+    foreach (DB::table('nhl_shot_attempt_predictions')->get() as $prediction) {
+        DB::table('event_unit_shifts')->insert(['event_id' => $prediction->play_by_play_id, 'unit_shift_id' => $shift]);
+        DB::table('nhl_shot_attempt_model_scores')->insert([
+            'expected_goals_model_id' => $prediction->expected_goals_model_id, 'shot_attempt_fact_id' => $prediction->shot_attempt_fact_id,
+            'play_by_play_id' => $prediction->play_by_play_id, 'nhl_game_id' => $prediction->nhl_game_id,
+            'prediction_target' => 'goal', 'is_scored' => true, 'probability' => $prediction->xg,
+        ]);
+    }
+    DB::table('nhl_shot_attempt_predictions')->delete();
+    expect(($this->facts)()['hero']['stats']['xgf'])->toBe(1.5);
+});
 it('ignores a newer same-season model that has no scored attempts for the displayed season', function (): void {
     ($this->goalieScoring)();
     DB::table('nhl_expected_goals_models')->update(['training_season_id' => '20252026', 'status' => 'published']);

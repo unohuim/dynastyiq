@@ -1,0 +1,36 @@
+name: NHL Prediction Season SAT Scoring
+type: Committed Import Event And Model Scoring Fanout
+location:
+  - app/Events/SatImported.php
+  - app/Listeners/QueuePredictionSeasonSatScoring.php
+  - app/Jobs/ScoreNhlPredictionGameSatJob.php
+  - app/Services/BuildNhlShotAttemptFacts.php
+  - app/Services/NhlShotAttemptModelScorer.php
+  - app/Providers/AppServiceProvider.php
+purpose: Apply existing model probabilities to newly imported prediction-season attempts without rebuilding Train or Test workflows.
+when_to_use:
+  - Committing imported shot-attempt facts for a game.
+  - Updating prediction-season ratings after a game's Shots import is repeated.
+when_not_to_use:
+  - Retraining probabilities or building entity profiles.
+  - Replacing existing Train and Test scoring and comparison pathways.
+rules:
+  - SatImported is dispatched after a successful nonempty shot-fact write and delivered only after the enclosing database transaction commits. Its payload carries game, season and game type, never hydrated SAT rows.
+  - The queued listener matches the imported season against each SAT run's resolved projectionSeasonId. Test or Train membership alone does not select a run. Matching game type and existing trained SAT and SOG buckets are required; archived and failed runs are excluded.
+  - Each matching run receives its own projections-queue scoring job. Source import and fact-building jobs retain their existing queues and do not wait for model scoring.
+  - Workers recheck the game, prediction season, game type and model eligibility at execution time and use that run's newest completed trained buckets for each existing target. They do not retrain or modify model configuration.
+  - All otherwise eligible SAT facts receive separate shot-on-goal and goal-target ratings using the existing scorer, preserving the trained target's meaning. In particular an Eval SOG goal rating remains conditional on SOG; assigning it to a SAT does not turn it into direct goal probability per SAT.
+  - Both targets for a model/game are replaced in one transaction. Reimports and retries do not duplicate ratings or replace other games, models or seasons. Source fact rows and trained model rows remain unchanged.
+  - Existing source facts and trained models are locked while both targets are rated. Duplicate jobs for the same run/game serialize; terminal failures retain model/game context in the failed queue job and application error.
+  - Ratings retain existing shootout, empty-net and missing-shooter exclusions. The import event does not introduce new eligibility thresholds or change confidence rules.
+  - Existing prediction-season imports can be populated through an explicitly requested Shots reprocess. Registering the listener does not launch an implicit historical backfill.
+  - Successful scoring invalidates cached public leader and goalie facts for the affected season after commit. Public reads remain read-only.
+public_interface:
+  - SatImported
+  - QueuePredictionSeasonSatScoring
+  - ScoreNhlPredictionGameSatJob
+  - NhlShotAttemptModelScorer::scoreGame
+  - nhl_shot_attempt_model_scores
+example_usage: |
+  SatImported::dispatch($gameId, $seasonId, $gameType);
+  // Matching prediction-season models independently rate this game's SAT facts.

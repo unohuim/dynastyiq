@@ -2276,7 +2276,7 @@ This boolean grouping choice is independent of the existing `display` values
 ### NHL Shot Attempt Prediction Target
 
 **Name:** NHL shot attempt prediction target
-**Storage location(s):** `nhl_expected_goals_models.prediction_target`, `nhl_shot_attempt_predictions.prediction_target` (string columns)
+**Storage location(s):** `nhl_expected_goals_models.prediction_target`, `nhl_shot_attempt_predictions.prediction_target`, `nhl_shot_attempt_model_scores.prediction_target` (string columns)
 **Allowed values currently emitted:**
 
 - `goal`

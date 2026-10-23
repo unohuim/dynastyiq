@@ -23,6 +23,29 @@ class NhlShotAttemptModelScorer
         float $highDangerThreshold,
         ?string $entityKey = null
     ): bool {
+        return $this->scoreFacts($model, $seasonId, $gameType, $highDangerThreshold, $entityKey);
+    }
+
+    /** Rate one game's facts without replacing ratings for other games or seasons. */
+    public function scoreGame(
+        NhlExpectedGoalsModel $model,
+        int $gameId,
+        string $seasonId,
+        int $gameType,
+        float $highDangerThreshold
+    ): bool {
+        return DB::transaction(fn (): bool => $this->scoreFacts($model, $seasonId, $gameType, $highDangerThreshold, null, $gameId));
+    }
+
+    /** Apply the same trained bucket matching for season builds and imported games. */
+    private function scoreFacts(
+        NhlExpectedGoalsModel $model,
+        string $seasonId,
+        int $gameType,
+        float $highDangerThreshold,
+        ?string $entityKey,
+        ?int $gameId = null
+    ): bool {
         if (! Schema::hasTable('nhl_shot_attempt_model_scores')) {
             return false;
         }
@@ -51,6 +74,13 @@ class NhlShotAttemptModelScorer
             $deleteBindings[] = $entityKey;
         }
 
+        if ($gameId !== null) {
+            $entityWhere .= ' AND facts.nhl_game_id = ?';
+            $deleteEntityWhere .= ' AND facts.nhl_game_id = ?';
+            $bindings[] = $gameId;
+            $deleteBindings[] = $gameId;
+        }
+
         DB::statement(<<<SQL
 DELETE FROM nhl_shot_attempt_model_scores scores
 USING nhl_shot_attempts_facts facts
@@ -62,6 +92,7 @@ WHERE facts.id = scores.shot_attempt_fact_id
 SQL, $deleteBindings);
 
         $candidateKeys = implode(",\n                    ", $this->candidateBucketKeySql($model, 'facts'));
+        $goalTarget = $model->prediction_target === NhlExpectedGoalsBackfiller::TARGET_GOAL ? 'true' : 'false';
 
         DB::statement(<<<SQL
 INSERT INTO nhl_shot_attempt_model_scores (
@@ -108,7 +139,7 @@ SELECT
     exclusions.exclusion_reason,
     matched.smoothed_goal_probability as probability,
     CASE
-        WHEN exclusions.exclusion_reason IS NULL
+        WHEN {$goalTarget} AND exclusions.exclusion_reason IS NULL
             AND matched.smoothed_goal_probability >= ?
             THEN true
         ELSE false

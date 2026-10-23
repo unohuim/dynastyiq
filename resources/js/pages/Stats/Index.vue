@@ -20,6 +20,8 @@ const stripCategories = computed(() => ['points', 'goals', 'assists', 'sog', 'pp
 const season = computed(() => props.leaders.season ? `${props.leaders.season.slice(0, 4)}–${props.leaders.season.slice(6)}` : 'Current season');
 const pendingView = ref(null);
 const failedView = ref(null);
+const seamlessTableSwitch = computed(() => ['skaters', 'goalies'].includes(props.view)
+    && ['skaters', 'goalies'].includes(pendingView.value) && props.initialPayload != null && props.leaders.season != null);
 const href = view => `/stats?view=${view}${props.leaders.season || props.selectedSeason ? `&season_id=${props.leaders.season || props.selectedSeason}` : ''}`;
 const navLinks = computed(() => ['Leaders', 'Skaters', 'Goalies', 'Teams'].map(label => ({ label, view: label.toLowerCase(), href: href(label.toLowerCase()) })));
 const startVisit = view => { pendingView.value = view; failedView.value = null; };
@@ -36,6 +38,8 @@ const rank = value => !value ? '—' : `${value}${value % 100 >= 11 && value % 1
 const delta = value => Number.isFinite(value) ? `${value > 0 ? '+' : ''}${value.toFixed(1)}` : '—';
 const colors = ['fill-rose-500', 'fill-amber-400', 'fill-emerald-500', 'fill-blue-500', 'fill-sky-600'];
 const externalPlayers = computed(() => (props.leaders.skaters ?? []).map(row => ({ ...row, external: true })));
+const smashPlayers = computed(() => externalPlayers.value.map(row => ({ ...row,
+    name: row.position ? `${row.name}, ${row.position}` : row.name })));
 const externalGoalies = computed(() => (props.leaders.goalies ?? []).map(row => ({ ...row, external: true })));
 const teamRows = computed(() => (props.leaders.teams ?? []).map(row => ({ ...row, id: row.team,
     stats: { gf: row.gf, gf_pg: row.gf_pg, ga_pg: row.ga_pg, ppg_pg: row.ppg_pg, points: row.points, goals: row.gf, assists: row.assists, sog: row.sog, hits: row.hits } })));
@@ -104,7 +108,7 @@ const sortTeams = key => { teamDescending.value = key === teamSort.value ? !team
                 </div>
                 <LeaderList title="Team Leaders" :rows="teamRows" entity="Team" :href="href('teams')" :tabs="[{key:'gf_pg',label:'Offense',heading:'GF/GP',format:'decimal'},{key:'ga_pg',label:'Defense',heading:'GA/GP',low:true,format:'decimal'},{key:'ppg_pg',label:'Special Teams',heading:'PPG/GP',format:'decimal'}]" />
                 <LeaderList title="Player Trends" hide-gp :columns="[{key:'ppg',label:'P/GP',format:'decimal'}]" :rows="trendRows" :href="href('skaters')" :tabs="[{key:'up',label:'Trending Up',heading:'Δ P/GP',format:'decimal'},{key:'down',label:'Trending Down',heading:'Δ P/GP',low:true,format:'decimal'},{key:'breakout',label:'Breakout',heading:'Δ P/GP',format:'decimal'}]" />
-                <LeaderList title="Smash Potatoes" :rows="externalPlayers" :tabs="smashTabs" :href="href('skaters')" />
+                <LeaderList title="Smash Potatoes" :rows="smashPlayers" :tabs="smashTabs" :href="href('skaters')" />
             </div>
             <div class="grid min-w-0 gap-3 md:grid-cols-2 xl:h-[190px] xl:grid-cols-4">
                 <LeaderList title="Goalie Leaders" :rows="externalGoalies" :tabs="goalieTabs" :href="href('goalies')" />
@@ -115,9 +119,10 @@ const sortTeams = key => { teamDescending.value = key === teamSort.value ? !team
         </template>
         <section v-else-if="view === 'teams' && !pendingView" class="overflow-hidden rounded-lg border border-[#143144] bg-[#041724] p-4"><h2 class="mb-3 text-lg font-bold">Team statistics · {{ season }}</h2><div class="overflow-x-auto"><table class="w-full text-left text-xs tabular-nums"><thead class="border-b border-[#143144] text-slate-400"><tr><th v-for="column in teamColumns" :key="column.key" class="whitespace-nowrap p-2" :aria-sort="teamSort === column.key ? teamDescending ? 'descending' : 'ascending' : 'none'"><button type="button" class="rounded hover:text-sky-300 focus-visible:ring-2 focus-visible:ring-sky-400" @click="sortTeams(column.key)">{{ column.label }} <span v-if="teamSort === column.key">{{ teamDescending ? '↓' : '↑' }}</span></button></th></tr></thead><tbody><tr v-for="team in sortedTeams" :key="team.id" class="border-b border-[#143144]/60"><td v-for="column in teamColumns" :key="column.key" class="whitespace-nowrap p-2"><span v-if="column.key === 'name'" class="flex items-center gap-2"><img v-if="team.logo" :src="team.logo" alt="" class="h-6 w-6 object-contain" />{{ team.name }}</span><template v-else>{{ team[column.key] === null ? '—' : column.key.endsWith('_pg') ? team[column.key].toFixed(2) : team[column.key] }}</template></td></tr></tbody></table><p v-if="!sortedTeams.length" class="py-8 text-sm text-slate-400">No completed team results for this season.</p></div></section>
         </Deferred>
-        <LoadingState v-if="pendingView" :label="pendingView" />
-        <LoadingState v-else-if="failedView" :label="failedView" failed @retry="router.visit(href(failedView))" />
-        <Deferred v-else-if="['skaters', 'goalies'].includes(view)" data="initialPayload">
+        <p v-if="seamlessTableSwitch" role="status" class="sr-only">Loading {{ pendingView }}…</p>
+        <LoadingState v-if="pendingView && !seamlessTableSwitch" :label="pendingView" />
+        <LoadingState v-if="failedView" :label="failedView" failed @retry="router.visit(href(failedView))" />
+        <Deferred v-if="['skaters', 'goalies'].includes(view) && (!pendingView || seamlessTableSwitch)" data="initialPayload">
             <template #fallback><LoadingState :label="view" /></template>
             <template #rescue="{ reloading }"><LoadingState :label="view" failed :reloading="reloading" @retry="reload('initialPayload')" /></template>
         <section class="overflow-hidden rounded-lg bg-[#101923] text-slate-900" :aria-label="`${view === 'goalies' ? 'Goalie' : 'Skater'} statistics`"><StatsTable :key="view + selectedPerspective" :report-view="view" :initial-payload="initialPayload" :api-url="apiUrl" :connected-leagues="connectedLeagues" :perspectives="perspectives" :selected-perspective="selectedPerspective" :mobile-breakpoint="mobileBreakpoint" /></section>

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Events\SatImported;
 use App\Models\NhlGame;
 use App\Models\PlayByPlay;
 use Carbon\CarbonImmutable;
@@ -86,11 +87,15 @@ class BuildNhlShotAttemptFacts
             return 0;
         }
 
-        DB::table('nhl_shot_attempts_facts')->upsert(
-            $rows,
-            ['play_by_play_id'],
-            array_values(array_diff(array_keys($rows[0]), ['play_by_play_id', 'created_at']))
-        );
+        DB::transaction(function () use ($rows, $game): void {
+            DB::table('nhl_shot_attempts_facts')->upsert(
+                $rows,
+                ['play_by_play_id'],
+                array_values(array_diff(array_keys($rows[0]), ['play_by_play_id', 'created_at']))
+            );
+
+            SatImported::dispatch((int) $game->nhl_game_id, (string) $game->season_id, (int) $game->game_type);
+        });
 
         return count($rows);
     }

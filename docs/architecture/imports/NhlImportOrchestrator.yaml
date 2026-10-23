@@ -51,6 +51,7 @@ rules:
   - Missing HTML PBP source coverage must complete the HTML PBP verification stage with reviewable validation context rather than failing the game pipeline.
   - Full run-scoped processing must queue per-game post-process enrichment for shot-attempt facts, faceoff facts, and right-rail refs/staff after all canonical import stages close.
   - Full run-scoped processing must remain running until the post-process enrichment batch completes or fails.
+  - Successful Shots fact writes emit the committed event defined in NhlPredictionSeasonSatScoring.yaml. Prediction-season scoring runs independently on projections and does not extend the source import's completion dependency.
   - Season stat rollups must wait until terminal summary validation stages have completed.
 public_interface:
   - NhlImportOrchestrator::processScheduled()

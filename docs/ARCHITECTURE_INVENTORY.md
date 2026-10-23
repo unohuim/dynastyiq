@@ -4169,3 +4169,12 @@ The shell loads first, with independent rescued deferred groups for leader facts
 and player tables, local navigation skeletons and retry states. GSAx chooses a
 model actually scoring the displayed season and exposes missing-data reasons.
 Authority: `docs/architecture/stats/NhlStatsDashboard.yaml`.
+
+## NHL Prediction Season SAT Scoring
+
+Committed Shots fact imports emit SatImported. Matching prediction-season SAT
+models independently queue per-game ratings using existing trained SAT and SOG
+buckets on projections. Ratings remain model-specific and repeatable without
+retraining or replacing Train/Test workflows. Public stats read current ratings
+with legacy backfill compatibility. Authority:
+`docs/architecture/imports/NhlPredictionSeasonSatScoring.yaml`.

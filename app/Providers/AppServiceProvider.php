@@ -68,6 +68,7 @@ class AppServiceProvider extends ServiceProvider
         Event::listen(DraftPickMade::class, UpdateRosterMembershipForDraftPick::class);
         Event::listen(DraftPickMade::class, AnnounceFantraxDraftPick::class);
         Event::listen(\App\Events\GamesDiscovered::class, \App\Listeners\StartDiscoveredGameProcessing::class);
+        Event::listen(\App\Events\SatImported::class, \App\Listeners\QueuePredictionSeasonSatScoring::class);
         Player::observe(PlayerNhlIdentityObserver::class);
 
 
