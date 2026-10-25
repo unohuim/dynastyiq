@@ -66,7 +66,7 @@ const teamTabs = [{ key: 'points', label: 'Points' }, { key: 'goals', label: 'Go
 
 <template>
     <Head title="Statistics · DynastyIQ" />
-    <main class="mx-auto flex min-w-0 max-w-[1800px] flex-col gap-3 bg-[#020e17] px-3 py-3 text-slate-100 md:px-5" aria-label="NHL statistics dashboard">
+    <main class="mx-auto flex min-w-0 max-w-[1800px] flex-col gap-3 bg-[#020e17] px-3 py-3 text-slate-100 md:px-5" aria-label="NHL statistics dashboard" :aria-busy="Boolean(pendingView)">
         <div class="overflow-hidden rounded-md border border-[#143144] bg-[#03131f] sm:hidden">
             <CategoryNav :links="navLinks" :view="pendingView || activeView" @start="startVisit" @finish="finishVisit" @failed="failVisit" />
         </div>
@@ -137,7 +137,7 @@ const teamTabs = [{ key: 'points', label: 'Points' }, { key: 'goals', label: 'Go
         </div>
         <Teams v-else-if="view === 'teams' && !pendingView" :rows="leaders.teams ?? []" :filters="leaders.team_filters ?? {}" :seasons="leaders.available_team_seasons ?? []" :season="leaders.season || selectedSeason" />
         </Deferred>
-        <p v-if="seamlessTableSwitch" role="status" class="sr-only">Loading {{ pendingView }}…</p>
+        <LoadingState v-if="seamlessTableSwitch" :label="pendingView" compact />
         <LoadingState v-if="pendingView && !seamlessTableSwitch" :label="pendingView" />
         <LoadingState v-if="failedView" :label="failedView" failed @retry="router.visit(href(failedView))" />
         <Deferred v-if="['skaters', 'goalies'].includes(view) && (!pendingView || seamlessTableSwitch)" data="initialPayload">

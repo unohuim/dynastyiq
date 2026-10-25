@@ -194,7 +194,8 @@ class SumNhlGameStrengthUnits
             unset($payload['unit_id']);
 
             $key = $row->nhl_player_id . ':' . $row->strength;
-            $points = $individual[$key] ?? ['g' => 0, 'a' => 0, 'pts' => 0];
+            $points = $individual[$key] ?? ['g' => 0, 'a' => 0, 'pts' => 0, 'gf' => 0];
+            $payload['gf'] = $points['gf'];
             $payload['individual_g'] = $points['g'];
             $payload['individual_a'] = $points['a'];
             $payload['individual_pts'] = $points['pts'];
@@ -207,37 +208,45 @@ class SumNhlGameStrengthUnits
     }
 
     /**
-     * @return array<string,array{g:int,a:int,pts:int}>
+     * Count participation and goals from the same distinct player/goal/strength population.
+     * Official player scoring totals remain in game summaries and boxscores.
+     *
+     * @return array<string,array{g:int,a:int,pts:int,gf:int}>
      */
     private function individualPointsByPlayerAndStrength(int $gameId): array
     {
         $points = [];
-        $events = DB::table('play_by_plays')
-            ->where('nhl_game_id', $gameId)
-            ->where('type_desc_key', 'goal')
-            ->where(function ($query): void {
-                $query->whereNull('period_type')
-                    ->orWhere('period_type', '<>', 'SO');
-            })
-            ->get(['strength', 'scoring_player_id', 'assist1_player_id', 'assist2_player_id']);
+        $strength = $this->unitStrengthExpression();
+        $events = DB::table('event_unit_shifts as eus')
+            ->join('nhl_unit_shifts as us', 'us.id', '=', 'eus.unit_shift_id')
+            ->join('nhl_units as u', 'u.id', '=', 'us.unit_id')
+            ->join('nhl_unit_players as up', 'up.unit_id', '=', 'u.id')
+            ->join('players as player', 'player.id', '=', 'up.player_id')
+            ->join('play_by_plays as p', 'p.id', '=', 'eus.event_id')
+            ->where('us.nhl_game_id', $gameId)
+            ->where('p.nhl_game_id', $gameId)
+            ->where('p.type_desc_key', 'goal')
+            ->whereNotNull('player.nhl_id')
+            ->where('player.nhl_id', '>', 0)
+            ->whereColumn('p.event_owner_team_id', 'us.team_id')
+            ->where(fn ($query) => $query->whereNull('p.period_type')->orWhere('p.period_type', '<>', 'SO'))
+            ->select(['p.id as event_id', 'player.nhl_id as nhl_player_id',
+                'p.scoring_player_id', 'p.assist1_player_id', 'p.assist2_player_id'])
+            ->selectRaw($strength.' as strength')
+            ->distinct()
+            ->get();
 
         foreach ($events as $event) {
-            $strength = in_array($event->strength, ['PP', 'PK'], true) ? $event->strength : 'EV';
-            foreach ([
-                'scoring_player_id' => ['g' => 1, 'a' => 0, 'pts' => 1],
-                'assist1_player_id' => ['g' => 0, 'a' => 1, 'pts' => 1],
-                'assist2_player_id' => ['g' => 0, 'a' => 1, 'pts' => 1],
-            ] as $field => $increments) {
-                $playerId = $event->{$field};
-                if (! $playerId) {
-                    continue;
-                }
-
-                $key = $playerId . ':' . $strength;
-                $points[$key] ??= ['g' => 0, 'a' => 0, 'pts' => 0];
-                $points[$key]['g'] += $increments['g'];
-                $points[$key]['a'] += $increments['a'];
-                $points[$key]['pts'] += $increments['pts'];
+            $playerId = (int) $event->nhl_player_id;
+            $key = $playerId.':'.$event->strength;
+            $points[$key] ??= ['g' => 0, 'a' => 0, 'pts' => 0, 'gf' => 0];
+            $points[$key]['gf']++;
+            if ($playerId === (int) $event->scoring_player_id) {
+                $points[$key]['g']++;
+                $points[$key]['pts']++;
+            } elseif (in_array($playerId, [(int) $event->assist1_player_id, (int) $event->assist2_player_id], true)) {
+                $points[$key]['a']++;
+                $points[$key]['pts']++;
             }
         }
 

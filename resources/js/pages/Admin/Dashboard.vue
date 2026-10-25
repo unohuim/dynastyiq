@@ -1070,7 +1070,7 @@ export default {
                                                         v-show="isGameImportProcessMenuOpen(run)"
                                                         .opacity.duration.150ms
                                                         
-                                                        class="absolute right-0 z-20 mt-1 w-32 overflow-hidden rounded-md border border-gray-200 bg-white py-1 text-left shadow-lg"
+                                                        class="absolute right-0 z-20 mt-1 w-48 overflow-hidden rounded-md border border-gray-200 bg-white py-1 text-left shadow-lg"
                                                     >
                                                         <button
                                                             type="button"
@@ -1092,6 +1092,13 @@ export default {
                                                             @click.stop.prevent="processFaceoffFactsGameImports(run)"
                                                         >
                                                             Faceoffs
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            class="block w-full px-3 py-1.5 text-left text-[11px] font-semibold text-gray-700 transition-colors duration-150 hover:bg-gray-50 focus-visible:ring-2 focus-visible:ring-indigo-500 motion-reduce:transition-none"
+                                                            @click.stop.prevent="processOnIceGameImports(run)"
+                                                        >
+                                                            Rebuild On-Ice Stats
                                                         </button>
                                                         <button
                                                             type="button"

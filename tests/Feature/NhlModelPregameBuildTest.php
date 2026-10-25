@@ -882,3 +882,135 @@ it('ignores queued legacy day jobs and failures after a checkpointed upgrade', f
     Bus::assertNothingDispatched();
 })->with([\App\Jobs\BuildNhlPregameContextDayJob::class, \App\Jobs\CalculateNhlPregameContextRunDayLeagueAveragesJob::class,
     \App\Jobs\CompareNhlPregameContextRunDayJob::class]);
+
+it('independently wakes active checkpointed builds without resuming terminal or paused runs', function (string $status, ?string $jobClass): void {
+    $run = NhlPregameContextRun::create(['model_run_id' => $this->model->id, 'action' => 'backfill',
+        'status' => $status, 'season_ids' => ['20252026'],
+        'options' => ['pipeline_version' => NhlPregameContextOrchestrator::CHECKPOINT_PIPELINE]]);
+    $before = $run->getRawOriginal();
+    app(NhlPregameContextOrchestrator::class)->recoverActiveRuns();
+    expect($run->fresh()->getRawOriginal())->toBe($before);
+    if ($jobClass === null) {
+        Bus::assertNothingDispatched();
+    } else {
+        Bus::assertDispatchedTimes($jobClass, 1);
+        Bus::assertDispatched($jobClass, fn ($job): bool => $job->runId === $run->id && $job->queue === 'projections');
+    }
+})->with([
+    ['queued', PrepareNhlPregameContextRunJob::class],
+    ['running', LoadNhlPregameContextRunJob::class],
+    ['pausing', LoadNhlPregameContextRunJob::class],
+    ['paused', null], ['stopped', null], ['completed', null], ['failed', null],
+]);
+
+it('leaves older pipeline versions unchanged during automatic recovery', function (): void {
+    NhlPregameContextRun::create(['action' => 'backfill', 'status' => 'running', 'season_ids' => ['20252026'],
+        'options' => ['pipeline_version' => NhlPregameContextOrchestrator::RESULTS_PIPELINE]]);
+    app(NhlPregameContextOrchestrator::class)->recoverActiveRuns();
+    Bus::assertNothingDispatched();
+});
+
+it('retains a delayed wakeup when another loader holds the run lock', function (): void {
+    $run = NhlPregameContextRun::create(['action' => 'backfill', 'status' => 'running', 'season_ids' => ['20252026'],
+        'options' => ['pipeline_version' => NhlPregameContextOrchestrator::CHECKPOINT_PIPELINE]]);
+    $lock = Cache::lock('nhl-pregame-context-run-loader:'.$run->id, 30);
+    $lock->get();
+    try {
+        app(NhlPregameContextOrchestrator::class)->load($run->id);
+        app(NhlPregameContextOrchestrator::class)->load($run->id);
+    } finally {
+        $lock->release();
+    }
+    Bus::assertDispatchedTimes(LoadNhlPregameContextRunJob::class, 1);
+    Bus::assertDispatched(LoadNhlPregameContextRunJob::class, fn ($job): bool => $job->runId === $run->id && $job->delay !== null);
+    expect($run->fresh()->status)->toBe('running');
+});
+
+it('reclaims abandoned work through automatic wakeup while preserving completed dates and entity cursors', function (): void {
+    config(['nhl-pregame.league_concurrency' => 1]);
+    $run = NhlPregameContextRun::create(['model_run_id' => $this->model->id, 'action' => 'backfill', 'status' => 'running', 'season_ids' => ['20252026'],
+        'total_games' => 2, 'options' => ['pipeline_version' => NhlPregameContextOrchestrator::CHECKPOINT_PIPELINE]]);
+    $complete = NhlPregameContextRunDay::create(['run_id' => $run->id, 'game_date' => '2025-10-09',
+        'league_state' => 'complete', 'context_state' => 'complete', 'league_cursor' => 4]);
+    $partial = NhlPregameContextRunDay::create(['run_id' => $run->id, 'game_date' => '2025-10-10',
+        'league_state' => 'processing', 'league_cursor' => 1, 'league_entity_cursor' => 108,
+        'league_claim_token' => '11111111-1111-4111-8111-111111111111', 'league_claim_expires_at' => now()->subSecond()]);
+    foreach (['2025-10-09', '2025-10-10'] as $index => $date) {
+        NhlPregameContextRunGame::create(['run_id' => $run->id, 'nhl_game_id' => 2025020001 + $index,
+            'game_date' => $date, 'sequence' => $index + 1, 'state' => $index === 0 ? 'complete' : 'pending']);
+    }
+    $before = $complete->getRawOriginal();
+    $orchestrator = app(NhlPregameContextOrchestrator::class);
+    $orchestrator->recoverActiveRuns();
+    (new LoadNhlPregameContextRunJob($run->id))->handle($orchestrator);
+    expect($complete->fresh()->getRawOriginal())->toBe($before)
+        ->and($partial->fresh()->league_cursor)->toBe(1)->and($partial->fresh()->league_entity_cursor)->toBe(108)
+        ->and($partial->fresh()->league_state)->toBe('processing')
+        ->and($partial->fresh()->league_claim_token)->not->toBe('11111111-1111-4111-8111-111111111111');
+    Bus::assertDispatched(\App\Jobs\CalculateNhlPregameLeagueBatchJob::class, fn ($job): bool => $job->runDayId === $partial->id);
+    $this->actingAs($this->admin)->getJson(route('admin.nhl-sat-models.context.progress', $this->model))
+        ->assertOk()->assertJsonPath('progress_html', fn (string $html): bool => str_contains($html, 'Building'));
+});
+
+it('finishes several committed league pages within one bounded delivery', function (): void {
+    config(['nhl-pregame.league_continuation_pages' => 2, 'nhl-pregame.league_continuation_seconds' => 3600]);
+    $run = NhlPregameContextRun::create(['action' => 'backfill', 'status' => 'running', 'season_ids' => ['20252026'],
+        'options' => ['pipeline_version' => NhlPregameContextOrchestrator::CHECKPOINT_PIPELINE]]);
+    $day = NhlPregameContextRunDay::create(['run_id' => $run->id, 'game_date' => '2025-10-10',
+        'league_state' => 'processing', 'league_cursor' => 1, 'league_entity_cursor' => 108]);
+    $service = Mockery::mock(\App\Services\NhlPregameLeagueResults::class);
+    $service->shouldReceive('buildNextAverages')->twice()->andReturnUsing(function ($owner, $page) use ($day): bool {
+        if ((int) $page->league_entity_cursor === 108) {
+            $day->update(['league_entity_cursor' => 116]);
+
+            return false;
+        }
+        expect((int) $page->league_entity_cursor)->toBe(116);
+        $day->update(['league_cursor' => 2, 'league_entity_cursor' => 0]);
+
+        return true;
+    });
+    (new \App\Jobs\CalculateNhlPregameLeagueBatchJob($run->id, $day->id))->handle(
+        Mockery::mock(\App\Services\NhlPregameContextBuilder::class), $service,
+    );
+    expect($day->fresh()->league_state)->toBe('complete')->and($day->fresh()->league_cursor)->toBe(2);
+    Bus::assertDispatchedTimes(LoadNhlPregameContextRunJob::class, 1);
+});
+
+it('yields league work at its page limit with the last committed cursor intact', function (): void {
+    config(['nhl-pregame.league_continuation_pages' => 2, 'nhl-pregame.league_continuation_seconds' => 3600]);
+    $run = NhlPregameContextRun::create(['action' => 'backfill', 'status' => 'running', 'season_ids' => ['20252026'],
+        'options' => ['pipeline_version' => NhlPregameContextOrchestrator::CHECKPOINT_PIPELINE]]);
+    $day = NhlPregameContextRunDay::create(['run_id' => $run->id, 'game_date' => '2025-10-10',
+        'league_state' => 'processing', 'league_cursor' => 1]);
+    $service = Mockery::mock(\App\Services\NhlPregameLeagueResults::class);
+    $service->shouldReceive('buildNextAverages')->twice()->andReturnUsing(function ($owner, $page): bool {
+        $page->increment('league_entity_cursor', 8);
+
+        return false;
+    });
+    (new \App\Jobs\CalculateNhlPregameLeagueBatchJob($run->id, $day->id))->handle(
+        Mockery::mock(\App\Services\NhlPregameContextBuilder::class), $service,
+    );
+    expect($day->fresh()->league_state)->toBe('pending')->and($day->fresh()->league_entity_cursor)->toBe(16);
+});
+
+it('honors a pause between league pages without losing the committed page', function (): void {
+    config(['nhl-pregame.league_continuation_pages' => 4, 'nhl-pregame.league_continuation_seconds' => 3600]);
+    $run = NhlPregameContextRun::create(['action' => 'backfill', 'status' => 'running', 'season_ids' => ['20252026'],
+        'options' => ['pipeline_version' => NhlPregameContextOrchestrator::CHECKPOINT_PIPELINE]]);
+    $day = NhlPregameContextRunDay::create(['run_id' => $run->id, 'game_date' => '2025-10-10',
+        'league_state' => 'processing', 'league_cursor' => 1]);
+    $service = Mockery::mock(\App\Services\NhlPregameLeagueResults::class);
+    $service->shouldReceive('buildNextAverages')->once()->andReturnUsing(function () use ($run, $day): bool {
+        $day->update(['league_entity_cursor' => 108]);
+        $run->update(['status' => 'pausing']);
+
+        return false;
+    });
+    (new \App\Jobs\CalculateNhlPregameLeagueBatchJob($run->id, $day->id))->handle(
+        Mockery::mock(\App\Services\NhlPregameContextBuilder::class), $service,
+    );
+    expect($run->fresh()->status)->toBe('pausing')->and($day->fresh()->league_state)->toBe('pending')
+        ->and($day->fresh()->league_entity_cursor)->toBe(108);
+});

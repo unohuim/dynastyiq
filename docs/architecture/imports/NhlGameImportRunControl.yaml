@@ -9,7 +9,7 @@ location:
   - app/Models/NhlGameImportRun.php
   - resources/js/admin/admin-hub.js
   - resources/js/pages/Admin/Dashboard.vue
-purpose: Pause, resume and cancel run-owned Discovery, Full, Shots, Faceoffs and Refs/Staff work without stopping queue workers or deleting completed results.
+purpose: Pause, resume and cancel run-owned Discovery, Full, Shots, Faceoffs, Refs/Staff and targeted On-Ice Stats work without stopping queue workers or deleting completed results.
 when_to_use:
   - Controlling queued or running NHL discovery and game-processing runs.
   - Preventing obsolete queued jobs and callbacks from reviving cancelled or restarted work.
@@ -17,6 +17,7 @@ when_not_to_use:
   - Terminating queue workers or clearing a shared queue.
   - Controlling season sync, schedule refresh, repair or model-building runs.
 rules:
+  - Targeted on-ice rebuilds use the existing scoped-game checkpoint mechanism and batch Resume/Cancel handling. An admitted game may finish all derived stages during Pause. Full-import post-processing must not accidentally add on-ice rebuild jobs to its existing enrichment batch. Once on-ice work completes, its separately tracked season syncs follow their existing independent lifecycle.
   - Admin Pause, Resume and Cancel endpoints share the existing authenticated super-admin and lifecycle authorization. Controls are scoped by persisted run identity, not date ranges or queue names.
   - Pause stops admission immediately. Previously admitted jobs may finish and checkpoint their results. The run remains Pausing until its live claims drain, then becomes Paused. Resume waits for live claims to finish; expired claims may be reclaimed after their job timeout and grace period.
   - Discovery date checkpoints, completed stage rows and successful scoped-game checkpoints survive Pause. Resume queues unfinished work and preserves the original batch callbacks and queue; skipped paused queue messages do not count as completed source work.

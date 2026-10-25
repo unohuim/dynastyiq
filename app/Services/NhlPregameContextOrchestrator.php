@@ -34,6 +34,42 @@ class NhlPregameContextOrchestrator
 
     private const DISPATCH_PAGE_SIZE = 12;
 
+    /** Wake active checkpointed builds independently of their queue continuation chain. */
+    public function recoverActiveRuns(): void
+    {
+        NhlPregameContextRun::query()
+            ->whereIn('status', [NhlPregameContextRun::STATUS_QUEUED, NhlPregameContextRun::STATUS_RUNNING, NhlPregameContextRun::STATUS_PAUSING])
+            ->where('options->pipeline_version', self::CHECKPOINT_PIPELINE)
+            ->select(['id', 'status'])->chunkById(100, function (Collection $runs): void {
+                foreach ($runs as $run) {
+                    if ($run->status === NhlPregameContextRun::STATUS_QUEUED) {
+                        PrepareNhlPregameContextRunJob::dispatch($run->id);
+                    } else {
+                        LoadNhlPregameContextRunJob::dispatch($run->id);
+                    }
+                }
+            });
+    }
+
+    /** Keep a bounded wakeup even when a loader loses a lock or its queue delivery is interrupted. */
+    private function scheduleRecovery(int $runId): void
+    {
+        if (! NhlPregameContextRun::query()->whereKey($runId)->whereIn('status', ['running', 'pausing'])->exists()) {
+            return;
+        }
+        $key = 'pregame-recovery-watchdog:'.$runId;
+        if (! Cache::add($key, true, 30)) {
+            return;
+        }
+        try {
+            LoadNhlPregameContextRunJob::dispatch($runId)->delay(now()->addSeconds(30));
+        } catch (\Throwable $exception) {
+            Cache::forget($key);
+
+            throw $exception;
+        }
+    }
+
     /** Serialize a new build and preserve its run history. */
     public function queueBackfill(
         array $seasons,
@@ -578,6 +614,8 @@ class NhlPregameContextOrchestrator
     {
         $lock = Cache::lock("nhl-pregame-context-run-loader:{$runId}", 30);
         if (! $lock->get()) {
+            $this->scheduleRecovery($runId);
+
             return;
         }
 
@@ -765,10 +803,7 @@ class NhlPregameContextOrchestrator
         } finally {
             $lock->release();
         }
-        if (NhlPregameContextRun::query()->whereKey($runId)->whereIn('status', ['running', 'pausing'])->exists()
-            && Cache::add('pregame-recovery-watchdog:'.$runId, true, 30)) {
-            LoadNhlPregameContextRunJob::dispatch($runId)->delay(now()->addSeconds(30));
-        }
+        $this->scheduleRecovery($runId);
     }
 
     /** Check one immutable delivery token; an expired or replaced delivery cannot commit. */

@@ -2810,6 +2810,7 @@ Teams uses the same slice values for GF, GA, Hits, Blocks, SAT, HDSAT, Saves, SO
 
 - `faceoffs`
 - `refs_staff`
+- `on_ice`
 - `shots`
 
 **Semantic meaning:**
@@ -2817,6 +2818,8 @@ Teams uses the same slice values for GF, GA, Hits, Blocks, SAT, HDSAT, Saves, SO
 - `faceoffs`: Process run was queued from Game Imports to upsert `nhl_faceoff_facts` from already imported play-by-play and event-to-unit links without running provider fetches or the full NHL import pipeline.
 - `refs_staff`: Process run was queued from Game Imports to refresh right-rail referees, linesmen, and head coaches for already discovered games without running the full NHL import pipeline.
 - `shots`: Process run was queued from Game Imports to upsert `nhl_shot_attempts_facts` from already imported play-by-play without running provider fetches or the full NHL import pipeline.
+
+- `on_ice`: Explicit derived on-ice rebuild from stored PBP, boxscores and raw shifts. Runs shift units, event linking, HTML verification, on-ice summaries and validation, then queues separately tracked season sync/cache preparation. It does not rebuild SAT facts or train SAT models.
 
 **Notes:**
 

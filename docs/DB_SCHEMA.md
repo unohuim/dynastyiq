@@ -2321,10 +2321,10 @@ Migrations remain the **sole source of truth**.
 | pim_a | unsignedSmallInteger | No | Penalty minutes against |
 | penalties_f | unsignedSmallInteger | No | Penalties for |
 | penalties_a | unsignedSmallInteger | No | Penalties against |
-| individual_g | unsignedSmallInteger | No | Individual goals while in this strength |
-| individual_a | unsignedSmallInteger | No | Individual assists while in this strength |
-| individual_pts | unsignedSmallInteger | No | Individual points while in this strength |
-| ipp | decimal(7,4) | No | Individual points percentage |
+| individual_g | unsignedSmallInteger | No | Goals credited on distinct linked on-ice team-goal events at this strength |
+| individual_a | unsignedSmallInteger | No | Assists credited on the same linked on-ice goal population; official scoring is stored separately |
+| individual_pts | unsignedSmallInteger | No | On-ice goal participation, at most one point per distinct player/goal/strength |
+| ipp | decimal(7,4) | No | Stored participation ratio (0–1); legacy zero-denominator value is 0, while derived API IPP is unavailable without goals |
 | created_at | timestamp | Yes | Laravel timestamp |
 | updated_at | timestamp | Yes | Laravel timestamp |
 

@@ -26,7 +26,10 @@ rules:
   - Date, game, player, and per-game views must not inherit season-volume minimum defaults; explicit volume limits apply to the chosen grouping.
   - Strength values must remain aligned with docs/ENUMS.md.
   - Empty-net contexts remain EV unless a separate context flag is approved.
-  - Per-game, per-60, percentages, and IPP must be derived from totals in one query/presentation layer.
+  - Per-game, per-60, percentages, and IPP must be derived from raw grouped totals before slice rounding. An IPP ratio must not change when presentation switches between totals, per-game and per-sixty.
+  - Player on-ice GF and individual scoring participation use the same distinct game/player/goal/strength population from linked unit events. A goal counts once per player even across duplicate unit memberships or shift links. Participation counts at most one point per goal, with no shootout or opposing-team goals. Official individual scoring remains in boxscores and game summaries; off-ice assists do not become on-ice participation.
+  - The ordinary stats ipp alias uses EV-only participation and EV on-ice goals while other on-ice aliases retain their existing populations. Explicit strength-summary queries retain their selected strength. Empty-net contexts follow the existing EV rule rather than silently narrowing EV to five-on-five.
+  - Missing EV goals or inconsistent persisted point/goal populations produce an unavailable derived IPP. A bad individual game cannot be hidden by pooling it with other valid games. Display percentages are never repaired by capping them at one hundred; stored legacy zero-denominator ipp values do not imply a meaningful zero-percent result.
   - Legacy nhl_unit_game_summaries may remain during migration but must not be the target strength model.
 public_interface:
   - SumNhlGameStrengthUnits::sum()

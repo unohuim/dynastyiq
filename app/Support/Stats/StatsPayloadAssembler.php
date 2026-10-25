@@ -80,6 +80,9 @@ final class StatsPayloadAssembler
             $toiPerGameSeconds = ($gamesPlayed > 0) ? (int) floor($toiSeconds / $gamesPlayed) : 0;
             $sliceTotals = [
                 'gp' => max(0, $gamesPlayed),
+                'g' => (float) ($isSeason ? ($entry->g ?? 0) : $playerStats->sum('g')),
+                'sog' => (float) ($isSeason ? ($entry->sog ?? 0) : $playerStats->sum('sog')),
+                'sat' => (float) ($isSeason ? ($entry->sat ?? 0) : $playerStats->sum('sat')),
                 'toi_total_seconds' => $toiSeconds,
             ];
 
@@ -207,19 +210,19 @@ final class StatsPayloadAssembler
         }
 
         $onIceRows = $this->nativeOnIceTotals($filters, $playerIds);
-        if ($onIceRows->isEmpty()) {
-            return $rows;
-        }
-
         return $rows->map(function (array $row) use ($columns, $onIceRows): array {
             $nhlPlayerId = (int) ($row['nhl_player_id'] ?? 0);
 
             if ($nhlPlayerId === 0 || ! $onIceRows->has($nhlPlayerId)) {
+                $row['ipp'] = null;
                 return $row;
             }
 
             $row = array_merge($row, $this->nativeOnIceAliases($onIceRows->get($nhlPlayerId)));
-            $row = $this->withFormulaColumns($row, $columns);
+            // The canonical EV metric must not be replaced by a legacy all-strength IPP formula.
+            $formulaColumns = array_values(array_filter($columns,
+                static fn (array $column): bool => strtolower(trim((string) ($column['key'] ?? ''))) !== 'ipp'));
+            $row = $this->withFormulaColumns($row, $formulaColumns);
 
             return $this->withComputedFantasyPoints($row, $columns);
         });
@@ -268,6 +271,36 @@ final class StatsPayloadAssembler
         return $playerStats
             ->filter(static fn (object $row): bool => (string) ($row->league_abbrev ?? '') === (string) $primaryLeague)
             ->values();
+    }
+
+    /** Append complete scored metrics and their unsliced sources during report preparation. */
+    public function appendExpectedGoalRows(Collection $rows, array $columns, array $filters, string $slice = 'total', bool $canSlice = true): Collection
+    {
+        $metrics = array_values(array_intersect(array_column($columns, 'key'), ['gax', 'gsax']));
+        if ($metrics === [] || $rows->isEmpty()) {
+            return $rows;
+        }
+        $ids = $rows->pluck('nhl_player_id')->filter()->map(fn ($id): int => (int) $id)->unique()->values()->all();
+        $expected = app(\App\Services\NhlStatsDashboardPayload::class)->advancedPlayerExpectations($filters, $ids, $metrics);
+        return $rows->map(function (array $row) use ($expected, $metrics, $slice, $canSlice): array {
+            $player = $expected->get((int) ($row['nhl_player_id'] ?? 0), []);
+            foreach ($metrics as $key) {
+                $source = $player[$key] ?? null;
+                $isGoalie = (bool) ($row['is_goalie'] ?? false) || ($row['pos'] ?? '') === 'G';
+                $actual = $key === 'gsax' ? ($row['goals_against'] ?? null) : ($row['__slice_totals']['g'] ?? null);
+                $actualSog = $key === 'gsax' ? ($row['shots_against'] ?? null) : ($row['__slice_totals']['sog'] ?? null);
+                $complete = $source !== null && $source->xg !== null && $actual !== null
+                    && (int) $source->all_goals === (int) $actual
+                    && $actualSog !== null && (int) $source->shots_on_goal === (int) $actualSog
+                    && ($key === 'gsax' || (int) $source->attempts === (int) ($row['__slice_totals']['sat'] ?? -1))
+                    && ($key === 'gsax' ? $isGoalie && (int) $source->games === (int) ($row['gp'] ?? 0) : ! $isGoalie);
+                $total = $complete ? ($key === 'gsax' ? (float) $source->xg - $source->eligible_goals : $source->eligible_goals - (float) $source->xg) : null;
+                $row['__slice_totals'][$key] = $total;
+                $denominator = ! $canSlice || $slice === 'total' ? 1.0 : ($slice === 'pgp' ? ($row['gp'] ?? 0) : ($row['toi_total_seconds'] ?? 0) / 3600);
+                $row[$key] = $total !== null && $denominator > 0 ? round($total / $denominator, 4) : null;
+            }
+            return $row;
+        });
     }
 
     /**
@@ -815,7 +848,10 @@ final class StatsPayloadAssembler
                 SUM(s.dzs) as dzs,
                 SUM(s.individual_g) as individual_g,
                 SUM(s.individual_a) as individual_a,
-                SUM(s.individual_pts) as individual_pts
+                SUM(s.individual_pts) as individual_pts,
+                SUM(CASE WHEN s.strength = 'EV' THEN s.individual_pts ELSE 0 END) as ipp_points,
+                SUM(CASE WHEN s.strength = 'EV' THEN s.gf ELSE 0 END) as ipp_goals_for,
+                SUM(CASE WHEN s.strength = 'EV' AND s.individual_pts > s.gf THEN 1 ELSE 0 END) as ipp_invalid_games
             SQL);
 
         if (! empty($filters['season_id'])) {
@@ -835,7 +871,7 @@ final class StatsPayloadAssembler
     }
 
     /**
-     * @return array<string,float|int>
+     * @return array<string,float|int|null>
      */
     private function nativeOnIceAliases(object $row): array
     {
@@ -850,7 +886,10 @@ final class StatsPayloadAssembler
         $ozs = (float) ($row->ozs ?? 0);
         $dzs = (float) ($row->dzs ?? 0);
         $toi = (int) ($row->toi ?? 0);
-        $individualPoints = (float) ($row->individual_pts ?? 0);
+        $ippPoints = (float) ($row->ipp_points ?? 0);
+        $ippGoalsFor = (float) ($row->ipp_goals_for ?? 0);
+        $ippAvailable = $ippGoalsFor > 0 && (int) ($row->ipp_invalid_games ?? 0) === 0
+            && $ippPoints >= 0 && $ippPoints <= $ippGoalsFor;
         $onIceShooting = $sf > 0 ? round($gf / $sf, 3) : 0.0;
         $onIceSave = $sa > 0 ? round(1 - ($ga / $sa), 3) : 0.0;
 
@@ -858,7 +897,7 @@ final class StatsPayloadAssembler
             'individual_g' => (int) ($row->individual_g ?? 0),
             'individual_a' => (int) ($row->individual_a ?? 0),
             'individual_pts' => (int) ($row->individual_pts ?? 0),
-            'ipp' => $gf > 0 ? round($individualPoints / $gf, 3) : 0.0,
+            'ipp' => $ippAvailable ? round($ippPoints / $ippGoalsFor, 4) : null,
             'gf' => (int) $gf,
             'ga' => (int) $ga,
             'gf_pct' => $this->ratioAlias($gf, $gf + $ga),

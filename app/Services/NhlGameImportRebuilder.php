@@ -36,6 +36,85 @@ class NhlGameImportRebuilder
         return $this->orchestrator->dispatchJob($gameId, NhlImportStages::PBP, $runId);
     }
 
+    /** Rebuild only derived on-ice outputs from already-imported source rows. */
+    public function rebuildOnIce(int $gameId): int
+    {
+        if (! app(NhlGameImportEligibility::class)->allowsStoredGame($gameId)) {
+            throw new \DomainException('This game type is not supported for on-ice rebuilding.');
+        }
+        foreach (['play_by_plays', 'nhl_boxscores', 'nhl_shifts'] as $table) {
+            if (! DB::table($table)->where('nhl_game_id', $gameId)->exists()) {
+                throw new \DomainException('Stored PBP, boxscores and shifts are required for on-ice rebuilding.');
+            }
+        }
+
+        return DB::transaction(function () use ($gameId): int {
+            $unitIds = DB::table('nhl_unit_shifts')->where('nhl_game_id', $gameId)->select('id');
+            DB::table('event_unit_shifts')->whereIn('unit_shift_id', $unitIds)->delete();
+            DB::table('event_unit_shifts')->whereIn('event_id', DB::table('play_by_plays')->where('nhl_game_id', $gameId)->select('id'))->delete();
+            DB::table('nhl_unit_shift_players')->whereIn('unit_shift_id', $unitIds)->delete();
+            foreach (['nhl_player_game_strength_summaries', 'nhl_unit_game_strength_summaries', 'nhl_unit_game_summaries'] as $table) {
+                DB::table($table)->where('nhl_game_id', $gameId)->delete();
+            }
+            DB::table('nhl_game_validations')->where('nhl_game_id', $gameId)
+                ->where('validation_type', \App\Models\NhlGameValidation::TYPE_PBP_HTML_REPORT)->delete();
+            DB::table('nhl_unit_shifts')->where('nhl_game_id', $gameId)->delete();
+
+            app(MakeNhlGameShiftUnits::class)->make($gameId);
+            if (! DB::table('nhl_unit_shifts')->where('nhl_game_id', $gameId)->exists()) {
+                throw new \DomainException('Stored shifts could not produce on-ice units.');
+            }
+            app()->make(ConnectEventsToUnitShifts::class, ['gameId' => $gameId])->connect();
+            app(VerifyNhlHtmlPlayByPlay::class)->verify($gameId);
+            $count = app()->make(SumNhlGameUnits::class, ['gameId' => $gameId])->sum();
+            $validation = app(ValidateNhlGameSummary::class)->validate($gameId);
+            if ($validation->status === \App\Models\NhlGameValidation::STATUS_FAILED) {
+                throw new \App\Exceptions\NhlGameSummaryValidationFailed(
+                    "NHL game {$gameId} summary validation failed with {$validation->mismatch_count} deltas.");
+            }
+            return $count;
+        });
+    }
+
+    /** Finish a successful scoped rebuild once, then queue independently tracked season/cache preparation. */
+    public function finishOnIceRun(int $runId, string $batchId): void
+    {
+        DB::transaction(function () use ($runId, $batchId): void {
+            $run = \App\Models\NhlGameImportRun::query()->lock('for no key update')->find($runId);
+            if ($run === null || ! in_array($run->status, ['queued', 'running'], true)
+                || ! app(NhlGameImportRunControl::class)->canAdvance($runId)
+                || data_get($run->payload, 'process_scope') !== 'on_ice'
+                || data_get($run->payload, 'on_ice_completed_at') !== null
+                || ! app(NhlGameImportRunControl::class)->acceptsBatchCallback($run, 'on_ice_batch_id', $batchId, true)) {
+                return;
+            }
+            $payload = $run->payload ?? [];
+            $ids = array_map('intval', $payload['on_ice_game_ids'] ?? []);
+            foreach ($ids as $gameId) {
+                if (! isset($payload['run_control']['completed']['on_ice:'.$gameId])) {
+                    return;
+                }
+            }
+            $syncIds = [];
+            foreach (DB::table('nhl_games')->whereIn('nhl_game_id', $ids)->distinct()->pluck('season_id') as $season) {
+                $bounds = DB::table('nhl_games')->where('season_id', $season)
+                    ->selectRaw('MIN(game_date) as first_date, MAX(game_date) as last_date')->first();
+                $sync = \App\Models\NhlGameImportRun::query()->create([
+                    'action' => \App\Models\NhlGameImportRun::ACTION_SEASON_SYNC, 'mode' => 'season', 'status' => 'queued',
+                    'start_date' => $bounds->last_date, 'end_date' => $bounds->first_date, 'date_count' => 1, 'queued_jobs' => 1,
+                    'payload' => ['season' => (string) $season, 'on_ice_parent_run_id' => $runId], 'created_by' => $run->created_by,
+                ]);
+                $syncIds[] = $sync->id;
+                \App\Jobs\SeasonSumJob::dispatch((string) $season, $sync->id)->afterCommit();
+            }
+            $payload['on_ice_completed_at'] = now()->toIso8601String();
+            $payload['on_ice_season_sync_run_ids'] = $syncIds;
+            $payload['completed_at'] = now()->toIso8601String();
+            $run->update(['status' => 'completed', 'payload' => $payload]);
+            DB::afterCommit(fn () => broadcast(new \App\Events\NhlGameImportStatusUpdated('on-ice-rebuild-completed', $runId)));
+        });
+    }
+
     /**
      * Clear raw and derived rows owned by one NHL game.
      */

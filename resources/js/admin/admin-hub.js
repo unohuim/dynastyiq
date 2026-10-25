@@ -74,6 +74,7 @@ export default function adminHub(options = {}) {
         gameImportDiscoverUrl: options.gameImportDiscoverUrl ?? '/admin/nhl-game-imports/discover',
         gameImportScheduleRefreshUrl: options.gameImportScheduleRefreshUrl ?? '/admin/nhl-game-imports/schedule-refresh',
         gameImportProcessUrl: options.gameImportProcessUrl ?? '/admin/nhl-game-imports/process',
+        gameImportProcessOnIceUrl: options.gameImportProcessOnIceUrl ?? '/admin/nhl-game-imports/process-on-ice',
         gameImportProcessShotsUrl: options.gameImportProcessShotsUrl ?? '/admin/nhl-game-imports/process-shots',
         gameImportProcessFaceoffsUrl: options.gameImportProcessFaceoffsUrl ?? '/admin/nhl-game-imports/process-faceoffs',
         gameImportProcessRefsStaffUrl: options.gameImportProcessRefsStaffUrl ?? '/admin/nhl-game-imports/process-refs-staff',
@@ -1429,6 +1430,41 @@ export default function adminHub(options = {}) {
             }
         },
 
+        async processOnIceGameImports(run) {
+            const runId = run?.id;
+            const processKey = this.gameImportProcessKey(run, 'on_ice');
+
+            if (!runId || this.gameImports.processingRuns[processKey] === true) {
+                return;
+            }
+
+            this.gameImports.processing = true;
+            this.gameImports.processingRuns = {
+                ...this.gameImports.processingRuns,
+                [processKey]: true,
+            };
+            this.closeGameImportProcessMenu(run);
+            this.gameImports.error = '';
+            this.gameImports.success = '';
+
+            try {
+                const response = await this.sendGameImportRequest(
+                    this.gameImportProcessOnIceUrl,
+                    { run_id: runId }
+                );
+
+                this.gameImports.success = response?.message ?? 'On-ice stats rebuild queued.';
+                await this.loadGameImports({ background: true, page: 1 });
+            } catch (error) {
+                this.gameImports.error = error.message ?? 'Unable to queue on-ice stats rebuild';
+            } finally {
+                this.gameImports.processing = false;
+                const next = { ...this.gameImports.processingRuns };
+                delete next[processKey];
+                this.gameImports.processingRuns = next;
+            }
+        },
+
         async submitGameImportSeasonSync() {
             const selected = this.gameImportSelectedSeason();
 
@@ -1735,7 +1771,7 @@ export default function adminHub(options = {}) {
                     : 'Duplicate PBP Repair';
             }
 
-            const scope = { shots: 'Shots', faceoffs: 'Faceoffs', refs_staff: 'Refs and Staff' }[run?.payload?.process_scope];
+            const scope = { shots: 'Shots', faceoffs: 'Faceoffs', refs_staff: 'Refs and Staff', on_ice: 'On-Ice Stats' }[run?.payload?.process_scope];
             return scope ? `${scope} · ${this.formatGameImportRange(run)}` : this.formatGameImportRange(run);
         },
 
@@ -2091,7 +2127,16 @@ export default function adminHub(options = {}) {
             return `${this.formatNumber(total)} dates queued`;
         },
 
+        gameImportOnIceSummaryText(run) {
+            const done = Number(run?.progress?.completed_stage_rows) || 0;
+            const total = Number(run?.progress?.total_stage_rows) || 0;
+            const skipped = Number(run?.payload?.on_ice_skipped_game_count) || 0;
+            const sync = (run?.payload?.on_ice_season_sync_run_ids ?? []).length ? ' · Season Sync queued separately' : '';
+            return `${this.formatNumber(done)} / ${this.formatNumber(total)} games rebuilt${skipped ? ` · ${this.formatNumber(skipped)} skipped (game or sources not ready)` : ''}${sync}`;
+        },
+
         gameImportSummaryText(run) {
+            if (run?.payload?.process_scope === 'on_ice') return this.gameImportOnIceSummaryText(run);
             if (this.isShotFactRun(run)) {
                 return this.gameImportShotFactSummaryText(run);
             }
@@ -2128,6 +2173,7 @@ export default function adminHub(options = {}) {
         },
 
         gameImportCompactSummaryText(run) {
+            if (run?.payload?.process_scope === 'on_ice') return this.gameImportOnIceSummaryText(run);
             if (this.isShotFactRun(run)) {
                 return this.gameImportShotFactSummaryText(run);
             }
@@ -2461,7 +2507,8 @@ export default function adminHub(options = {}) {
             return this.gameImports.processingRuns[this.gameImportProcessKey(run, 'full')] === true
                 || this.gameImports.processingRuns[this.gameImportProcessKey(run, 'shots')] === true
                 || this.gameImports.processingRuns[this.gameImportProcessKey(run, 'faceoffs')] === true
-                || this.gameImports.processingRuns[this.gameImportProcessKey(run, 'refs_staff')] === true;
+                || this.gameImports.processingRuns[this.gameImportProcessKey(run, 'refs_staff')] === true
+                || this.gameImports.processingRuns[this.gameImportProcessKey(run, 'on_ice')] === true;
         },
 
         isGameImportProcessMenuOpen(run) {

@@ -2763,3 +2763,57 @@ describe('admin-hub lineup sources', () => {
         expect(instance.lineupSources.items[0].active).toBe(false);
     });
 });
+
+describe('On-ice stats rebuild controls', () => {
+    beforeEach(() => {
+        vi.restoreAllMocks();
+        vi.stubGlobal('window', { location: { search: '' } });
+    });
+    afterEach(() => { vi.unstubAllGlobals(); });
+
+    it('renders the targeted action in the discovery Process menu', () => {
+        const source = readFileSync(new URL('../pages/Admin/Dashboard.vue', import.meta.url), 'utf8');
+        expect(source).toContain('Rebuild On-Ice Stats');
+        expect(source).toContain('@click.stop.prevent="processOnIceGameImports(run)"');
+    });
+
+    it('acknowledges the accepted rebuild before refreshing the run list', async () => {
+        const hub = (await loadAdminHub())();
+        hub.sendGameImportRequest = vi.fn().mockResolvedValue({ message: 'On-ice stats rebuild queued.' });
+        hub.loadGameImports = vi.fn(async () => { expect(hub.gameImports.success).toBe('On-ice stats rebuild queued.'); });
+        await hub.processOnIceGameImports({ id: 23 });
+        expect(hub.sendGameImportRequest).toHaveBeenCalledWith('/admin/nhl-game-imports/process-on-ice', { run_id: 23 });
+        expect(hub.loadGameImports).toHaveBeenCalledWith({ background: true, page: 1 });
+        expect(hub.gameImports.processingRuns['23:on_ice']).toBeUndefined();
+    });
+
+    it('prevents duplicate clicks while the selected rebuild is being queued', async () => {
+        const hub = (await loadAdminHub())();
+        hub.gameImports.processingRuns['23:on_ice'] = true;
+        hub.sendGameImportRequest = vi.fn();
+        await hub.processOnIceGameImports({ id: 23 });
+        expect(hub.sendGameImportRequest).not.toHaveBeenCalled();
+        expect(hub.gameImportProcessBusy({ id: 23 })).toBe(true);
+        expect(hub.gameImportProcessBusy({ id: 24 })).toBe(false);
+    });
+
+    it('reports request errors and releases the selected button', async () => {
+        const hub = (await loadAdminHub())();
+        hub.gameImports.success = 'Old request';
+        hub.sendGameImportRequest = vi.fn().mockRejectedValue(new Error('Stored shifts required'));
+        hub.loadGameImports = vi.fn();
+        await hub.processOnIceGameImports({ id: 23 });
+        expect(hub.gameImports.error).toBe('Stored shifts required');
+        expect(hub.gameImports.success).toBe('');
+        expect(hub.gameImports.processingRuns['23:on_ice']).toBeUndefined();
+        expect(hub.loadGameImports).not.toHaveBeenCalled();
+    });
+
+    it('distinguishes completed games from separately queued Season Sync work', async () => {
+        const hub = (await loadAdminHub())();
+        const text = hub.gameImportSummaryText({ payload: { process_scope: 'on_ice', on_ice_season_sync_run_ids: [7] },
+            progress: { completed_stage_rows: 12, total_stage_rows: 12 } });
+        expect(text).toContain('12 / 12 games rebuilt');
+        expect(text).toContain('Season Sync queued separately');
+    });
+});

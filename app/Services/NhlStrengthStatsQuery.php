@@ -66,6 +66,8 @@ class NhlStrengthStatsQuery
                 's.strength',
             ], array_merge(self::TOTAL_FIELDS, self::PLAYER_ONLY_FIELDS)));
 
+        $query->selectRaw('SUM(CASE WHEN s.individual_pts > s.gf THEN 1 ELSE 0 END) as ipp_invalid_games');
+
         $this->applyFilters($query, $filters);
 
         return $this->deriveRates($query->get(), $slice, true);
@@ -145,6 +147,12 @@ class NhlStrengthStatsQuery
             $gamesPlayed = (int) $row->gp;
             $toi = (int) $row->toi;
 
+            if ($includeIpp) {
+                $points = (float) ($row->individual_pts ?? 0);
+                $gf = (float) ($row->gf ?? 0);
+                $row->ipp = $gf > 0 && (int) ($row->ipp_invalid_games ?? 0) === 0 && $points >= 0 && $points <= $gf ? round($points / $gf, 4) : null;
+            }
+
             foreach (array_merge(self::TOTAL_FIELDS, self::PLAYER_ONLY_FIELDS) as $field) {
                 if (! property_exists($row, $field)) {
                     continue;
@@ -157,12 +165,6 @@ class NhlStrengthStatsQuery
                     $toi,
                     $slice
                 );
-            }
-
-            if ($includeIpp) {
-                $points = property_exists($row, 'individual_pts') ? (float) $row->individual_pts : 0;
-                $gf = property_exists($row, 'gf') ? (float) $row->gf : 0;
-                $row->ipp = $gf > 0 ? round($points / $gf, 4) : 0;
             }
 
             return $row;

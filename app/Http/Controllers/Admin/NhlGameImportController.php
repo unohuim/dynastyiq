@@ -607,6 +607,72 @@ class NhlGameImportController extends Controller
         ], 202);
     }
 
+    /** Queue a scoped derived on-ice rebuild without reimporting stored game sources. */
+    public function processOnIce(Request $request): JsonResponse
+    {
+        $input = $request->validate(['run_id' => ['required', 'integer', 'min:1']]);
+        $source = $this->rerunSourceRunFromInput($input);
+        if (! in_array($source->action, [NhlGameImportRun::ACTION_DISCOVER, NhlGameImportRun::ACTION_PROCESS], true)
+            || in_array($source->status, ['queued', 'running', 'pausing', 'paused', 'cancelling'], true)) {
+            throw ValidationException::withMessages(['run_id' => 'Choose a completed, failed or cancelled discovery or process run.']);
+        }
+        $range = $this->rerunRangeFromRun($source);
+        $selected = $this->gameIdsForRunRange($source);
+        $gameIds = DB::table('nhl_games')->whereIn('nhl_game_id', $selected)
+            ->whereIn('game_type', NhlGameImportEligibility::ALLOWED_GAME_TYPES)->whereIn('game_state', ['OFF', 'FINAL'])
+            ->whereNotNull('home_team_score')->whereNotNull('away_team_score');
+        foreach (['play_by_plays', 'nhl_boxscores', 'nhl_shifts'] as $table) {
+            $gameIds->whereExists(function ($query) use ($table): void {
+                $query->selectRaw('1')->from($table)->whereColumn($table.'.nhl_game_id', 'nhl_games.nhl_game_id');
+            });
+        }
+        $ids = $gameIds->orderBy('nhl_game_id')->pluck('nhl_game_id')->map(fn ($id): int => (int) $id)->all();
+        if ($ids === []) {
+            throw ValidationException::withMessages(['run_id' => 'No completed games have stored PBP, boxscores and shifts to rebuild.']);
+        }
+        $run = \Illuminate\Support\Facades\Cache::lock('nhl-on-ice-rebuild-admission', 15)->block(5,
+            function () use ($request, $source, $range, $selected, $ids): NhlGameImportRun {
+                return DB::transaction(function () use ($request, $source, $range, $selected, $ids): NhlGameImportRun {
+                    $active = NhlGameImportRun::query()->whereIn('status', ['queued', 'running', 'pausing', 'paused', 'cancelling'])
+                        ->where('payload->process_scope', 'on_ice')
+                        ->whereDate('start_date', '>=', $range['end']->toDateString())
+                        ->whereDate('end_date', '<=', $range['start']->toDateString())->first();
+                    if ($active !== null) {
+                        throw ValidationException::withMessages(['run_id' => 'An on-ice rebuild already overlaps this selection. Resume or cancel it first.']);
+                    }
+                    if (DB::table('nhl_import_progress')->whereIn('game_id', $ids)->where('status', 'running')->exists()) {
+                        throw ValidationException::withMessages(['run_id' => 'Wait until active game processing finishes before rebuilding on-ice stats.']);
+                    }
+                    $run = NhlGameImportRun::query()->create([
+                        'action' => NhlGameImportRun::ACTION_PROCESS, 'mode' => $range['mode'], 'status' => 'running',
+                        'start_date' => $range['start'], 'end_date' => $range['end'],
+                        'date_count' => count($this->dateStrings($range['start'], $range['end'])), 'queued_jobs' => count($ids),
+                        'created_by' => $request->user()?->id,
+                        'payload' => ['process_scope' => 'on_ice', 'on_ice_game_ids' => $ids,
+                            'on_ice_skipped_game_count' => count($selected) - count($ids), 'on_ice_source_run_id' => $source->id,
+                            'processing_started_at' => now()->toIso8601String()],
+                    ]);
+                    $runId = $run->id;
+                    $jobs = array_map(fn (int $id) => new \App\Jobs\RebuildNhlOnIceStatsJob($id, $runId), $ids);
+                    $batch = Bus::batch($jobs)->onQueue('default')->name('NHL:OnIceStats:'.$runId)
+                        ->then(static function (Batch $batch) use ($runId): void {
+                            app(\App\Services\NhlGameImportRebuilder::class)->finishOnIceRun($runId, $batch->id);
+                        })
+                        ->catch(static function (Batch $batch, Throwable $exception) use ($runId): void {
+                            $run = NhlGameImportRun::query()->find($runId);
+                            $control = app(\App\Services\NhlGameImportRunControl::class);
+                            if ($control->acceptsBatchCallback($run, 'on_ice_batch_id', $batch->id)) {
+                                $control->saveWorkerRun($run, ['status' => 'failed', 'last_error' => mb_substr($exception->getMessage(), 0, 1000)]);
+                            }
+                        })->dispatch();
+                    $run->update(['payload' => [...$run->payload, 'on_ice_batch_id' => $batch->id]]);
+                    return $run;
+                });
+            });
+        broadcast(new NhlGameImportStatusUpdated('on-ice-rebuild-queued', $run->id));
+        return response()->json(['message' => 'On-ice stats rebuild queued.', 'run' => $this->serializeRun($run->fresh())], 202);
+    }
+
     /**
      * Queue deterministic shot-attempt fact collection for games in a run range.
      */
@@ -1275,6 +1341,19 @@ class NhlGameImportController extends Controller
             return $this->duplicatePbpRepairProgressForRun($run);
         }
 
+        if (data_get($run->payload, 'process_scope') === 'on_ice') {
+            $payload = $run->payload ?? [];
+            $ids = $payload['on_ice_game_ids'] ?? [];
+            $completed = count(array_filter($ids, fn ($id): bool => isset($payload['run_control']['completed']['on_ice:'.$id])));
+            $failed = count($payload['on_ice_failed_game_ids'] ?? []);
+            $running = count($payload['run_control']['active'] ?? []);
+            return ['status' => $run->status, 'total_stage_rows' => count($ids), 'completed_stage_rows' => $completed,
+                'failed_stage_rows' => $failed, 'running_stage_rows' => $running,
+                'scheduled_stage_rows' => max(0, count($ids) - $completed - $failed - $running), 'skipped_stage_rows' => 0,
+                'percentage' => count($ids) > 0 ? (int) floor($completed / count($ids) * 100) : 0,
+                'last_error' => $run->last_error];
+        }
+
         if ($this->isShotFactRun($run)) {
             return $this->shotFactProgressForRun($run);
         }
@@ -1717,6 +1796,7 @@ class NhlGameImportController extends Controller
     {
         return $run->action !== NhlGameImportRun::ACTION_SEASON_SYNC
             && $run->action !== NhlGameImportRun::ACTION_SCHEDULE_REFRESH
+            && data_get($run->payload, 'process_scope') !== 'on_ice'
             && ! $this->isShotFactRun($run)
             && ! $this->isFaceoffFactRun($run)
             && ! $this->isDuplicatePbpRepairRun($run);
@@ -1793,7 +1873,7 @@ class NhlGameImportController extends Controller
      */
     private function duplicateRunKey(NhlGameImportRun $run): string
     {
-        if (in_array(data_get($run->payload, 'process_scope'), ['shots', 'faceoffs', 'refs_staff'], true)) {
+        if (in_array(data_get($run->payload, 'process_scope'), ['shots', 'faceoffs', 'refs_staff', 'on_ice'], true)) {
             return 'scope:'.data_get($run->payload, 'process_scope').':'.$this->runRangeKey($run);
         }
         if (
@@ -1871,6 +1951,7 @@ class NhlGameImportController extends Controller
     private function exactRangeRunForRange(string $startDate, string $endDate, ?int $exceptRunId = null): ?NhlGameImportRun
     {
         $runs = NhlGameImportRun::query()
+            ->where(fn ($query) => $query->whereNull('payload->process_scope')->orWhere('payload->process_scope', '<>', 'on_ice'))
             ->whereIn('action', [NhlGameImportRun::ACTION_DISCOVER, NhlGameImportRun::ACTION_PROCESS])
             ->whereDate('start_date', $startDate)
             ->whereDate('end_date', $endDate)

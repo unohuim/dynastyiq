@@ -275,3 +275,23 @@ it('opens Teams filters with one toggle and no player-position or goalie report 
     expect(source).toContain('aria-label="Game type"');
     expect(source).not.toContain('aria-label="Position"');
 });
+
+
+it('shows visible compact loading feedback without replacing a retained report with skeleton rows', () => {
+    app = createApp(LoadingState, { label: 'goalies', compact: true }); app.mount('#leaders');
+    const status = document.querySelector('[role="status"]');
+    expect(status.textContent).toContain('Loading goalies');
+    expect(status.classList.contains('sr-only')).toBe(false);
+    expect(status.getAttribute('aria-busy')).toBe('true');
+    expect(status.querySelector('svg')).not.toBeNull();
+    expect(status.querySelector('[aria-hidden="true"].space-y-3')).toBeNull();
+});
+
+it('keeps explicit loading boundaries for preserved player tabs and deferred team data', () => {
+    const source = readFileSync(new URL('./Stats/Index.vue', import.meta.url), 'utf8');
+    expect(source).toContain('<LoadingState v-if="seamlessTableSwitch" :label="pendingView" compact />');
+    expect(source).toContain('<LoadingState v-if="pendingView && !seamlessTableSwitch"');
+    expect(source).toContain(':aria-busy="Boolean(pendingView)"');
+    expect(source).toContain("['skaters', 'goalies', 'prospects'].includes(pendingView.value)");
+    expect(source).not.toContain('v-if="seamlessTableSwitch" role="status" class="sr-only"');
+});

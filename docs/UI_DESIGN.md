@@ -600,3 +600,17 @@ placeholder. Do not show a season-not-prepared message alongside visible cards.
 - Teams rows show GP, W, PTS, GF, GA, W%, GAA, Corsi%, Hits, Blocks, SAT, HDSAT, Saves, SOG, PIM, PP% and PK%. GAA is per 60 actual game minutes. Percent labels display percent values; missing coverage displays an em dash.
 - The graphite filter bar defaults to Search and All Teams. Its blue Filters toggle replaces quick controls with season, period/date range, game type, team and counting-stat slice controls using a 500ms horizontal transition, suppressed for reduced motion. No player position or goalie reports appear in Teams.
 - Desktop team-abbreviation badges use 28px player-row team logos; Teams badges use 32px logos. Mobile Teams uses compact white rows and all requested metrics; desktop supports horizontal table scrolling.
+
+### Individual points percentage
+
+The ordinary stats IPP column represents even-strength on-ice point participation. It uses the same percentage formatting on desktop and mobile. Missing denominators or inconsistent source counts display an em dash; genuine zero participation with positive on-ice goals displays 0.00%. Switching counting-stat slices must not change IPP.
+
+### Game Imports on-ice rebuild
+
+The discovery Process menu includes Rebuild On-Ice Stats alongside fact-processing actions. Queue acceptance displays its response message immediately, then refreshes records in the background. Busy state belongs to the selected run/action. A scoped rebuild row shows rebuilt/selected games, ineligible or missing-source games skipped, and that follow-up Season Sync runs were queued separately. Existing Pause, Resume and Cancel buttons apply to the scoped rebuild.
+
+### Advanced report columns and category loading
+
+- Goalies Adv includes GSAx and omits the redundant GA/GP column; the existing slice control remains available. Skaters Adv includes G−xG (individual goals above expected) and HDSAT.
+- GSAx and G−xG display signed goal values to two decimals, with an em dash for unavailable scoring coverage. HDSAT remains a counting stat and follows the selected slice.
+- Skaters, Goalies, Prospects and Teams navigation must show visible loading feedback immediately. Preserved player-report transitions use the compact status/spinner while retaining their existing content; full category transitions and deferred initial loads retain existing skeletons. Page busy state is exposed accessibly and motion respects reduced-motion settings.

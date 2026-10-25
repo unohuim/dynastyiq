@@ -59,6 +59,17 @@ final class StatsDerivedFilterApplier
             ];
         }
 
+        $expectedKeys = [];
+        foreach (['gax' => 'G−xG', 'gsax' => 'GSAx'] as $key => $label) {
+            if (! $rows->contains(fn (array $row): bool => array_key_exists($key, $row))) {
+                continue;
+            }
+            $expectedKeys[] = $key;
+            $values = $rows->map(fn (array $row) => $row['__slice_totals'][$key] ?? null)->filter(fn ($value): bool => is_numeric($value));
+            $virtualSchema[] = ['key' => $key, 'label' => $label, 'type' => 'number', 'step' => 0.1,
+                'bounds' => ['min' => (float) floor($values->min() ?? 0), 'max' => (float) ceil($values->max() ?? 0)]];
+        }
+
         if (! $request) {
             return [$rows, ['filters' => []], $virtualSchema];
         }
@@ -101,6 +112,20 @@ final class StatsDerivedFilterApplier
         })->values();
 
         $applied = ['filters' => []];
+        $ranges = StatsFilterSet::fromRequest($request)->numericRanges;
+        foreach ($expectedKeys as $key) {
+            $range = $ranges[$key] ?? null;
+            if ($range === null || ($range['min'] === null && $range['max'] === null)) {
+                continue;
+            }
+            $filtered = $filtered->filter(function (array $row) use ($key, $range): bool {
+                $value = $row['__slice_totals'][$key] ?? null;
+                return $value !== null && ($range['min'] === null || $value >= $range['min'])
+                    && ($range['max'] === null || $value <= $range['max']);
+            })->values();
+            $applied['filters'][$key] = $range;
+        }
+
         if ($gpMin !== null || $gpMax !== null) {
             $applied['filters']['gp'] = [
                 'min' => $gpMin !== null ? (int) $gpMin : null,

@@ -8,6 +8,7 @@ location:
   - app/Jobs/DedupeNhlPlayByPlayRepairJob.php
   - app/Jobs/QueueDuplicatePbpAffectedRebuildsJob.php
   - app/Jobs/SeasonSumJob.php
+  - app/Jobs/RebuildNhlOnIceStatsJob.php
   - app/Jobs/RebuildNhlGameImportJob.php
   - app/Jobs/PreflightNhlGameImportRebuildJob.php
   - app/Jobs/ClearNhlGameImportJob.php
@@ -33,6 +34,8 @@ when_not_to_use:
   - Replacing NhlImportOrchestrator stage ownership.
   - Replacing nhl_import_progress as the pipeline stage state source of truth.
 rules:
+  - The discovery Process menu includes Rebuild On-Ice Stats. It admits only completed scored games with stored PBP, boxscores and raw shifts from the selected discovery range, reports excluded games as not ready, and does not mutate the original discovery. Active overlapping scoped selections and currently running canonical stages block duplicate admission.
+  - The on-ice action has an explicit scoped process run identity distinct from Full and fact imports, with progress counted from that run's committed game checkpoints rather than existing summary coverage. It reuses the existing run controls and broadcasts. Parent completion means on-ice rebuilding finished; separately tracked Season Sync runs and cache preparation are identified explicitly rather than represented as already finished.
   - The admin controller dispatches existing NHL jobs directly instead of invoking Artisan commands.
   - Discovery requests must queue discovery work and must not perform downstream import stages.
   - Processing requests must ask the NHL import orchestrator to fill active game slots and must not directly call import services.

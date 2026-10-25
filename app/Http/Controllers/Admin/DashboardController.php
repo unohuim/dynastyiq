@@ -103,6 +103,7 @@ class DashboardController extends Controller
             'gameImportDiscoverUrl' => route('admin.nhl-game-imports.discover'),
             'gameImportScheduleRefreshUrl' => route('admin.nhl-game-imports.schedule-refresh'),
             'gameImportProcessUrl' => route('admin.nhl-game-imports.process'),
+            'gameImportProcessOnIceUrl' => route('admin.nhl-game-imports.process-on-ice'),
             'gameImportProcessShotsUrl' => route('admin.nhl-game-imports.process-shots'),
             'gameImportProcessFaceoffsUrl' => route('admin.nhl-game-imports.process-faceoffs'),
             'gameImportProcessRefsStaffUrl' => route('admin.nhl-game-imports.process-refs-staff'),

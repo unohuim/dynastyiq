@@ -1828,6 +1828,12 @@ New model-initiated runs checkpoint raw-result league populations first and save
 indexed peer references alongside their averages. Context then commits one game
 per continuation, reusing those references for ranks and deltas. Snapshot and
 comparison checkpoints make failed work retryable without rebuilding saved games.
+
+A single-server minute recovery check independently wakes active checkpointed
+builds after interrupted queue chains. Bounded league continuations can commit
+several short pages; player snapshots use grouped upserts and shared appearance
+window selection. Existing tables, pipeline versions and saved checkpoints remain
+compatible. Canonical rules: `docs/architecture/stats/NhlPregameContextEvidence.yaml`.
 Both stages have configurable bounded concurrency and visible day progress. Fully
 paused batched runs upgrade on resume while retaining completed snapshots.
 Resume can cancel Pausing; delivery leases and a bounded watchdog recover abandoned
@@ -4220,3 +4226,9 @@ with legacy backfill compatibility. Authority:
 `docs/architecture/imports/NhlPredictionSeasonSatScoring.yaml`.
 
 - Teams stats: `Stats/Teams.vue` renders the compact team dashboard from retained per-game facts in `NhlStatsDashboardPayload`; Boxscore processing supplements its player imports with actual team PP goals/opportunities from right-rail data, while Teams cache preparation automatically fills only missing completed-game totals through the same parser; Refs and Staff remains scoped to officials/coaches context. See `architecture/stats/NhlStatsDashboard.yaml`, `architecture/stats/StatsPageRenderer.yaml` and `architecture/imports/NhlGameDataImportServices.yaml`.
+
+- IPP uses EV-only on-ice participation in ordinary stats reports. Strength-summary aggregation de-duplicates linked player/goal events for both participation and GF; rates derive before slicing. Inconsistent legacy counts remain unavailable. See `architecture/stats/NhlStrengthOnIceStats.yaml` and `architecture/stats/StatsPayloadPipeline.yaml`.
+
+- Game Imports targeted on-ice rebuilds: the discovery Process menu queues `RebuildNhlOnIceStatsJob` on default with the existing control fence and shared game lock. `NhlGameImportRebuilder` replaces only the derived on-ice graph in canonical order and queues separately tracked season/cache preparation after successful game completion. See `architecture/imports/NhlGameImportRebuilder.yaml`, `architecture/imports/NhlGameImportRunControl.yaml` and `architecture/admin/AdminNhlGameImports.yaml`.
+
+- Advanced stats reports add cached GSAx and individual G−xG using the existing scored SAT expectation rules, plus stored HDSAT for skaters. Saved default report columns migrate without reseeding; tab navigation uses visible loading feedback even while preserving existing content. See `architecture/stats/StatsPayloadPipeline.yaml` and `architecture/stats/StatsPageRenderer.yaml`.

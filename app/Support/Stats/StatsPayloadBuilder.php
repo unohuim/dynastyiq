@@ -30,7 +30,10 @@ final class StatsPayloadBuilder
     /** Identify a public report revision without sharing private or user-specific payloads. */
     public function preparedKey(Perspective $perspective, string $season, int $gameType): string
     {
-        return 'nhl:stats:table:v1:'.$season.':'.$gameType.':'.$perspective->id.':'.hash('sha256',
+        // Derived advanced metrics get a new prepared revision; unrelated warm reports stay available.
+        $serializedSettings = json_encode($perspective->settings, JSON_THROW_ON_ERROR);
+        $revision = preg_match('/\\b(?:ipp|gax|gsax)\\b/i', $serializedSettings) === 1 ? 'v2' : 'v1';
+        return 'nhl:stats:table:'.$revision.':'.$season.':'.$gameType.':'.$perspective->id.':'.hash('sha256',
             json_encode([$perspective->slug, $perspective->settings, $perspective->is_slicable], JSON_THROW_ON_ERROR));
     }
 
@@ -305,6 +308,8 @@ final class StatsPayloadBuilder
                 'season_id' => $season,
                 'game_type' => $effectiveGameType,
             ]);
+            $rows = $this->payloadAssembler->appendExpectedGoalRows($rows, $columns,
+                ['season_id' => $season, 'game_type' => $effectiveGameType], $payloadRequest->slice, $payloadRequest->canSlice);
             $buildMark('append_on_ice_ms');
         }
 
@@ -431,6 +436,7 @@ final class StatsPayloadBuilder
         $buildMark('assemble_rows_ms');
 
         $rows = $this->appendOnIceRows($rows, $columns, $rangeFilters);
+        $rows = $this->payloadAssembler->appendExpectedGoalRows($rows, $columns, $rangeFilters, $payloadRequest->slice, $payloadRequest->canSlice);
         $buildMark('append_on_ice_ms');
 
         [$rows, $appliedExtra, $virtualSchema] = $this->applyPostFilters($payloadRequest->request, $rows);

@@ -79,7 +79,7 @@ class NhlGameImportRunControl
         $payload = $run->payload ?? [];
         unset($payload['run_control']['active'][$token]);
         // Stages and discovery dates already have durable progress rows; only scoped work needs extra keys.
-        if ($successful && in_array(strtok($key, ':'), ['shots', 'faceoffs', 'refs_staff'], true)) {
+        if ($successful && in_array(strtok($key, ':'), ['shots', 'faceoffs', 'refs_staff', 'on_ice'], true)) {
             $payload['run_control']['completed'][$key] = true;
         }
         $run->update(['payload' => $payload, 'status' => $this->settledStatus($run, $payload)]);
@@ -295,6 +295,7 @@ class NhlGameImportRunControl
             'shots' => ['shot_fact_game_ids', 'shot_fact_batch_id', BuildNhlShotAttemptFactsJob::class],
             'faceoffs' => ['faceoff_fact_game_ids', 'faceoff_fact_batch_id', BuildNhlFaceoffFactsJob::class],
             'refs_staff' => ['refs_staff_game_ids', 'refs_staff_batch_id', RefreshNhlGameContextJob::class],
+            'on_ice' => ['on_ice_game_ids', 'on_ice_batch_id', \App\Jobs\RebuildNhlOnIceStatsJob::class],
         ];
         if (isset($definitions[$scope])) {
             [$gameKey, $batchKey, $class] = $definitions[$scope];
@@ -304,7 +305,7 @@ class NhlGameImportRunControl
         } elseif (! empty($payload['post_process_enrichment_batch_id']) && empty($payload['post_process_enrichment_completed_at'])) {
             $batchKey = 'post_process_enrichment_batch_id';
             foreach (DB::table('nhl_import_progress')->where('run_id', $run->id)->distinct()->pluck('game_id') as $gameId) {
-                foreach ($definitions as [, , $class]) {
+                foreach (array_intersect_key($definitions, array_flip(['shots', 'faceoffs', 'refs_staff'])) as [, , $class]) {
                     $jobs[] = new $class((int) $gameId, $run->id);
                 }
             }
@@ -313,6 +314,10 @@ class NhlGameImportRunControl
         }
         $jobs = array_values(array_filter($jobs, fn ($job): bool => ! isset($payload['run_control']['completed'][$this->workKey($job)])));
         if ($jobs === []) {
+            if ($scope === 'on_ice') {
+                app(NhlGameImportRebuilder::class)->finishOnIceRun($run->id, $payload['on_ice_batch_id'] ?? '');
+                return true;
+            }
             $run->update(['status' => 'completed']);
             return true;
         }
@@ -366,7 +371,7 @@ class NhlGameImportRunControl
     /** Known child batches belonging to supported processing scopes. */
     private function batchKeys(): array
     {
-        return ['shot_fact_batch_id', 'faceoff_fact_batch_id', 'refs_staff_batch_id', 'post_process_enrichment_batch_id'];
+        return ['shot_fact_batch_id', 'faceoff_fact_batch_id', 'refs_staff_batch_id', 'on_ice_batch_id', 'post_process_enrichment_batch_id'];
     }
 
     /** Dropped paused jobs do not count as completed source work when a batch drains. */
@@ -377,10 +382,11 @@ class NhlGameImportRunControl
             'shot_fact_batch_id' => ['shot_fact_game_ids', BuildNhlShotAttemptFactsJob::class],
             'faceoff_fact_batch_id' => ['faceoff_fact_game_ids', BuildNhlFaceoffFactsJob::class],
             'refs_staff_batch_id' => ['refs_staff_game_ids', RefreshNhlGameContextJob::class],
+            'on_ice_batch_id' => ['on_ice_game_ids', \App\Jobs\RebuildNhlOnIceStatsJob::class],
         ];
         if ($batchKey === 'post_process_enrichment_batch_id') {
             $ids = DB::table('nhl_import_progress')->where('run_id', $run->id)->distinct()->pluck('game_id')->all();
-            foreach ($definitions as [, $class]) {
+            foreach (array_diff_key($definitions, ['on_ice_batch_id' => true]) as [, $class]) {
                 foreach ($ids as $gameId) {
                     if (! isset($payload['run_control']['completed'][$this->workType($class).':'.$gameId])) {
                         return false;
@@ -408,6 +414,7 @@ class NhlGameImportRunControl
             BuildNhlShotAttemptFactsJob::class => 'shots',
             BuildNhlFaceoffFactsJob::class => 'faceoffs',
             RefreshNhlGameContextJob::class => 'refs_staff',
+            \App\Jobs\RebuildNhlOnIceStatsJob::class => 'on_ice',
             default => $class,
         };
     }

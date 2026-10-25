@@ -348,17 +348,86 @@ class NhlStatsDashboardPayload
             ->get()->keyBy('nhl_id');
     }
 
+    /**
+     * Read complete individual shooter/goalie goal expectations for an advanced report scope.
+     * The same score precedence and model sample semantics as the Leaders dashboard apply.
+     *
+     * @param array<string,mixed> $filters
+     * @param array<int,int> $playerIds
+     * @param array<int,string> $metrics
+     * @return Collection<int,array<string,object>>
+     */
+    public function advancedPlayerExpectations(array $filters, array $playerIds, array $metrics): Collection
+    {
+        if ($playerIds === []) {
+            return collect();
+        }
+        $model = $this->goalModelId($filters['season_id'] ?? null, (int) ($filters['game_type'] ?? 2), $filters);
+        if ($model === null) {
+            return collect();
+        }
+        $result = collect();
+        foreach (['gax' => 'shooter_player_id', 'gsax' => 'goalie_player_id'] as $metric => $identity) {
+            if (! in_array($metric, $metrics, true)) {
+                continue;
+            }
+            $query = DB::table('nhl_shot_attempts_facts as f')
+                ->join('nhl_games as g', 'g.nhl_game_id', '=', 'f.nhl_game_id')
+                ->join('nhl_expected_goals_models as m', fn ($join) => $join->where('m.id', $model))
+                ->leftJoinSub($this->scoredGoalPredictions(), 'p', function ($join) use ($model): void {
+                    $join->on('p.shot_attempt_fact_id', '=', 'f.id')->where('p.expected_goals_model_id', $model)
+                        ->where('p.prediction_target', 'goal')->where('p.is_scored', true);
+                })->whereIn('f.'.$identity, $playerIds)->where('f.is_shot_attempt', true)
+                ->whereIn('g.game_state', ['OFF', 'FINAL'])->where('g.game_type', (int) ($filters['game_type'] ?? 2))
+                ->where(fn ($q) => $q->whereNull('f.period_type')->orWhere('f.period_type', '<>', 'SO'));
+            if (! empty($filters['season_id'])) {
+                $query->where('g.season_id', $filters['season_id']);
+            }
+            if (! empty($filters['date_from'])) {
+                $query->whereDate('g.game_date', '>=', $filters['date_from']);
+            }
+            if (! empty($filters['date_to'])) {
+                $query->whereDate('g.game_date', '<=', $filters['date_to']);
+            }
+            if ($metric === 'gsax') {
+                $query->where(fn ($q) => $q->whereNull('f.is_empty_net')->orWhere('f.is_empty_net', false));
+            }
+            $eligible = 'NOT COALESCE(f.is_empty_net, false)';
+            $expectation = $this->historicalGoalExpectation();
+            $rows = $query->groupBy('f.'.$identity)->selectRaw("f.{$identity} as nhl_player_id,
+                COUNT(DISTINCT f.nhl_game_id) as games, COUNT(*) as attempts,
+                SUM(CASE WHEN f.is_shot_on_goal THEN 1 ELSE 0 END) as shots_on_goal,
+                SUM(CASE WHEN f.is_goal THEN 1 ELSE 0 END) as all_goals,
+                SUM(CASE WHEN {$eligible} AND f.is_goal THEN 1 ELSE 0 END) as eligible_goals,
+                CASE WHEN SUM(CASE WHEN {$eligible} AND p.xg IS NULL THEN 1 ELSE 0 END) = 0
+                    THEN SUM(CASE WHEN {$eligible} THEN {$expectation} ELSE 0 END) ELSE NULL END as xg")
+                ->get();
+            foreach ($rows as $row) {
+                $id = (int) $row->nhl_player_id;
+                $result->put($id, [...($result->get($id) ?? []), $metric => $row]);
+            }
+        }
+        return $result;
+    }
+
     /** Select a stored goal model actually scoring completed games in the displayed season. */
-    private function goalModelId(string $season): ?int
+    private function goalModelId(?string $season, int $gameType = 2, array $filters = []): ?int
     {
         $id = DB::table('nhl_expected_goals_models as m')->where('m.prediction_target', 'goal')
-            ->whereExists(function ($query) use ($season): void {
+            ->whereExists(function ($query) use ($season, $gameType, $filters): void {
                 $query->selectRaw('1')->fromSub($this->scoredGoalPredictions(), 'p')
                     ->join('nhl_shot_attempts_facts as f', 'f.id', '=', 'p.shot_attempt_fact_id')
                     ->join('nhl_games as g', 'g.nhl_game_id', '=', 'f.nhl_game_id')
                     ->whereColumn('p.expected_goals_model_id', 'm.id')->where('p.prediction_target', 'goal')
-                    ->where('p.is_scored', true)->whereNotNull('p.xg')->where('f.season_id', $season)
-                    ->where('g.game_type', 2)->whereIn('g.game_state', ['OFF', 'FINAL']);
+                    ->where('p.is_scored', true)->whereNotNull('p.xg')
+                    ->when($season !== null, fn ($q) => $q->where('f.season_id', $season))
+                    ->where('g.game_type', $gameType)->whereIn('g.game_state', ['OFF', 'FINAL']);
+                if (! empty($filters['date_from'])) {
+                    $query->whereDate('g.game_date', '>=', $filters['date_from']);
+                }
+                if (! empty($filters['date_to'])) {
+                    $query->whereDate('g.game_date', '<=', $filters['date_to']);
+                }
             })->orderByDesc('m.trained_at')->orderByDesc('m.id')->value('m.id');
 
         return $id === null ? null : (int) $id;

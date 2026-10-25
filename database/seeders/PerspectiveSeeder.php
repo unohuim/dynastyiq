@@ -76,6 +76,8 @@ class PerspectiveSeeder extends Seeder
                         ['key' => 'cf_pct', 'label' => 'CF%', 'type' => 'float'],
                         ['key' => 'pdo', 'label' => 'PDO', 'type' => 'float'],
                         ['key' => 'ozs_pct', 'label' => 'OZS%', 'type' => 'float'],
+                        ['key' => 'gax', 'label' => 'G−xG', 'type' => 'float'],
+                        ['key' => 'hdsat', 'label' => 'HDSAT', 'type' => 'int'],
                     ],
                     'sort' => [
                         'sortKey' => 'ipp',
@@ -147,7 +149,7 @@ class PerspectiveSeeder extends Seeder
                         ['key' => 'pksv', 'label' => 'PKSV', 'type' => 'int'],
                         ['key' => 'pk_sv_pct', 'label' => 'PKSV%', 'type' => 'float'],
                         ['key' => 'shosv', 'label' => 'SOSV', 'type' => 'int'],
-                        ['key' => 'ga_per_gp', 'label' => 'GA/GP', 'type' => 'float'],
+                        ['key' => 'gsax', 'label' => 'GSAx', 'type' => 'float'],
                         ['key' => 'really_bad_starts', 'label' => 'RBS', 'type' => 'int'],
                     ],
                     'sort' => [

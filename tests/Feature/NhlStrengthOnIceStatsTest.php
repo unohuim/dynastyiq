@@ -1794,3 +1794,247 @@ it('discards the season sync event when its enclosing transaction rolls back', f
     }
     Event::assertNotDispatched(NhlSeasonStatsSynced::class);
 });
+
+
+it('uses only matched on-ice goal participation for IPP and preserves official points', function (): void {
+    ($this->insertGame)();
+    ($this->makePlayer)(1);
+    $unit = app(ResolveNhlUnit::class)->resolve('F', [1], 'TOR');
+    $shift = ($this->insertUnitShift)($unit->id, 'F');
+    DB::table('nhl_boxscores')->insert(['nhl_game_id' => 2026020001, 'nhl_player_id' => 1,
+        'nhl_team_id' => 1, 'goals' => 4, 'points' => 4]);
+    foreach (range(1, 4) as $number) {
+        $event = ($this->insertEvent)('goal', $number * 10, ['scoring_player_id' => 1]);
+        if ($number < 4) {
+            DB::table('event_unit_shifts')->insert(['event_id' => $event, 'unit_shift_id' => $shift]);
+        }
+    }
+    app()->make(SumNhlGameStrengthUnits::class, ['gameId' => 2026020001])->sum();
+    $row = DB::table('nhl_player_game_strength_summaries')->where('nhl_player_id', 1)->first();
+    expect((int) $row->gf)->toBe(3)->and((int) $row->individual_pts)->toBe(3)
+        ->and((float) $row->ipp)->toBe(1.0)
+        ->and(DB::table('nhl_boxscores')->value('points'))->toBe(4);
+});
+
+it('counts one player goal once when the player appears in multiple linked units', function (): void {
+    ($this->insertGame)();
+    ($this->makePlayer)(1);
+    $first = app(ResolveNhlUnit::class)->resolve('F', [1], 'TOR');
+    $second = app(ResolveNhlUnit::class)->resolve('D', [1], 'TOR');
+    $event = ($this->insertEvent)('goal', 30, ['scoring_player_id' => 1]);
+    foreach ([$first, $second] as $unit) {
+        $shift = ($this->insertUnitShift)($unit->id, $unit->unit_type);
+        DB::table('event_unit_shifts')->insert(['event_id' => $event, 'unit_shift_id' => $shift]);
+    }
+    app()->make(SumNhlGameStrengthUnits::class, ['gameId' => 2026020001])->sum();
+    $row = DB::table('nhl_player_game_strength_summaries')->where('nhl_player_id', 1)->first();
+    expect((int) $row->gf)->toBe(1)->and((int) $row->individual_pts)->toBe(1)->and((float) $row->ipp)->toBe(1.0);
+});
+
+it('keeps an off-ice assist outside on-ice IPP participation', function (): void {
+    ($this->insertGame)();
+    ($this->makePlayer)(1);
+    $unit = app(ResolveNhlUnit::class)->resolve('F', [1], 'TOR');
+    $shift = ($this->insertUnitShift)($unit->id, 'F');
+    $onIce = ($this->insertEvent)('goal', 20, ['scoring_player_id' => 2]);
+    DB::table('event_unit_shifts')->insert(['event_id' => $onIce, 'unit_shift_id' => $shift]);
+    ($this->insertEvent)('goal', 80, ['scoring_player_id' => 2, 'assist1_player_id' => 1]);
+    app()->make(SumNhlGameStrengthUnits::class, ['gameId' => 2026020001])->sum();
+    $row = DB::table('nhl_player_game_strength_summaries')->where('nhl_player_id', 1)->first();
+    expect((int) $row->gf)->toBe(1)->and((int) $row->individual_pts)->toBe(0)->and((float) $row->ipp)->toBe(0.0);
+});
+
+it('uses the linked unit strength for both point participation and goal counts', function (): void {
+    ($this->insertGame)();
+    ($this->makePlayer)(1);
+    $unit = app(ResolveNhlUnit::class)->resolve('PP', [1], 'TOR');
+    $shift = ($this->insertUnitShift)($unit->id, 'PP');
+    $event = ($this->insertEvent)('goal', 30, ['strength' => null, 'scoring_player_id' => 1]);
+    DB::table('event_unit_shifts')->insert(['event_id' => $event, 'unit_shift_id' => $shift]);
+    app()->make(SumNhlGameStrengthUnits::class, ['gameId' => 2026020001])->sum();
+    $row = DB::table('nhl_player_game_strength_summaries')->where('nhl_player_id', 1)->first();
+    expect($row->strength)->toBe('PP')->and((int) $row->individual_pts)->toBe(1)->and((int) $row->gf)->toBe(1);
+});
+
+it('does not give an opposing goal or shootout goal to on-ice point participation', function (): void {
+    ($this->insertGame)();
+    ($this->makePlayer)(1);
+    $unit = app(ResolveNhlUnit::class)->resolve('F', [1], 'TOR');
+    $shift = ($this->insertUnitShift)($unit->id, 'F');
+    foreach ([['event_owner_team_id' => 2], ['period_type' => 'SO']] as $overrides) {
+        $event = ($this->insertEvent)('goal', 30, array_merge(['scoring_player_id' => 1], $overrides));
+        DB::table('event_unit_shifts')->insert(['event_id' => $event, 'unit_shift_id' => $shift]);
+    }
+    app()->make(SumNhlGameStrengthUnits::class, ['gameId' => 2026020001])->sum();
+    $row = DB::table('nhl_player_game_strength_summaries')->where('nhl_player_id', 1)->first();
+    expect((int) $row->individual_pts)->toBe(0)->and((int) $row->gf)->toBe(0);
+});
+
+it('counts at most one point when a malformed goal repeats the same credited player', function (): void {
+    ($this->insertGame)();
+    ($this->makePlayer)(1);
+    $unit = app(ResolveNhlUnit::class)->resolve('F', [1], 'TOR');
+    $shift = ($this->insertUnitShift)($unit->id, 'F');
+    $event = ($this->insertEvent)('goal', 30, ['scoring_player_id' => 2, 'assist1_player_id' => 1, 'assist2_player_id' => 1]);
+    DB::table('event_unit_shifts')->insert(['event_id' => $event, 'unit_shift_id' => $shift]);
+    app()->make(SumNhlGameStrengthUnits::class, ['gameId' => 2026020001])->sum();
+    $row = DB::table('nhl_player_game_strength_summaries')->where('nhl_player_id', 1)->first();
+    expect((int) $row->individual_a)->toBe(1)->and((int) $row->individual_pts)->toBe(1);
+});
+
+it('keeps player IPP identical across totals, per-game and per-sixty slices', function (): void {
+    ($this->insertGame)();
+    $player = ($this->makePlayer)(1);
+    DB::table('nhl_player_game_strength_summaries')->insert(['nhl_game_id' => 2026020001,
+        'player_id' => $player->id, 'nhl_player_id' => 1, 'strength' => 'EV', 'toi' => 2630, 'gf' => 3, 'individual_pts' => 2]);
+    $query = app(NhlStrengthStatsQuery::class);
+    foreach (['total', 'pgp', 'p60'] as $slice) {
+        expect($query->players(['strength' => 'EV'], $slice)->first()->ipp)->toBe(0.6667);
+    }
+});
+
+it('derives displayed IPP from EV counts while leaving other on-ice totals in their existing scope', function (): void {
+    ($this->insertGame)();
+    $player = ($this->makePlayer)(1);
+    foreach ([['strength' => 'EV', 'gf' => 2, 'individual_pts' => 1], ['strength' => 'PP', 'gf' => 2, 'individual_pts' => 2]] as $counts) {
+        DB::table('nhl_player_game_strength_summaries')->insert(array_merge(['nhl_game_id' => 2026020001,
+            'player_id' => $player->id, 'nhl_player_id' => 1], $counts));
+    }
+    $row = app(\App\Support\Stats\StatsPayloadAssembler::class)->appendOnIceRows(
+        collect([['nhl_player_id' => 1]]), [['key' => 'ipp']], ['season_id' => '20262027'],
+    )->first();
+    expect($row['ipp'])->toBe(0.5)->and($row['gf'])->toBe(4)->and($row['individual_pts'])->toBe(3);
+});
+
+it('leaves displayed IPP unavailable without EV on-ice goals', function (): void {
+    ($this->insertGame)();
+    $player = ($this->makePlayer)(1);
+    DB::table('nhl_player_game_strength_summaries')->insert(['nhl_game_id' => 2026020001,
+        'player_id' => $player->id, 'nhl_player_id' => 1, 'strength' => 'PP', 'gf' => 2, 'individual_pts' => 1]);
+    $row = app(\App\Support\Stats\StatsPayloadAssembler::class)->appendOnIceRows(
+        collect([['nhl_player_id' => 1]]), [['key' => 'ipp']], ['season_id' => '20262027'],
+    )->first();
+    expect($row['ipp'])->toBeNull();
+});
+
+it('exposes inconsistent persisted IPP counts as unavailable instead of capping them', function (): void {
+    ($this->insertGame)();
+    $player = ($this->makePlayer)(1);
+    DB::table('nhl_player_game_strength_summaries')->insert(['nhl_game_id' => 2026020001,
+        'player_id' => $player->id, 'nhl_player_id' => 1, 'strength' => 'EV', 'gf' => 3, 'individual_pts' => 4]);
+    $row = app(\App\Support\Stats\StatsPayloadAssembler::class)->appendOnIceRows(
+        collect([['nhl_player_id' => 1]]), [['key' => 'ipp']], ['season_id' => '20262027'],
+    )->first();
+    expect($row['ipp'])->toBeNull()
+        ->and(app(NhlStrengthStatsQuery::class)->players(['strength' => 'EV'])->first()->ipp)->toBeNull();
+});
+
+it('changes the prepared cache revision only for reports that use IPP', function (): void {
+    $report = Perspective::create(['name' => 'EV Points', 'slug' => 'ev-points', 'visibility' => 'public_guest',
+        'settings' => ['columns' => [['key' => 'ipp']]]]);
+    $builder = app(\App\Support\Stats\StatsPayloadBuilder::class);
+    expect($builder->preparedKey($report, '20262027', 2))->toStartWith('nhl:stats:table:v2:');
+    $report->settings = ['columns' => [['key' => 'pts']]];
+    expect($builder->preparedKey($report, '20262027', 2))->toStartWith('nhl:stats:table:v1:');
+});
+
+
+it('keeps canonical EV IPP when a stored report has a legacy all-strength IPP formula', function (): void {
+    ($this->insertGame)();
+    $player = ($this->makePlayer)(1);
+    foreach ([['strength' => 'EV', 'gf' => 2, 'individual_pts' => 1], ['strength' => 'PP', 'gf' => 2, 'individual_pts' => 2]] as $counts) {
+        DB::table('nhl_player_game_strength_summaries')->insert(array_merge(['nhl_game_id' => 2026020001,
+            'player_id' => $player->id, 'nhl_player_id' => 1], $counts));
+    }
+    $row = app(\App\Support\Stats\StatsPayloadAssembler::class)->appendOnIceRows(
+        collect([['nhl_player_id' => 1]]), [['key' => 'ipp', 'formula' => 'individual_pts / gf']], ['season_id' => '20262027'],
+    )->first();
+    expect($row['ipp'])->toBe(0.5);
+});
+
+it('does not substitute an existing numeric IPP when on-ice source data is missing', function (): void {
+    ($this->insertGame)();
+    ($this->makePlayer)(1);
+    $row = app(\App\Support\Stats\StatsPayloadAssembler::class)->appendOnIceRows(
+        collect([['nhl_player_id' => 1, 'ipp' => 1.333]]), [['key' => 'ipp']], ['season_id' => '20262027'],
+    )->first();
+    expect($row['ipp'])->toBeNull();
+});
+
+
+it('does not hide an inconsistent IPP game inside otherwise valid season totals', function (): void {
+    ($this->insertGame)(2026020001);
+    ($this->insertGame)(2026020002);
+    $player = ($this->makePlayer)(1);
+    foreach ([[2026020001, 3, 4], [2026020002, 4, 0]] as [$gameId, $gf, $points]) {
+        DB::table('nhl_player_game_strength_summaries')->insert(['nhl_game_id' => $gameId,
+            'player_id' => $player->id, 'nhl_player_id' => 1, 'strength' => 'EV', 'gf' => $gf, 'individual_pts' => $points]);
+    }
+    $row = app(\App\Support\Stats\StatsPayloadAssembler::class)->appendOnIceRows(
+        collect([['nhl_player_id' => 1]]), [['key' => 'ipp']], ['season_id' => '20262027'],
+    )->first();
+    expect($row['ipp'])->toBeNull()
+        ->and(app(NhlStrengthStatsQuery::class)->players(['strength' => 'EV'])->first()->ipp)->toBeNull();
+});
+
+describe('derived on-ice rebuild service', function (): void {
+    beforeEach(function (): void {
+        ($this->insertGame)();
+        ($this->makePlayer)(1);
+        $this->rebuildUnit = app(ResolveNhlUnit::class)->resolve('F', [1], 'TOR');
+        $this->oldRebuildShift = ($this->insertUnitShift)($this->rebuildUnit->id, 'F');
+        DB::table('nhl_boxscores')->insert(['nhl_game_id' => 2026020001, 'nhl_player_id' => 1, 'nhl_team_id' => 1]);
+        $this->rawRebuildEvent = ($this->insertEvent)('goal', 30, ['scoring_player_id' => 1]);
+        DB::table('nhl_shifts')->insert(['nhl_game_id' => 2026020001, 'nhl_player_id' => 1, 'shift_number' => 1,
+            'period' => 1, 'start_time' => '00:00', 'end_time' => '01:00', 'shift_start_seconds' => 0,
+            'shift_end_seconds' => 60, 'team_abbrev' => 'TOR', 'team_name' => 'Toronto', 'first_name' => 'Test', 'last_name' => 'Player']);
+        $this->rebuildSteps = [];
+        $this->mockRebuildStages = function (bool $failValidation = false): void {
+            $make = Mockery::mock(\App\Services\MakeNhlGameShiftUnits::class);
+            $make->shouldReceive('make')->once()->with(2026020001)->andReturnUsing(function (): int {
+                $this->rebuildSteps[] = 'units';
+                expect(DB::table('nhl_unit_shifts')->where('id', $this->oldRebuildShift)->exists())->toBeFalse();
+                ($this->insertUnitShift)($this->rebuildUnit->id, 'F');
+                return 1;
+            });
+            $this->app->bind(\App\Services\MakeNhlGameShiftUnits::class, fn () => $make);
+            $connect = Mockery::mock(\App\Services\ConnectEventsToUnitShifts::class);
+            $connect->shouldReceive('connect')->once()->andReturnUsing(function (): int { $this->rebuildSteps[] = 'connect'; return 1; });
+            $this->app->bind(\App\Services\ConnectEventsToUnitShifts::class, fn () => $connect);
+            $verify = Mockery::mock(\App\Services\VerifyNhlHtmlPlayByPlay::class);
+            $verify->shouldReceive('verify')->once()->with(2026020001)->andReturnUsing(function (): int { $this->rebuildSteps[] = 'verify'; return 1; });
+            $this->app->bind(\App\Services\VerifyNhlHtmlPlayByPlay::class, fn () => $verify);
+            $sum = Mockery::mock(SumNhlGameUnits::class);
+            $sum->shouldReceive('sum')->once()->andReturnUsing(function (): int { $this->rebuildSteps[] = 'summaries'; return 5; });
+            $this->app->bind(SumNhlGameUnits::class, fn () => $sum);
+            $validate = Mockery::mock(\App\Services\ValidateNhlGameSummary::class);
+            $validate->shouldReceive('validate')->once()->with(2026020001)->andReturnUsing(function () use ($failValidation) {
+                $this->rebuildSteps[] = 'validate';
+                return new \App\Models\NhlGameValidation(['status' => $failValidation ? 'failed' : 'approved', 'mismatch_count' => $failValidation ? 1 : 0]);
+            });
+            $this->app->bind(\App\Services\ValidateNhlGameSummary::class, fn () => $validate);
+        };
+    });
+
+    it('runs the five canonical derived transformations in order while preserving source rows', function (): void {
+        ($this->mockRebuildStages)();
+        expect(app(\App\Services\NhlGameImportRebuilder::class)->rebuildOnIce(2026020001))->toBe(5)
+            ->and($this->rebuildSteps)->toBe(['units', 'connect', 'verify', 'summaries', 'validate']);
+        expect(DB::table('play_by_plays')->where('id', $this->rawRebuildEvent)->exists())->toBeTrue()
+            ->and(DB::table('nhl_shifts')->where('nhl_game_id', 2026020001)->count())->toBe(1)
+            ->and(DB::table('nhl_boxscores')->where('nhl_game_id', 2026020001)->count())->toBe(1);
+    });
+
+    it('rolls back derived cleanup and replacements if validation fails', function (): void {
+        ($this->mockRebuildStages)(true);
+        expect(fn () => app(\App\Services\NhlGameImportRebuilder::class)->rebuildOnIce(2026020001))
+            ->toThrow(\App\Exceptions\NhlGameSummaryValidationFailed::class);
+        expect(DB::table('nhl_unit_shifts')->where('id', $this->oldRebuildShift)->exists())->toBeTrue();
+    });
+
+    it('rejects missing stored shifts before deleting existing derived data', function (): void {
+        DB::table('nhl_shifts')->where('nhl_game_id', 2026020001)->delete();
+        expect(fn () => app(\App\Services\NhlGameImportRebuilder::class)->rebuildOnIce(2026020001))->toThrow(DomainException::class);
+        expect(DB::table('nhl_unit_shifts')->where('id', $this->oldRebuildShift)->exists())->toBeTrue();
+    });
+});

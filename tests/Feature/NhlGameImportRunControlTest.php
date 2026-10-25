@@ -371,3 +371,157 @@ it('does not replay provider work when its transaction fails', function (): void
     expect($calls)->toBe(1)
         ->and((int) DB::table('nhl_import_progress')->where('id', $progress)->value('items_count'))->toBe(1);
 });
+
+
+describe('scoped on-ice rebuilds', function (): void {
+    beforeEach(function (): void {
+        $this->run->update(['status' => 'completed']);
+        $this->onIceUrl = '/admin/nhl-game-imports/process-on-ice';
+        $this->seedOnIceGame = function (int $id = 2026020001, string $date = '2026-10-22', string $season = '20262027'): void {
+            DB::table('nhl_games')->insert(['nhl_game_id' => $id, 'season_id' => $season, 'game_type' => 2,
+                'game_date' => $date, 'game_state' => 'OFF', 'home_team_score' => 1, 'away_team_score' => 0]);
+            DB::table('play_by_plays')->insert(['nhl_game_id' => $id]);
+            DB::table('nhl_boxscores')->insert(['nhl_game_id' => $id, 'nhl_player_id' => 1, 'nhl_team_id' => 1]);
+            DB::table('nhl_shifts')->insert(['nhl_game_id' => $id, 'nhl_player_id' => 1, 'shift_number' => 1,
+                'period' => 1, 'start_time' => '00:00', 'end_time' => '01:00', 'shift_start_seconds' => 0,
+                'shift_end_seconds' => 60, 'team_abbrev' => 'TOR', 'team_name' => 'Toronto', 'first_name' => 'Test', 'last_name' => 'Player']);
+        };
+        $this->onIceRun = function (string $status = 'running', array $completed = []): void {
+            $this->run->update(['action' => 'process', 'status' => $status, 'payload' => [
+                'process_scope' => 'on_ice', 'on_ice_game_ids' => [2026020001], 'on_ice_batch_id' => 'on-ice-fixture',
+                'run_control' => ['completed' => $completed],
+            ]]);
+        };
+    });
+
+    it('denies guests the on-ice processing endpoint', function (): void {
+        $this->postJson($this->onIceUrl, ['run_id' => $this->run->id])->assertUnauthorized();
+        Bus::assertNothingBatched();
+    });
+
+    it('denies non-admins the on-ice processing endpoint', function (): void {
+        $this->actingAs(User::factory()->create())->postJson($this->onIceUrl, ['run_id' => $this->run->id])->assertForbidden();
+        Bus::assertNothingBatched();
+    });
+
+    it('queues only derived on-ice jobs and preserves the original discovery', function (): void {
+        ($this->seedOnIceGame)();
+        $response = $this->actingAs($this->admin)->postJson($this->onIceUrl, ['run_id' => $this->run->id]);
+        $response->assertAccepted()->assertJsonPath('run.payload.process_scope', 'on_ice')
+            ->assertJsonPath('run.progress.completed_stage_rows', 0)->assertJsonPath('run.progress.total_stage_rows', 1);
+        expect($response->json('run.id'))->not->toBe($this->run->id)
+            ->and($this->run->fresh()->status)->toBe('completed');
+        Bus::assertBatched(fn ($batch): bool => $batch->jobs->count() === 1
+            && $batch->jobs->first() instanceof \App\Jobs\RebuildNhlOnIceStatsJob
+            && $batch->jobs->first()->queue === 'default');
+        Bus::assertNotDispatched(\App\Jobs\ImportPbpNhlJob::class);
+        Bus::assertNotDispatched(\App\Jobs\BuildNhlShotAttemptFactsJob::class);
+    });
+
+    it('rejects an invalid source run without dispatching work', function (): void {
+        $this->actingAs($this->admin)->postJson($this->onIceUrl, ['run_id' => 99999999])->assertUnprocessable();
+        Bus::assertNothingBatched();
+    });
+
+    it('rejects a selection without stored source coverage', function (): void {
+        $this->actingAs($this->admin)->postJson($this->onIceUrl, ['run_id' => $this->run->id])->assertUnprocessable();
+        Bus::assertNothingBatched();
+    });
+
+    it('rejects a paused source discovery', function (): void {
+        $this->run->update(['status' => 'paused']);
+        $this->actingAs($this->admin)->postJson($this->onIceUrl, ['run_id' => $this->run->id])->assertUnprocessable();
+    });
+
+    it('limits queued games to the selected discovery range', function (): void {
+        ($this->seedOnIceGame)();
+        ($this->seedOnIceGame)(2026020002, '2026-10-23');
+        $this->actingAs($this->admin)->postJson($this->onIceUrl, ['run_id' => $this->run->id])->assertAccepted()
+            ->assertJsonPath('run.payload.on_ice_game_ids', [2026020001]);
+    });
+
+    it('does not admit a duplicate active on-ice selection', function (): void {
+        ($this->seedOnIceGame)();
+        $this->actingAs($this->admin)->postJson($this->onIceUrl, ['run_id' => $this->run->id])->assertAccepted();
+        $this->postJson($this->onIceUrl, ['run_id' => $this->run->id])->assertUnprocessable();
+    });
+
+    it('rejects games currently running through the canonical import pipeline', function (): void {
+        ($this->seedOnIceGame)();
+        ($this->progress)('running');
+        $this->actingAs($this->admin)->postJson($this->onIceUrl, ['run_id' => $this->run->id])->assertUnprocessable();
+    });
+
+    it('checkpoints successful on-ice games through the existing commit fence', function (): void {
+        ($this->onIceRun)();
+        $job = new \App\Jobs\RebuildNhlOnIceStatsJob(2026020001, $this->run->id);
+        (new ControlNhlGameImportRun())->handle($job, function (): void {});
+        expect(data_get($this->run->fresh()->payload, 'run_control.completed.on_ice:2026020001'))->toBeTrue();
+    });
+
+    it('resumes only unfinished on-ice games in the original batch', function (): void {
+        ($this->onIceRun)('paused', ['on_ice:2026020001' => true]);
+        $payload = $this->run->payload;
+        $payload['on_ice_game_ids'][] = 2026020002;
+        $this->run->update(['payload' => $payload]);
+        $batch = Mockery::mock(Batch::class);
+        $batch->failedJobs = 0;
+        $batch->shouldReceive('cancelled')->andReturnFalse();
+        $batch->shouldReceive('add')->once()->with(Mockery::on(fn ($jobs): bool => count($jobs) === 1
+            && $jobs[0] instanceof \App\Jobs\RebuildNhlOnIceStatsJob && $jobs[0]->nhlGameId === 2026020002))->andReturnSelf();
+        Bus::shouldReceive('findBatch')->with('on-ice-fixture')->andReturn($batch);
+        $this->control->resume($this->run->id);
+        expect($this->run->fresh()->status)->toBe('running');
+    });
+
+    it('does not queue season sync while an on-ice game remains unfinished', function (): void {
+        ($this->seedOnIceGame)();
+        ($this->onIceRun)();
+        app(\App\Services\NhlGameImportRebuilder::class)->finishOnIceRun($this->run->id, 'on-ice-fixture');
+        Bus::assertNotDispatched(\App\Jobs\SeasonSumJob::class);
+        expect($this->run->fresh()->status)->toBe('running');
+    });
+
+    it('queues one tracked Season Sync after all games complete and rejects duplicate completion', function (): void {
+        ($this->seedOnIceGame)();
+        ($this->onIceRun)('running', ['on_ice:2026020001' => true]);
+        $rebuilder = app(\App\Services\NhlGameImportRebuilder::class);
+        $rebuilder->finishOnIceRun($this->run->id, 'on-ice-fixture');
+        $rebuilder->finishOnIceRun($this->run->id, 'on-ice-fixture');
+        expect($this->run->fresh()->status)->toBe('completed')
+            ->and($this->run->fresh()->payload['on_ice_season_sync_run_ids'])->toHaveCount(1);
+        Bus::assertDispatchedTimes(\App\Jobs\SeasonSumJob::class, 1);
+        $this->assertDatabaseHas('nhl_game_import_runs', ['action' => 'season-sync', 'status' => 'queued']);
+    });
+
+    it('keeps fully rebuilt paused work paused until Resume queues the season sync', function (): void {
+        ($this->seedOnIceGame)();
+        ($this->onIceRun)('paused', ['on_ice:2026020001' => true]);
+        app(\App\Services\NhlGameImportRebuilder::class)->finishOnIceRun($this->run->id, 'on-ice-fixture');
+        Bus::assertNotDispatched(\App\Jobs\SeasonSumJob::class);
+        $this->control->resume($this->run->id);
+        expect($this->run->fresh()->status)->toBe('completed');
+        Bus::assertDispatched(\App\Jobs\SeasonSumJob::class);
+    });
+
+    it('prevents cancelled on-ice work from queueing a season sync', function (): void {
+        ($this->onIceRun)('cancelled', ['on_ice:2026020001' => true]);
+        app(\App\Services\NhlGameImportRebuilder::class)->finishOnIceRun($this->run->id, 'on-ice-fixture');
+        Bus::assertNotDispatched(\App\Jobs\SeasonSumJob::class);
+    });
+
+    it('fences cancelled on-ice jobs before the transformation begins', function (): void {
+        ($this->onIceRun)('cancelled');
+        $called = false;
+        (new ControlNhlGameImportRun())->handle(new \App\Jobs\RebuildNhlOnIceStatsJob(2026020001, $this->run->id),
+            function () use (&$called): void { $called = true; });
+        expect($called)->toBeFalse();
+    });
+
+    it('reports on-ice progress from this run checkpoints rather than stale summary rows', function (): void {
+        ($this->onIceRun)();
+        $response = $this->actingAs($this->admin)->getJson(route('admin.nhl-game-imports.status'))->assertOk();
+        $run = collect($response->json('runs'))->firstWhere('id', $this->run->id);
+        expect($run['progress']['completed_stage_rows'])->toBe(0)->and($run['facts'])->toBe([]);
+    });
+});

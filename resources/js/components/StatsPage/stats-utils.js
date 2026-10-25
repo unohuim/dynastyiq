@@ -201,6 +201,8 @@ export const statFormatters = {
     league: val => formatLeagueName(val),
     shooting_percentage: val => typeof val === 'number' ? (val * 100).toFixed(1) + '%' : val,
     ipp: val => formatPercentageTwoDecimals(val),
+    gsax: val => formatGoalsAboveExpected(val),
+    gax: val => formatGoalsAboveExpected(val),
     avgPTSpGP: val => typeof val === 'number' ? Number(val).toFixed(2) : val,
     g_per_gp: val => formatOneDecimalTruncated(val),
     pts_per_gp: val => formatOneDecimalTruncated(val),
@@ -221,7 +223,15 @@ function formatOneDecimalTruncated(value) {
     return (Math.trunc(number * 10) / 10).toFixed(1);
 }
 
+function formatGoalsAboveExpected(value) {
+    if (value === null || value === undefined || value === '') return '—';
+    const number = Number(value);
+    return Number.isFinite(number) ? `${number > 0 ? '+' : ''}${number.toFixed(2)}` : '—';
+}
+
 function formatPercentageTwoDecimals(value) {
+    if (value === null || value === undefined || value === '') return '—';
+
     const number = typeof value === 'number' ? value : Number(value);
 
     if (!Number.isFinite(number)) {

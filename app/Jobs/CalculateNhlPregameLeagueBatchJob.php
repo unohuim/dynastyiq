@@ -55,7 +55,19 @@ class CalculateNhlPregameLeagueBatchJob extends CalculateNhlPregameContextRunDay
         }
         try {
             $day->update(['league_started_at' => $day->league_started_at ?? now()]);
-            $complete = $results->buildNextAverages($run, $day, fn (): bool => $this->runStopped());
+            $started = hrtime(true);
+            $pages = 0;
+            do {
+                $cursor = [(int) $day->league_cursor, (int) $day->league_entity_cursor];
+                $complete = $results->buildNextAverages($run, $day, fn (): bool => $this->runStopped());
+                $day->refresh();
+                $pages++;
+                // Every page commits separately. Yield promptly for Pause and never spin on a stale cursor.
+            } while (! $complete
+                && $cursor !== [(int) $day->league_cursor, (int) $day->league_entity_cursor]
+                && $pages < max(1, (int) config('nhl-pregame.league_continuation_pages', 4))
+                && (hrtime(true) - $started) / 1e9 < max(1, (int) config('nhl-pregame.league_continuation_seconds', 8))
+                && NhlPregameContextRun::query()->whereKey($run->id)->value('status') === 'running');
             DB::transaction(function () use ($run, $day, $complete): void {
                 if ($this->runStopped()) {
                     throw new NhlPregameContextRunStopped('Pregame work is no longer active.');

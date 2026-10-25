@@ -46,6 +46,7 @@ rules:
 public_interface:
   - GET /stats named stats.index
   - Existing /api/stats payload contract
+  - NhlStatsDashboardPayload::advancedPlayerExpectations
   - NhlStatsDashboardPayload::build
   - NhlDashboardPayload::statsHighlights
   - Stats/Index and Stats/Table Inertia components

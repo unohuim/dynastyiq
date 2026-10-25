@@ -2,6 +2,12 @@
 
 use Illuminate\Support\Facades\Schedule;
 
+Schedule::call(fn () => app(\App\Services\NhlPregameContextOrchestrator::class)->recoverActiveRuns())
+    ->name('nhl-pregame-recover-active-runs')
+    ->everyMinute()
+    ->onOneServer()
+    ->withoutOverlapping(2);
+
 Schedule::command('nhl:import --players')
     ->dailyAt('03:30')
     ->timezone('America/Toronto')

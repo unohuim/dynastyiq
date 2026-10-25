@@ -1159,3 +1159,136 @@ it('bounds slow PP preparation and retains completed batches for the next automa
         ->and(\App\Models\NhlGame::findOrFail(2026020009)->home_pp_opportunities)->toBeNull();
     Http::assertSentCount(8);
 });
+
+
+describe('advanced report expected goals', function (): void {
+    beforeEach(function (): void {
+        $this->player->update(['pos_type' => 'F']);
+        $this->goalie->update(['pos_type' => 'G']);
+        ($this->goalieScoring)();
+        DB::table('nhl_shot_attempts_facts')->update(['shooter_player_id' => 9000001, 'is_shot_on_goal' => true]);
+        DB::table('nhl_season_stats')->where('nhl_player_id', 9000001)->update(['gp' => 1, 'g' => 1, 'sat' => 2, 'sog' => 2, 'hdsat' => 1, 'toi' => 3600]);
+        DB::table('nhl_season_stats')->where('nhl_player_id', 9000002)->update(['sa' => 2, 'toi' => 3600]);
+        $this->advancedRows = collect([
+            ['nhl_player_id' => 9000001, 'gp' => 1, 'is_goalie' => false, 'toi_total_seconds' => 3600,
+                '__slice_totals' => ['g' => 1, 'sog' => 2, 'sat' => 2]],
+            ['nhl_player_id' => 9000002, 'gp' => 1, 'is_goalie' => true, 'pos' => 'G', 'goals_against' => 1,
+                'shots_against' => 2, 'toi_total_seconds' => 3600, '__slice_totals' => ['g' => 0, 'sog' => 0, 'sat' => 0]],
+        ]);
+        $this->advancedMetrics = fn (string $slice = 'total') => app(\App\Support\Stats\StatsPayloadAssembler::class)
+            ->appendExpectedGoalRows($this->advancedRows, [['key' => 'gax'], ['key' => 'gsax']],
+                ['season_id' => '20262027', 'game_type' => 2], $slice)->keyBy('nhl_player_id');
+    });
+
+    it('calculates shooter goals above expected and goalie goals saved above expected from the same scored model', function (): void {
+        $rows = ($this->advancedMetrics)();
+        expect($rows[9000001]['gax'])->toBe(-0.5)->and($rows[9000002]['gsax'])->toBe(0.5)
+            ->and($rows[9000001]['gsax'])->toBeNull()->and($rows[9000002]['gax'])->toBeNull();
+    });
+
+    it('withholds metrics if an eligible attempt is unscored', function (): void {
+        DB::table('nhl_shot_attempt_predictions')->where('xg', 0.7)->delete();
+        $rows = ($this->advancedMetrics)();
+        expect($rows[9000001]['gax'])->toBeNull()->and($rows[9000002]['gsax'])->toBeNull();
+    });
+
+    it('withholds metrics if actual shooting coverage disagrees with stored facts', function (): void {
+        $this->advancedRows = $this->advancedRows->map(function (array $row): array {
+            if ($row['nhl_player_id'] === 9000001) $row['__slice_totals']['sog'] = 3;
+            else $row['shots_against'] = 3;
+            return $row;
+        });
+        $rows = ($this->advancedMetrics)();
+        expect($rows[9000001]['gax'])->toBeNull()->and($rows[9000002]['gsax'])->toBeNull();
+    });
+
+    it('withholds goalie GSAx when only some recorded appearances have facts', function (): void {
+        $this->advancedRows = $this->advancedRows->map(fn (array $row): array => [...$row, 'gp' => 2]);
+        expect(($this->advancedMetrics)()[9000002]['gsax'])->toBeNull();
+    });
+
+    it('excludes empty-net goals and expectations from shooter goals above expected', function (): void {
+        DB::table('nhl_shot_attempts_facts')->where('is_goal', true)->update(['is_empty_net' => true, 'goalie_player_id' => null]);
+        expect(($this->advancedMetrics)()[9000001]['gax'])->toBe(-0.7);
+    });
+
+    it('respects the selected model SOG sample mode', function (): void {
+        DB::table('nhl_expected_goals_models')->update(['feature_config' => json_encode(['sample_mode' => 'sog'])]);
+        DB::table('nhl_shot_attempts_facts')->where('is_goal', false)->update(['is_shot_on_goal' => false]);
+        $this->advancedRows = $this->advancedRows->map(function (array $row): array {
+            if ($row['nhl_player_id'] === 9000001) $row['__slice_totals']['sog'] = 1;
+            else $row['shots_against'] = 1;
+            return $row;
+        });
+        $rows = ($this->advancedMetrics)();
+        expect($rows[9000001]['gax'])->toBe(0.2)->and($rows[9000002]['gsax'])->toBe(-0.2);
+    });
+
+    it('scales advanced goal totals using raw games and actual TOI while retaining unsliced totals', function (): void {
+        $this->advancedRows = $this->advancedRows->map(fn (array $row): array => [...$row, 'toi_total_seconds' => 1800]);
+        $rows = ($this->advancedMetrics)('p60');
+        expect($rows[9000001]['gax'])->toBe(-1.0)->and($rows[9000002]['gsax'])->toBe(1.0)
+            ->and($rows[9000001]['__slice_totals']['gax'])->toBe(-0.5);
+    });
+
+    it('prepares advanced report columns and serves the warm report without source queries', function (): void {
+        $report = Perspective::create(['name' => 'Skaters Adv', 'slug' => 'skaters-adv', 'visibility' => 'public_guest',
+            'sport' => 'hockey', 'is_slicable' => true, 'settings' => ['columns' => [
+                ['key' => 'gax', 'label' => 'G−xG', 'type' => 'float'], ['key' => 'hdsat', 'label' => 'HDSAT', 'type' => 'int'],
+            ], 'filters' => ['pos_type' => ['operator' => '!=', 'value' => 'G']]]]);
+        $builder = app(StatsPayloadBuilder::class);
+        $builder->refreshPreparedSeasonPayload($report, '20262027', 2);
+        DB::enableQueryLog(); DB::flushQueryLog();
+        [$payload] = $builder->readPreparedSeasonPayload(($this->reportInput)($report));
+        $queries = DB::getQueryLog(); DB::disableQueryLog();
+        expect($payload['data'][0]['gax'])->toBe(-0.5)->and($payload['data'][0]['hdsat'])->toBe(1)->and($queries)->toBe([]);
+    });
+
+    it('filters advanced report metrics using raw derived totals and exposes meaningful bounds', function (): void {
+        $rows = ($this->advancedMetrics)()->values();
+        [$filtered, $applied, $schema] = app(\App\Support\Stats\StatsDerivedFilterApplier::class)
+            ->apply(Request::create('/stats', 'GET', ['gax_max' => -0.1]), $rows);
+        expect($filtered)->toHaveCount(1)->and($filtered->first()['nhl_player_id'])->toBe(9000001)
+            ->and(collect($schema)->firstWhere('key', 'gax')['bounds'])->toBe(['min' => -1.0, 'max' => 0.0]);
+    });
+
+    it('uses a report revision for existing custom GSAx reports without invalidating basic reports', function (): void {
+        $report = Perspective::create(['name' => 'Existing GSAx', 'slug' => 'existing-gsax', 'visibility' => 'public_guest',
+            'settings' => ['columns' => [['key' => 'gsax']]]]);
+        expect(app(StatsPayloadBuilder::class)->preparedKey($report, '20262027', 2))->toStartWith('nhl:stats:table:v2:');
+    });
+});
+
+describe('advanced report column migration', function (): void {
+    it('updates existing advanced reports without resetting unrelated settings and restores them on rollback', function (): void {
+        $before = ['columns' => [['key' => 'ga_per_gp', 'label' => 'GA/GP', 'type' => 'float'], ['key' => 'custom', 'label' => 'Custom']],
+            'sort' => ['sortKey' => 'custom'], 'filters' => ['pos_type' => ['value' => 'G']]];
+        $goalies = Perspective::create(['name' => 'Goalies Adv', 'slug' => 'goalies-adv', 'visibility' => 'public_guest', 'settings' => $before]);
+        $skaters = Perspective::create(['name' => 'Skaters Adv', 'slug' => 'skaters-adv', 'visibility' => 'public_guest',
+            'settings' => ['columns' => [['key' => 'ipp', 'label' => 'IPP']]]]);
+        $migration = require database_path('migrations/2026_10_24_000001_update_advanced_stats_report_columns.php');
+        $migration->up();
+        expect(array_column($goalies->fresh()->settings['columns'], 'key'))->toBe(['custom', 'gsax'])
+            ->and($goalies->fresh()->settings['sort'])->toBe($before['sort'])
+            ->and(array_column($skaters->fresh()->settings['columns'], 'key'))->toBe(['ipp', 'gax', 'hdsat']);
+        $migration->down();
+        expect($goalies->fresh()->settings)->toBe($before);
+    });
+
+    it('handles historical encoded settings and avoids duplicating existing metric columns', function (): void {
+        $report = Perspective::create(['name' => 'Goalies Adv', 'slug' => 'goalies-adv', 'visibility' => 'public_guest',
+            'settings' => ['columns' => [['key' => 'gsax', 'label' => 'GSAx']]]]);
+        DB::table('perspectives')->where('id', $report->id)->update(['settings' => json_encode(json_encode($report->settings))]);
+        $migration = require database_path('migrations/2026_10_24_000001_update_advanced_stats_report_columns.php');
+        $migration->up();
+        expect(array_column($report->fresh()->settings['columns'], 'key'))->toBe(['gsax']);
+    });
+
+    it('leaves private reports untouched', function (): void {
+        $settings = ['columns' => [['key' => 'ga_per_gp']]];
+        $report = Perspective::create(['name' => 'Private goalie', 'slug' => 'goalies-adv', 'visibility' => 'private', 'settings' => $settings]);
+        $migration = require database_path('migrations/2026_10_24_000001_update_advanced_stats_report_columns.php');
+        $migration->up();
+        expect($report->fresh()->settings)->toBe($settings);
+    });
+});

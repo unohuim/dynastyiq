@@ -450,9 +450,19 @@ class NhlPregameContextBuilder
             ->select(['summaries.nhl_player_id', 'summaries.nhl_team_id', 'summaries.nhl_game_id',
                 'summaries.toi', 'summaries.sat', 'summaries.sog', 'summaries.g', 'summaries.a', 'summaries.pts',
                 'games.season_id', 'games.home_team_id', 'games.away_team_id', 'games.start_time_utc'])
-            ->selectRaw('EXISTS (SELECT 1 FROM nhl_shot_attempts_facts facts WHERE facts.nhl_game_id = summaries.nhl_game_id AND facts.is_shot_attempt = true) as has_shot_facts')
             ->get()->groupBy('nhl_player_id');
         $historyGameIds = $histories->flatten(1)->pluck('nhl_game_id')->unique()->values();
+        // Check coverage once per historical game, rather than once per player's appearance.
+        $coveredGames = DB::table('nhl_games')->whereIn('nhl_game_id', $historyGameIds)
+            ->whereExists(function ($query): void {
+                $query->selectRaw('1')->from('nhl_shot_attempts_facts as facts')
+                    ->whereColumn('facts.nhl_game_id', 'nhl_games.nhl_game_id')->where('facts.is_shot_attempt', true);
+            })->pluck('nhl_game_id')->flip();
+        foreach ($histories as $appearances) {
+            foreach ($appearances as $appearance) {
+                $appearance->has_shot_facts = $coveredGames->has($appearance->nhl_game_id);
+            }
+        }
         $exposures = DB::table('nhl_player_game_strength_summaries')
             ->whereIn('nhl_player_id', $playerIds)->whereIn('nhl_game_id', $historyGameIds)
             ->get(['nhl_player_id', 'nhl_game_id', 'strength', 'toi', 'satf', 'sata', 'sf', 'sa', 'gf', 'ga', 'individual_pts'])
@@ -522,6 +532,7 @@ class NhlPregameContextBuilder
 
         $playerCount = 0;
         $playerInputs = $dayInputs['players'] ?? [];
+        $pendingPlayers = [];
         foreach ($participants->values() as $participantIndex => $participant) {
             $this->assertRunNotStopped($isStopped);
             if (($dayInputs['batch_players'] ?? false) && $participantIndex % 8 === 0) {
@@ -552,7 +563,7 @@ class NhlPregameContextBuilder
             );
             $this->assertRunNotStopped($isStopped);
 
-            DB::table('nhl_player_game_pregame_contexts')->upsert([[
+            $pendingPlayers[] = ['metrics' => $metrics, 'row' => [
                 'run_id' => $run->id,
                 'model_run_id' => $modelRunId,
                 'team_context_id' => $teamContextId,
@@ -569,20 +580,42 @@ class NhlPregameContextBuilder
                 'ranks' => json_encode([], JSON_THROW_ON_ERROR),
                 'created_at' => now(),
                 'updated_at' => now(),
-            ]], ['model_run_id', 'nhl_game_id', 'nhl_player_id', 'nhl_team_id', 'context_version'], [
-                'run_id', 'team_context_id', 'opponent_team_id', 'game_date', 'source_cutoff_at', 'venue', 'participant_source', 'metrics', 'ranks', 'updated_at',
-            ]);
-            $playerContextId = (int) DB::table('nhl_player_game_pregame_contexts')
-                ->where('model_run_id', $modelRunId)->where('nhl_game_id', $gameId)
-                ->where('nhl_player_id', (int) $participant->nhl_player_id)->where('nhl_team_id', $teamId)
-                ->where('context_version', self::VERSION)->value('id');
-            $this->storeNormalizedMetrics('nhl_player_game_pregame_context_metrics', 'player_context_id', $playerContextId, $metrics, [], $metricWriteBuffer);
+            ]];
+            if (count($pendingPlayers) >= 8) {
+                $this->storePlayerContextBatch($modelRunId, $gameId, $pendingPlayers, $metricWriteBuffer);
+                $pendingPlayers = [];
+            }
             $playerCount++;
         }
 
         $this->assertRunNotStopped($isStopped);
+        if ($pendingPlayers !== []) {
+            $this->storePlayerContextBatch($modelRunId, $gameId, $pendingPlayers, $metricWriteBuffer);
+        }
 
         return ['team_context_count' => count($teamContextIds), 'player_context_count' => $playerCount];
+    }
+
+    /** Upsert a bounded player group and resolve its identities in one read before writing metrics. */
+    private function storePlayerContextBatch(?int $modelRunId, int $gameId, array $players, ?array &$metricWriteBuffer): void
+    {
+        $rows = array_column($players, 'row');
+        DB::table('nhl_player_game_pregame_contexts')->upsert($rows,
+            ['model_run_id', 'nhl_game_id', 'nhl_player_id', 'nhl_team_id', 'context_version'], [
+                'run_id', 'team_context_id', 'opponent_team_id', 'game_date', 'source_cutoff_at', 'venue', 'participant_source', 'metrics', 'ranks', 'updated_at',
+            ]);
+        $contexts = DB::table('nhl_player_game_pregame_contexts')
+            ->where('model_run_id', $modelRunId)->where('nhl_game_id', $gameId)
+            ->whereIn('nhl_player_id', array_column($rows, 'nhl_player_id'))->where('context_version', self::VERSION)
+            ->get(['id', 'nhl_player_id', 'nhl_team_id'])
+            ->keyBy(fn (object $context): string => $context->nhl_player_id.':'.$context->nhl_team_id);
+        foreach ($players as $player) {
+            $context = $contexts->get($player['row']['nhl_player_id'].':'.$player['row']['nhl_team_id']);
+            if ($context === null) {
+                throw new RuntimeException('A saved player context could not be resolved.');
+            }
+            $this->storeNormalizedMetrics('nhl_player_game_pregame_context_metrics', 'player_context_id', (int) $context->id, $player['metrics'], [], $metricWriteBuffer);
+        }
     }
 
     /** Abort the enclosing transaction when a run-specific stop signal is present. */
@@ -843,38 +876,48 @@ class NhlPregameContextBuilder
             ->get()->groupBy('nhl_game_id');
         $attempts = $preloaded['attempts'] ?? $this->individualAttemptCounts($playerId, $gameIds, $bucketFilter);
 
-        $isOpponent = fn (object $row): bool => ((int) $row->home_team_id === (int) $row->nhl_team_id ? (int) $row->away_team_id : (int) $row->home_team_id) === $opponentId;
-        $isVenue = fn (object $row): bool => $venue === 'home' ? (int) $row->home_team_id === (int) $row->nhl_team_id : (int) $row->away_team_id === (int) $row->nhl_team_id;
+        $windows = $this->playerHistoryWindows($history, $opponentId, $venue, $seasonId, $training);
 
         return [
             'all' => $bucketFilter !== null
-                ? $this->strengthMetrics($history, $exposure, $attempts, $opponentId, $venue, $seasonId, 'ALL', $training)
-                : [
-                'last_game' => $this->summaryMetrics($history->take(1)),
-                ...($training === [] ? [] : ['train' => $this->summaryMetrics($history->filter(fn ($row) => in_array((string) $row->season_id, $training, true)))]),
-                ...($training === [] ? [] : ['venue_train' => $this->summaryMetrics($history->filter(fn ($row) => in_array((string) $row->season_id, $training, true))->filter($isVenue))]),
-                ...($training === [] ? [] : ['opponent_train' => $this->summaryMetrics($history->filter(fn ($row) => in_array((string) $row->season_id, $training, true))->filter($isOpponent))]),
-                'last_season' => $this->summaryMetrics($history->where('season_id', (string) ((int) $seasonId - 10001))),
-                'venue_last_season' => $this->summaryMetrics($history->where('season_id', (string) ((int) $seasonId - 10001))->filter($isVenue)),
-                'opponent_last_season' => $this->summaryMetrics($history->where('season_id', (string) ((int) $seasonId - 10001))->filter($isOpponent)),
-                'last_5' => $this->summaryMetrics($history->take(5)),
-                'last_10' => $this->summaryMetrics($history->take(10)),
-                'last_20' => $this->summaryMetrics($history->take(20)),
-                'season_to_date' => $this->summaryMetrics($history->filter(fn (object $row): bool => (string) $row->season_id === $seasonId)),
-                ...($training === [] ? [] : collect(range(1, 4))->mapWithKeys(fn (int $quarter): array => [
-                    'q'.$quarter.'_to_date' => $this->summaryMetrics($history->where('season_id', $seasonId)->reverse()->values()->slice(($quarter - 1) * 20, $quarter === 4 ? 22 : 20)),
-                ])->all()),
-                'venue_season_to_date' => $this->summaryMetrics($history->filter(fn (object $row): bool => (string) $row->season_id === $seasonId)->filter($isVenue)),
-                'opponent_last_10' => $this->summaryMetrics($history->filter($isOpponent)->take(10)),
-                'opponent_last_5' => $this->summaryMetrics($history->filter($isOpponent)->take(5)),
-                'opponent_last_20' => $this->summaryMetrics($history->filter($isOpponent)->take(20)),
-                'opponent_season_to_date' => $this->summaryMetrics($history->filter(fn (object $row): bool => (string) $row->season_id === $seasonId)->filter($isOpponent)),
-                'opponent_last_season' => $this->summaryMetrics($history->filter(fn (object $row): bool => (string) $row->season_id === (string) ((int) $seasonId - 10001))->filter($isOpponent)),
-            ],
+                ? $this->strengthMetrics($history, $exposure, $attempts, 'ALL', $windows)
+                : array_map(fn (Collection $rows): array => $this->summaryMetrics($rows), $windows),
             'individual_strength_version' => 1,
             'strength' => collect(['EV', 'PP', 'PK'])->mapWithKeys(fn (string $strength): array => [
-                $strength => $this->strengthMetrics($history, $exposure, $attempts, $opponentId, $venue, $seasonId, $strength, $training),
+                $strength => $this->strengthMetrics($history, $exposure, $attempts, $strength, $windows),
             ])->all(),
+        ];
+    }
+
+    /** Select appearance windows once and preserve their keys for all strength calculations. */
+    private function playerHistoryWindows(Collection $history, int $opponentId, string $venue, string $seasonId, array $training): array
+    {
+        $isOpponent = fn (object $row): bool => ((int) $row->home_team_id === (int) $row->nhl_team_id ? (int) $row->away_team_id : (int) $row->home_team_id) === $opponentId;
+        $isVenue = fn (object $row): bool => $venue === 'home' ? (int) $row->home_team_id === (int) $row->nhl_team_id : (int) $row->away_team_id === (int) $row->nhl_team_id;
+        $train = $history->filter(fn (object $row): bool => in_array((string) $row->season_id, $training, true));
+        $lastSeason = $history->where('season_id', (string) ((int) $seasonId - 10001));
+        $season = $history->where('season_id', $seasonId);
+        $opponent = $history->filter($isOpponent);
+        $chronologicalSeason = $season->reverse();
+
+        return [
+            'last_game' => $history->take(1),
+            ...($training === [] ? [] : ['train' => $train, 'venue_train' => $train->filter($isVenue), 'opponent_train' => $train->filter($isOpponent)]),
+            'last_season' => $lastSeason,
+            'venue_last_season' => $lastSeason->filter($isVenue),
+            'opponent_last_season' => $lastSeason->filter($isOpponent),
+            'last_5' => $history->take(5),
+            'last_10' => $history->take(10),
+            'last_20' => $history->take(20),
+            'season_to_date' => $season,
+            ...($training === [] ? [] : collect(range(1, 4))->mapWithKeys(fn (int $quarter): array => [
+                'q'.$quarter.'_to_date' => $chronologicalSeason->slice(($quarter - 1) * 20, $quarter === 4 ? 22 : 20),
+            ])->all()),
+            'venue_season_to_date' => $season->filter($isVenue),
+            'opponent_last_10' => $opponent->take(10),
+            'opponent_last_5' => $opponent->take(5),
+            'opponent_last_20' => $opponent->take(20),
+            'opponent_season_to_date' => $season->filter($isOpponent),
         ];
     }
 
@@ -888,14 +931,20 @@ class NhlPregameContextBuilder
     private function summaryMetrics(Collection $rows): array
     {
         $games = $rows->count();
-        $toi = (int) $rows->sum('toi');
-        $sat = (int) $rows->sum('sat');
-        $sog = (int) $rows->sum('sog');
-        $goals = (int) $rows->sum('g');
+        $totals = array_fill_keys(['toi', 'sat', 'sog', 'g', 'a', 'pts'], 0);
+        foreach ($rows as $row) {
+            foreach ($totals as $key => $total) {
+                $totals[$key] = $total + ($row->{$key} ?? 0);
+            }
+        }
+        $toi = (int) $totals['toi'];
+        $sat = (int) $totals['sat'];
+        $sog = (int) $totals['sog'];
+        $goals = (int) $totals['g'];
 
         return [
             'games' => $games, 'toi_seconds' => $toi, 'sat' => $sat, 'sog' => $sog, 'goals' => $goals,
-            'assists' => (int) $rows->sum('a'), 'points' => (int) $rows->sum('pts'),
+            'assists' => (int) $totals['a'], 'points' => (int) $totals['pts'],
             'sat_per_60' => $toi > 0 ? round($sat * 3600 / $toi, 4) : null,
             'sog_per_60' => $toi > 0 ? round($sog * 3600 / $toi, 4) : null,
             'goals_per_60' => $toi > 0 ? round($goals * 3600 / $toi, 4) : null,
@@ -1071,7 +1120,7 @@ class NhlPregameContextBuilder
     }
 
     /** @return array<string,array<string,int|float|null>> */
-    private function strengthMetrics(Collection $history, Collection $exposure, Collection $attempts, int $opponentId, string $venue, string $seasonId, string $strength, array $training = []): array
+    private function strengthMetrics(Collection $history, Collection $exposure, Collection $attempts, string $strength, array $windows): array
     {
         // Choose appearances first: a game with no PP/PK time still belongs in L5/L10/L20.
         $history = $history->map(function (object $appearance) use ($exposure, $attempts, $strength): object {
@@ -1098,31 +1147,15 @@ class NhlPregameContextBuilder
                 'goals' => (int) ($counts->goals ?? 0),
             ];
         });
-        $isOpponent = fn (object $row): bool => ((int) $row->home_team_id === (int) $row->nhl_team_id ? (int) $row->away_team_id : (int) $row->home_team_id) === $opponentId;
-        $isVenue = fn (object $row): bool => $venue === 'home' ? (int) $row->home_team_id === (int) $row->nhl_team_id : (int) $row->away_team_id === (int) $row->nhl_team_id;
+        $metrics = [];
+        foreach ($windows as $window => $appearances) {
+            $metrics[$window] = $this->strengthWindowMetrics(
+                $history->only($appearances->keys()->all()),
+                in_array($window, ['train', 'venue_train', 'opponent_train'], true),
+            );
+        }
 
-        return [
-            'last_game' => $this->strengthWindowMetrics($history->take(1)),
-            ...($training === [] ? [] : ['train' => $this->strengthWindowMetrics($history->filter(fn ($row) => in_array((string) $row->season_id, $training, true)), true)]),
-            ...($training === [] ? [] : ['venue_train' => $this->strengthWindowMetrics($history->filter(fn ($row) => in_array((string) $row->season_id, $training, true))->filter($isVenue), true)]),
-            ...($training === [] ? [] : ['opponent_train' => $this->strengthWindowMetrics($history->filter(fn ($row) => in_array((string) $row->season_id, $training, true))->filter($isOpponent), true)]),
-            'last_season' => $this->strengthWindowMetrics($history->where('season_id', (string) ((int) $seasonId - 10001))),
-            'venue_last_season' => $this->strengthWindowMetrics($history->where('season_id', (string) ((int) $seasonId - 10001))->filter($isVenue)),
-            'opponent_last_season' => $this->strengthWindowMetrics($history->where('season_id', (string) ((int) $seasonId - 10001))->filter($isOpponent)),
-            'last_5' => $this->strengthWindowMetrics($history->take(5)),
-            'last_10' => $this->strengthWindowMetrics($history->take(10)),
-            'last_20' => $this->strengthWindowMetrics($history->take(20)),
-            'season_to_date' => $this->strengthWindowMetrics($history->filter(fn (object $row): bool => (string) $row->season_id === $seasonId)),
-            ...($training === [] ? [] : collect(range(1, 4))->mapWithKeys(fn (int $quarter): array => [
-                'q'.$quarter.'_to_date' => $this->strengthWindowMetrics($history->where('season_id', $seasonId)->reverse()->values()->slice(($quarter - 1) * 20, $quarter === 4 ? 22 : 20)),
-            ])->all()),
-            'venue_season_to_date' => $this->strengthWindowMetrics($history->filter(fn (object $row): bool => (string) $row->season_id === $seasonId)->filter($isVenue)),
-            'opponent_last_10' => $this->strengthWindowMetrics($history->filter($isOpponent)->take(10)),
-            'opponent_last_5' => $this->strengthWindowMetrics($history->filter($isOpponent)->take(5)),
-            'opponent_last_20' => $this->strengthWindowMetrics($history->filter($isOpponent)->take(20)),
-            'opponent_season_to_date' => $this->strengthWindowMetrics($history->filter(fn (object $row): bool => (string) $row->season_id === $seasonId)->filter($isOpponent)),
-            'opponent_last_season' => $this->strengthWindowMetrics($history->filter(fn (object $row): bool => (string) $row->season_id === (string) ((int) $seasonId - 10001))->filter($isOpponent)),
-        ];
+        return $metrics;
     }
 
     /** Combine individual counts with matching strength exposure, never on-ice shot totals. */
@@ -1154,14 +1187,23 @@ class NhlPregameContextBuilder
     private function onIceMetrics(Collection $rows): array
     {
         $games = $rows->count();
-        $toi = (int) $rows->sum('toi');
-        $cf = (int) $rows->sum('satf');
-        $ca = (int) $rows->sum('sata');
-        $sf = (int) $rows->sum('sf');
-        $sa = (int) $rows->sum('sa');
-        $gf = (int) $rows->sum('gf');
-        $ga = (int) $rows->sum('ga');
-        $points = (int) $rows->sum('individual_pts');
+        $totals = array_fill_keys(['toi', 'satf', 'sata', 'sf', 'sa', 'gf', 'ga', 'individual_pts'], 0);
+        $invalidPoints = false;
+        foreach ($rows as $row) {
+            foreach ($totals as $key => $total) {
+                $totals[$key] = $total + ($row->{$key} ?? 0);
+            }
+            $invalidPoints = $invalidPoints || (int) ($row->individual_pts ?? 0) > (int) ($row->gf ?? 0);
+        }
+        $toi = (int) $totals['toi'];
+        $cf = (int) $totals['satf'];
+        $ca = (int) $totals['sata'];
+        $sf = (int) $totals['sf'];
+        $sa = (int) $totals['sa'];
+        $gf = (int) $totals['gf'];
+        $ga = (int) $totals['ga'];
+        $points = (int) $totals['individual_pts'];
+        $ippAvailable = $gf > 0 && ! $invalidPoints;
         $onIceShooting = $sf > 0 ? 100 * $gf / $sf : null;
         $onIceSave = $sa > 0 ? 100 * (1 - ($ga / $sa)) : null;
 
@@ -1173,7 +1215,7 @@ class NhlPregameContextBuilder
             'on_ice_shooting_pct' => $onIceShooting === null ? null : round($onIceShooting, 4),
             'on_ice_save_pct' => $onIceSave === null ? null : round($onIceSave, 4),
             'pdo' => $onIceShooting === null || $onIceSave === null ? null : round($onIceShooting + $onIceSave, 4),
-            'ipp' => $gf > 0 ? round(100 * $points / $gf, 4) : null,
+            'ipp' => $ippAvailable ? round(100 * $points / $gf, 4) : null,
         ];
     }
 

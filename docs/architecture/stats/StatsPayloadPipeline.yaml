@@ -38,6 +38,9 @@ when_not_to_use:
   - Discord bot runtime.
   - One-off admin reports that do not expose the stats payload contract.
 rules:
+  - Advanced player report gax is eligible individual shooter goals minus expected goals, while gsax is goalie-facing expected goals minus actual goals allowed. Reuse the dashboard scored-model selection, current-score precedence and model sample semantics for the selected season/date/game-type scope. Exclude shootouts and empty nets from eligible actual/expected contributions; shooter empty-net counts may only reconcile source coverage, not contribute to G−xG. Withhold metrics for incomplete score, shot, goal or goalie-appearance coverage. No scoring or imports run from these expected-stat reads.
+  - Advanced expected metrics publish in the existing public season report bundles after source/season sync and recover through the existing cold report build. Store unsliced sources beside displayed values so per-game and per-sixty conversion uses raw GP and TOI once. Derived numeric filters use those raw totals and calculated bounds, never fictitious source-table columns or zero-filled missing metrics.
+  - The ipp payload alias derives from EV-only raw participation and on-ice goal totals, independently of the existing population of other on-ice aliases. Missing denominators or inconsistent contributing games remain unavailable. Legacy report formulas cannot overwrite the canonical EV ipp alias. Public report cache revisions must invalidate old IPP semantics without evicting unrelated prepared reports.
   - Stats payload responses must preserve headings, data, settings, and meta keys unless a breaking contract change is explicitly approved.
   - HTTP request parsing must be normalized before query filtering or schema generation.
   - Query-backed filters and post-assembly derived filters must remain distinct.

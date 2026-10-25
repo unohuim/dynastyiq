@@ -1736,3 +1736,23 @@ describe('stats page prospect controls', () => {
       .toBeLessThan(document.body.textContent.indexOf('Minor Goalie'));
   });
 });
+
+
+it('formats unavailable IPP separately from a genuine zero percentage', async () => {
+  const { statFormatters } = await import('../components/StatsPage/stats-utils.js');
+  expect(statFormatters.ipp(null)).toBe('—');
+  expect(statFormatters.ipp(undefined)).toBe('—');
+  expect(statFormatters.ipp('')).toBe('—');
+  expect(statFormatters.ipp(0)).toBe('0.00%');
+  expect(statFormatters.ipp(0.6667)).toBe('66.67%');
+});
+
+
+it('shows signed goals above expected and saves above expected while preserving unknown values', async () => {
+  const { statFormatters } = await import('../components/StatsPage/stats-utils.js');
+  expect(statFormatters.gsax(1.25)).toBe('+1.25');
+  expect(statFormatters.gsax(-1.25)).toBe('-1.25');
+  expect(statFormatters.gax(0)).toBe('0.00');
+  expect(statFormatters.gax(null)).toBe('—');
+  expect(statFormatters.gsax(undefined)).toBe('—');
+});

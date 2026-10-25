@@ -768,3 +768,72 @@ it('pages eligible players deterministically and excludes target-only participan
     expect($first->pluck('entity_id')->map(fn ($id): int => (int) $id)->all())->toBe([101])
         ->and($builder->leagueEntities($this->run, $game, 'player', 101, 1))->toHaveCount(0);
 });
+
+it('preserves player metrics and team links when rebuilding snapshots with bounded batch writes', function (): void {
+    ($this->fact)(2025020001, 'EV', true, true);
+    ($this->fact)(2025020001, 'PP', true);
+    // This player's zero attempts must use game coverage, not require a personal attempt.
+    DB::table('players')->insert(['nhl_id' => 102, 'first_name' => 'Other', 'last_name' => 'Skater',
+        'full_name' => 'Other Skater', 'position' => 'D', 'pos_type' => 'D']);
+    foreach ([2025020001, 2025020010] as $gameId) {
+        DB::table('nhl_game_summaries')->insert(['nhl_game_id' => $gameId, 'nhl_player_id' => 102,
+            'nhl_team_id' => 10, 'toi' => 900, 'sat' => 0, 'sog' => 0, 'g' => 0]);
+    }
+    DB::table('nhl_player_game_strength_summaries')->insert(['nhl_game_id' => 2025020001,
+        'player_id' => DB::table('players')->where('nhl_id', 102)->value('id'), 'nhl_player_id' => 102,
+        'team_id' => 10, 'strength' => 'EV', 'toi' => 900]);
+    $builder = app(NhlPregameContextBuilder::class);
+    $builder->build($this->run, 2025020010);
+    $before = DB::table('nhl_player_game_pregame_contexts')->where('nhl_game_id', 2025020010)
+        ->orderBy('nhl_player_id')->get(['id', 'team_context_id', 'metrics'])->all();
+    $counts = $builder->buildDay($this->run, [2025020010]);
+    $after = DB::table('nhl_player_game_pregame_contexts')->where('nhl_game_id', 2025020010)
+        ->orderBy('nhl_player_id')->get(['id', 'team_context_id', 'metrics'])->all();
+    expect($after)->toEqual($before)->and($counts['player_context_count'])->toBe(2);
+    $metrics = json_decode($after[1]->metrics, true);
+    expect($metrics['strength']['EV']['last_5']['sat'])->toBe(0)
+        ->and($metrics['strength']['EV']['last_5']['individual_missing_games'])->toBe(0);
+});
+
+it('writes groups of player snapshots instead of issuing an upsert for every player', function (): void {
+    ($this->fact)(2025020001, 'EV', true);
+    foreach (range(102, 109) as $playerId) {
+        DB::table('nhl_game_summaries')->insert(['nhl_game_id' => 2025020010,
+            'nhl_player_id' => $playerId, 'nhl_team_id' => 10, 'toi' => 600]);
+    }
+    $writes = [];
+    DB::listen(function ($query) use (&$writes): void {
+        if (str_starts_with(strtolower($query->sql), 'insert into ')
+            && str_contains($query->sql, 'nhl_player_game_pregame_contexts')) {
+            $writes[] = $query->sql;
+        }
+    });
+    $result = app(NhlPregameContextBuilder::class)->buildDay($this->run, [2025020010]);
+    expect($writes)->toHaveCount(2)->and($result['player_context_count'])->toBe(9)
+        ->and(DB::table('nhl_player_game_pregame_contexts')->where('nhl_game_id', 2025020010)->count())->toBe(9)
+        ->and(DB::table('nhl_player_game_pregame_contexts')->where('nhl_game_id', 2025020010)->whereNull('team_context_id')->count())->toBe(0);
+});
+
+it('shares exact quarter appearance boundaries across all and strength windows', function (): void {
+    $this->run->update(['options' => ['train_season_ids' => ['20242025']]]);
+    ($this->fact)(2025020001, 'EV', true);
+    foreach (range(1, 61) as $index) {
+        $id = 2025020100 + $index;
+        ($this->game)($id, Carbon::parse('2025-10-10')->subDays($index)->format('Y-m-d'));
+        ($this->exposure)($id, 'EV', 600);
+        ($this->fact)($id, 'EV', true);
+    }
+    ($this->game)(2024020001, '2024-10-01', '20242025');
+    ($this->exposure)(2024020001, 'EV', 600);
+    ($this->fact)(2024020001, 'EV', true);
+    $metrics = ($this->build)();
+    foreach ([1 => 20, 2 => 20, 3 => 20, 4 => 2] as $quarter => $games) {
+        expect($metrics['all']['q'.$quarter.'_to_date']['games'])->toBe($games)
+            ->and($metrics['strength']['EV']['q'.$quarter.'_to_date']['games'])->toBe($games)
+            ->and($metrics['strength']['EV']['q'.$quarter.'_to_date']['sat'])->toBe($games);
+    }
+    expect($metrics['all']['train']['games'])->toBe(1)
+        ->and($metrics['strength']['EV']['train']['sat'])->toBe(1)
+        ->and($metrics['all']['last_5']['games'])->toBe(5)
+        ->and($metrics['strength']['EV']['last_5']['sat'])->toBe(5);
+});
