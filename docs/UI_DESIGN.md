@@ -38,14 +38,21 @@ Leaders. Rank skaters by the selected season's SOG, Hits, Blocks or PIMs totals;
 show rank, Player, GP and the selected stat, rather than last-night lines.
 
 On mobile below 640px, /stats removes the hero header across category views and
-keeps the category tabs above the content. Skaters, Goalies and Prospects retain
-the original compact vertical player list shown in `docs/designs/stats-mobile.png`,
-with white 52px-high rows, dark text, team strips, 28px avatars, compact identity
-details and a single inline statistics row, matching the reference spacing. Do
-not add mobile rate-bar rows. The list spans the mobile viewport; desktop rows
-retain their graphite styling and rate bars. Prospects opens
-the existing Prospects report. Teams uses matching compact vertical rows with
-team logos and season statistics; its desktop table remains unchanged. Horizontal
+keeps the existing category tabs on Leaders. For mobile Skaters, Goalies,
+Prospects and Teams, `docs/designs/stats-compact.png` is the approved reference:
+use a compact category dropdown, dark navy surfaces, 44px ranked rows,
+small portraits/logos and aligned column headers. Pin player/team identity while
+the remaining report columns scroll horizontally inside the table; never overflow
+the document. Show abbreviated player names with the full name available, and
+team/position metadata beneath. Prioritize PTS and GP for Skaters, GAA/SV%/W for
+Goalies and available Age/Team/PTS fields for Prospects, retaining all other report
+columns. Missing values display an em dash. Keep mobile search, sort and filters
+compact, with quick position pills where applicable and the existing Report
+selector accessible inside the filter drawer. Do not invent unsupported filters.
+Do not add mobile rate bars. Prospects opens the existing Prospects report.
+Desktop rows retain their graphite styling, controls and rate bars. Teams uses
+the same compact dark presentation on mobile and retains its desktop table.
+Horizontal
 leader cards belong only to the Leaders tab. Leaders uses four compact horizontal
 card rows headed All Skaters, All Goalies, All Teams and All Prospects. Exactly
 three cards fit each row's visible width; remaining cards scroll horizontally
@@ -599,7 +606,7 @@ placeholder. Do not show a season-not-prepared message alongside visible cards.
 - Teams uses a compact desktop header with three category leaders: W%, GAA and Corsi%. Mobile retains category navigation without the hero.
 - Teams rows show GP, W, PTS, GF, GA, W%, GAA, Corsi%, Hits, Blocks, SAT, HDSAT, Saves, SOG, PIM, PP% and PK%. GAA is per 60 actual game minutes. Percent labels display percent values; missing coverage displays an em dash.
 - The graphite filter bar defaults to Search and All Teams. Its blue Filters toggle replaces quick controls with season, period/date range, game type, team and counting-stat slice controls using a 500ms horizontal transition, suppressed for reduced motion. No player position or goalie reports appear in Teams.
-- Desktop team-abbreviation badges use 28px player-row team logos; Teams badges use 32px logos. Mobile Teams uses compact white rows and all requested metrics; desktop supports horizontal table scrolling.
+- Desktop team-abbreviation badges use 28px player-row team logos; Teams badges use 32px logos. Mobile Teams follows stats-compact.png with dark ranked rows, 24px logos and a pinned team column; all requested metrics remain available through horizontal table scrolling.
 
 ### Individual points percentage
 

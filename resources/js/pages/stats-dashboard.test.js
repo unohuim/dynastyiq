@@ -6,6 +6,7 @@ import LoadingState from './Stats/LoadingState.vue';
 import LeaderCardRow from './Stats/LeaderCardRow.vue';
 import CategoryNav from './Stats/CategoryNav.vue';
 import Teams from './Stats/Teams.vue';
+import PlayerCardList from './Stats/Mobile/PlayerCardList.vue';
 import { readFileSync } from 'node:fs';
 
 let app;
@@ -207,16 +208,16 @@ it('links the Prospects category to the existing full report and marks it active
     const active = document.querySelector('[aria-current="page"]');
     expect(active.textContent).toBe('Prospects');
     expect(active.getAttribute('href')).toBe('/stats?view=skaters&perspective=prospects&season_id=20252026');
-    expect(document.querySelector('nav').classList.contains('overflow-x-auto')).toBe(true);
+    expect(document.querySelector('button[aria-expanded]').textContent).toContain('Prospects');
 });
 
-it('retains full player reports and separates mobile team rows from the desktop table', () => {
+it('retains full player reports and uses a responsive compact team table', () => {
     const source = readFileSync(new URL('./Stats/Index.vue', import.meta.url), 'utf8');
     expect(source).toContain('<StatsTable :key="view + selectedPerspective"');
     const teams = readFileSync(new URL('./Stats/Teams.vue', import.meta.url), 'utf8');
     expect(source).toContain('<Teams v-else-if=');
-    expect(teams).toContain('<li v-for="team in teams"');
-    expect(teams).toContain('<div class="hidden overflow-x-auto sm:block"><table');
+    expect(teams).toContain('data-compact-team-row');
+    expect(teams).toContain('data-compact-team-table');
     expect(source).toContain("['Leaders', 'Skaters', 'Goalies', 'Prospects', 'Teams']");
 });
 
@@ -238,7 +239,7 @@ const mountTeams = (overrides = {}) => {
 };
 it('renders every requested Teams column without duplicate hits or blocks', () => {
     mountTeams();
-    expect([...document.querySelectorAll('thead th')].map(node => node.textContent.trim().replace(/ [↓↑]$/, '')))
+    expect([...document.querySelectorAll('thead th')].map(node => node.textContent.trim().replace(/^#\s*/, '').replace(/ [↓↑]$/, '')))
         .toEqual(['Team', 'GP', 'W', 'PTS', 'GF', 'GA', 'W%', 'GAA', 'Corsi%', 'Hits', 'Blocks', 'SAT', 'HDSAT', 'Saves', 'SOG', 'PIM', 'PP%', 'PK%']);
 });
 it('filters prepared Teams rows immediately by name or abbreviation', async () => {
@@ -294,4 +295,136 @@ it('keeps explicit loading boundaries for preserved player tabs and deferred tea
     expect(source).toContain(':aria-busy="Boolean(pendingView)"');
     expect(source).toContain("['skaters', 'goalies', 'prospects'].includes(pendingView.value)");
     expect(source).not.toContain('v-if="seamlessTableSwitch" role="status" class="sr-only"');
+});
+
+const mountCompact = (overrides = {}) => {
+    app = createApp(PlayerCardList, {
+        rows: [
+            { player_id: 1, name: 'Connor McDavid', team: 'EDM', pos: 'C', age: 29, gp: 10, pts: 20, sog: 30, avatar_url: '/connor.png' },
+            { player_id: 2, name: 'Leon Draisaitl', team: 'EDM', pos: 'C/L', age: 30, gp: 12, pts: 15, sog: 25 },
+        ],
+        headings: [{ key: 'name', label: 'Player' }, { key: 'gp', label: 'GP' }, { key: 'pts', label: 'PTS' }, { key: 'sog', label: 'SOG' }],
+        settings: { dashboardTable: true, sortKey: 'pts', sortDirection: 'desc' },
+        ...overrides,
+    });
+    app.mount('#leaders');
+};
+
+it('renders compact dashboard players as ranked table rows while retaining every report metric', () => {
+    mountCompact();
+    expect(document.querySelectorAll('[data-compact-player-row]')).toHaveLength(2);
+    expect([...document.querySelectorAll('thead th')].map(node => node.textContent.trim())).toEqual(['#', 'Player', 'PTS↓', 'GP', 'SOG']);
+    expect(document.querySelector('tbody tr').textContent).toContain('C. McDavid');
+    expect(document.querySelector('tbody tr td').textContent).toBe('1');
+});
+
+it('keeps full player names available alongside compact team and position identity', () => {
+    mountCompact();
+    expect(document.querySelector('[title="Connor McDavid"]').textContent).toBe('C. McDavid');
+    expect(document.querySelector('tbody tr th').textContent).toContain('EDM · C');
+});
+
+it('retains genuine zero counting stats in compact rows', () => {
+    mountCompact({ rows: [{ player_id: 1, name: 'Zero Goals', gp: 1, pts: 0, sog: 0 }] });
+    expect([...document.querySelectorAll('tbody td')].map(node => node.textContent.trim())).toEqual(['1', '0', '1', '0']);
+});
+
+it('shows missing compact metrics as unavailable rather than blank or zero', () => {
+    mountCompact({ rows: [{ player_id: 1, name: 'Missing Data', gp: 1, pts: null, sog: undefined }] });
+    expect([...document.querySelectorAll('tbody td')].map(node => node.textContent.trim())).toEqual(['1', '—', '1', '—']);
+});
+
+it('formats compact goalie columns as GAA save percentage and wins', () => {
+    mountCompact({ settings: { dashboardTable: true, dashboardGoalies: true, sortKey: 'wins', sortDirection: 'desc' },
+        rows: [{ player_id: 1, name: 'Ilya Sorokin', team: 'NYI', pos: 'G', gaa: 2, sv_pct: 94.3, wins: 7 }],
+        headings: [{ key: 'wins', label: 'W' }, { key: 'sv_pct', label: 'SV%' }, { key: 'gaa', label: 'GAA' }],
+    });
+    expect([...document.querySelectorAll('thead th')].map(node => node.textContent.trim())).toEqual(['#', 'Player', 'GAA', 'SV%', 'W↓']);
+    expect([...document.querySelectorAll('tbody td')].map(node => node.textContent.trim())).toEqual(['1', '2.00', '.943', '7']);
+});
+
+it('preserves ratio-based goalie save percentages and perfect saves in compact rows', () => {
+    mountCompact({ settings: { dashboardTable: true, dashboardGoalies: true, sortKey: 'sv_pct', sortDirection: 'desc' },
+        rows: [{ player_id: 1, name: 'Perfect Saves', sv_pct: 1 }, { player_id: 2, name: 'Ratio Saves', sv_pct: .925 }],
+        headings: [{ key: 'sv_pct', label: 'SV%' }],
+    });
+    expect(document.querySelector('tbody').textContent).toContain('1.000');
+    expect(document.querySelector('tbody').textContent).toContain('.925');
+});
+
+it('keeps compact points per game readable without changing its numeric source', () => {
+    const rows = [{ player_id: 1, name: 'Rate Skater', pts_pg: 2.6666666667 }];
+    mountCompact({ rows, headings: [{ key: 'pts_pg', label: 'PTS/GP' }] });
+    expect(document.querySelector('tbody').textContent).toContain('2.67');
+    expect(rows[0].pts_pg).toBe(2.6666666667);
+});
+
+it('exposes available prospect age team and points as compact columns', () => {
+    mountCompact({ settings: { dashboardTable: true, dashboardProspects: true, sortKey: 'pts', sortDirection: 'desc' },
+        rows: [{ player_id: 1, name: 'Future Skater', age: 19, team: 'TOR', league: 'OHL', pos: 'C', pts: 20 }],
+        headings: [{ key: 'pts', label: 'PTS' }, { key: 'age', label: 'Age' }, { key: 'team', label: 'Team' }],
+    });
+    expect([...document.querySelectorAll('thead th')].map(node => node.textContent.trim())).toEqual(['#', 'Player', 'Age', 'Team', 'PTS↓']);
+    expect(document.querySelector('tbody th').textContent).toContain('C · OHL');
+});
+
+it('delegates compact header sorting through the existing sort callback', async () => {
+    const changes = [];
+    mountCompact({ onSortChange: change => changes.push(change) });
+    [...document.querySelectorAll('thead button')].find(node => node.textContent.includes('PTS')).click();
+    await nextTick();
+    expect(changes).toEqual([{ sortKey: 'pts', sortDirection: 'asc' }]);
+});
+
+it('preserves nested stat values and existing local player search in compact tables', () => {
+    mountCompact({ rows: [{ player_id: 1, name: 'Nested Skater', stats: { gp: 8, pts: 12, sog: 0 } },
+        { player_id: 2, name: 'Other Player', gp: 2, pts: 1 }], searchTerm: 'nested' });
+    expect(document.querySelectorAll('tbody tr')).toHaveLength(1);
+    expect(document.querySelector('tbody').textContent).toContain('12');
+    expect(document.querySelector('tbody').textContent).not.toContain('Other Player');
+});
+
+it('uses initials when a compact player portrait fails', async () => {
+    mountCompact();
+    document.querySelector('tbody img').dispatchEvent(new Event('error'));
+    await nextTick();
+    expect(document.querySelector('tbody tr img')).toBeNull();
+    expect(document.querySelector('tbody tr th').textContent).toContain('CM');
+});
+
+it('retains legacy player cards outside the dashboard compact-table opt-in', () => {
+    mountCompact({ settings: { sortKey: 'pts', sortDirection: 'desc' } });
+    expect(document.querySelector('[data-compact-player-table]')).toBeNull();
+    expect(document.querySelectorAll('[data-vue-stats-mobile-card]')).toHaveLength(2);
+});
+
+it('opens and dismisses compact category navigation with Escape and restores focus', async () => {
+    app = createApp(CategoryNav, { view: 'goalies', links: [
+        { view: 'skaters', label: 'Skaters', href: '/stats?view=skaters' },
+        { view: 'goalies', label: 'Goalies', href: '/stats?view=goalies' },
+    ] });
+    app.mount('#leaders');
+    const toggle = document.querySelector('button[aria-expanded]');
+    toggle.click(); await nextTick();
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(document.getElementById(toggle.getAttribute('aria-controls')).textContent).toContain('Skaters');
+    toggle.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await nextTick();
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(document.activeElement).toBe(toggle);
+});
+
+it('leaves Leaders category navigation in its existing tab format', () => {
+    app = createApp(CategoryNav, { view: 'leaders', links: [{ view: 'leaders', label: 'Leaders', href: '/stats' }] });
+    app.mount('#leaders');
+    expect(document.querySelector('button[aria-expanded]')).toBeNull();
+    expect(document.querySelector('nav').classList.contains('overflow-x-auto')).toBe(true);
+});
+
+it('keeps team identity pinned while all existing team metrics remain accessible', () => {
+    mountTeams();
+    expect(document.querySelector('[data-compact-team-table]').getAttribute('tabindex')).toBe('0');
+    expect(document.querySelectorAll('table')).toHaveLength(1);
+    expect(document.querySelectorAll('tbody tr')).toHaveLength(2);
+    expect(document.querySelector('tbody tr td').classList.contains('sticky')).toBe(true);
+    expect(document.querySelector('thead').textContent).toContain('PK%');
 });

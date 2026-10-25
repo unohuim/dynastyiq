@@ -305,6 +305,52 @@ describe('stats page prospect controls', () => {
     expect(document.body.querySelector('button[aria-label="Stats filters"]')).not.toBeNull();
   });
 
+  it('renders compact dashboard rows with local position pills and a filter-drawer report selector', async () => {
+    const shell = await createShell({ mobile: true, config: { dashboardFilters: true, reportView: 'skaters', selectedPerspective: 'skaters' } });
+    shell.render();
+    expect(shell.container.querySelector('[data-compact-player-table]')).not.toBeNull();
+    expect(shell.container.querySelector('input[aria-label="Search skaters"]')).not.toBeNull();
+    expect(shell.container.querySelectorAll('button[aria-label="Stats filters"]')).toHaveLength(1);
+    expect([...shell.container.querySelectorAll('[aria-label="Player positions"] button')].map(node => node.textContent))
+      .toEqual(['All', 'C', 'L', 'R', 'D']);
+    shell.container.querySelector('button[aria-label="Stats filters"]').click();
+    expect(shell.state.isFilterDrawerOpen).toBe(true);
+    expect(shell.container.querySelector('#mobile-stats-filter-drawer').textContent).toContain('Report');
+  });
+
+  it('keeps compact mobile search when sorting or changing the filter-drawer state', async () => {
+    const shell = await createShell({ mobile: true, config: { dashboardFilters: true, reportView: 'skaters', selectedPerspective: 'skaters' } });
+    shell.render();
+    shell.contentEl.dispatchEvent(new CustomEvent('searchInputEvent', { detail: { searchTerm: 'Test Prospect' } }));
+    expect(shell.mobileSearchTerm).toBe('Test Prospect');
+    shell.onSortChange({ sortKey: 'gp', sortDirection: 'desc' });
+    expect(shell.container.querySelector('#searchInput').value).toBe('Test Prospect');
+    shell.openFilterDrawer();
+    shell.closeFilterDrawer();
+    expect(shell.container.querySelector('#searchInput').value).toBe('Test Prospect');
+    expect(shell.container.querySelectorAll('[data-compact-player-row]')).toHaveLength(1);
+  });
+
+  it('clears compact mobile position selections without clearing the search', async () => {
+    const shell = await createShell({ mobile: true, config: { dashboardFilters: true, reportView: 'skaters', selectedPerspective: 'skaters' } });
+    shell.render();
+    shell.contentEl.dispatchEvent(new CustomEvent('searchInputEvent', { detail: { searchTerm: 'Test Prospect' } }));
+    shell.state.selectedPosTypes = ['D'];
+    shell.render();
+    expect(shell.container.querySelectorAll('[data-compact-player-row]')).toHaveLength(0);
+    shell.container.querySelector('[aria-label="Player positions"] button').click();
+    expect(shell.state.selectedPosTypes).toEqual([]);
+    expect(shell.container.querySelectorAll('[data-compact-player-row]')).toHaveLength(1);
+    expect(shell.container.querySelector('#searchInput').value).toBe('Test Prospect');
+  });
+
+  it('omits skater position pills in compact goalie reports', async () => {
+    const shell = await createShell({ mobile: true, config: { dashboardFilters: true, reportView: 'goalies', selectedPerspective: 'goalies' } });
+    shell.render();
+    expect(shell.container.querySelector('[aria-label="Player positions"]')).toBeNull();
+    expect(shell.container.querySelector('input[aria-label="Search goalies"]')).not.toBeNull();
+  });
+
   it('opens the mobile filter drawer from the top filters button', async () => {
     const shell = await createShell({
       mobile: true,

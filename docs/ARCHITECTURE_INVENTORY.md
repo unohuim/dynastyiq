@@ -1265,6 +1265,14 @@ $perspectives = Perspective::query()
 **Purpose:**
 Render desktop and mobile stats experiences from the stats payload while sharing utilities and UI primitives. The first Inertia migration pass uses `Stats/Index.vue` as a compatibility shell around the existing StatsPage renderer, with Vue mobile card components taking over mobile player-card list rendering and Vue desktop row components taking over desktop player-row rendering during the staged migration.
 
+Public mobile category reports opt into compact dark ranked tables through
+`dashboardTable`, with pinned identity, horizontally accessible report metrics,
+local search, position controls and the existing sort/filter callbacks. The
+mobile category dropdown excludes Leaders, which retains its current navigation.
+Other mobile consumers retain their cards. Canonical behavior:
+`docs/architecture/stats/StatsPageRenderer.yaml`; visual authority:
+`docs/UI_DESIGN.md` and `docs/designs/stats-compact.png`.
+
 **When to Use:**
 Stats table/card rendering on `/stats`.
 

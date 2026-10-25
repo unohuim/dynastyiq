@@ -97,6 +97,7 @@ export class StatsPageShell {
     this.filterState = new StatsFilterState(this.state);
     this.pendingLocalPositionFilters = null;
     this.cachedSkaterHeadings = null;
+    this.mobileSearchTerm = '';
 
     this.settings = {
       ...settings,
@@ -645,6 +646,10 @@ export class StatsPageShell {
 
   renderMobileControls() {
     const wrapper = createElement('div', 'top-0 z-40');
+    if (this.config.dashboardFilters === true) {
+      wrapper.appendChild(this.renderMobileFilterDrawer());
+      return wrapper;
+    }
     const row = createElement('div', 'flex');
 
     const filterButton = createElement('button', 'searchbar-button-mobile', '');
@@ -721,12 +726,14 @@ export class StatsPageShell {
     this.state.isFilterDrawerOpen = true;
     document.body.style.overflow = 'hidden';
     this.renderControls();
+    this.contentEl.querySelector('button[aria-controls="mobile-stats-filter-drawer"]')?.setAttribute('aria-expanded', 'true');
   }
 
   closeFilterDrawer() {
     this.state.isFilterDrawerOpen = false;
     document.body.style.overflow = '';
     this.renderControls();
+    this.contentEl.querySelector('button[aria-controls="mobile-stats-filter-drawer"]')?.setAttribute('aria-expanded', 'false');
   }
 
   renderMobileFilterDrawer() {
@@ -779,6 +786,12 @@ export class StatsPageShell {
     header.appendChild(headerRow);
 
     const body = createElement('div', 'flex-1 overflow-y-auto px-4 py-4 space-y-6');
+    if (this.config.dashboardFilters === true) {
+      const reportLabel = createElement('label', 'block space-y-1 text-xs font-medium', 'Report');
+      reportLabel.appendChild(this.renderSelect(this.perspectiveOptions(), this.state.perspective,
+        value => this.setPerspective(value), 'h-9 w-full rounded-md border border-gray-200 bg-white px-2 text-sm text-gray-900'));
+      body.appendChild(reportLabel);
+    }
     body.appendChild(this.renderMobileFilterStrip());
     this.numericFilterSpecs().forEach((spec) => {
       body.appendChild(this.renderDualSliderFilter(spec));
@@ -1236,6 +1249,17 @@ export class StatsPageShell {
       filterSearchTarget: this.config.dashboardFilters === true ? this.desktopSearchRow : null,
       dashboardTable: this.config.dashboardFilters === true,
       dashboardGoalies: this.config.dashboardFilters === true && (this.config.reportView === 'goalies' || this.state.perspective.startsWith('goalies')),
+      dashboardProspects: this.config.dashboardFilters === true && this.state.perspective.startsWith('prospects'),
+      mobileSearchTerm: this.mobileSearchTerm,
+      mobileFiltersOpen: this.state.isFilterDrawerOpen,
+      onMobileSearchChange: value => { this.mobileSearchTerm = value; },
+      onOpenMobileFilters: () => this.openFilterDrawer(),
+      onClearMobilePositions: () => {
+        this.state.selectedPos = [];
+        this.state.selectedPosTypes = [];
+        this.state.leagueAutoSkaterFilter = false;
+        this.render();
+      },
       leagueProspectMode: this.payload?.meta?.leagueProspectMode || '',
       resource: this.settings.resource || this.resource,
       teamAggregate: this.settings.teamAggregate === true || this.resource === 'teams',

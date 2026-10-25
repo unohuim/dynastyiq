@@ -66,8 +66,8 @@ const teamTabs = [{ key: 'points', label: 'Points' }, { key: 'goals', label: 'Go
 
 <template>
     <Head title="Statistics · DynastyIQ" />
-    <main class="mx-auto flex min-w-0 max-w-[1800px] flex-col gap-3 bg-[#020e17] px-3 py-3 text-slate-100 md:px-5" aria-label="NHL statistics dashboard" :aria-busy="Boolean(pendingView)">
-        <div class="overflow-hidden rounded-md border border-[#143144] bg-[#03131f] sm:hidden">
+    <main class="mx-auto flex min-w-0 max-w-[1800px] flex-col bg-[#020e17] px-3 text-slate-100 md:px-5" :class="activeView === 'leaders' ? 'gap-3 py-3' : 'gap-0 py-0 sm:gap-3 sm:py-3'" aria-label="NHL statistics dashboard" :aria-busy="Boolean(pendingView)">
+        <div class="bg-[#03131f] sm:hidden" :class="activeView === 'leaders' ? 'overflow-hidden rounded-md border border-[#143144]' : '-mx-3'">
             <CategoryNav :links="navLinks" :view="pendingView || activeView" @start="startVisit" @finish="finishVisit" @failed="failVisit" />
         </div>
         <Deferred data="leaders">
@@ -143,7 +143,7 @@ const teamTabs = [{ key: 'points', label: 'Points' }, { key: 'goals', label: 'Go
         <Deferred v-if="['skaters', 'goalies'].includes(view) && (!pendingView || seamlessTableSwitch)" data="initialPayload">
             <template #fallback><LoadingState :label="view" :message="statsCacheMissing ? rewindMessage : ''" /></template>
             <template #rescue="{ reloading }"><LoadingState :label="view" failed :reloading="reloading" @retry="reload('initialPayload')" /></template>
-        <section class="-mx-3 overflow-hidden bg-white text-slate-900 sm:mx-0 sm:rounded-lg sm:bg-[#101923]" :aria-label="`${activeView === 'prospects' ? 'Prospect' : view === 'goalies' ? 'Goalie' : 'Skater'} statistics`"><StatsTable :key="view + selectedPerspective" :report-view="view" :initial-payload="initialPayload" :api-url="apiUrl" :connected-leagues="connectedLeagues" :perspectives="perspectives" :selected-perspective="selectedPerspective" :mobile-breakpoint="mobileBreakpoint" /></section>
+        <section class="-mx-3 overflow-hidden bg-[#03131f] text-slate-100 sm:mx-0 sm:rounded-lg sm:bg-[#101923]" :aria-label="`${activeView === 'prospects' ? 'Prospect' : view === 'goalies' ? 'Goalie' : 'Skater'} statistics`"><StatsTable :key="view + selectedPerspective" :report-view="view" :initial-payload="initialPayload" :api-url="apiUrl" :connected-leagues="connectedLeagues" :perspectives="perspectives" :selected-perspective="selectedPerspective" :mobile-breakpoint="mobileBreakpoint" /></section>
         </Deferred>
     </main>
 </template>

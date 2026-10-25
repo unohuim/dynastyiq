@@ -84,7 +84,7 @@ function getOrCreateElement(id) {
 }
 
 export function StatsMobile({ container, data, headings, settings, onSortChange }) {
-  let searchTerm = '';
+  let searchTerm = settings.dashboardTable ? String(settings.mobileSearchTerm ?? '') : '';
   const rows = Array.isArray(data) ? data : [];
 
   ensureDisplayKey(settings, headings);
@@ -113,6 +113,7 @@ export function StatsMobile({ container, data, headings, settings, onSortChange 
         headings,
         settings,
         searchTerm,
+        onSortChange,
       });
 
       app.mount(listWrapper);
@@ -128,7 +129,57 @@ export function StatsMobile({ container, data, headings, settings, onSortChange 
   try {
     const searchBar = UI.SearchBar(container);
     if (searchBar) {
+      if (settings.dashboardTable) {
+        searchBar.className = 'border-b border-[#143144] bg-[#03131f] px-2 py-2';
+        const inner = searchBar.querySelector('.searchbar-innerWrapper-mobile');
+        inner.className = 'flex min-w-0 items-center gap-2';
+        const field = searchBar.querySelector('.searchbar-gridWrapper-mobile');
+        field.className = 'relative min-w-0 flex-1';
+        const input = searchBar.querySelector('input');
+        input.className = 'h-8 w-full rounded-md border border-[#244258] bg-[#071d2c] py-0 pl-7 pr-2 text-[11px] text-slate-100 placeholder:text-slate-400 focus:border-sky-400 focus:ring-1 focus:ring-sky-400';
+        input.placeholder = settings.dashboardProspects ? 'Search prospects…' : settings.dashboardGoalies ? 'Search goalies…' : 'Search skaters…';
+        input.setAttribute('aria-label', input.placeholder.replace('…', ''));
+        input.value = searchTerm;
+        field.insertAdjacentHTML('afterbegin', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true" class="pointer-events-none absolute left-2 top-2 h-4 w-4 text-slate-400"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg>');
+        const sort = inner.querySelector('button');
+        sort.className = 'flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-[#244258] bg-[#071d2c] text-slate-300 focus-visible:ring-2 focus-visible:ring-sky-400';
+        sort.querySelector('svg').setAttribute('class', 'h-4 w-4');
+        const filters = document.createElement('button');
+        filters.type = 'button';
+        filters.className = sort.className;
+        filters.setAttribute('aria-label', 'Stats filters');
+        filters.setAttribute('aria-controls', 'mobile-stats-filter-drawer');
+        filters.setAttribute('aria-expanded', String(settings.mobileFiltersOpen === true));
+        filters.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true" class="h-4 w-4"><path d="M3 6h18M3 12h18M3 18h18M8 3v6M16 9v6M10 15v6"/></svg>';
+        filters.addEventListener('click', () => settings.onOpenMobileFilters?.());
+        inner.prepend(filters);
+      }
       container.insertBefore(searchBar, listWrapper);
+      if (settings.dashboardTable && !settings.dashboardGoalies) {
+        const positions = document.createElement('div');
+        positions.className = 'flex gap-1.5 overflow-x-auto border-b border-[#143144] bg-[#03131f] px-2 pb-2';
+        positions.setAttribute('role', 'group');
+        positions.setAttribute('aria-label', 'Player positions');
+        const addPosition = (value, label, active) => {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'h-7 min-w-11 shrink-0 rounded-full border px-3 text-[10px] font-medium transition-colors duration-150 motion-reduce:transition-none focus-visible:ring-2 focus-visible:ring-sky-400 '
+            + (active ? 'border-blue-500 bg-blue-600 text-white' : 'border-[#143144] bg-[#071d2c] text-slate-300');
+          button.textContent = label;
+          button.setAttribute('aria-pressed', String(active));
+          button.addEventListener('click', () => value ? settings.onPositionToggle?.(value) : settings.onClearMobilePositions?.());
+          positions.appendChild(button);
+        };
+        const selected = [...(settings.selectedPos ?? []), ...(settings.selectedPosTypes ?? [])];
+        addPosition('', 'All', selected.length === 0);
+        for (const position of settings.positionButtons ?? []) {
+          if (position === 'All' || (!settings.dashboardProspects && ['F', 'G'].includes(position))) continue;
+          if (settings.dashboardProspects && !['F', 'D', 'G'].includes(position)) continue;
+          const labels = settings.dashboardProspects ? { F: 'Forwards', D: 'Defense', G: 'Goalies' } : { LW: 'L', RW: 'R' };
+          addPosition(position, labels[position] || position, selected.includes(position));
+        }
+        container.insertBefore(positions, listWrapper);
+      }
     }
   } catch (error) {
     console.error('[stats-mobile] search bar setup failed', error);
@@ -230,6 +281,7 @@ export function StatsMobile({ container, data, headings, settings, onSortChange 
 
   const searchHandler = (event) => {
     searchTerm = String(event.detail?.searchTerm ?? '');
+    if (settings.dashboardTable) settings.onMobileSearchChange?.(searchTerm);
     renderList();
   };
   const openSortHandler = () => openSortSheet();
