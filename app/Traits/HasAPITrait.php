@@ -54,11 +54,20 @@ public function getAPIDataWithToken(
      */
     public function getAPIDataFullUrl(string $url): array
     {
-        $client = new \GuzzleHttp\Client();
+        return Http::connectTimeout(10)
+            ->timeout(30)
+            ->acceptJson()
+            ->retry([1000, 3000], 0, static function (\Exception $exception): bool {
+                if ($exception instanceof \Illuminate\Http\Client\ConnectionException) {
+                    return true;
+                }
 
-        $response = $client->get($url);
-
-        return json_decode($response->getBody()->getContents(), true);
+                return $exception instanceof RequestException
+                    && ($exception->response->status() === 429 || $exception->response->status() >= 500);
+            })
+            ->get($url)
+            ->throw()
+            ->json();
     }
 
 

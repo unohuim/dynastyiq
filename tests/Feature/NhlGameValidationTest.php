@@ -1576,7 +1576,9 @@ it('allows on-ice stages to run when stored shiftcharts are missing', function (
         ->and($result['on_ice_message'])->toContain('shifts:empty_shiftcharts');
 });
 
-it('falls back to TV and TH time-on-ice reports when shiftcharts are empty', function (): void {
+it('falls back to TV and TH time-on-ice reports when shiftcharts are empty or time out', function (bool $unavailable): void {
+    \Illuminate\Support\Sleep::fake();
+    $this->beforeApplicationDestroyed(static fn () => \Illuminate\Support\Sleep::fake(false));
     ($this->insertGame)();
     ($this->makePlayer)(8478700, [
         'first_name' => 'Sidney',
@@ -1602,6 +1604,9 @@ it('falls back to TV and TH time-on-ice reports when shiftcharts are empty', fun
     ]);
 
     Http::fake([
+        'https://api.nhle.com/stats/rest/en/shiftcharts?cayenneExp=gameId=2026020001' => $unavailable
+            ? Http::sequence()->push('error code: 524', 524)->push('error code: 524', 524)->push('error code: 524', 524)
+            : Http::response(['data' => []]),
         'https://api-web.nhle.com/v1/gamecenter/2026020001/right-rail' => Http::response([
             'gameReports' => [
                 'toiAway' => 'https://www.nhl.com/scores/htmlreports/20262027/TV020001.HTM',
@@ -1618,17 +1623,7 @@ it('falls back to TV and TH time-on-ice reports when shiftcharts are empty', fun
         ),
     ]);
 
-    $importer = new class extends ImportNhlShifts {
-        /**
-         * @return array<string,mixed>
-         */
-        public function getAPIDataFullUrl(string $url): array
-        {
-            return ['data' => []];
-        }
-    };
-
-    expect($importer->import('2026020001'))->toBe(2)
+    expect(app(ImportNhlShifts::class)->import('2026020001'))->toBe(2)
         ->and(DB::table('nhl_shifts')->where('nhl_game_id', 2026020001)->count())->toBe(2)
         ->and(DB::table('nhl_game_summaries')
             ->where('nhl_game_id', 2026020001)
@@ -1646,7 +1641,151 @@ it('falls back to TV and TH time-on-ice reports when shiftcharts are empty', fun
         'reason' => 'tv_th_fallback',
         'url' => 'https://www.nhl.com/scores/htmlreports/20262027/TV020001.HTM',
     ]);
+    if ($unavailable) {
+        $this->assertDatabaseHas('nhl_game_source_statuses', [
+            'nhl_game_id' => 2026020001, 'source' => NhlGameSourceStatus::SOURCE_SHIFTS,
+            'status' => NhlGameSourceStatus::STATUS_UNAVAILABLE, 'reason' => 'request_failed',
+        ]);
+        $admin = ($this->makeSuperAdmin)();
+        $this->actingAs($admin)->getJson(route('admin.nhl-game-imports.source-gaps'))->assertOk()
+            ->assertJsonPath('gaps.0.game_id', 2026020001)
+            ->assertJsonPath('gaps.0.sources.0.details.http_status', 524);
+    }
+})->with([false, true]);
+
+it('recovers shift-chart requests after transient failures without using the HTML fallback', function (?int $status): void {
+    \Illuminate\Support\Sleep::fake();
+    $this->beforeApplicationDestroyed(static fn () => \Illuminate\Support\Sleep::fake(false));
+    $url = 'https://api.nhle.com/stats/rest/en/shiftcharts?cayenneExp=gameId=2026020001';
+    $expected = ['data' => [['playerId' => 8478700]], 'total' => 1];
+    $options = [];
+    $attempts = 0;
+    Http::fake([$url => function ($request, array $requestOptions) use (&$options, &$attempts, $status, $expected) {
+        $options = $requestOptions;
+        $attempts++;
+        if ($attempts === 1 && $status === null) {
+            throw new \Illuminate\Http\Client\ConnectionException('Provider connection timed out');
+        }
+
+        return $attempts === 1 ? Http::response('temporary failure', $status) : Http::response($expected);
+    }]);
+
+    expect(app(ImportNhlShifts::class)->getAPIDataFullUrl($url))->toBe($expected)
+        ->and($options['timeout'])->toBe(30)->and($options['connect_timeout'])->toBe(10);
+    expect($attempts)->toBe(2);
+    \Illuminate\Support\Sleep::assertSleptTimes(1);
+})->with([429, 500, 503, 524, null]);
+
+it('retains exhausted shift-chart failures when fallback reports provide no shifts', function (bool $connectionFailure): void {
+    \Illuminate\Support\Sleep::fake();
+    $this->beforeApplicationDestroyed(static fn () => \Illuminate\Support\Sleep::fake(false));
+    ($this->insertGame)();
+    $url = 'https://api.nhle.com/stats/rest/en/shiftcharts?cayenneExp=gameId=2026020001';
+    $attempts = 0;
+    Http::fake(function () use (&$attempts, $connectionFailure) {
+        $attempts++;
+        if ($connectionFailure) {
+            throw new \Illuminate\Http\Client\ConnectionException('Provider connection timed out');
+        }
+
+        return Http::response('error code: 524', 524);
+    });
+    $fallback = Mockery::mock(\App\Services\ImportNhlHtmlToiShifts::class);
+    $fallback->shouldReceive('import')->once()->with(2026020001)->andReturn(0);
+    $this->app->instance(\App\Services\ImportNhlHtmlToiShifts::class, $fallback);
+
+    expect(fn () => app(ImportNhlShifts::class)->import('2026020001'))
+        ->toThrow($connectionFailure ? \Illuminate\Http\Client\ConnectionException::class : \Illuminate\Http\Client\RequestException::class);
+    expect($attempts)->toBe(3);
+    \Illuminate\Support\Sleep::assertSleptTimes(2);
+    $this->assertDatabaseHas('nhl_game_source_statuses', [
+        'nhl_game_id' => 2026020001, 'source' => NhlGameSourceStatus::SOURCE_SHIFTS,
+        'status' => NhlGameSourceStatus::STATUS_UNAVAILABLE, 'reason' => 'request_failed', 'url' => $url,
+    ]);
+})->with([false, true]);
+
+it('replaces a stale API source gap after recovering and importing shift windows', function (): void {
+    \Illuminate\Support\Sleep::fake();
+    $this->beforeApplicationDestroyed(static fn () => \Illuminate\Support\Sleep::fake(false));
+    ($this->insertGame)();
+    ($this->makePlayer)();
+    $url = 'https://api.nhle.com/stats/rest/en/shiftcharts?cayenneExp=gameId=2026020001';
+    NhlGameSourceStatus::create([
+        'nhl_game_id' => 2026020001, 'source' => NhlGameSourceStatus::SOURCE_SHIFTS,
+        'status' => NhlGameSourceStatus::STATUS_UNAVAILABLE, 'reason' => 'request_failed', 'url' => $url,
+        'details' => ['http_status' => 524], 'checked_at' => now(),
+    ]);
+    Http::fake([$url => Http::sequence()->push('error code: 524', 524)->push(['total' => 1, 'data' => [[
+        'playerId' => 8478402, 'shiftNumber' => 1, 'period' => 1,
+        'startTime' => '00:00', 'endTime' => '01:00', 'duration' => '01:00',
+        'teamAbbrev' => 'TOR', 'teamName' => 'Toronto Maple Leafs',
+        'firstName' => 'Test', 'lastName' => 'Player', 'eventNumber' => 1, 'typeCode' => 517,
+    ]]])]);
+    $fallback = Mockery::mock(\App\Services\ImportNhlHtmlToiShifts::class);
+    $fallback->shouldNotReceive('import');
+    $this->app->instance(\App\Services\ImportNhlHtmlToiShifts::class, $fallback);
+
+    expect(app(ImportNhlShifts::class)->import('2026020001'))->toBe(1);
+    $this->assertDatabaseHas('nhl_shifts', ['nhl_game_id' => 2026020001, 'nhl_player_id' => 8478402]);
+    $this->assertDatabaseHas('nhl_game_summaries', ['nhl_game_id' => 2026020001, 'nhl_player_id' => 8478402, 'toi' => 60]);
+    $this->assertDatabaseHas('nhl_game_source_statuses', [
+        'nhl_game_id' => 2026020001, 'source' => NhlGameSourceStatus::SOURCE_SHIFTS,
+        'status' => NhlGameSourceStatus::STATUS_AVAILABLE, 'reason' => null,
+    ]);
+    Http::assertSentCount(2);
 });
+
+it('does not retry permanent shift-chart errors or use fallback data for them', function (int $status): void {
+    ($this->insertGame)();
+    Http::fake(['https://api.nhle.com/stats/rest/en/shiftcharts*' => Http::response('permanent error', $status)]);
+    $fallback = Mockery::mock(\App\Services\ImportNhlHtmlToiShifts::class);
+    $fallback->shouldNotReceive('import');
+    $this->app->instance(\App\Services\ImportNhlHtmlToiShifts::class, $fallback);
+
+    expect(fn () => app(ImportNhlShifts::class)->import('2026020001'))->toThrow(\Illuminate\Http\Client\RequestException::class);
+    Http::assertSentCount(1);
+})->with([400, 401, 403, 404, 422]);
+
+it('propagates shift importer programming errors without attempting an HTML fallback', function (): void {
+    ($this->insertGame)();
+    $fallback = Mockery::mock(\App\Services\ImportNhlHtmlToiShifts::class);
+    $fallback->shouldNotReceive('import');
+    $this->app->instance(\App\Services\ImportNhlHtmlToiShifts::class, $fallback);
+    $importer = new class extends ImportNhlShifts {
+        /** Reject malformed application output rather than disguising it as a source outage. */
+        public function getAPIDataFullUrl(string $url): array
+        {
+            throw new \TypeError('Malformed application output');
+        }
+    };
+
+    expect(fn () => $importer->import('2026020001'))->toThrow(\TypeError::class, 'Malformed application output');
+    Http::assertNothingSent();
+});
+
+it('classifies Laravel and Guzzle provider failures consistently without reporting them as application bugs', function (string $type, ?int $status, bool $retryable): void {
+    $request = new \GuzzleHttp\Psr7\Request('GET', 'https://api.nhle.com/stats/rest/en/shiftcharts');
+    $response = $status === null ? null : new \GuzzleHttp\Psr7\Response($status);
+    $exception = match ($type) {
+        'guzzle' => new \GuzzleHttp\Exception\RequestException('Provider request failed', $request, $response),
+        'guzzle_connection' => new \GuzzleHttp\Exception\ConnectException('Connection failed', $request),
+        'laravel_connection' => new \Illuminate\Http\Client\ConnectionException('Connection failed'),
+        default => new \Illuminate\Http\Client\RequestException(new \Illuminate\Http\Client\Response($response)),
+    };
+    $previousHub = \Sentry\SentrySdk::getCurrentHub();
+    // A hub without a client records no network traffic; restore it even when an assertion fails.
+    \Sentry\SentrySdk::setCurrentHub(new \Sentry\State\Hub());
+    try {
+        $metadata = app(\App\Services\NhlImportFailureReporter::class)->capture($exception, 2026020001, 'shifts', null);
+        expect($metadata['failure_category'])->toBe('provider')->and($metadata['retryable'])->toBe($retryable);
+    } finally {
+        \Sentry\SentrySdk::setCurrentHub($previousHub);
+    }
+})->with([
+    ['guzzle', 524, true], ['guzzle', 429, true], ['guzzle', 403, false], ['guzzle', null, true],
+    ['guzzle_connection', null, true], ['laravel_connection', null, true],
+    ['laravel', 524, true], ['laravel', 429, true], ['laravel', 404, false],
+]);
 
 it('skips missing players from HTML time-on-ice summaries for preseason games', function (): void {
     ($this->insertGame)(2026010001, [

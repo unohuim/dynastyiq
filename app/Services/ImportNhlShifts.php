@@ -8,9 +8,12 @@ use App\Models\NhlGameSummary;
 use App\Models\Player;
 use App\Classes\ImportNHLPlayer;
 use App\Models\NhlGame;
+use App\Models\NhlGameSourceStatus;
 use App\Models\NhlBoxscore;
 use App\Models\PlayByPlay;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Http\Client\RequestException;
 
 class ImportNhlShifts
 {
@@ -38,10 +41,36 @@ class ImportNhlShifts
             ));
         }
 
-        // Fetch shifts from the special base URL
-        $response = $this->getAPIDataFullUrl(
-            "https://api.nhle.com/stats/rest/en/shiftcharts?cayenneExp=gameId={$nhlGameId}"
-        );
+        $url = "https://api.nhle.com/stats/rest/en/shiftcharts?cayenneExp=gameId={$nhlGameId}";
+        try {
+            $response = $this->getAPIDataFullUrl($url);
+        } catch (ConnectionException|RequestException $exception) {
+            $status = $exception instanceof RequestException ? $exception->response->status() : null;
+            if ($status !== null && $status !== 429 && $status < 500) {
+                throw $exception;
+            }
+            NhlGameSourceStatus::query()->updateOrCreate([
+                'nhl_game_id' => (int) $nhlGameId, 'source' => NhlGameSourceStatus::SOURCE_SHIFTS,
+            ], [
+                'status' => NhlGameSourceStatus::STATUS_UNAVAILABLE, 'reason' => 'request_failed', 'url' => $url,
+                'details' => ['message' => $exception->getMessage(), 'http_status' => $status], 'checked_at' => now(),
+            ]);
+            $count = app(ImportNhlHtmlToiShifts::class)->import((int) $nhlGameId);
+            if ($count > 0) {
+                return $count;
+            }
+
+            // Keep an exhausted provider failure visible when the fallback has no usable shifts.
+            throw $exception;
+        }
+
+        NhlGameSourceStatus::query()->updateOrCreate([
+            'nhl_game_id' => (int) $nhlGameId, 'source' => NhlGameSourceStatus::SOURCE_SHIFTS,
+        ], [
+            'status' => empty($response['data']) ? NhlGameSourceStatus::STATUS_EMPTY : NhlGameSourceStatus::STATUS_AVAILABLE,
+            'reason' => empty($response['data']) ? 'empty_shiftcharts' : null, 'url' => $url,
+            'details' => ['data_count' => count($response['data'] ?? []), 'total' => $response['total'] ?? null], 'checked_at' => now(),
+        ]);
 
         if (empty($response['data'])) {
             return app(ImportNhlHtmlToiShifts::class)->import((int) $nhlGameId);

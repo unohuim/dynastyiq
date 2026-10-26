@@ -7,6 +7,9 @@ namespace App\Services;
 use Illuminate\Broadcasting\BroadcastException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Client\RequestException;
+use Illuminate\Http\Client\ConnectionException;
+use GuzzleHttp\Exception\RequestException as GuzzleRequestException;
+use GuzzleHttp\Exception\ConnectException as GuzzleConnectException;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -90,7 +93,8 @@ class NhlImportFailureReporter
     {
         $message = $throwable->getMessage();
 
-        if ($throwable instanceof RequestException) {
+        if ($throwable instanceof RequestException || $throwable instanceof ConnectionException
+            || $throwable instanceof GuzzleRequestException || $throwable instanceof GuzzleConnectException) {
             return self::CATEGORY_PROVIDER;
         }
 
@@ -123,6 +127,16 @@ class NhlImportFailureReporter
             $status = $throwable->response?->status();
 
             return $status === 429 || ($status !== null && $status >= 500);
+        }
+
+        if ($throwable instanceof ConnectionException || $throwable instanceof GuzzleConnectException) {
+            return true;
+        }
+
+        if ($throwable instanceof GuzzleRequestException) {
+            $status = $throwable->getResponse()?->getStatusCode();
+
+            return $status === null || $status === 429 || $status >= 500;
         }
 
         return false;

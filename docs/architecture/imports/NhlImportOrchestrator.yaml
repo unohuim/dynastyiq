@@ -33,6 +33,7 @@ rules:
   - Jobs must attempt raw provider troubleshooting export before marking a game stage failed.
   - Failed NHL game stage jobs must capture Sentry context before progress rows are marked failed.
   - Sentry failure context must include game id, run id, import stage, failure category, retryability, environment, and release when available.
+  - Laravel and Guzzle HTTP failures use provider classification consistently. Connection failures, rate limits and server errors are retryable provider failures; permanent client errors remain non-retryable. Retryability metadata does not by itself schedule additional stage deliveries.
   - Import status values must remain aligned with docs/ENUMS.md.
   - Admin status keeps Shots, Faceoffs and Refs/Staff processing separate from same-range discovery or Full work. Range deduplication may suppress duplicate runs only within the same processing scope; active scoped runs remain visible to progress polling.
   - Shots progress counts successfully committed run-owned game checkpoints and live claims, with batch progress as a legacy fallback when checkpoints are absent. Existing shot-fact coverage is not evidence that the current run has finished. The admin UI acknowledges accepted Shots requests immediately and labels the scoped run explicitly.

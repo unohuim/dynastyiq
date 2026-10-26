@@ -73,6 +73,7 @@ rules:
   - Penalty-shot attempts must not create normal event-unit links because shiftcharts describe normal shift windows at that timestamp, not the shooter-goalie-only penalty-shot participants.
   - Core NHL game import stages require PBP and boxscore feeds.
   - Shiftcharts remain the primary source for shift windows, but missing or empty shiftcharts may fall back to official HTML TV/TH time-on-ice reports when those reports can produce player shift windows.
+  - Shiftchart requests have bounded connection and response timeouts and bounded retries for connection failures, rate limits and server errors. Exhausted transient requests record the API source gap and attempt the existing HTML TV/TH fallback. A successful fallback retains its separate source status; without usable fallback shifts the original provider exception remains visible. Permanent client errors and programming errors are not concealed by fallback data. Later successful API imports refresh their source status.
   - HTML TV/TH fallback shift imports must store an auditable `html-toi` source status and must continue to preserve the original missing or empty `shifts` source status.
   - Source preflight must store exact provider URLs and source-specific reasons for empty or unavailable feeds.
   - Summary validation may return incomplete when source coverage prevents validating shift-dependent fields.
