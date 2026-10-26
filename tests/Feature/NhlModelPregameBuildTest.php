@@ -662,6 +662,9 @@ it('checkpoints one game at a time and completes the day through continuations',
         'options' => ['pipeline_version' => NhlPregameContextOrchestrator::CHECKPOINT_PIPELINE]]);
     $day = NhlPregameContextRunDay::create(['run_id' => $run->id, 'game_date' => '2025-10-10',
         'league_state' => 'complete', 'context_state' => 'processing']);
+    $run->update(['options' => [...$run->options, 'timeout_retries' => ['context:'.$day->id => [
+        'checkpoint' => '2025020001:snapshot', 'attempts' => 2,
+    ]]]]);
     foreach ([1, 2] as $sequence) {
         NhlPregameContextRunGame::create(['run_id' => $run->id, 'nhl_game_id' => 2025020000 + $sequence,
             'game_date' => '2025-10-10', 'sequence' => $sequence, 'state' => 'pending']);
@@ -674,14 +677,22 @@ it('checkpoints one game at a time and completes the day through continuations',
         expect($run->games()->where('nhl_game_id', $gameId)->first()->snapshot_completed_at)->not->toBeNull();
         return $actualRun->id === $run->id;
     });
-    $service->shouldReceive('releaseDayPeers')->once();
+    $transactionLevel = \Illuminate\Support\Facades\DB::transactionLevel();
+    $service->shouldReceive('releaseDayPeerPage')->once()->andReturnUsing(function () use ($transactionLevel): bool {
+        expect(\Illuminate\Support\Facades\DB::transactionLevel())->toBe($transactionLevel);
+
+        return false;
+    });
     $this->app->instance(\App\Services\NhlPregameLeagueResults::class, $service);
     $job = new \App\Jobs\BuildNhlPregameContextDayBatchJob($run->id, $day->id);
     $job->handle($builder);
-    expect($day->fresh()->context_state)->toBe('pending')->and($run->games()->where('state', 'complete')->count())->toBe(1)
-        ->and($run->games()->where('state', 'pending')->count())->toBe(1);
-    app(NhlPregameContextOrchestrator::class)->load($run->id);
-    (new \App\Jobs\BuildNhlPregameContextDayBatchJob($run->id, $day->id, $day->fresh()->context_claim_token))->handle($builder);
+    expect($day->fresh()->context_state)->toBe('pending')->and($run->games()->where('state', 'complete')->count())->toBe(0)
+        ->and($run->games()->where('state', 'pending')->count())->toBe(1)
+        ->and($run->fresh()->options)->not->toHaveKey('timeout_retries');
+    foreach (range(1, 4) as $delivery) {
+        app(NhlPregameContextOrchestrator::class)->load($run->id);
+        (new \App\Jobs\BuildNhlPregameContextDayBatchJob($run->id, $day->id, $day->fresh()->context_claim_token))->handle($builder);
+    }
     expect($day->fresh()->context_state)->toBe('complete')->and($run->fresh()->completed_games)->toBe(2)
         ->and($run->games()->whereNotNull('comparisons_completed_at')->count())->toBe(2);
 });
@@ -700,6 +711,9 @@ it('retains a committed snapshot when comparisons fail and retries only unfinish
     $service->shouldReceive('attachGameComparisons')->once()->andThrow(new RuntimeException('Comparison failure'));
     $this->app->instance(\App\Services\NhlPregameLeagueResults::class, $service);
     $job = new \App\Jobs\BuildNhlPregameContextDayBatchJob($run->id, $day->id);
+    $job->handle($builder);
+    app(NhlPregameContextOrchestrator::class)->load($run->id);
+    $job = new \App\Jobs\BuildNhlPregameContextDayBatchJob($run->id, $day->id, $day->fresh()->context_claim_token);
     expect(fn () => $job->handle($builder))->toThrow(RuntimeException::class);
     expect($game->fresh()->snapshot_completed_at)->not->toBeNull()->and($game->fresh()->comparisons_completed_at)->toBeNull()
         ->and($day->fresh()->failed_games)->toBe(1);
@@ -707,13 +721,12 @@ it('retains a committed snapshot when comparisons fail and retries only unfinish
     app(NhlPregameContextOrchestrator::class)->load($run->id);
     $retryService = Mockery::mock(\App\Services\NhlPregameLeagueResults::class);
     $retryService->shouldReceive('attachGameComparisons')->once();
-    $retryService->shouldReceive('releaseDayPeers')->once();
     $this->app->instance(\App\Services\NhlPregameLeagueResults::class, $retryService);
     (new \App\Jobs\BuildNhlPregameContextDayBatchJob($run->id, $day->id, $day->fresh()->context_claim_token))->handle($builder);
     expect($game->fresh()->state)->toBe('complete')->and($run->fresh()->failed_games)->toBe(0);
 });
 
-it('marks only the active game failed after a checkpointed timeout', function (): void {
+it('marks only the active game failed after a permanent checkpoint error', function (): void {
     $run = NhlPregameContextRun::create(['model_run_id' => $this->model->id, 'action' => 'backfill',
         'status' => 'running', 'season_ids' => ['20252026'], 'total_games' => 3,
         'options' => ['pipeline_version' => NhlPregameContextOrchestrator::CHECKPOINT_PIPELINE]]);
@@ -726,6 +739,118 @@ it('marks only the active game failed after a checkpointed timeout', function ()
     (new \App\Jobs\BuildNhlPregameContextDayBatchJob($run->id, $day->id))->failed(new RuntimeException('Timed out'));
     expect($run->fresh()->failed_games)->toBe(1)->and($day->fresh()->failed_games)->toBe(1)
         ->and($run->games()->orderBy('sequence')->pluck('state')->all())->toBe(['complete', 'failed', 'pending']);
+});
+
+it('renews an owned execution lease without replacing its delivery token', function (string $stage, int $seconds): void {
+    $token = '11111111-1111-4111-8111-111111111111';
+    $run = NhlPregameContextRun::create(['model_run_id' => $this->model->id, 'action' => 'backfill',
+        'status' => 'running', 'season_ids' => ['20252026'],
+        'options' => ['pipeline_version' => NhlPregameContextOrchestrator::CHECKPOINT_PIPELINE]]);
+    $day = NhlPregameContextRunDay::create(['run_id' => $run->id, 'game_date' => '2025-10-10',
+        $stage.'_state' => 'processing', $stage.'_claim_token' => $token, $stage.'_claim_expires_at' => now()->addSecond()]);
+    config(['nhl-pregame.claim_grace_seconds' => 120]);
+
+    expect(app(NhlPregameContextOrchestrator::class)->startDayClaim($run->id, $day->id, $stage, $token))->toBeTrue()
+        ->and($day->fresh()->getAttribute($stage.'_claim_token'))->toBe($token)
+        ->and($day->fresh()->getAttribute($stage.'_claim_expires_at')->equalTo(now()->addSeconds($seconds)))->toBeTrue();
+})->with([['league', 300], ['context', 420]]);
+
+it('cannot renew an expired replaced or terminal delivery', function (string $status, bool $replaced, int $remaining): void {
+    $token = '11111111-1111-4111-8111-111111111111';
+    $run = NhlPregameContextRun::create(['model_run_id' => $this->model->id, 'action' => 'backfill',
+        'status' => $status, 'season_ids' => ['20252026'],
+        'options' => ['pipeline_version' => NhlPregameContextOrchestrator::CHECKPOINT_PIPELINE]]);
+    $day = NhlPregameContextRunDay::create(['run_id' => $run->id, 'game_date' => '2025-10-10',
+        'context_state' => 'processing', 'context_claim_token' => $token, 'context_claim_expires_at' => now()->addSeconds($remaining)]);
+    $before = $day->getRawOriginal();
+
+    expect(app(NhlPregameContextOrchestrator::class)->startDayClaim($run->id, $day->id, 'context',
+        $replaced ? '22222222-2222-4222-8222-222222222222' : $token))->toBeFalse()
+        ->and($day->fresh()->getRawOriginal())->toBe($before);
+})->with([['running', false, -1], ['running', true, 60], ['paused', false, 60], ['stopped', false, 60]]);
+
+it('requeues genuine timeouts while retaining committed checkpoints and pause intent', function (string $stage, string $status): void {
+    $token = '11111111-1111-4111-8111-111111111111';
+    $run = NhlPregameContextRun::create(['model_run_id' => $this->model->id, 'action' => 'backfill',
+        'status' => $status, 'season_ids' => ['20252026'], 'total_games' => 1,
+        'options' => ['pipeline_version' => NhlPregameContextOrchestrator::CHECKPOINT_PIPELINE]]);
+    $day = NhlPregameContextRunDay::create(['run_id' => $run->id, 'game_date' => '2025-10-10',
+        'league_cursor' => 1, 'league_entity_cursor' => \App\Services\NhlPregameLeagueResults::FINALIZING_ENTITY_CURSOR,
+        $stage.'_state' => 'processing', $stage.'_claim_token' => $token, $stage.'_claim_expires_at' => now()->addMinutes(5)]);
+    $game = NhlPregameContextRunGame::create(['run_id' => $run->id, 'nhl_game_id' => 2025020001,
+        'game_date' => '2025-10-10', 'sequence' => 1, 'state' => 'processing', 'snapshot_completed_at' => now()]);
+    $job = $stage === 'league'
+        ? new \App\Jobs\CalculateNhlPregameLeagueBatchJob($run->id, $day->id, $token)
+        : new \App\Jobs\BuildNhlPregameContextDayBatchJob($run->id, $day->id, $token);
+    $job->failed(new \Illuminate\Queue\TimeoutExceededException('Worker deadline'));
+
+    expect($run->fresh()->status)->toBe($status)->and($day->fresh()->getAttribute($stage.'_state'))->toBe('pending')
+        ->and($day->fresh()->getAttribute($stage.'_claim_token'))->not->toBe($token)
+        ->and($day->fresh()->league_entity_cursor)->toBe(\App\Services\NhlPregameLeagueResults::FINALIZING_ENTITY_CURSOR)
+        ->and($game->fresh()->snapshot_completed_at)->not->toBeNull()->and($game->fresh()->state)->toBe('processing')
+        ->and($run->fresh()->options['timeout_retries'][$stage.':'.$day->id]['attempts'])->toBe(1);
+    Bus::assertDispatched(LoadNhlPregameContextRunJob::class, fn ($queued): bool => $queued->runId === $run->id);
+    // A late failure callback from the replaced delivery cannot fail the new work.
+    $job->failed(new \Illuminate\Queue\TimeoutExceededException('Late callback'));
+    expect($run->fresh()->status)->toBe($status);
+})->with([['league', 'running'], ['context', 'running'], ['league', 'pausing'], ['context', 'pausing']]);
+
+it('fails visibly after the bounded timeout budget is exhausted without progress', function (): void {
+    config(['nhl-pregame.timeout_retries' => 3]);
+    $run = NhlPregameContextRun::create(['model_run_id' => $this->model->id, 'action' => 'backfill',
+        'status' => 'running', 'season_ids' => ['20252026'],
+        'options' => ['pipeline_version' => NhlPregameContextOrchestrator::CHECKPOINT_PIPELINE]]);
+    $day = NhlPregameContextRunDay::create(['run_id' => $run->id, 'game_date' => '2025-10-10', 'league_state' => 'processing']);
+    foreach (range(1, 4) as $attempt) {
+        $token = '11111111-1111-4111-8111-11111111111'.$attempt;
+        $day->refresh()->update(['league_state' => 'processing', 'league_claim_token' => $token,
+            'league_claim_expires_at' => now()->addMinutes(5)]);
+        (new \App\Jobs\CalculateNhlPregameLeagueBatchJob($run->id, $day->id, $token))
+            ->failed(new \Illuminate\Queue\TimeoutExceededException('No progress'));
+        expect($run->fresh()->status)->toBe($attempt <= 3 ? 'running' : 'failed');
+    }
+    expect($day->fresh()->league_state)->toBe('failed');
+    Bus::assertDispatchedTimes(LoadNhlPregameContextRunJob::class, 3);
+});
+
+it('starts a fresh timeout budget when the durable league checkpoint advances', function (): void {
+    config(['nhl-pregame.timeout_retries' => 1]);
+    $run = NhlPregameContextRun::create(['model_run_id' => $this->model->id, 'action' => 'backfill',
+        'status' => 'running', 'season_ids' => ['20252026'],
+        'options' => ['pipeline_version' => NhlPregameContextOrchestrator::CHECKPOINT_PIPELINE]]);
+    $day = NhlPregameContextRunDay::create(['run_id' => $run->id, 'game_date' => '2025-10-10', 'league_state' => 'processing']);
+    $service = app(NhlPregameContextOrchestrator::class);
+    foreach ([0, 32] as $cursor) {
+        $token = '11111111-1111-4111-8111-111111111111';
+        $day->refresh()->update(['league_state' => 'processing', 'league_entity_cursor' => $cursor,
+            'league_claim_token' => $token, 'league_claim_expires_at' => now()->addMinutes(5)]);
+        expect($service->retryTimedOutDay($run->id, $day->id, 'league', $token,
+            new \Illuminate\Queue\TimeoutExceededException('Worker deadline')))->toBeTrue();
+    }
+    expect($run->fresh()->options['timeout_retries']['league:'.$day->id]['attempts'])->toBe(1);
+});
+
+it('yields bounded peer cleanup while preserving completed games', function (): void {
+    config(['nhl-pregame.peer_cleanup_pages' => 1]);
+    $run = NhlPregameContextRun::create(['model_run_id' => $this->model->id, 'action' => 'backfill',
+        'status' => 'running', 'season_ids' => ['20252026'], 'total_games' => 1,
+        'options' => ['pipeline_version' => NhlPregameContextOrchestrator::CHECKPOINT_PIPELINE]]);
+    $day = NhlPregameContextRunDay::create(['run_id' => $run->id, 'game_date' => '2025-10-10',
+        'league_state' => 'complete', 'context_state' => 'processing']);
+    $game = NhlPregameContextRunGame::create(['run_id' => $run->id, 'nhl_game_id' => 2025020001,
+        'game_date' => '2025-10-10', 'sequence' => 1, 'state' => 'complete',
+        'snapshot_completed_at' => now(), 'comparisons_completed_at' => now()]);
+    $builder = Mockery::mock(\App\Services\NhlPregameContextBuilder::class);
+    $builder->shouldNotReceive('buildDay');
+    $service = Mockery::mock(\App\Services\NhlPregameLeagueResults::class);
+    $service->shouldNotReceive('attachGameComparisons');
+    $service->shouldReceive('releaseDayPeerPage')->twice()->andReturn(true, false);
+    $this->app->instance(\App\Services\NhlPregameLeagueResults::class, $service);
+    (new \App\Jobs\BuildNhlPregameContextDayBatchJob($run->id, $day->id))->handle($builder);
+    expect($day->fresh()->context_state)->toBe('pending')->and($game->fresh()->state)->toBe('complete');
+    app(NhlPregameContextOrchestrator::class)->load($run->id);
+    (new \App\Jobs\BuildNhlPregameContextDayBatchJob($run->id, $day->id, $day->fresh()->context_claim_token))->handle($builder);
+    expect($day->fresh()->context_state)->toBe('complete');
 });
 
 it('keeps continuation checkpoints when a batch finishes during pause', function (): void {

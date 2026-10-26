@@ -16,10 +16,10 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Throwable;
 
-/** Build and checkpoint one game per continuation while keeping day-level concurrency. */
+/** Checkpoint one game phase or bounded peer cleanup per delivery. */
 class BuildNhlPregameContextDayBatchJob extends BuildNhlPregameContextDayJob
 {
-    // Lock-contention releases may retry; a real exception or timeout fails immediately.
+    // Timeout retries use durable checkpoints; other exceptions fail visibly.
     public int $tries = 0;
     public int $maxExceptions = 1;
     public int $timeout = 300;
@@ -45,7 +45,10 @@ class BuildNhlPregameContextDayBatchJob extends BuildNhlPregameContextDayJob
         $run = NhlPregameContextRun::query()->find($this->runId);
         $day = NhlPregameContextRunDay::query()->whereKey($this->runDayId)->where('run_id', $this->runId)->first();
         if ($run === null || $day === null || data_get($run->options, 'pipeline_version') !== NhlPregameContextOrchestrator::CHECKPOINT_PIPELINE
-            || ! $this->ownsClaim()) {
+            || ! app(NhlPregameContextOrchestrator::class)->startDayClaim($this->runId, $this->runDayId, 'context', $this->claimToken)) {
+            if ($run !== null && in_array($run->status, ['running', 'pausing'], true)) {
+                LoadNhlPregameContextRunJob::dispatch($run->id);
+            }
             return;
         }
         if (! in_array($run->status, [NhlPregameContextRun::STATUS_RUNNING, NhlPregameContextRun::STATUS_PAUSING], true)) {
@@ -59,6 +62,7 @@ class BuildNhlPregameContextDayBatchJob extends BuildNhlPregameContextDayJob
         }
         $service = app(NhlPregameLeagueResults::class);
         $work = null;
+        $cleanupComplete = false;
         try {
             $work = DB::transaction(function () use ($run, $day): ?NhlPregameContextRunGame {
                 $this->assertOwnerActive();
@@ -88,8 +92,7 @@ class BuildNhlPregameContextDayBatchJob extends BuildNhlPregameContextDayJob
                         'last_error' => ! empty($counts['blocked']) ? 'The game is missing completed schedule or player summary context.' : null]);
                     NhlPregameContextRunDay::query()->whereKey($day->id)->increment('context_seconds', $seconds);
                 });
-            }
-            if ($work !== null && $work->fresh()->state !== 'blocked') {
+            } elseif ($work !== null && $work->fresh()->state !== 'blocked') {
                 $started = hrtime(true);
                 DB::transaction(function () use ($service, $run, $day, $work, $started): void {
                     $service->attachGameComparisons($run, $day, (int) $work->nhl_game_id, fn (): bool => $this->runStopped());
@@ -100,20 +103,29 @@ class BuildNhlPregameContextDayBatchJob extends BuildNhlPregameContextDayJob
                     NhlPregameContextRunDay::query()->whereKey($day->id)->increment('comparison_seconds', $seconds);
                 });
             }
-            DB::transaction(function () use ($run, $day, $service): void {
-                $this->assertOwnerActive();
+            if ($work === null) {
+                $started = hrtime(true);
+                $pages = 0;
+                do {
+                    $more = $service->releaseDayPeerPage($run, $day, fn (): bool => $this->runStopped());
+                    $pages++;
+                } while ($more && $pages < max(1, (int) config('nhl-pregame.peer_cleanup_pages', 8))
+                    && (hrtime(true) - $started) / 1e9 < max(1, (int) config('nhl-pregame.peer_cleanup_seconds', 8)));
+                $cleanupComplete = ! $more;
+            }
+            DB::transaction(function () use ($run, $day, $cleanupComplete): void {
+                $owner = $this->assertOwnerActive();
                 $games = NhlPregameContextRunGame::query()->where('run_id', $run->id)->whereDate('game_date', $day->game_date);
                 $remaining = (clone $games)->where(function ($query): void {
                     $query->whereNotIn('state', ['complete', 'blocked'])
                         ->orWhere(fn ($complete) => $complete->where('state', 'complete')->whereNull('comparisons_completed_at'));
                 })->exists();
-                $day->update(['context_state' => $remaining ? 'pending' : 'complete',
+                $complete = ! $remaining && $cleanupComplete;
+                $day->update(['context_state' => $complete ? 'complete' : 'pending',
                     'completed_games' => (clone $games)->where('state', 'complete')->count(),
                     'blocked_games' => (clone $games)->where('state', 'blocked')->count(),
-                    'context_completed_at' => $remaining ? null : now(), 'last_error' => null]);
-                if (! $remaining) {
-                    $service->releaseDayPeers($day);
-                }
+                    'context_completed_at' => $complete ? now() : null, 'last_error' => null]);
+                app(NhlPregameContextOrchestrator::class)->clearDayTimeoutRetries($owner, $day->id, 'context');
             });
         } catch (NhlPregameContextRunStopped) {
             // Stop already fences work; a failed sibling run leaves this batch resumable.
@@ -136,6 +148,9 @@ class BuildNhlPregameContextDayBatchJob extends BuildNhlPregameContextDayJob
     /** Fail only the current game; committed games and snapshots remain usable. */
     public function failed(Throwable $exception): void
     {
+        if (app(NhlPregameContextOrchestrator::class)->retryTimedOutDay($this->runId, $this->runDayId, 'context', $this->claimToken, $exception)) {
+            return;
+        }
         DB::transaction(function () use ($exception): void {
             // Status updates must coexist with foreign-key key-share locks held by other dates.
             $run = NhlPregameContextRun::query()->whereKey($this->runId)->lock(DB::getDriverName() === 'pgsql' ? 'for no key update' : true)->first();
@@ -156,7 +171,7 @@ class BuildNhlPregameContextDayBatchJob extends BuildNhlPregameContextDayJob
     }
 
     /** Serialize checkpoint commits with Stop, Pause, and failure transitions. */
-    private function assertOwnerActive(): void
+    private function assertOwnerActive(): NhlPregameContextRun
     {
         if ($this->runStopped()) {
             throw new NhlPregameContextRunStopped('Pregame work is no longer active.');
@@ -165,6 +180,8 @@ class BuildNhlPregameContextDayBatchJob extends BuildNhlPregameContextDayJob
         if (! in_array($run->status, ['running', 'pausing'], true) || ! $this->ownsClaim()) {
             throw new NhlPregameContextRunStopped('Pregame work is no longer active.');
         }
+
+        return $run;
     }
 
     /** Check cancellation during bounded result and metric batches. */

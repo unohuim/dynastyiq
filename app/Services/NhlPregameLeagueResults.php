@@ -13,6 +13,8 @@ use Illuminate\Support\Facades\DB;
 /** Calculates independent league baselines from results, then attaches context comparisons. */
 class NhlPregameLeagueResults
 {
+    public const FINALIZING_ENTITY_CURSOR = PHP_INT_MAX;
+
     /** Reuse the context metric definitions while reading only raw results for league peers. */
     public function __construct(private NhlPregameContextBuilder $builder)
     {
@@ -157,6 +159,9 @@ class NhlPregameLeagueResults
         }
         $game = $cutoffs[intdiv($cursor, 2)];
         $entityType = $cursor % 2 === 0 ? 'team' : 'player';
+        if ((int) $day->league_entity_cursor === self::FINALIZING_ENTITY_CURSOR) {
+            return $this->finalizeNextPopulation($run, $day, $game, $entityType, count($cutoffs) * 2, $isStopped);
+        }
         $pageSize = $entityType === 'team' ? 8 : max(1, (int) config('nhl-pregame.league_entity_page_size', 32));
         $entities = $this->builder->leagueEntities($run, $game, $entityType, (int) $day->league_entity_cursor, $pageSize + 1);
         $populationComplete = $entities->count() <= $pageSize;
@@ -224,27 +229,35 @@ class NhlPregameLeagueResults
                         ->on('average.strength', '=', 'peer.strength');
                 })->select(['average.id', 'peer.entity_id', 'peer.value'])
                     ->selectRaw('0 AS league_rank');
-                DB::table('nhl_pregame_context_league_peers')->insertUsing(['league_average_id', 'entity_id', 'value', 'league_rank'], $peers);
+                // Replayed deterministic pages replace the same peer instead of failing on a duplicate key.
+                DB::statement('INSERT INTO nhl_pregame_context_league_peers (league_average_id, entity_id, value, league_rank) '
+                    .$peers->whereRaw('1 = 1')->toSql()
+                    .' ON CONFLICT (league_average_id, entity_id) DO UPDATE SET value = EXCLUDED.value, league_rank = EXCLUDED.league_rank',
+                    $peers->getBindings());
                 $this->assertActive($isStopped);
                 if ($populationComplete) {
-                    $this->finalizePopulation($averages);
+                    // Zero denotes an unpublished group while its complete peer population is ranked.
+                    (clone $averages)->update(['rank_population' => 0]);
                 }
                 $owner = NhlPregameContextRun::query()->whereKey($run->id)->lock(DB::getDriverName() === 'pgsql' ? 'for no key update' : true)->firstOrFail();
                 if (! in_array($owner->status, [NhlPregameContextRun::STATUS_RUNNING, NhlPregameContextRun::STATUS_PAUSING], true)) {
                     throw new NhlPregameContextRunStopped('Pregame work is no longer active.');
                 }
                 $this->assertActive($isStopped);
-                NhlPregameContextRunDay::query()->whereKey($day->id)->where('league_cursor', $cursor)->update([
-                    'league_cursor' => $populationComplete ? $cursor + 1 : $cursor,
-                    'league_entity_cursor' => $populationComplete ? 0 : (int) $entities->last()->entity_id,
+                $updated = NhlPregameContextRunDay::query()->whereKey($day->id)->where('league_cursor', $cursor)
+                    ->where('league_entity_cursor', $day->league_entity_cursor)->update([
+                    'league_entity_cursor' => $populationComplete ? self::FINALIZING_ENTITY_CURSOR : (int) $entities->last()->entity_id,
                     'league_seconds' => DB::raw('league_seconds + '.round((hrtime(true) - $started) / 1e9, 3)),
                 ]);
+                if ($updated !== 1) {
+                    throw new NhlPregameContextRunStopped('The league checkpoint has changed.');
+                }
             });
         } finally {
             DB::statement("DROP TABLE IF EXISTS {$temporaryTable}");
         }
 
-        return $populationComplete && $cursor + 1 >= count($cutoffs) * 2;
+        return false;
     }
 
     /** Reuse prior-cutoff player values only when both their history and matchup are unchanged. */
@@ -271,7 +284,42 @@ class NhlPregameLeagueResults
             ->select(['peer.entity_id', 'average.metric_key', 'average.window_key', 'average.strength', 'peer.value']);
     }
 
-    /** Finalize averages and competition ranks once, after every entity page has committed. */
+    /** Finalize a bounded set of complete metric populations in a separately committed delivery. */
+    private function finalizeNextPopulation(NhlPregameContextRun $run, NhlPregameContextRunDay $day, object $game, string $entityType, int $populationCount, ?Closure $isStopped): bool
+    {
+        $started = hrtime(true);
+
+        return DB::transaction(function () use ($run, $day, $game, $entityType, $populationCount, $isStopped, $started): bool {
+            $this->assertActive($isStopped);
+            $averages = DB::table('nhl_pregame_context_league_averages')->where('run_id', $run->id)
+                ->where('run_day_id', $day->id)->where('source_cutoff_at', $game->start_time_utc)->where('entity_type', $entityType);
+            $ids = (clone $averages)->where('rank_population', 0)->orderBy('id')
+                ->limit(max(1, (int) config('nhl-pregame.league_rank_group_page_size', 8)))->pluck('id');
+            if ($ids->isNotEmpty()) {
+                $this->finalizePopulation((clone $averages)->whereIn('id', $ids));
+            }
+            $more = (clone $averages)->where('rank_population', 0)->exists();
+            $owner = NhlPregameContextRun::query()->whereKey($run->id)
+                ->lock(DB::getDriverName() === 'pgsql' ? 'for no key update' : true)->firstOrFail();
+            if (! in_array($owner->status, ['running', 'pausing'], true)) {
+                throw new NhlPregameContextRunStopped('Pregame work is no longer active.');
+            }
+            $this->assertActive($isStopped);
+            $updated = NhlPregameContextRunDay::query()->whereKey($day->id)->where('league_cursor', $day->league_cursor)
+                ->where('league_entity_cursor', self::FINALIZING_ENTITY_CURSOR)->update([
+                    'league_cursor' => $more ? $day->league_cursor : (int) $day->league_cursor + 1,
+                    'league_entity_cursor' => $more ? self::FINALIZING_ENTITY_CURSOR : 0,
+                    'league_seconds' => DB::raw('league_seconds + '.round((hrtime(true) - $started) / 1e9, 3)),
+                ]);
+            if ($updated !== 1) {
+                throw new NhlPregameContextRunStopped('The league checkpoint has changed.');
+            }
+
+            return ! $more && (int) $day->league_cursor + 1 >= $populationCount;
+        });
+    }
+
+    /** Rank only the supplied complete metric groups; ties retain descending competition rank. */
     private function finalizePopulation(\Illuminate\Database\Query\Builder $averages): void
     {
         (clone $averages)->whereNotExists(fn ($query) => $query->selectRaw('1')->from('nhl_pregame_context_league_peers as peer')
@@ -394,6 +442,33 @@ class NhlPregameLeagueResults
     {
         DB::table('nhl_pregame_context_league_peers')->whereIn('league_average_id',
             DB::table('nhl_pregame_context_league_averages')->where('run_day_id', $day->id)->select('id'))->delete();
+    }
+
+    /** Delete a bounded peer page without holding the parent run lock during the expensive delete. */
+    public function releaseDayPeerPage(NhlPregameContextRun $run, NhlPregameContextRunDay $day, ?Closure $isStopped = null): bool
+    {
+        $limit = max(1, (int) config('nhl-pregame.peer_cleanup_page_size', 10000));
+        // The run/cutoff prefix reuses the existing average-group index; no schema change is needed.
+        $averages = DB::table('nhl_pregame_context_league_averages')->where('run_id', $run->id)
+            ->where('run_day_id', $day->id)->whereIn('source_cutoff_at', collect($this->cutoffs($run, $day))->pluck('start_time_utc'))
+            ->select('id');
+        $page = DB::table('nhl_pregame_context_league_peers')->whereIn('league_average_id', $averages)
+            ->limit($limit)->select(['league_average_id', 'entity_id']);
+
+        return DB::transaction(function () use ($run, $day, $page, $limit, $isStopped): bool {
+            $this->assertActive($isStopped);
+            $deleted = DB::delete('DELETE FROM nhl_pregame_context_league_peers AS peer USING ('.$page->toSql().') AS page '
+                .'WHERE peer.league_average_id = page.league_average_id AND peer.entity_id = page.entity_id', $page->getBindings());
+            $owner = NhlPregameContextRun::query()->whereKey($run->id)
+                ->lock(DB::getDriverName() === 'pgsql' ? 'for no key update' : true)->firstOrFail();
+            if (! in_array($owner->status, ['running', 'pausing'], true)) {
+                throw new NhlPregameContextRunStopped('Pregame work is no longer active.');
+            }
+            $this->assertActive($isStopped);
+            app(NhlPregameContextOrchestrator::class)->clearDayTimeoutRetries($owner, $day->id, 'context');
+
+            return $deleted === $limit;
+        });
     }
 
     /** Obtain each distinct scheduled cutoff from run games, independently of saved context. */

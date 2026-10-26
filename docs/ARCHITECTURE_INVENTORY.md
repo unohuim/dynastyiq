@@ -1833,9 +1833,11 @@ Evaluation Train and Train H/A strength windows retain complete appearances inst
 - `NhlPregameContextOrchestrator`
 
 New model-initiated runs checkpoint raw-result league populations first and save
-indexed peer references alongside their averages. Context then commits one game
-per continuation, reusing those references for ranks and deltas. Snapshot and
-comparison checkpoints make failed work retryable without rebuilding saved games.
+indexed peer references alongside their averages. Ranking finalization processes
+bounded metric groups. Context commits a snapshot or its comparisons per delivery,
+then deletes transient peers in bounded pages outside the shared run lock.
+Execution renews valid delivery leases; bounded automatic timeout recovery retains
+committed checkpoints and Pause/Stop intent without rebuilding saved games.
 
 A single-server minute recovery check independently wakes active checkpointed
 builds after interrupted queue chains. Bounded league continuations can commit

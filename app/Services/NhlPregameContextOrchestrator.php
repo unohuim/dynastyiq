@@ -21,6 +21,7 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
+use Illuminate\Queue\TimeoutExceededException;
 use Illuminate\Validation\ValidationException;
 
 /** Coordinates durable, date-ordered pregame-context work without queue flooding. */
@@ -816,6 +817,89 @@ class NhlPregameContextOrchestrator
         return NhlPregameContextRunDay::query()->whereKey($dayId)->where('run_id', $runId)
             ->where($stage.'_state', 'processing')->where($stage.'_claim_token', $token)
             ->when($token !== null, fn ($query) => $query->where($stage.'_claim_expires_at', '>', now()))->exists();
+    }
+
+    /** Give an unchanged, still-owned delivery its full execution lease after queue waiting. */
+    public function startDayClaim(int $runId, int $dayId, string $stage, ?string $token): bool
+    {
+        if (! in_array($stage, ['league', 'context'], true)) {
+            return false;
+        }
+
+        return DB::transaction(function () use ($runId, $dayId, $stage, $token): bool {
+            $run = NhlPregameContextRun::query()->whereKey($runId)
+                ->lock(DB::getDriverName() === 'pgsql' ? 'for no key update' : true)->first();
+            if ($run === null || data_get($run->options, 'pipeline_version') !== self::CHECKPOINT_PIPELINE
+                || ! in_array($run->status, ['running', 'pausing'], true)
+                || ! $this->ownsDayClaim($runId, $dayId, $stage, $token)) {
+                return false;
+            }
+            NhlPregameContextRunDay::query()->whereKey($dayId)->where('run_id', $runId)
+                ->where($stage.'_claim_token', $token)->update([
+                    $stage.'_claim_expires_at' => $this->dayLease($stage)[$stage.'_claim_expires_at'],
+                    'updated_at' => now(),
+                ]);
+
+            return true;
+        });
+    }
+
+    /** Retry only a genuine timeout, fencing its old delivery and retaining all committed work. */
+    public function retryTimedOutDay(int $runId, int $dayId, string $stage, ?string $token, \Throwable $exception): bool
+    {
+        if (! $exception instanceof TimeoutExceededException || ! in_array($stage, ['league', 'context'], true)) {
+            return false;
+        }
+        $retry = DB::transaction(function () use ($runId, $dayId, $stage, $token, $exception): bool {
+            $run = NhlPregameContextRun::query()->whereKey($runId)
+                ->lock(DB::getDriverName() === 'pgsql' ? 'for no key update' : true)->first();
+            if ($run === null || data_get($run->options, 'pipeline_version') !== self::CHECKPOINT_PIPELINE
+                || ! in_array($run->status, ['running', 'pausing'], true)
+                || ! $this->ownsDayClaim($runId, $dayId, $stage, $token)) {
+                return false;
+            }
+            $day = NhlPregameContextRunDay::query()->whereKey($dayId)->firstOrFail();
+            $game = $stage === 'context' ? $run->games()->whereDate('game_date', $day->game_date)
+                ->where('state', 'processing')->orderBy('sequence')->first() : null;
+            $checkpoint = $stage === 'league'
+                ? implode(':', [$day->league_cursor, $day->league_entity_cursor, $day->league_seconds])
+                : ($game === null ? 'cleanup' : $game->nhl_game_id.':'.($game->snapshot_completed_at === null ? 'snapshot' : 'comparisons'));
+            $key = $stage.':'.$dayId;
+            $options = $run->options ?? [];
+            $previous = $options['timeout_retries'][$key] ?? [];
+            $attempts = ($previous['checkpoint'] ?? null) === $checkpoint ? (int) ($previous['attempts'] ?? 0) : 0;
+            if ($attempts >= max(0, (int) config('nhl-pregame.timeout_retries', 3))) {
+                return false;
+            }
+            $options['timeout_retries'][$key] = ['checkpoint' => $checkpoint, 'attempts' => $attempts + 1];
+            $run->update(['options' => $options]);
+            $day->update([$stage.'_state' => 'pending', $stage.'_claim_token' => (string) Str::uuid(),
+                $stage.'_claim_expires_at' => null,
+                'last_error' => mb_strimwidth('Automatic timeout retry '.($attempts + 1).': '.$exception->getMessage(), 0, 2000)]);
+
+            return true;
+        });
+        if ($retry) {
+            LoadNhlPregameContextRunJob::dispatch($runId)
+                ->delay(now()->addSeconds(max(1, (int) config('nhl-pregame.timeout_retry_delay_seconds', 10))));
+        }
+
+        return $retry;
+    }
+
+    /** Clear a recovered checkpoint's consecutive-timeout budget under the caller's parent run lock. */
+    public function clearDayTimeoutRetries(NhlPregameContextRun $run, int $dayId, string $stage): void
+    {
+        $options = $run->options ?? [];
+        $key = $stage.':'.$dayId;
+        if (! isset($options['timeout_retries'][$key])) {
+            return;
+        }
+        unset($options['timeout_retries'][$key]);
+        if ($options['timeout_retries'] === []) {
+            unset($options['timeout_retries']);
+        }
+        $run->update(['options' => $options]);
     }
 
     /** Create a delivery fence with enough time for queue wait, bounded execution, and cleanup. */

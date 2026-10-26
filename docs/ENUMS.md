@@ -183,7 +183,7 @@ Horizon assigns twenty-five workers to `projections`, five workers to `default`,
   work is marked `stopped`, and a new Build Pregame action creates a fresh run.
 - Run-game `state`: `pending`, `ready`, `processing`, `complete`, `blocked`,
   `failed`, or `stopped`. Stopping a run marks every unfinished game `stopped`.
-- `nhl_pregame_context_runs.options.pipeline_version`: `results_league_v3` selects checkpointed league entity pages with persisted ranking references, followed by one-game context continuations. Run-day claim tokens identify delivery ownership; they are opaque UUIDs rather than lifecycle values. Resume may cancel a pending Pause without changing this pipeline.
+- `nhl_pregame_context_runs.options.pipeline_version`: `results_league_v3` selects checkpointed league entity pages with persisted ranking references, followed by one-game context phases and bounded peer cleanup. Run-day claim tokens identify delivery ownership; they are opaque UUIDs rather than lifecycle values. Resume may cancel a pending Pause without changing this pipeline.
   `results_league_v2` retains the earlier league-first, whole-day context jobs until an explicit paused/failed-run upgrade.
   `results_league_v1` retains the previous independent context, league, and comparison jobs until paused-run upgrade.
   `game_day_batch_v1` retains the earlier context-dependent league stage; absent values retain the legacy per-game loader.
@@ -191,6 +191,8 @@ Horizon assigns twenty-five workers to `projections`, five workers to `default`,
   `complete`, `failed`, or `stopped`. In `results_league_v2` and `results_league_v3`, league dates need only prior raw results;
   each context date waits for its averages and finishes only after attaching rankings and deltas.
   `comparison_state` is used only by the older three-stage pipeline; v2/v3 completion uses context and league states. In v3, each continuation returns its unfinished day to pending; snapshot/comparison timestamps distinguish committed progress from claimed work.
+- Run-day `league_entity_cursor`: `0` begins collection, a positive entity ID resumes collection, and `PHP_INT_MAX` (`9223372036854775807` on the supported 64-bit runtime) identifies bounded finalization of the current population. While finalization is pending, average groups with `rank_population = 0` are unpublished; context waits for the whole league stage.
+- Run `options.timeout_retries`: temporary map keyed by `league:{day_id}` or `context:{day_id}`, with `checkpoint` and `attempts`. Context checkpoint suffixes are `snapshot`, `comparisons`, or `cleanup`; league checkpoints encode population cursor, entity cursor, and committed work time. Successful progress clears the budget. Only genuine queue timeouts receive bounded automatic retries; exhaustion or other errors fail visibly.
   queues every missing game/split coordinate in the current stage immediately;
   Horizon controls execution concurrency. `game_lanes_v1` retains legacy fixed
   game chains; missing values retain legacy split chains. Pause/resume upgrades

@@ -18,7 +18,7 @@ use Throwable;
 /** Checkpoint one league population per continuation before any dependent context. */
 class CalculateNhlPregameLeagueBatchJob extends CalculateNhlPregameContextRunDayLeagueAveragesJob
 {
-    // Lock-contention releases may retry; a real exception or timeout fails immediately.
+    // Timeout retries retain durable pages; other exceptions fail visibly.
     public int $tries = 0;
     public int $maxExceptions = 1;
     public int $timeout = 180;
@@ -44,7 +44,10 @@ class CalculateNhlPregameLeagueBatchJob extends CalculateNhlPregameContextRunDay
         $run = NhlPregameContextRun::query()->find($this->runId);
         $day = NhlPregameContextRunDay::query()->whereKey($this->runDayId)->where('run_id', $this->runId)->first();
         if ($run === null || $day === null || data_get($run->options, 'pipeline_version') !== NhlPregameContextOrchestrator::CHECKPOINT_PIPELINE
-            || ! $this->ownsClaim()) {
+            || ! app(NhlPregameContextOrchestrator::class)->startDayClaim($this->runId, $this->runDayId, 'league', $this->claimToken)) {
+            if ($run !== null && in_array($run->status, ['running', 'pausing'], true)) {
+                LoadNhlPregameContextRunJob::dispatch($run->id);
+            }
             return;
         }
         if (! in_array($run->status, ['running', 'pausing'], true)) {
@@ -58,13 +61,13 @@ class CalculateNhlPregameLeagueBatchJob extends CalculateNhlPregameContextRunDay
             $started = hrtime(true);
             $pages = 0;
             do {
-                $cursor = [(int) $day->league_cursor, (int) $day->league_entity_cursor];
+                $cursor = [(int) $day->league_cursor, (int) $day->league_entity_cursor, (float) $day->league_seconds];
                 $complete = $results->buildNextAverages($run, $day, fn (): bool => $this->runStopped());
                 $day->refresh();
                 $pages++;
                 // Every page commits separately. Yield promptly for Pause and never spin on a stale cursor.
             } while (! $complete
-                && $cursor !== [(int) $day->league_cursor, (int) $day->league_entity_cursor]
+                && $cursor !== [(int) $day->league_cursor, (int) $day->league_entity_cursor, (float) $day->league_seconds]
                 && $pages < max(1, (int) config('nhl-pregame.league_continuation_pages', 4))
                 && (hrtime(true) - $started) / 1e9 < max(1, (int) config('nhl-pregame.league_continuation_seconds', 8))
                 && NhlPregameContextRun::query()->whereKey($run->id)->value('status') === 'running');
@@ -78,6 +81,7 @@ class CalculateNhlPregameLeagueBatchJob extends CalculateNhlPregameContextRunDay
                 }
                 $day->update(['league_state' => $complete ? 'complete' : 'pending',
                     'league_completed_at' => $complete ? now() : null, 'last_error' => null]);
+                app(NhlPregameContextOrchestrator::class)->clearDayTimeoutRetries($owner, $day->id, 'league');
             });
         } catch (NhlPregameContextRunStopped) {
             NhlPregameContextRunDay::query()->whereKey($day->id)->where('league_state', 'processing')
@@ -97,6 +101,9 @@ class CalculateNhlPregameLeagueBatchJob extends CalculateNhlPregameContextRunDay
     /** Ignore obsolete timeout callbacks after a different delivery reclaimed the work. */
     public function failed(Throwable $exception): void
     {
+        if (app(NhlPregameContextOrchestrator::class)->retryTimedOutDay($this->runId, $this->runDayId, 'league', $this->claimToken, $exception)) {
+            return;
+        }
         DB::transaction(function () use ($exception): void {
             NhlPregameContextRun::query()->whereKey($this->runId)->lock('for no key update')->first();
             if ($this->ownsClaim()) {
