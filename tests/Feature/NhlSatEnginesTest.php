@@ -151,7 +151,7 @@ it('previews the selected non-default stack through the shared delegation and st
             ->and($attempt['engine_name'])->toBe('Priority ' . ($index + 1))
             ->and($attempt['internal_confidence'])->toBe(80)
             ->and($attempt['pick_qualified'])->toBe($index + 1 === $winner)
-            ->and($attempt['prediction']['confidence_score'])->toEqual($index + 1 === $winner ? 92 : 80);
+            ->and($attempt['prediction']['confidence_score'])->toEqual($index + 1 === $winner ? 83 : 80);
     }
     Bus::assertNothingDispatched();
 })->with([1, 2, 3]);

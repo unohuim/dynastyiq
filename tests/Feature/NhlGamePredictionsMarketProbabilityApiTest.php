@@ -1287,3 +1287,26 @@ it('normalizes final API goals using actual simulation weights and retains raw s
     'SAT defaults' => [88.0, 2.0],
     'no contributing weights' => [0.0, 0.0],
 ]);
+
+
+it('adds only three points before blending qualified confidence with no post-blend lift', function (
+    float $internal,
+    ?float $winPct,
+    ?float $coveragePct,
+    bool $qualified,
+    float $expected
+): void {
+    $service = app(NhlGamePredictionPayload::class);
+    $engine = new NhlSatEngine(['discovery_win_pct' => $winPct, 'discovery_coverage_pct' => $coveragePct]);
+    $method = new ReflectionMethod($service, 'presentationConfidence');
+    expect($method->invoke($service, $internal, $engine, $qualified))->toBe($expected);
+})->with([
+    'qualified no historical metrics' => [75.0, null, null, true, 78.0],
+    'qualified blend without a post-blend addition' => [80.0, 75.0, 3.125, true, 79.0],
+    'qualified lower limit' => [60.0, null, null, true, 70.0],
+    'qualified upper limit' => [99.0, null, null, true, 95.0],
+    'zero coverage retains the three-point uplift' => [80.0, 75.0, 0.0, true, 83.0],
+    'full coverage uses historical win rate' => [80.0, 75.0, 100.0, true, 75.0],
+    'unqualified no historical metrics is unchanged before penalty' => [75.0, null, null, false, 75.0],
+    'unqualified historical blend has no uplift' => [80.0, 75.0, 3.125, false, 77.5],
+]);

@@ -19,10 +19,10 @@ that override, the Engine's own Production Model supplies both. This is a stack-
 override and does not change the saved Production Model on any Engine.
 The returned `prediction.confidence_score` and each market row's `confidence_score`
 are presentation confidence, not the Engine's internal qualification confidence:
-for a qualified Engine, `min(95, max(70, blend(internal + 5, observed_win_pct,
-coverage^(1/5)) + 7))`, using the Engine's frozen discovery percentages as
+for a qualified Engine, `min(95, max(70, blend(min(100, internal + 3), observed_win_pct,
+coverage^(1/5))))`, using the Engine's frozen discovery percentages as
 decimals. An Engine without frozen discovery metrics uses its internal score plus
-five and the seven-point presentation lift, within the same 70–95 range. A normal response with
+three with no post-blend lift, within the same 70–95 range. A normal response with
 `pick_qualified: false` subtracts 20 percentage points from this outward-facing
 confidence (floored at zero); this does not alter internal qualification. If no default stack is available,
 ordinary predictions retain the legacy fallback: no engine model or weights are
