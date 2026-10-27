@@ -1167,18 +1167,18 @@ The `prediction` block contains the display headline:
 
 | Field | Meaning |
 | --- | --- |
-| `predicted_score.away` | Away goals after dividing the weighted score by the combined offense/defense multiplier. |
+| `predicted_score.away` | Away goals after normalizing each bucket by its participating offense/defense multipliers. |
 | `predicted_score.home` | Home goals after the same normalization. |
 | `predicted_total_goals` | Combined normalized game goals, summed before rounding. |
 | `selection_score` | Original unrounded away/home weighted goals used for winner selection and moneyline/puckline probabilities. |
 | `selection_goal_differential` | Original weighted home-minus-away gap used for selection. |
-| `totals_normalization` | Applied offense/defense percentages, their combined divisor, and whether normalization was applied. |
+| `totals_normalization` | Configured offense/defense percentages and configured_divisor; away/home unrounded goals_per_game, effective divisor and bucket_divisors; a shared divisor only when both sides agree; and whether both normalized scores are available. |
 | `winner` | Side selected using the original weighted scores before final goal normalization. |
 | `goal_differential` | Home projected goals minus away projected goals. |
 | `confidence_score` | `1` to `100`, averaging the two teams' weighted skater/goalie input confidence; not goal margin or win probability. |
 | `goalie_edge` | Selected-starter goalie edge in goals saved per game. |
 
-Final goal normalization leaves winner, win probability, confidence and qualification unchanged. For example, 150% offense plus 50% defense divides both team goals by 2. Over/under uses these normalized goals. With zero combined weights, normalized scores and total are null and total markets are omitted. Existing saved revisions retain their original outputs.
+Final goal normalization leaves winner, win probability, confidence and qualification unchanged. For example, 150% offense plus 50% defense divides a matching bucket by 2. If its defensive match is missing, only 150% offense participated, so that bucket is divided by 1.5. Over/under uses the unrounded normalized team goals without dividing again. Empty bucket evidence or zero participating weights makes that side’s normalized score and the combined total unavailable, and total markets are omitted. Existing saved revisions retain their original outputs.
 
 `goalie_edge.score` scale:
 

@@ -339,6 +339,10 @@ class NhlProjectedTeamMatchupSimulator
             'goalie_adjusted_xgf' => round((float) $rows->sum('goalie_adjusted_xgf'), 4),
         ];
         $totalGoalieAdjustedXgf = $adjusted['goalie_adjusted_xgf'] + $pk['goalie_adjusted_xgf'];
+        $goalTotalsNormalization = $satModelId === null
+            ? ['goals_per_game' => $totalGoalieAdjustedXgf / $projectedGames,
+                'divisor' => 1.0, 'bucket_divisors' => [1.0]]
+            : $this->normalizedBucketGoals($rows, $projectedGames);
         $penaltiesByBucket = $rows->mapWithKeys(fn (array $row): array => [
             (string) $row['matched_bucket_key'] => 0.0,
         ]);
@@ -363,6 +367,7 @@ class NhlProjectedTeamMatchupSimulator
 
         return [
             'bucket_model_run_id' => $satModelId,
+            'goal_totals_normalization' => $goalTotalsNormalization,
             'goalie_input_confidence' => $satModelId === null ? null
                 : app(NhlHistoricalPredictionService::class)->confidence($evGoalieBuckets, 'projected_sata', 'source_confidence_score'),
             'goalie_bucket_coverage' => $satModelId === null ? [] : [
@@ -1398,6 +1403,34 @@ class NhlProjectedTeamMatchupSimulator
         $projectedGames = (float) $rows->max('projected_games');
 
         return $projectedGames > 0 ? $projectedGames : self::TARGET_SEASON_GAMES;
+    }
+
+    /** Normalize final goalie-adjusted goals using only each bucket's participating weights.
+     * @param Collection<int,array<string,mixed>> $rows
+     * @return array{goals_per_game:float|null,divisor:float|null,bucket_divisors:array<int,float>}
+     */
+    private function normalizedBucketGoals(Collection $rows, float $projectedGames): array
+    {
+        $normalized = 0.0;
+        $raw = 0.0;
+        $divisors = [];
+        foreach ($rows as $row) {
+            $divisor = (float) $row['environment_offense_weight'] + (float) $row['environment_defense_weight'];
+            if ($divisor <= 0) {
+                return ['goals_per_game' => null, 'divisor' => null, 'bucket_divisors' => []];
+            }
+            $goals = (float) $row['goalie_adjusted_xgf'];
+            $raw += $goals;
+            $normalized += $goals / $divisor;
+            $divisors[] = $divisor;
+        }
+        $divisors = array_values(array_unique($divisors));
+
+        return [
+            'goals_per_game' => $divisors === [] ? null : $normalized / $projectedGames,
+            'divisor' => count($divisors) === 1 ? $divisors[0] : ($normalized > 0 ? $raw / $normalized : null),
+            'bucket_divisors' => $divisors,
+        ];
     }
 
     private function tablesExist(): bool

@@ -209,15 +209,16 @@ beforeEach(function (): void {
         return $token;
     };
 
-    $this->bindMatchupSimulator = function (float $awayGoals = 2.4, float $homeGoals = 3.2, float $confidence = 0.8, array $weights = ['offense' => 85, 'defense' => 15]): void {
+    $this->bindMatchupSimulator = function (float $awayGoals = 2.4, float $homeGoals = 3.2, float $confidence = 0.8, array $weights = ['offense' => 85, 'defense' => 15], array $normalizations = []): void {
         app()->bind(
             NhlProjectedTeamMatchupSimulator::class,
-            fn (): NhlProjectedTeamMatchupSimulator => new class($awayGoals, $homeGoals, $confidence, $weights) extends NhlProjectedTeamMatchupSimulator {
+            fn (): NhlProjectedTeamMatchupSimulator => new class($awayGoals, $homeGoals, $confidence, $weights, $normalizations) extends NhlProjectedTeamMatchupSimulator {
                 public function __construct(
                     private readonly float $awayGoals,
                     private readonly float $homeGoals,
                     private readonly float $confidence,
-                    private readonly array $weights
+                    private readonly array $weights,
+                    private readonly array $normalizations
                 ) {
                 }
 
@@ -240,6 +241,7 @@ beforeEach(function (): void {
                         'inputs' => ['goal_weights' => $this->weights],
                         'sides' => [
                             [
+                                'goal_totals_normalization' => $this->normalizations['away'] ?? null,
                                 'offense_team' => $teamA,
                                 'defense_team' => $teamB,
                                 'summary' => [
@@ -251,6 +253,7 @@ beforeEach(function (): void {
                                 ],
                             ],
                             [
+                                'goal_totals_normalization' => $this->normalizations['home'] ?? null,
                                 'offense_team' => $teamB,
                                 'defense_team' => $teamA,
                                 'summary' => [
@@ -1310,3 +1313,86 @@ it('adds only three points before blending qualified confidence with no post-ble
     'unqualified no historical metrics is unchanged before penalty' => [75.0, null, null, false, 75.0],
     'unqualified historical blend has no uplift' => [80.0, 75.0, 3.125, false, 77.5],
 ]);
+
+
+it('normalizes goalie-adjusted bucket goals using only participating weights', function (array $rows, float $games, ?float $expected): void {
+    $simulator = new NhlProjectedTeamMatchupSimulator();
+    $normalization = (new ReflectionMethod($simulator, 'normalizedBucketGoals'))->invoke($simulator, collect($rows), $games);
+    expect($normalization['goals_per_game'] === null ? null : round($normalization['goals_per_game'], 6))->toBe($expected);
+})->with([
+    'missing defensive evidence does not count its configured 200 percent' => [
+        [['goalie_adjusted_xgf' => 12.76, 'environment_offense_weight' => 2.0, 'environment_defense_weight' => 0.0]], 1.0, 6.38],
+    'matching defense participates' => [
+        [['goalie_adjusted_xgf' => 12.76, 'environment_offense_weight' => 2.0, 'environment_defense_weight' => 2.0]], 1.0, 3.19],
+    'matched and unmatched buckets use different divisors before summing' => [[
+        ['goalie_adjusted_xgf' => 4.8, 'environment_offense_weight' => 2.0, 'environment_defense_weight' => 2.0],
+        ['goalie_adjusted_xgf' => 4.8, 'environment_offense_weight' => 2.0, 'environment_defense_weight' => 0.0],
+    ], 1.0, 3.6],
+    'EV PP and PK retain each lanes goalie-adjusted goals' => [[
+        ['projection_strength' => 'ev', 'goalie_adjusted_xgf' => 4.8, 'environment_offense_weight' => 2.0, 'environment_defense_weight' => 0.0],
+        ['projection_strength' => 'pp', 'goalie_adjusted_xgf' => 1.2, 'environment_offense_weight' => 2.0, 'environment_defense_weight' => 2.0],
+        ['projection_strength' => 'pk', 'goalie_adjusted_xgf' => 0.2, 'environment_offense_weight' => 2.0, 'environment_defense_weight' => 0.0],
+    ], 1.0, 2.8],
+    'below 100 percent offense without defense' => [
+        [['goalie_adjusted_xgf' => 0.8, 'environment_offense_weight' => .25, 'environment_defense_weight' => 0.0]], 1.0, 3.2],
+    'per game exposure is applied once' => [
+        [['goalie_adjusted_xgf' => 1071.84, 'environment_offense_weight' => 2.0, 'environment_defense_weight' => 0.0]], 84.0, 6.38],
+    'zero goals with valid weights are a valid projection' => [
+        [['goalie_adjusted_xgf' => 0.0, 'environment_offense_weight' => 2.0, 'environment_defense_weight' => 0.0]], 1.0, 0.0],
+    'zero participating weights are unavailable' => [
+        [['goalie_adjusted_xgf' => 0.0, 'environment_offense_weight' => 0.0, 'environment_defense_weight' => 0.0]], 1.0, null],
+    'no projected buckets are unavailable' => [[], 1.0, null],
+]);
+
+it('publishes participating-weight totals once while preserving selection and moneyline probabilities', function (float $homeDivisor): void {
+    $this->travelTo(\Illuminate\Support\Carbon::parse('2026-10-01 12:00:00 UTC'));
+    Http::preventStrayRequests();
+    $token = ($this->seedPredictionInputs)(4.8, 6.4);
+    ($this->bindMatchupSimulator)(4.8, 6.4, .68, ['offense' => 200, 'defense' => 200], [
+        'away' => ['goals_per_game' => 2.4, 'divisor' => 2.0, 'bucket_divisors' => [2.0]],
+        'home' => ['goals_per_game' => 6.4 / $homeDivisor, 'divisor' => $homeDivisor, 'bucket_divisors' => [$homeDivisor]],
+    ]);
+    DB::table('nhl_goalie_season_projections')->update(['confidence_score' => .68]);
+    $params = ['nhl_game_id' => 2026020001, 'source_season_id' => '20252026',
+        'target_season_id' => '20262027', 'projection_version' => 'skater-market',
+        'toi_projection_version' => 'toi-market', 'goalie_projection_version' => 'goalie-market',
+        'away_goalie_id' => 9001, 'home_goalie_id' => 9002, 'markets' => ['moneyline', 'total']];
+    $response = $this->withToken($token)->getJson('/api/nhl-game-predictions?'.http_build_query($params))->assertOk()
+        ->assertJsonPath('prediction.selection_score.away', 4.8)
+        ->assertJsonPath('prediction.selection_score.home', 6.4)
+        ->assertJsonPath('prediction.winner.side', 'home')
+        ->assertJsonPath('prediction.predicted_score.away', 2.4)
+        ->assertJsonPath('prediction.predicted_score.home', round(6.4 / $homeDivisor, 2))
+        ->assertJsonPath('prediction.totals_normalization.configured_divisor', 4)
+        ->assertJsonPath('prediction.totals_normalization.away.divisor', 2)
+        ->assertJsonPath('prediction.totals_normalization.divisor', $homeDivisor === 2.0 ? 2 : null)
+        ->assertJsonPath('prediction.predicted_total_goals', fn ($value): bool => (float) $value === round(2.4 + 6.4 / $homeDivisor, 2));
+    $method = new ReflectionMethod(NhlGamePredictionPayload::class, 'marketProbabilities');
+    $baseline = $response->json('prediction');
+    unset($baseline['totals_normalization']);
+    $service = app(NhlGamePredictionPayload::class);
+    $original = collect($method->invoke($service, 'AWY', 'HOM', 4.8, 6.4, $baseline, $params));
+    $normalized = collect($method->invoke($service, 'AWY', 'HOM', 2.4, 6.4 / $homeDivisor, $baseline, $params));
+    $actual = collect($response->json('market_probabilities'));
+    expect($actual->where('market_key', 'moneyline')->values()->all())->toEqual($original->where('market_key', 'moneyline')->values()->all())
+        ->and($actual->where('market_key', 'total')->values()->all())->toEqual($normalized->where('market_key', 'total')->values()->all());
+    $revision = DB::table('nhl_game_prediction_revisions')->latest('id')->first();
+    expect(json_decode($revision->payload, true)['prediction'])->toEqual($response->json('prediction'));
+    Http::assertNothingSent();
+    $this->travelBack();
+})->with(['neither side has defensive evidence' => [2.0], 'only home has matching defensive buckets' => [4.0]]);
+
+
+it('carries actual defensive bucket participation from environment math into final goal normalization', function (bool $hasDefense): void {
+    $attack = (object) ['matched_bucket_key' => 'shot|near', 'bucket_dimensions' => [],
+        'shot_type_group' => 'shot', 'distance_group' => 'near', 'angle_group' => 'all', 'sequence_group' => 'all',
+        'baseline_xsat' => 60.0, 'baseline_xsog' => 30.0, 'baseline_xgf' => 3.0];
+    $defense = $hasDefense ? collect([clone $attack]) : collect();
+    $rows = app(\App\Services\NhlSatModelPredictionService::class)->environment(0, collect([$attack]), $defense, 2.0, 2.0);
+    expect($rows->first()['environment_defense_weight'])->toBe($hasDefense ? 2.0 : 0.0);
+    $rows = $rows->map(fn (array $row): array => [...$row, 'goalie_adjusted_xgf' => $row['adjusted_xgf'] * .9]);
+    $simulator = new NhlProjectedTeamMatchupSimulator();
+    $normalized = (new ReflectionMethod($simulator, 'normalizedBucketGoals'))->invoke($simulator, $rows, 1.0);
+    expect(round($normalized['goals_per_game'], 4))->toBe(2.7)
+        ->and($normalized['divisor'])->toBe($hasDefense ? 4.0 : 2.0);
+})->with(['matching defense' => [true], 'no defensive evidence' => [false]]);

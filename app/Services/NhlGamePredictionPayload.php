@@ -474,7 +474,8 @@ class NhlGamePredictionPayload
         $weights = data_get($result, 'inputs.goal_weights')
             ?? ($overrides['engine_weights'] ?? ($satModelId === null
                 ? ['offense' => 85, 'defense' => 15] : ['offense' => 88, 'defense' => 2]));
-        $prediction = $this->normalizeGoalTotals($prediction, $awayGoals, $homeGoals, $weights);
+        $prediction = $this->normalizeGoalTotals($prediction, $awayGoals, $homeGoals, $weights,
+            $awaySide['goal_totals_normalization'] ?? null, $homeSide['goal_totals_normalization'] ?? null);
 
         $response = [
             'prediction_available' => true,
@@ -560,26 +561,45 @@ class NhlGamePredictionPayload
     /** Normalize final goals without changing the raw scores used to select or qualify the winner.
      * @param array<string,mixed> $prediction
      * @param array{offense:float|int,defense:float|int} $weights
+     * @param array<string,mixed>|null $awayNormalization
+     * @param array<string,mixed>|null $homeNormalization
      * @return array<string,mixed>
      */
-    private function normalizeGoalTotals(array $prediction, float $awayGoals, float $homeGoals, array $weights): array
+    private function normalizeGoalTotals(
+        array $prediction,
+        float $awayGoals,
+        float $homeGoals,
+        array $weights,
+        ?array $awayNormalization = null,
+        ?array $homeNormalization = null
+    ): array
     {
         $divisor = ((float) $weights['offense'] + (float) $weights['defense']) / 100;
+        $awayNormalization ??= ['goals_per_game' => $divisor > 0 ? $awayGoals / $divisor : null,
+            'divisor' => $divisor];
+        $homeNormalization ??= ['goals_per_game' => $divisor > 0 ? $homeGoals / $divisor : null,
+            'divisor' => $divisor];
+        $awayNormalized = $awayNormalization['goals_per_game'];
+        $homeNormalized = $homeNormalization['goals_per_game'];
+        $available = $awayNormalized !== null && $homeNormalized !== null;
         $prediction['selection_score'] = ['away' => $awayGoals, 'home' => $homeGoals];
         $prediction['selection_goal_differential'] = $prediction['goal_differential'];
         $prediction['totals_normalization'] = [
             'offense_percent' => (float) $weights['offense'],
             'defense_percent' => (float) $weights['defense'],
-            'divisor' => $divisor,
-            'applied' => $divisor > 0,
+            'configured_divisor' => $divisor,
+            'divisor' => $awayNormalization['divisor'] === $homeNormalization['divisor']
+                ? $awayNormalization['divisor'] : null,
+            'away' => $awayNormalization,
+            'home' => $homeNormalization,
+            'applied' => $available,
         ];
-        // A zero/zero engine has no defined normalized total; do not invent a divisor.
         $prediction['predicted_score'] = [
-            'away' => $divisor > 0 ? round($awayGoals / $divisor, 2) : null,
-            'home' => $divisor > 0 ? round($homeGoals / $divisor, 2) : null,
+            'away' => $awayNormalized === null ? null : round($awayNormalized, 2),
+            'home' => $homeNormalized === null ? null : round($homeNormalized, 2),
         ];
-        $prediction['predicted_total_goals'] = $divisor > 0 ? round(($awayGoals + $homeGoals) / $divisor, 2) : null;
-        $prediction['goal_differential'] = $divisor > 0 ? round(($homeGoals - $awayGoals) / $divisor, 4) : null;
+        $prediction['predicted_total_goals'] = $available ? round($awayNormalized + $homeNormalized, 2) : null;
+        $prediction['goal_differential'] = $available ? round($homeNormalized - $awayNormalized, 4) : null;
 
         return $prediction;
     }
@@ -1414,12 +1434,12 @@ class NhlGamePredictionPayload
         }
 
         if (in_array('total', $markets, true)) {
-            $divisor = (float) data_get($prediction, 'totals_normalization.divisor', 1);
-            if ($divisor <= 0) {
+            $awayTotalGoals = data_get($prediction, 'totals_normalization.away.goals_per_game', $awayGoals);
+            $homeTotalGoals = data_get($prediction, 'totals_normalization.home.goals_per_game', $homeGoals);
+            if ($awayTotalGoals === null || $homeTotalGoals === null) {
                 return $probabilities;
             }
-            $totalDistribution = $divisor === 1.0 ? $distribution
-                : $this->scoreDistribution($awayGoals / $divisor, $homeGoals / $divisor);
+            $totalDistribution = $this->scoreDistribution((float) $awayTotalGoals, (float) $homeTotalGoals);
             foreach ($this->requestedTotalLines($overrides) as $line) {
                 array_push(
                     $probabilities,
