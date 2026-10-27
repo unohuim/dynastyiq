@@ -1,4 +1,6 @@
 <script setup>
+import { useLiveGameFeed } from './live-game-feed';
+import { Link } from '@inertiajs/vue3';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import {
     defaultSlateDate, shiftSlateDate, slateRolloverDelay, slateNavigationLabel,
@@ -17,7 +19,7 @@ const end = ref(null);
 const loading = ref(false);
 const loadingEdge = ref(null);
 const error = ref('');
-const liveError = ref('');
+const liveError = computed(() => liveWarning.value);
 const scroller = ref(null);
 const days = computed(() => scoreboardDays(start.value, end.value, games.value));
 const dateLabel = computed(() => slateNavigationLabel(selectedDate.value, clock.value));
@@ -34,6 +36,7 @@ let liveRequest;
 let liveRefreshing = false;
 let payloadVersion = 0;
 const dateVersions = new Map();
+const gameVersions = new Map();
 const loadedDates = new Set();
 
 async function fetchRange(from, through, controller) {
@@ -60,8 +63,10 @@ function mergeRange(payload, from, through, version) {
         dateVersions.set(date, version);
     }
     // A slower navigation response cannot replace newer live scores for the same day.
-    games.value = mergeScoreboardGames(games.value.filter(game => !accepted.has(game.game_date)),
-        payload.games.filter(game => accepted.has(game.game_date)));
+    const incoming = payload.games.filter(game => version >= (gameVersions.get(Number(game.nhl_game_id)) ?? 0));
+    games.value = mergeScoreboardGames(games.value.filter(game => !accepted.has(game.game_date)
+        || (gameVersions.get(Number(game.nhl_game_id)) ?? 0) > version), incoming);
+    incoming.forEach(game => gameVersions.set(Number(game.nhl_game_id), version));
 }
 
 function isRecentDate(date) {
@@ -69,26 +74,21 @@ function isRecentDate(date) {
     return date >= shiftSlateDate(today, -1) && date <= today;
 }
 
-async function refreshRecentGames() {
-    if (disposed || document.hidden || liveRefreshing) return;
-    const today = new Date().toISOString().slice(0, 10);
-    const yesterday = shiftSlateDate(today, -1);
-    const controller = new AbortController();
-    liveRequest = controller;
-    liveRefreshing = true;
-    const version = ++payloadVersion;
-    try {
-        const payload = await fetchRange(yesterday, today, controller);
-        if (disposed) return;
-        mergeRange(payload, yesterday, today, version);
-        liveError.value = '';
-    } catch {
-        if (!disposed) liveError.value = 'Unable to refresh live scores.';
-    } finally {
-        liveRefreshing = false;
-        if (liveRequest === controller) liveRequest = null;
-    }
-}
+const { warning: liveWarning, resync: refreshRecentGames } = useLiveGameFeed({
+    update(snapshot) {
+        const row = snapshot.game;
+        const current = games.value.find(game => Number(game.nhl_game_id) === Number(row.nhl_game_id));
+        const merged = { ...current, ...row, href: current?.href ?? `/games/${row.nhl_game_id}` };
+        if (row.mode === 'preview') {
+            for (const side of ['away', 'home']) merged[side] = { ...row[side], score: null, win_probability: current?.[side]?.win_probability ?? null };
+        }
+        games.value = mergeScoreboardGames(games.value, [merged]);
+        // Fence slower in-flight schedule navigation responses after a pushed live update.
+        const version = ++payloadVersion;
+        dateVersions.set(row.game_date, version);
+        gameVersions.set(Number(row.nhl_game_id), version);
+    },
+});
 
 function activateRange(date) {
     if (!loadedDates.has(date)) return;
@@ -257,7 +257,7 @@ onMounted(() => {
     selectedDate.value = defaultSlateDate();
     loadAround(selectedDate.value);
     scheduleRollover();
-    refreshTimer = setInterval(refresh, 15000);
+    refreshTimer = setInterval(() => { clock.value = new Date(); }, 60000);
 });
 onBeforeUnmount(() => {
     disposed = true;
@@ -289,7 +289,7 @@ onBeforeUnmount(() => {
                     <div class="flex w-8 shrink-0 items-center justify-center border-r border-[#1F2B37] bg-white/[0.025]">
                         <span class="whitespace-nowrap font-mono text-[9px] text-[#788997] [writing-mode:vertical-rl]">{{ day.labels.weekday }} {{ day.labels.date }}</span>
                     </div>
-                    <a v-for="game in day.games" :key="game.nhl_game_id" :href="game.href" :aria-label="gameLabel(game)" class="relative w-32 shrink-0 border-r border-[#1F2B37] px-3.5 py-2.5 transition-colors duration-150 hover:bg-white/5 focus-visible:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-400 motion-reduce:transition-none">
+                    <Link v-for="game in day.games" :prefetch="isLive(game) ? false : 'hover'" :cache-for="isLive(game) ? 0 : 15000" :key="game.nhl_game_id" :href="game.href" :aria-label="gameLabel(game)" class="relative w-32 shrink-0 border-r border-[#1F2B37] px-3.5 py-2.5 transition-colors duration-150 hover:bg-white/5 focus-visible:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-400 motion-reduce:transition-none">
                         <div class="mb-1.5 font-mono text-[10px] font-semibold" :class="isLive(game) ? 'text-emerald-400' : 'text-[#788997]'">{{ scoreboardStatus(game) }}</div>
                         <div v-for="side in ['away', 'home']" :key="side" class="flex h-5 items-center gap-1.5 font-mono text-[13px] font-semibold" :class="isLoser(game, side) ? 'text-[#788997]' : 'text-[#E7EEF6]'">
                             <img v-if="game[side].team_logo" :src="game[side].team_logo" alt="" class="h-[18px] w-[18px] shrink-0 object-contain" :class="isLoser(game, side) ? 'opacity-50' : ''" loading="lazy" />
@@ -297,7 +297,7 @@ onBeforeUnmount(() => {
                             <span class="min-w-0 flex-1">{{ game[side].team_abbrev ?? '—' }}</span>
                             <span class="shrink-0 tabular-nums" :class="['FUT', 'PRE'].includes((game.game_state ?? '').toUpperCase()) ? 'text-[10px]' : ''">{{ scoreboardTeamValue(game, side) }}</span>
                         </div>
-                    </a>
+                    </Link>
                     <div v-if="!day.games.length" class="flex w-32 shrink-0 items-center justify-center border-r border-[#1F2B37] px-3 text-center text-xs text-[#788997]">No games scheduled</div>
                 </section>
                 <div v-if="!days.length && loading" role="status" class="flex min-h-[82px] w-full items-center justify-center gap-2 text-xs text-[#C9D5E0]"><span aria-hidden="true" class="h-4 w-4 animate-spin rounded-full border-2 border-sky-400/20 border-t-sky-300 motion-reduce:animate-none" />Loading games…</div>

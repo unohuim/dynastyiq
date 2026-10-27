@@ -1765,3 +1765,15 @@ Example:
   ]
 }
 ```
+
+
+## Public live game updates
+
+Public live scores are distributed separately from authenticated prediction calculations.
+Subscribe to public Reverb channel `nhl.games` and event `.nhl.game.updated` using the configured public Reverb application key and host. The application secret must never be exposed. Browser clients must use a host permitted by the existing Reverb allowed-origins configuration; this change does not broaden those origins.
+
+Each message contains `sequence`, `observed_at`, `changed` and `game` (game ID, state, date, clock, period, and each team's public identity, score and SOG). This same event is available to internal Laravel listeners. It contains no private prediction evidence. No webhook delivery or replay guarantee is provided by this stream.
+
+Read `GET /games/live` for recent compact snapshots, or `GET /games/live?game_id={nhl_game_id}` for one full public game snapshot. The response is `{ "snapshots": [...] }`; each snapshot includes `sequence`, `observed_at`, `game` and `stale`. These public reads require no partner credential and never calculate predictions or contact NHL. Existing partner authentication and prediction endpoints are unchanged.
+
+Subscribe before requesting the initial snapshot, then apply updates by increasing per-game sequence. Re-read on reconnect to recover missed changes. Live snapshots older than twenty seconds are explicitly stale; terminal results remain final. A five-second shared producer polls NHL independently of viewer count. PBP and boxscore are separate shared source requests, and provider/network latency still affects freshness.

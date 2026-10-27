@@ -1137,3 +1137,125 @@ it('does not seed unfinished discovered games', function (): void {
 
     expect(DB::table('nhl_import_progress')->count())->toBe(0);
 });
+
+
+describe('season sync after a completed Full import', function (): void {
+    beforeEach(function (): void {
+        Bus::fake();
+        Event::fake();
+        $this->fullRun = ($this->overlapRun)(['payload' => [
+            'processing_started_at' => '2026-06-29T12:00:00Z',
+            'post_process_enrichment_started_at' => '2026-06-29T12:00:00Z',
+            'post_process_enrichment_batch_id' => 'full-fixture',
+        ]]);
+        ($this->insertGame)();
+        $rows = ($this->overlapRows)($this->fullRun->id, [2026020001]);
+        foreach ($rows as &$row) {
+            $row['status'] = 'completed';
+        }
+        unset($row);
+        DB::table('nhl_import_progress')->insert($rows);
+        $this->finishFull = function (string $batchId = 'full-fixture'): void {
+            (new \ReflectionMethod(NhlImportOrchestrator::class, 'recordFullPostProcessCompleted'))
+                ->invoke(null, $this->fullRun->id, $batchId);
+        };
+    });
+
+    it('queues a tracked season sync despite unfinished validations in other runs', function (string $status): void {
+        $other = ($this->overlapRun)(['status' => 'paused']);
+        ($this->insertProgress)(2026020002, NhlImportStages::VALIDATE_SUMMARY, $status, ['run_id' => $other->id]);
+
+        ($this->finishFull)();
+
+        $ids = $this->fullRun->fresh()->payload['post_process_enrichment_season_sync_run_ids'];
+        expect($this->fullRun->fresh()->status)->toBe('completed')->and($ids)->toHaveCount(1);
+        $this->assertDatabaseHas('nhl_game_import_runs', [
+            'id' => $ids[0], 'action' => 'season-sync', 'status' => 'queued',
+        ]);
+        $this->assertDatabaseHas('nhl_import_progress', ['run_id' => $other->id, 'status' => $status]);
+        Bus::assertDispatchedTimes(\App\Jobs\SeasonSumJob::class, 1);
+        Bus::assertDispatched(\App\Jobs\SeasonSumJob::class,
+            fn ($job): bool => $job->seasonId === '20262027' && $job->runId === $ids[0]);
+    })->with(['scheduled', 'running', 'error']);
+
+    it('waits for enrichment instead of syncing after an individual validation', function (): void {
+        $orchestrator = app(NhlImportOrchestrator::class);
+        $orchestrator->onSuccess(2026020001, NhlImportStages::VALIDATE_SUMMARY, [], $this->fullRun->id);
+        Bus::assertNotDispatched(\App\Jobs\SeasonSumJob::class);
+        expect($this->fullRun->fresh()->status)->toBe('running');
+        ($this->finishFull)();
+        Bus::assertDispatchedTimes(\App\Jobs\SeasonSumJob::class, 1);
+    });
+
+    it('ignores duplicate completion callbacks without replacing the sync checkpoint', function (): void {
+        ($this->finishFull)();
+        $ids = $this->fullRun->fresh()->payload['post_process_enrichment_season_sync_run_ids'];
+        ($this->finishFull)();
+        expect($this->fullRun->fresh()->payload['post_process_enrichment_season_sync_run_ids'])->toBe($ids);
+        Bus::assertDispatchedTimes(\App\Jobs\SeasonSumJob::class, 1);
+    });
+
+    it('keeps drained paused imports paused until Resume queues their sync', function (): void {
+        $this->fullRun->update(['status' => 'paused']);
+        ($this->finishFull)();
+        expect($this->fullRun->fresh()->status)->toBe('paused');
+        Bus::assertNotDispatched(\App\Jobs\SeasonSumJob::class);
+        app(\App\Services\NhlGameImportRunControl::class)->resume($this->fullRun->id);
+        expect($this->fullRun->fresh()->status)->toBe('completed');
+        Bus::assertDispatchedTimes(\App\Jobs\SeasonSumJob::class, 1);
+    });
+
+    it('does not sync cancelled or cancelling imports', function (string $status): void {
+        $this->fullRun->update(['status' => $status]);
+        ($this->finishFull)();
+        expect($this->fullRun->fresh()->status)->toBe($status);
+        Bus::assertNotDispatched(\App\Jobs\SeasonSumJob::class);
+    })->with(['cancelled', 'cancelling']);
+
+    it('rejects completion from a replaced enrichment batch', function (): void {
+        ($this->finishFull)('obsolete-batch');
+        expect($this->fullRun->fresh()->status)->toBe('running');
+        Bus::assertNotDispatched(\App\Jobs\SeasonSumJob::class);
+    });
+
+    it('queues each affected season once for a cross-season import', function (): void {
+        ($this->insertGame)(2025020001, ['season_id' => '20252026', 'game_date' => '2025-10-01']);
+        ($this->insertProgress)(2025020001, NhlImportStages::VALIDATE_SUMMARY, 'completed', [
+            'run_id' => $this->fullRun->id, 'season_id' => '20252026', 'game_date' => '2025-10-01',
+        ]);
+        ($this->finishFull)();
+        Bus::assertDispatchedTimes(\App\Jobs\SeasonSumJob::class, 2);
+        Bus::assertDispatched(\App\Jobs\SeasonSumJob::class, fn ($job): bool => $job->seasonId === '20252026');
+        Bus::assertDispatched(\App\Jobs\SeasonSumJob::class, fn ($job): bool => $job->seasonId === '20262027');
+        expect($this->fullRun->fresh()->payload['post_process_enrichment_season_sync_run_ids'])->toHaveCount(2);
+    });
+
+    it('allows a fresh explicit rerun to queue its own season sync', function (): void {
+        ($this->finishFull)();
+        $payload = app(\App\Services\NhlGameImportRunControl::class)->freshPayload($this->fullRun->fresh()->payload);
+        $payload['post_process_enrichment_batch_id'] = 'second-batch';
+        $this->fullRun->update(['status' => 'running', 'payload' => $payload]);
+        ($this->finishFull)('second-batch');
+        Bus::assertDispatchedTimes(\App\Jobs\SeasonSumJob::class, 2);
+    });
+
+    it('excludes seasons belonging only to overlap-excluded games', function (): void {
+        ($this->insertProgress)(2025020001, NhlImportStages::VALIDATE_SUMMARY, 'completed', [
+            'run_id' => $this->fullRun->id, 'season_id' => '20252026', 'game_date' => '2025-10-01',
+        ]);
+        $payload = $this->fullRun->payload;
+        $payload['overlap_excluded_games'] = ['2025020001' => 128];
+        $this->fullRun->update(['payload' => $payload]);
+        ($this->finishFull)();
+        Bus::assertDispatchedTimes(\App\Jobs\SeasonSumJob::class, 1);
+        Bus::assertNotDispatched(\App\Jobs\SeasonSumJob::class, fn ($job): bool => $job->seasonId === '20252026');
+    });
+
+    it('syncs a completed legacy game despite unrelated unfinished validations', function (): void {
+        ($this->insertProgress)(2026020002, NhlImportStages::VALIDATE_SUMMARY, 'completed');
+        ($this->insertProgress)(2026020003, NhlImportStages::VALIDATE_SUMMARY, 'scheduled');
+        (new \ReflectionMethod(NhlImportOrchestrator::class, 'seasonSummary'))
+            ->invoke(app(NhlImportOrchestrator::class), 2026020002, NhlImportStages::VALIDATE_SUMMARY);
+        Bus::assertDispatched(\App\Jobs\SeasonSumJob::class, fn ($job): bool => $job->seasonId === '20262027');
+    });
+});

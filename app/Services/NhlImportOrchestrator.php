@@ -176,7 +176,9 @@ class NhlImportOrchestrator
         $this->repo->markCompleted($gameId, $type, $items, $runId, true);
         DB::afterCommit(function () use ($gameId, $type, $runId): void {
             $this->clearTroubleshootingDirectoryAfterSuccessfulStage($gameId, $type);
-            $this->seasonSummary($gameId, $type);
+            if ($runId === null) {
+                $this->seasonSummary($gameId, $type);
+            }
             $this->advance($gameId, $type, $runId);
         });
     }
@@ -312,46 +314,63 @@ class NhlImportOrchestrator
         }
     }
 
-    /**
-     * If all season validations have completed, dispatch the season stat rollup once.
-     */
+    /** Queue the rollup for a completed legacy game import without a parent run. */
     private function seasonSummary(int $gameId, string $type): void
     {
         if ($type !== NhlImportStages::VALIDATE_SUMMARY) {
             return;
         }
 
-        // Find the season for this game
         $seasonId = DB::table('nhl_import_progress')
             ->where('game_id', $gameId)
+            ->whereNull('run_id')
             ->value('season_id');
 
-        if (! $seasonId) {
-            return;
+        if ($seasonId) {
+            SeasonSumJob::dispatch((string) $seasonId)->afterCommit();
         }
+    }
 
-        // Scheduled/running/error validations block the season sum.
-        $notDone = DB::table('nhl_import_progress')
-            ->where('season_id', $seasonId)
-            ->where('import_type', NhlImportStages::VALIDATE_SUMMARY)
-            ->whereIn('status', ['scheduled', 'running', 'error'])
-            ->count();
+    /** Queue one tracked rollup per imported season and Full-run generation. */
+    private function queueSeasonSummariesForCompletedRun(int $runId): void
+    {
+        DB::transaction(function () use ($runId): void {
+            $run = NhlGameImportRun::query()->lock('for no key update')->find($runId);
+            $payload = $run?->payload ?? [];
 
-        if ($notDone > 0) {
-            return; // still work to do
-        }
-
-        // Best-effort de-dupe so multiple concurrent completions don't double-dispatch
-        $lockKey = "season-sum-dispatch:{$seasonId}";
-        $lock = Cache::lock($lockKey, 600);
-
-        if ($lock->get()) { // 10 min lock
-            try {
-                dispatch((new SeasonSumJob($seasonId))->afterCommit());
-            } finally {
-                $lock->release();
+            if ($run === null || $run->status !== NhlGameImportRun::STATUS_COMPLETED
+                || ! $this->shouldQueueFullPostProcess($run, $payload)
+                || ! $this->hasFullPostProcessCompleted($payload)
+                || isset($payload['post_process_enrichment_season_sync_run_ids'])) {
+                return;
             }
-        }
+
+            $gameIds = $this->gameIdsForRun($runId);
+            $seasons = DB::table('nhl_import_progress')->where('run_id', $runId)
+                ->whereIn('game_id', $gameIds)->distinct()->pluck('season_id');
+            $syncIds = [];
+
+            foreach ($seasons as $seasonId) {
+                $bounds = DB::table('nhl_games')->where('season_id', $seasonId)
+                    ->selectRaw('MIN(game_date) AS first_date, MAX(game_date) AS last_date')->first();
+                $sync = NhlGameImportRun::query()->create([
+                    'action' => NhlGameImportRun::ACTION_SEASON_SYNC,
+                    'mode' => NhlGameImportRun::MODE_SEASON,
+                    'status' => NhlGameImportRun::STATUS_QUEUED,
+                    'start_date' => $bounds->last_date ?? $run->start_date,
+                    'end_date' => $bounds->first_date ?? $run->end_date,
+                    'date_count' => 1,
+                    'queued_jobs' => 1,
+                    'payload' => ['season' => (string) $seasonId, 'import_parent_run_id' => $runId],
+                    'created_by' => $run->created_by,
+                ]);
+                $syncIds[] = $sync->id;
+                SeasonSumJob::dispatch((string) $seasonId, $sync->id)->afterCommit();
+            }
+
+            $payload['post_process_enrichment_season_sync_run_ids'] = $syncIds;
+            $run->update(['payload' => $payload]);
+        });
     }
 
     private function clearTroubleshootingDirectoryAfterSuccessfulStage(int $gameId, string $type): void
@@ -472,15 +491,24 @@ class NhlImportOrchestrator
             return;
         }
 
-        $payload['completed_at'] = now()->toIso8601String();
+        DB::transaction(function () use ($runId): void {
+            $current = NhlGameImportRun::query()->lock('for no key update')->find($runId);
+            if ($current === null || $current->status === NhlGameImportRun::STATUS_COMPLETED
+                || in_array($current->status, NhlGameImportRunControl::CONTROLLED, true)) {
+                return;
+            }
 
-        app(NhlGameImportRunControl::class)->saveWorkerRun($run, [
-            'status' => NhlGameImportRun::STATUS_COMPLETED,
-            'payload' => $payload,
-            'updated_at' => now(),
-        ]);
+            $payload = $current->payload ?? [];
+            $payload['completed_at'] = now()->toIso8601String();
+            app(NhlGameImportRunControl::class)->saveWorkerRun($current, [
+                'status' => NhlGameImportRun::STATUS_COMPLETED,
+                'payload' => $payload,
+                'updated_at' => now(),
+            ]);
+            $this->queueSeasonSummariesForCompletedRun($runId);
 
-        broadcast(new NhlGameImportStatusUpdated('processing-completed', $runId));
+            DB::afterCommit(fn () => broadcast(new NhlGameImportStatusUpdated('processing-completed', $runId)));
+        });
     }
 
     /**
@@ -596,34 +624,39 @@ class NhlImportOrchestrator
 
     private static function recordFullPostProcessCompleted(int $runId, string $batchId): void
     {
-        $run = NhlGameImportRun::query()->find($runId);
+        DB::transaction(function () use ($runId, $batchId): void {
+            $run = NhlGameImportRun::query()->lock('for no key update')->find($runId);
 
-        if (! app(NhlGameImportRunControl::class)->acceptsBatchCallback($run, 'post_process_enrichment_batch_id', $batchId, true)) {
-            return;
-        }
+            if ($run?->status === NhlGameImportRun::STATUS_COMPLETED
+                || ! app(NhlGameImportRunControl::class)->acceptsBatchCallback($run, 'post_process_enrichment_batch_id', $batchId, true)) {
+                return;
+            }
 
-        $payload = $run->payload ?? [];
-        $gameIds = app(self::class)->gameIdsForRun($runId);
+            $payload = $run->payload ?? [];
+            $gameIds = app(self::class)->gameIdsForRun($runId);
 
-        $payload['post_process_enrichment_batch_id'] = $batchId;
-        $payload['post_process_enrichment_completed_at'] = now()->toIso8601String();
-        $payload['post_process_enrichment_processed_game_count'] = count($gameIds);
-        $payload['shot_fact_game_count'] = count($gameIds);
-        $payload['shot_fact_processed_game_count'] = self::processedGameCount('nhl_shot_attempts_facts', $gameIds);
-        $payload['faceoff_fact_game_count'] = count($gameIds);
-        $payload['faceoff_fact_processed_game_count'] = self::processedGameCount('nhl_faceoff_facts', $gameIds);
-        $payload['refs_staff_game_count'] = count($gameIds);
-        $payload['refs_staff_processed_game_count'] = self::processedRightRailGameCount($gameIds);
-        $payload['refs_staff_assignment_game_count'] = self::refsStaffAssignmentGameCount($gameIds);
-        $payload['completed_at'] = now()->toIso8601String();
+            $payload['post_process_enrichment_batch_id'] = $batchId;
+            $payload['post_process_enrichment_completed_at'] = now()->toIso8601String();
+            $payload['post_process_enrichment_processed_game_count'] = count($gameIds);
+            $payload['shot_fact_game_count'] = count($gameIds);
+            $payload['shot_fact_processed_game_count'] = self::processedGameCount('nhl_shot_attempts_facts', $gameIds);
+            $payload['faceoff_fact_game_count'] = count($gameIds);
+            $payload['faceoff_fact_processed_game_count'] = self::processedGameCount('nhl_faceoff_facts', $gameIds);
+            $payload['refs_staff_game_count'] = count($gameIds);
+            $payload['refs_staff_processed_game_count'] = self::processedRightRailGameCount($gameIds);
+            $payload['refs_staff_assignment_game_count'] = self::refsStaffAssignmentGameCount($gameIds);
+            $payload['completed_at'] = now()->toIso8601String();
 
-        app(NhlGameImportRunControl::class)->saveWorkerRun($run, [
-            'status' => NhlGameImportRun::STATUS_COMPLETED,
-            'payload' => $payload,
-            'updated_at' => now(),
-        ]);
+            app(NhlGameImportRunControl::class)->saveWorkerRun($run, [
+                'status' => NhlGameImportRun::STATUS_COMPLETED,
+                'payload' => $payload,
+                'updated_at' => now(),
+            ]);
 
-        broadcast(new NhlGameImportStatusUpdated('processing-completed', $runId));
+            app(self::class)->queueSeasonSummariesForCompletedRun($runId);
+
+            DB::afterCommit(fn () => broadcast(new NhlGameImportStatusUpdated('processing-completed', $runId)));
+        });
     }
 
     private static function recordFullPostProcessFailure(int $runId, string $batchId, Throwable $throwable): void

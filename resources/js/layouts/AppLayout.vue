@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, provide, ref, shallowRef, watch } from 'vue';
 import { router, usePage } from '@inertiajs/vue3';
 import {
     DialogRoot, DialogPortal, DialogOverlay, DialogContent, DialogTitle, DialogDescription,
@@ -16,6 +16,10 @@ const user = computed(() => page.props.auth?.user);
 const drawer = ref(null);
 const newsOpen = ref(false);
 const mobileNewsOpen = ref(false);
+const liveGame = shallowRef(null);
+const liveConnected = ref(false);
+provide('nhlLiveGame', liveGame);
+provide('nhlLiveConnected', liveConnected);
 const toasts = ref([]);
 const timers = new Map();
 let sequence = 0;
@@ -54,10 +58,12 @@ function restoreFocus(event) {
 
 function reconnect() {
     disconnect?.();
-    if (!mounted || !user.value || !shell.value) return;
+    if (!mounted || !shell.value) return;
     disconnect = connectShellRealtime({
-        userId: user.value.id, organizationId: shell.value.organization.id, csrf: shell.value.csrf,
+        userId: user.value?.id, organizationId: shell.value.organization.id, csrf: shell.value.csrf,
         refresh: () => router.reload({ only: ['shell'], preserveScroll: true }), notify,
+        gameUpdate: snapshot => { liveGame.value = snapshot; },
+        connectionState: connected => { liveConnected.value = connected; },
     });
 }
 

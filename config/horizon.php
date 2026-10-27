@@ -224,6 +224,19 @@ return [
             'timeout' => 600,
             'nice' => 0,
         ],
+        'supervisor-nhl-live' => [
+            'connection' => 'redis',
+            'queue' => ['nhl-live'],
+            'balance' => 'auto',
+            'minProcesses' => 4,
+            'maxProcesses' => 8,
+            'maxTime' => 0,
+            'maxJobs' => 0,
+            'memory' => 128,
+            'tries' => 1,
+            'timeout' => 12,
+            'nice' => 0,
+        ],
         'supervisor-lineups' => [
             'connection' => 'redis',
             'queue' => ['lineups'],
@@ -246,6 +259,7 @@ return [
             'supervisor-projections' => [],
             'supervisor-fantrax' => [],
             'supervisor-lineups' => [],
+            'supervisor-nhl-live' => [],
         ],
     ]
 ];

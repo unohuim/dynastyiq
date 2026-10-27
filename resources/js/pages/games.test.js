@@ -1,7 +1,7 @@
 /* @vitest-environment jsdom */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createApp, h, nextTick } from 'vue';
+import { createApp, h, nextTick, reactive } from 'vue';
 import * as inertia from '@inertiajs/vue3';
 import * as shellRealtime from '../layouts/shell-realtime';
 import AppLayout from '../layouts/AppLayout.vue';
@@ -10,6 +10,7 @@ import ToggleSwitch from '../components/ToggleSwitch.vue';
 import GameCard from './Games/GameCard.vue';
 import GamesIndex from './Games/Index.vue';
 import LineupTeam from './Games/LineupTeam.vue';
+import GameShow from './Games/Show.vue';
 import {
     createGameCard,
     formatGameDate,
@@ -918,7 +919,8 @@ describe('Inertia mobile navigation', () => {
             },
         } };
         vi.spyOn(inertia, 'usePage').mockImplementation(() => page);
-        vi.spyOn(shellRealtime, 'connectShellRealtime').mockReturnValue(() => {});
+        vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ snapshots: [], games: [], meta: {} }) })));
+        vi.spyOn(shellRealtime, 'connectShellRealtime').mockImplementation(options => { options.connectionState?.(true); return () => {}; });
     });
 
     afterEach(() => {
@@ -990,7 +992,7 @@ describe('Inertia mobile navigation', () => {
         expect(signIn.querySelector('img').getAttribute('src')).toBe('/images/Discord-Symbol-White.svg');
         expect(mobileNav().querySelector('[aria-label="Open account"]')).toBeNull();
         expect(mobileNav().textContent).not.toContain('Menu');
-        expect(shellRealtime.connectShellRealtime).not.toHaveBeenCalled();
+        expect(shellRealtime.connectShellRealtime).toHaveBeenCalledWith(expect.objectContaining({ userId: undefined }));
     });
 
     it('opens the mobile News menu independently of desktop navigation', async () => {
@@ -1007,5 +1009,103 @@ describe('Inertia mobile navigation', () => {
         menus[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
         await nextTick();
         expect(trigger.getAttribute('aria-expanded')).toBe('false');
+    });
+});
+
+
+describe('public game preview and recap', () => {
+    let app;
+    let state;
+    const mount = (extra = {}) => {
+        state = reactive({ game: {
+            nhl_game_id: 2026020001, game_date: '2026-10-26', start_time_utc: '2026-10-26T23:00:00Z',
+            mode: 'recap', status: 'Final', game_state: 'OFF', events: [], head_to_head: [], comparison: [],
+            away: { team_abbrev: 'BOS', score: 0, sog: 22, boxscore: [] },
+            home: { team_abbrev: 'TOR', score: 3, sog: 30, boxscore: [] }, ...extra,
+        } });
+        app = createApp({ render: () => h(GameShow, state) });
+        app.config.globalProperties.$headManager = { createProvider: () => ({ update: vi.fn(), disconnect: vi.fn() }) };
+        app.mount('#game-show');
+    };
+    beforeEach(() => {
+        document.body.innerHTML = '<div id="game-show"></div>';
+        vi.useFakeTimers();
+        vi.spyOn(inertia.router, 'reload').mockImplementation(() => {});
+        vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+    });
+    afterEach(() => {
+        app?.unmount();
+        app = null;
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+        document.body.innerHTML = '';
+    });
+    it('presents completed games as recaps and preserves zero scores', () => {
+        mount();
+        expect(document.querySelector('h1').textContent).toContain('Game recap');
+        expect(document.querySelector('#summary')).not.toBeNull();
+        expect(document.querySelector('header').textContent).toContain('0');
+    });
+    it('shows saved preview probabilities with one decimal', () => {
+        mount({ mode: 'preview', prediction: { probabilities: { away: .454, home: .546 } } });
+        expect(document.querySelector('header').textContent).toContain('45.4%');
+        expect(document.querySelector('header').textContent).toContain('54.6%');
+        expect(document.querySelector('#lineups')).not.toBeNull();
+    });
+    it('labels missing predictions without inventing percentages', () => {
+        mount({ mode: 'preview', prediction: null });
+        expect(document.querySelector('header').textContent).toContain('Prediction not yet available');
+        expect(document.querySelector('header').textContent).not.toContain('50.0%');
+    });
+    it('links previous meetings to the existing game route', () => {
+        mount({ mode: 'preview', head_to_head: [{ id: 2025020001, date: '2025-10-01', away: 'BOS', home: 'TOR', away_score: 2, home_score: 3 }] });
+        expect(document.querySelector('#meetings a').getAttribute('href')).toBe('/games/2025020001');
+    });
+    it('shows imported scoring names assists and period', () => {
+        mount({ events: [{ id: 1, period: 2, time: '04:12', scorer: 'Scorer', assists: ['Helper'], away_score: 0, home_score: 1 }] });
+        expect(document.querySelector('#goals').textContent).toContain('Scorer');
+        expect(document.querySelector('#goals').textContent).toContain('Helper');
+        expect(document.querySelector('#goals').textContent).toContain('P2');
+    });
+    it('keeps missing boxscores explicit', () => {
+        mount();
+        expect(document.querySelector('#boxscore').textContent).toContain('Boxscore details have not been imported yet.');
+    });
+    it('renders the live clock and period', () => {
+        mount({ mode: 'live', game_state: 'LIVE', time_remaining: '12:34', period_number: 2, period_type: 'REG' });
+        expect(document.querySelector('header').textContent).toContain('12:34 | 2nd');
+    });
+    it('does not poll Inertia for live game updates', async () => {
+        mount({ mode: 'live', game_state: 'LIVE' });
+        await vi.advanceTimersByTimeAsync(60000);
+        expect(inertia.router.reload).not.toHaveBeenCalled();
+    });
+    it('refreshes previews after one minute', async () => {
+        mount({ mode: 'preview', game_state: 'FUT' });
+        await vi.advanceTimersByTimeAsync(60000);
+        expect(inertia.router.reload).toHaveBeenCalledTimes(1);
+    });
+    it('never polls a completed recap', async () => {
+        mount();
+        await vi.advanceTimersByTimeAsync(120000);
+        expect(inertia.router.reload).not.toHaveBeenCalled();
+    });
+    it('skips live refreshes while the document is hidden', async () => {
+        vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+        mount({ mode: 'live', game_state: 'LIVE' });
+        await vi.advanceTimersByTimeAsync(15000);
+        expect(inertia.router.reload).not.toHaveBeenCalled();
+    });
+    it('does not leave page reload timers after live detail unmounts', async () => {
+        mount({ mode: 'live', game_state: 'LIVE' });
+        app.unmount();
+        app = null;
+        await vi.advanceTimersByTimeAsync(60000);
+        expect(inertia.router.reload).not.toHaveBeenCalled();
+    });
+    it('shows an unavailable live state without exposing the stored teams', () => {
+        mount({ mode: 'live', live_data_unavailable: true });
+        expect(document.querySelector('[role="status"]').textContent).toBeTruthy();
+        expect(document.querySelector('header')).toBeNull();
     });
 });

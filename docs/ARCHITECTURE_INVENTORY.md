@@ -1877,7 +1877,7 @@ league peer staging in temporary SQL tables rather than PHP memory or JSON.
 **Purpose:**
 Move NHL game imports through explicit progress stages while tracking status, dependencies, failures, and stale running jobs.
 Discovery runs may explicitly reprocess existing game/stage rows by reattaching matching progress rows to the selected run and resetting them to scheduled before normal slot-based processing resumes. Explicit reprocess runs true-sync game-scoped source and derived stage rows by clearing stage-owned rows before current provider data is read or recalculated.
-Full run-scoped processing remains active after canonical import stages close until per-game post-process enrichment has upserted shot-attempt facts, faceoff facts, and right-rail refs/staff context.
+Full run-scoped processing remains active after canonical import stages close until per-game post-process enrichment has upserted shot-attempt facts, faceoff facts, and right-rail refs/staff context. Each successful Full run then queues independently tracked season-stat syncs once per affected season, without waiting for validation stages in other runs; Pause/Cancel fences and explicit-rerun checkpoints remain enforced.
 
 **When to Use:**
 Scheduling or executing game-level NHL imports that must run in dependency order.
@@ -4245,3 +4245,21 @@ with legacy backfill compatibility. Authority:
 - Game Imports targeted on-ice rebuilds: the discovery Process menu queues `RebuildNhlOnIceStatsJob` on default with the existing control fence and shared game lock. `NhlGameImportRebuilder` replaces only the derived on-ice graph in canonical order and queues separately tracked season/cache preparation after successful game completion. See `architecture/imports/NhlGameImportRebuilder.yaml`, `architecture/imports/NhlGameImportRunControl.yaml` and `architecture/admin/AdminNhlGameImports.yaml`.
 
 - Advanced stats reports add cached GSAx and individual G−xG using the existing scored SAT expectation rules, plus stored HDSAT for skaters. Saved default report columns migrate without reseeding; tab navigation uses visible loading feedback even while preserving existing content. See `architecture/stats/StatsPayloadPipeline.yaml` and `architecture/stats/StatsPageRenderer.yaml`.
+
+
+### NHL Public Game Page
+
+**Purpose:** Cached previews, live game detail and imported recaps at the existing game URL, with saved public prediction outputs and preserved lineup controls.
+**Location:** `app/Services/NhlPublicGamePage.php`, `app/Jobs/RefreshNhlPublicGamePageJob.php`, `resources/js/pages/Games/Show.vue`.
+**Public interface:** `GET /games/{nhlGameId}`, `NhlPublicGamePage::payload()`, `NhlPublicGamePage::forget()`.
+**Authority:** `docs/architecture/ui/NhlPublicGamePage.yaml`.
+**Example:** `$pages->payload($gameId)` reads or prepares one public game without calculating predictions.
+
+
+### NHL Shared Live Game Feed
+
+**Purpose:** One bounded shared producer per live game, with public Reverb updates and snapshot-based recovery independent of viewer count.
+**Location:** `app/Services/NhlLiveGameFeed.php`, `app/Jobs/PollNhlLiveGameJob.php`, `resources/js/layouts/live-game-feed.js`.
+**Public interface:** `GET /games/live`, `NhlLiveGameUpdated`, `NhlLiveGameFeed::dispatchDue()`.
+**Authority:** `docs/architecture/imports/NhlLiveGameFeed.yaml`.
+**Example:** One producer fetches each live game; all browser surfaces receive its updates through the layout's Echo connection.

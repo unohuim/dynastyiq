@@ -71,6 +71,14 @@ class AppServiceProvider extends ServiceProvider
         Event::listen(\App\Events\SatImported::class, \App\Listeners\QueuePredictionSeasonSatScoring::class);
         Event::listen(\App\Events\NhlSeasonStatsSynced::class, \App\Listeners\QueueNhlStatsDashboardRefresh::class);
         Event::listen(\App\Events\NhlStatsSourceUpdated::class, \App\Listeners\QueueNhlStatsDashboardRefresh::class);
+        Event::listen(\App\Events\SatImported::class, function (\App\Events\SatImported $event): void {
+            app(\App\Services\NhlPublicGamePage::class)->refreshAfterCommit($event->nhlGameId);
+        });
+        foreach ([\App\Models\NhlCurrentLineup::class, \App\Models\NhlStartingGoalieObservation::class] as $model) {
+            Event::listen('eloquent.saved: '.$model, function ($row): void {
+                app(\App\Services\NhlPublicGamePage::class)->refreshAfterCommit((int) $row->nhl_game_id);
+            });
+        }
         Player::observe(PlayerNhlIdentityObserver::class);
 
 

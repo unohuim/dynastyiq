@@ -78,6 +78,12 @@ class NhlGameLiveContext
             return null;
         }
 
+        return $this->contextFromProvider($game, $response, $compact);
+    }
+
+    /** Normalize trusted provider evidence using the existing public presentation contract. */
+    private function contextFromProvider(NhlGame $game, array $response, bool $compact): ?array
+    {
         $this->goalies->lockBoxscoreStarters((int) $game->nhl_game_id, $response);
 
         $state = mb_strtoupper((string) ($response['gameState'] ?? ''));
@@ -132,6 +138,64 @@ class NhlGameLiveContext
             'away_goalie' => $this->goalie($response, 'awayTeam', $game, (string) $game->away_team_abbrev),
             'home_goalie' => $this->goalie($response, 'homeTeam', $game, (string) $game->home_team_abbrev),
         ];
+    }
+
+    /** Public reads consume shared producer snapshots and never initiate NHL requests. */
+    public function sharedForGame(NhlGame $game, bool $compact = false): ?array
+    {
+        $feed = app(NhlLiveGameFeed::class);
+        $snapshot = $feed->snapshot((int) $game->nhl_game_id);
+        if ($feed->fresh($snapshot)) {
+            return $this->contextFromProvider($game, $snapshot['boxscore'], $compact);
+        }
+        $state = strtoupper((string) $game->game_state);
+        if (in_array($state, ['FUT', 'PRE'], true)) {
+            $context = ['state' => $state, 'label' => $state === 'PRE' ? 'Starting soon' : 'Pregame', 'show_score' => false];
+            if (! $compact) {
+                foreach (['away', 'home'] as $side) {
+                    $context[$side.'_goalie'] = $this->goalies->select((int) $game->nhl_game_id,
+                        (string) $game->{$side.'_team_abbrev'}, (string) $game->season_id);
+                }
+            }
+
+            return $context;
+        }
+
+        return null;
+    }
+
+    /** Read live detail only from the shared feed, with explicit freshness. */
+    public function publicDetail(NhlGame $game): ?array
+    {
+        $feed = app(NhlLiveGameFeed::class);
+        $snapshot = $feed->snapshot((int) $game->nhl_game_id);
+        if (! $feed->fresh($snapshot) || in_array($snapshot['boxscore']['gameState'] ?? '', ['', 'FUT', 'PRE', 'PPD', 'CNCL'], true)) {
+            return null;
+        }
+
+        return $this->detailFromProvider($snapshot['boxscore'], $snapshot['pbp']);
+    }
+
+    /** Persist source state centrally before notifying subscribers. */
+    public function persistShared(NhlGame $game, array $box): void
+    {
+        $this->goalies->lockBoxscoreStarters((int) $game->nhl_game_id, $box);
+        $values = ['game_state' => $box['gameState'] ?? $game->game_state];
+        foreach (['away', 'home'] as $side) {
+            foreach (['score', 'sog'] as $field) {
+                if (isset($box[$side.'Team'][$field])) {
+                    $values[$side.'_team_'.$field] = $box[$side.'Team'][$field];
+                }
+            }
+        }
+        $game->forceFill($values)->save();
+    }
+
+    /** Assemble public detail from already validated shared provider responses. */
+    public function detailFromProvider(array $box, array $pbp): array
+    {
+        return ['game' => $this->livePresentation($box), 'boxscore' => $box,
+            'plays' => $pbp['plays'] ?? [], 'roster' => $pbp['rosterSpots'] ?? [], 'events_available' => isset($pbp['id'])];
     }
 
     /** Build live presentation exclusively from provider JSON, except canonical goalie avatars. */

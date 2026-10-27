@@ -71,10 +71,36 @@ class NhlGamesController extends Controller
         return response()->json($payload->scoreboard($start, $end))->header('Cache-Control', 'no-store');
     }
 
-    /** Display the latest current lineup projection for both teams in a game. */
-    public function show(int $nhlGameId, NhlAnticipatedLineupPayload $payload): Response
+    /** Display a cached preview, live game or completed-game recap. */
+    public function show(int $nhlGameId, \App\Services\NhlPublicGamePage $payload): \Symfony\Component\HttpFoundation\Response
     {
-        return Inertia::render('Games/Show', $payload->gamePage($nhlGameId));
+        $data = $payload->payload($nhlGameId);
+        $response = Inertia::render('Games/Show', [...$data,
+            'canManageLineups' => $this->canManageGameSync(request()),
+        ])->toResponse(request());
+        if (($data['game']['mode'] ?? null) === 'live') {
+            $response->headers->set('Cache-Control', 'no-store');
+        }
+
+        return $response;
+    }
+
+    /** Latest shared public live snapshot; browser requests never poll NHL. */
+    public function live(Request $request, \App\Services\NhlLiveGameFeed $feed): JsonResponse
+    {
+        $input = $request->validate(['game_id' => ['nullable', 'integer', 'min:1']]);
+        $ids = isset($input['game_id']) ? [(int) $input['game_id']] : NhlGame::query()
+            ->whereBetween('game_date', [now('UTC')->subDay()->toDateString(), now('UTC')->toDateString()])->pluck('nhl_game_id')->all();
+        $rows = [];
+        foreach ($ids as $id) {
+            $snapshot = $feed->snapshot((int) $id);
+            if ($snapshot !== null) {
+                $rows[] = [...(isset($input['game_id']) ? \Illuminate\Support\Arr::only($snapshot, ['sequence', 'observed_at', 'game']) : $feed->compact($snapshot)),
+                    'stale' => ! $feed->fresh($snapshot) && ($snapshot['game']['mode'] ?? null) !== 'recap'];
+            }
+        }
+
+        return response()->json(['snapshots' => $rows])->header('Cache-Control', 'no-store');
     }
 
     private function canManageGameSync(Request $request): bool

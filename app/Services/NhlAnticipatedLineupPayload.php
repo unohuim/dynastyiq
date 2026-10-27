@@ -486,7 +486,7 @@ class NhlAnticipatedLineupPayload
         }
 
         if ($game->game_state !== 'FINAL') {
-            $context = $compact ? $this->liveContext->forGame($game, true) : $this->liveContext->forGame($game);
+            $context = $compact ? $this->liveContext->sharedForGame($game, true) : $this->liveContext->sharedForGame($game);
             if ($context !== null && filled($context['state'] ?? null)) {
                 return $context;
             }

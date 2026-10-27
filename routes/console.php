@@ -40,3 +40,10 @@ Schedule::command('admin:dispatch-scheduled-imports')
     ->everySecond()
     ->withoutOverlapping(1)
     ->timezone('America/Toronto');
+
+
+Schedule::call(fn () => app(\App\Services\NhlLiveGameFeed::class)->dispatchDue())
+    ->name('nhl-live-dispatch')
+    ->everyFiveSeconds()
+    ->onOneServer()
+    ->withoutOverlapping(1);

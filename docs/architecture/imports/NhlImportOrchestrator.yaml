@@ -59,7 +59,7 @@ rules:
   - Full run-scoped processing must queue per-game post-process enrichment for shot-attempt facts, faceoff facts, and right-rail refs/staff after all canonical import stages close.
   - Full run-scoped processing must remain running until the post-process enrichment batch completes or fails.
   - Successful Shots fact writes emit the committed event defined in NhlPredictionSeasonSatScoring.yaml. Prediction-season scoring runs independently on projections and does not extend the source import's completion dependency.
-  - Season stat rollups must wait until terminal summary validation stages have completed.
+  - Each successful Full import queues independently tracked season-stat rollups after its own canonical stages and post-process enrichment finish, regardless of unfinished validation stages in other runs. A run-locked payload checkpoint prevents duplicate rollups for the same run generation; explicit reruns reset that checkpoint. Paused or cancelled runs cannot queue these rollups. Legacy imports without a parent run queue a rollup after their own terminal validation completes.
 public_interface:
   - NhlImportOrchestrator::processScheduled()
   - NhlImportOrchestrator::fillActiveGameSlotsForRun()

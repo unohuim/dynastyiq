@@ -2,9 +2,9 @@ import Echo from 'laravel-echo';
 import Pusher from 'pusher-js';
 
 /** Keep connection state component-owned without relying on global clients. */
-export function connectShellRealtime({ userId, organizationId, csrf, refresh, notify }) {
+export function connectShellRealtime({ userId, organizationId, csrf, refresh, notify, gameUpdate = () => {}, connectionState = () => {} }) {
     const key = import.meta.env.VITE_REVERB_APP_KEY;
-    if (!key || !userId) return () => {};
+    if (!key) { connectionState(false); return () => {}; }
     const client = new Pusher(key, {
         cluster: import.meta.env.VITE_REVERB_APP_CLUSTER ?? 'mt1',
         wsHost: import.meta.env.VITE_REVERB_HOST,
@@ -18,7 +18,12 @@ export function connectShellRealtime({ userId, organizationId, csrf, refresh, no
         },
     });
     const echo = new Echo({ broadcaster: 'reverb', client });
-    echo.private(`user.${userId}`)
+    client.connection.bind('disconnected', () => connectionState(false));
+    client.connection.bind('unavailable', () => connectionState(false));
+    echo.channel('nhl.games').listen('.nhl.game.updated', gameUpdate)
+        .subscribed(() => connectionState(true))
+        .error(() => connectionState(false));
+    if (userId) echo.private(`user.${userId}`)
         .listen('.discord.connected', refresh)
         .listen('.fantrax.draft.pick', event => {
             window.dispatchEvent(new CustomEvent('fantrax:draft-pick', { detail: event }));

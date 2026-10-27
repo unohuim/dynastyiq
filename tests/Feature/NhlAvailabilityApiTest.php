@@ -3695,7 +3695,7 @@ it('shows cached pregame state and an observed starting goalie for a utc-today g
         'nhl_game_id' => 2026010301, 'game_date' => '2026-09-21', 'team_abbrev' => 'BOS',
         'opponent_abbrev' => 'NYR', 'is_home' => false, 'player_name' => 'Expected Goalie',
     ]);
-    Http::fake(['*' => Http::response(['gameState' => 'FUT'], 200)]);
+    ($this->seedSharedLive)(['gameState' => 'FUT']);
 
     $this->getJson(route('games.payload', ['date' => '2026-09-21']))
         ->assertOk()
@@ -3705,7 +3705,7 @@ it('shows cached pregame state and an observed starting goalie for a utc-today g
         ->assertJsonPath('games.0.away.starting_goalie.status', 'expected');
 
     $this->getJson(route('games.payload', ['date' => '2026-09-21']))->assertOk();
-    Http::assertSentCount(1);
+    Http::assertNothingSent();
     Carbon::setTestNow();
 });
 
@@ -3717,9 +3717,9 @@ it('treats every non-terminal non-pregame provider state as live', function (): 
         'start_time_utc' => Carbon::parse('2026-09-21 16:00:00 UTC'),
         'away_team_abbrev' => 'BOS', 'home_team_abbrev' => 'NYR',
     ]);
-    Http::fake(['*' => Http::response([
+    ($this->seedSharedLive)([
         'gameState' => 'INTERMISSION', 'awayTeam' => ['score' => 2, 'sog' => 15], 'homeTeam' => ['score' => 1, 'sog' => 0],
-    ], 200)]);
+    ]);
 
     $this->getJson(route('games.payload', ['date' => '2026-09-21']))
         ->assertOk()
@@ -3755,12 +3755,12 @@ it('exposes live starter identity and individual goalie statistics', function (?
     if ($saves !== null) {
         $starter['saves'] = $saves;
     }
-    Http::fake(['*' => Http::response([
+    ($this->seedSharedLive)([
         'gameState' => 'LIVE', 'awayTeam' => ['score' => 1], 'homeTeam' => ['score' => 7],
         'playerByGameStats' => ['awayTeam' => ['goalies' => [
             ['playerId' => 8489992, 'starter' => false, 'toi' => '00:00', 'goalsAgainst' => 0, 'saves' => 0], $starter,
         ]]],
-    ])]);
+    ]);
     $this->getJson('/games/payload?date=2026-09-21')->assertOk()
         ->assertJsonCount(1, 'games.0.away.goalies')
         ->assertJsonPath('games.0.away.goalies.0.nhl_player_id', 8489991)
@@ -3788,7 +3788,7 @@ it('uses provider live rosters and replaces goalie presentation with or without 
         'away_team_abbrev' => 'OLD', 'home_team_abbrev' => 'OLD', 'game_state' => 'LIVE',
         'away_team_score' => 99, 'away_team_sog' => 99,
     ]);
-    Http::fake(['*' => Http::response([
+    ($this->seedSharedLive)([
         'id' => 2026010396, 'gameState' => 'LIVE', 'gameDate' => '2026-09-21',
         'startTimeUTC' => '2026-09-21T23:05:00Z',
         'awayTeam' => ['abbrev' => 'PHI', 'score' => 1],
@@ -3800,7 +3800,7 @@ it('uses provider live rosters and replaces goalie presentation with or without 
             ['playerId' => 8489992, 'name' => ['default' => 'Provider Relief'], 'saveShotsAgainst' => '4/4', 'goalsAgainst' => 0, 'toi' => '10:00'],
             ['playerId' => 8489993, 'name' => ['default' => 'Unused Backup'], 'shotsAgainst' => 0, 'goalsAgainst' => 0, 'toi' => '00:00'],
         ]]],
-    ])]);
+    ]);
     $this->getJson('/games/payload?date=2026-09-21')->assertOk()
         ->assertJsonPath('games.0.live_mode', true)
         ->assertJsonPath('games.0.start_time_utc', '2026-09-21T23:05:00Z')
@@ -3828,9 +3828,9 @@ it('treats final as the terminal gamecenter state', function (): void {
         'start_time_utc' => Carbon::parse('2026-09-21 10:00:00 UTC'),
         'away_team_abbrev' => 'BOS', 'home_team_abbrev' => 'NYR',
     ]);
-    Http::fake(['*' => Http::response([
+    ($this->seedSharedLive)([
         'gameState' => 'FINAL', 'awayTeam' => ['score' => 3], 'homeTeam' => ['score' => 4],
-    ], 200)]);
+    ]);
 
     $this->getJson(route('games.payload', ['date' => '2026-09-21']))
         ->assertOk()
@@ -3865,10 +3865,10 @@ it('refreshes unfinished games across utc midnight in index and detail payloads'
         'away_team_abbrev' => 'PHI', 'home_team_abbrev' => 'WSH',
         'game_state' => $state, 'away_team_score' => 0, 'home_team_score' => 0,
     ]);
-    Http::fake(['*' => Http::response([
+    ($this->seedSharedLive)([
         'gameState' => 'LIVE', 'awayTeam' => ['score' => 2, 'sog' => 12],
         'homeTeam' => ['score' => 0, 'sog' => 8],
-    ])]);
+    ]);
     $this->getJson('/games/payload?date=2026-09-21')->assertOk()
         ->assertJsonPath('games.0.game_state_label', 'Live')
         ->assertJsonPath('games.0.away.score', 2)
@@ -3879,7 +3879,7 @@ it('refreshes unfinished games across utc midnight in index and detail payloads'
     ]);
     $this->get('/games/2026010390')->assertOk()->assertInertia(fn (Assert $page) => $page
         ->where('game.away.score', 2)->where('game.home.sog', 8));
-    Http::assertSentCount(1);
+    Http::assertNothingSent();
     $this->travelBack();
 })->with(['LIVE', 'PRE', 'FUT']);
 
@@ -3892,7 +3892,7 @@ it('does not substitute stored live data on provider failure while retaining fin
         'away_team_abbrev' => 'PHI', 'home_team_abbrev' => 'WSH', 'game_state' => $state,
         'away_team_score' => 0, 'home_team_score' => 3, 'away_team_sog' => 9, 'home_team_sog' => 20,
     ]);
-    Http::fake(['*' => Http::response([], 503)]);
+    ($this->seedSharedLive)([]);
     $this->getJson('/games/payload?date=2026-09-21')->assertOk()
         ->assertJsonPath('games.0.game_state_label', $state === 'FINAL' ? 'Final' : null)
         ->assertJsonPath('games.0.away.score', $state === 'FINAL' ? 0 : null)
@@ -3991,4 +3991,18 @@ it('resolves a reported sweater number from the teams latest imported boxscore',
     $resolved = app(\App\Services\NhlLineupPlayerResolver::class)->resolve('48', 'WSH');
 
     expect($resolved?->is($player))->toBeTrue();
+});
+
+
+beforeEach(function (): void {
+    $this->seedSharedLive = function (array $box): void {
+        if ($box === []) {
+            return;
+        }
+        $id = (int) NhlGame::query()->orderByDesc('nhl_game_id')->value('nhl_game_id');
+        \Illuminate\Support\Facades\Cache::put('nhl:live:snapshot:v1:'.$id, [
+            'sequence' => 1, 'observed_at' => now()->toIso8601String(),
+            'boxscore' => ['id' => $id, ...$box], 'pbp' => ['id' => $id, 'plays' => []], 'game' => [],
+        ], 120);
+    };
 });

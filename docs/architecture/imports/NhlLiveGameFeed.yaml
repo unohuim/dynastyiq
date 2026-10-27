@@ -1,0 +1,37 @@
+name: NHL Shared Live Game Feed
+type: Single Producer And Public Reverb Stream
+location:
+  - app/Services/NhlLiveGameFeed.php
+  - app/Jobs/PollNhlLiveGameJob.php
+  - app/Events/NhlLiveGameUpdated.php
+  - config/nhl_live.php
+  - config/horizon.php
+  - routes/console.php
+  - resources/js/layouts/live-game-feed.js
+purpose: Fetch live NHL evidence once per game and distribute it to all public consumers without viewer-driven provider requests.
+when_to_use:
+  - Updating public scoreboard, games index and game detail during active games.
+  - Letting internal listeners or partner clients consume the same public live update.
+when_not_to_use:
+  - Historical import processing or season-stat aggregation.
+  - Forecast calculations or exposing saved prediction evidence.
+rules:
+  - One scheduler tick every five seconds admits imminent games and unfinished UTC-today/yesterday games. One-server scheduling, game-unique queue jobs and a distributed per-game poll lock prevent duplicate provider requests across workers and servers. Obsolete queued ticks are discarded rather than replayed.
+  - Live polling uses the dedicated nhl-live Horizon queue. Each bounded poll fetches PBP and boxscore in parallel with bounded connection/request timeouts; these two requests are shared by all consumers. Browser reads never initiate these calls.
+  - Validate both source game identities. Clock, period, score and team shots use the single PBP snapshot where present, with boxscore player details from the same polling cycle. No local stored score or anticipated roster fills missing live provider facts.
+  - Persist received state and the latest shared snapshot before emitting NhlLiveGameUpdated. The event broadcasts immediately instead of waiting behind ordinary queue work. Its small public envelope contains observed time, monotonic per-game sequence, changed flag and compact public game facts; it never contains raw provider blobs or private prediction inputs.
+  - Public channel and event names are canonical in docs/ENUMS.md. Internal listeners may subscribe to the same event. Webhooks are not part of this implementation.
+  - The latest received snapshot is retained for initial loads and reconnects without a cache-expiry refresh delay. Freshness is explicit; live evidence older than twenty seconds is marked stale. Heartbeats maintain freshness even without score changes. This shared state is separate from preview/recap caches.
+  - A terminal provider result is persisted and published, then leaves the polling set and queues public recap preparation. Final provider details remain available while historical player imports are incomplete.
+  - GET /games/live reads only shared public snapshots and returns no-store responses. Its optional game_id selects full public detail; otherwise return recent compact snapshots. It accepts guests and authenticated users equally and never exposes credentials or private channels.
+  - The mounted Inertia layout owns one Echo connection and provides component-local live refs to descendants. Public guests subscribe to the NHL channel; existing private user/organization channel authorization remains unchanged. Components must dispose listeners, timers and requests.
+  - Scoreboard updates apply directly. Detail consumers apply clock/score immediately, then read full public detail from the shared endpoint. Reject out-of-order sequences, accept newer corrections, resync on connection recovery or foreground return, and display interrupted/stale states. Recovery requests read shared state only and never poll NHL.
+public_interface:
+  - NhlLiveGameFeed::dispatchDue
+  - NhlLiveGameFeed::poll
+  - NhlLiveGameFeed::snapshot
+  - GET /games/live
+  - NhlLiveGameUpdated
+example_usage: |
+  The scheduler queues one PollNhlLiveGameJob per eligible game.
+  A successful poll publishes one public event to every subscribed browser.

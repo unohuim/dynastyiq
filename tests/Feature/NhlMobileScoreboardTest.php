@@ -198,7 +198,7 @@ it('refuses incomplete nonfinal or mismatched historical provider scores', funct
 it('uses provider identity and scores for currently live games', function (): void {
     ($this->game)(2026020001, '2026-10-22', ['game_state' => 'LIVE', 'away_team_score' => 99, 'home_team_score' => 99]);
     $live = Mockery::mock(NhlGameLiveContext::class);
-    $live->shouldReceive('forGame')->once()->andReturn(['state' => 'LIVE', 'show_score' => true, 'live_game' => [
+    $live->shouldReceive('sharedForGame')->once()->andReturn(['state' => 'LIVE', 'show_score' => true, 'live_game' => [
         'game_state' => 'LIVE', 'start_time_utc' => '2026-10-22T23:00:00Z',
         'away' => ['team_abbrev' => 'MTL', 'team_logo' => '/live-mtl.svg', 'score' => 0],
         'home' => ['team_abbrev' => 'NYR', 'team_logo' => '/live-nyr.svg', 'score' => 2],
@@ -212,7 +212,7 @@ it('uses provider identity and scores for currently live games', function (): vo
 it('keeps unavailable live facts unavailable instead of falling back to database scores', function (): void {
     ($this->game)(2026020001, '2026-10-22', ['game_state' => 'LIVE', 'away_team_score' => 99, 'home_team_score' => 99]);
     $live = Mockery::mock(NhlGameLiveContext::class);
-    $live->shouldReceive('forGame')->once()->andReturnNull();
+    $live->shouldReceive('sharedForGame')->once()->andReturnNull();
     $this->app->instance(NhlGameLiveContext::class, $live);
     $this->getJson(route('games.scoreboard', ['start' => '2026-10-22', 'end' => '2026-10-22']))->assertOk()
         ->assertJsonPath('games.0.live_data_unavailable', true)->assertJsonPath('games.0.away.score', null)

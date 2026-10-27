@@ -34,6 +34,9 @@ final class NhlGamePredictionHistory
             'payload' => json_encode($payload, JSON_THROW_ON_ERROR),
             'summary' => json_encode($this->metrics($payload), JSON_THROW_ON_ERROR), 'predicted_at' => $at,
         ]);
+        if ($canonical && ($payload['prediction_available'] ?? false) === true) {
+            app(NhlPublicGamePage::class)->refreshAfterCommit($gameId);
+        }
         $payload['meta']['prediction_revision_id'] = $id;
         $payload['meta']['predicted_at'] = $at->toIso8601String();
 

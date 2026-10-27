@@ -18,9 +18,9 @@ when_not_to_use:
   - Treating projected goalie selection as confirmed evidence.
 rules:
   - The Vue games index sorts live games first, pregame or unknown-state games next, and FINAL games last, with ascending puck-drop time within each group. Ordering recomputes after AJAX payload updates without mutating provider payload order; unavailable live games retain live priority.
-  - NHL gamecenter boxscore responses are cached independently by NHL game id for fifteen seconds.
+  - Public live reads use the shared producer in NhlLiveGameFeed.yaml and never initiate provider requests. Legacy scheduled/internal consumers retain their existing fifteen-second source cache.
   - Live presentation uses NHL boxscore JSON exclusively. The sole local enrichment is goalie avatar lookup by provider playerId. Database names, scores, team metadata, projected starters, and anticipated lineups must not fill missing live fields.
-  - Provider failure must not prevent the page from rendering; known-live games display unavailable rather than stored game details. Cached provider JSON remains provider evidence under the existing fifteen-second cache.
+  - Provider failure must not prevent the page from rendering; known-live games display unavailable rather than stored game details. Shared provider snapshots retain explicit observed times and freshness under NhlLiveGameFeed.yaml.
   - Public index/detail refreshes and scheduled boxscore sync include UTC yesterday's unfinished games so midnight cannot strand games in progress. Stored FINAL games do not refresh; recent final scores remain visible without waiting for the historical import pipeline. Older index/detail games retain the existing historical import checks; the compact scoreboard uses the separate final-score rules below.
   - FUT renders as Pregame and PRE renders as Starting soon.
   - Every non-empty provider state other than FUT, PRE, and FINAL is treated as live and renders current provider scores; FINAL renders final provider scores.
@@ -34,6 +34,7 @@ rules:
   - Pregame team rows present the selected goalie as a right-aligned identity with player name, evidence-status badge, and canonical player headshot when available.
   - Live team rows show every boxscore goalie with participation evidence (starter flag, nonzero TOI, shots against, saves, or goals against), retaining provider names and local avatars when available. Missing starter flags must not trigger prediction selection. Unused backups are omitted; no claim is made that any listed participant is currently on ice.
   - Each live goalie's GA and Saves use their own provider row. Saves prefer saves, then a valid saveShotsAgainst numerator, then nonnegative shotsAgainst minus goalsAgainst. Never use team totals or another goalie; missing statistics render a dash and zero remains zero.
+  - The public game-detail route additionally follows ui/NhlPublicGamePage.yaml for preview/recap modes, prepared payloads and provider scoring timelines. These changes do not alter index or partner payload contracts.
   - Live payloads set live_mode and expose per-team goalies arrays; starting_goalie and lineup remain null. Live index and detail views suppress anticipated-lineup UI. Internal database game ids may identify routes, but displayed game identity and metadata come from the provider.
 public_interface:
   - GET /games

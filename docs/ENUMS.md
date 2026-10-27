@@ -1,5 +1,10 @@
 # ENUMS - Canonical Enum Authority
 
+## Public NHL game detail
+
+- Public game `mode`: `preview`, `live`, `recap`. These are presentation modes, not stored schedule states.
+- Public Reverb channel: `nhl.games`; event: `nhl.game.updated`. Snapshot `changed` and `stale` are booleans; `sequence` increases per game.
+
 ## Operational game prediction history
 
 - Admin tab key: `game-predictions`.
@@ -151,8 +156,9 @@ Storage: `nhl_lineup_observations.raw_evidence.ocr[].status` and local post audi
 - `projections`: Model builds, profiles, projections, comparisons, SAT Engine discovery/ranking, next-game evaluations, and historical pregame-context builds (including coordinators, loaders, continuations, and child batches).
 - `fantrax`: Fantrax import, league-sync, and draft-sync work.
 - `lineups`: Time-sensitive anticipated NHL lineup work and live game-prediction cache refreshes.
+- `nhl-live`: Shared five-second NHL live-source polls; four to eight dedicated Horizon workers.
 
-Horizon assigns twenty-five workers to `projections`, five workers to `default`, five workers to `fantrax`, and two workers to `lineups` (thirty-seven total per Horizon instance), as governed by `docs/architecture/application/LaravelApplicationShell.yaml`.
+Horizon retains the existing queue allocations and adds four to eight dedicated `nhl-live` workers, as governed by `docs/architecture/application/LaravelApplicationShell.yaml`.
 
 ## Scheduled process keys and discovery work scheduling
 

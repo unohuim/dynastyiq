@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createApp, nextTick } from 'vue';
+import { createApp, nextTick, ref } from 'vue';
+import * as liveFeed from './live-game-feed';
 import MobileScoreboard from './MobileScoreboard.vue';
 import {
     defaultSlateDate, shiftSlateDate, slateRolloverDelay, slateDateLabels, slateNavigationLabel,
@@ -158,6 +159,9 @@ describe('Mobile scoreboard lifecycle', () => {
     let app;
     let media;
     let requests;
+    let pushLive;
+    let liveWarning;
+    let resyncLive;
     const settle = async () => { for (let index = 0; index < 8; index++) await Promise.resolve(); await nextTick(); };
     beforeEach(() => {
         vi.useFakeTimers();
@@ -165,6 +169,12 @@ describe('Mobile scoreboard lifecycle', () => {
         document.body.innerHTML = '<div id="scoreboard"></div>';
         media = { matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() };
         requests = [];
+        liveWarning = ref('');
+        resyncLive = vi.fn(async () => { liveWarning.value = ''; });
+        vi.spyOn(liveFeed, 'useLiveGameFeed').mockImplementation(({ update }) => {
+            pushLive = update;
+            return { warning: liveWarning, resync: resyncLive };
+        });
         vi.stubGlobal('matchMedia', vi.fn(() => media));
         vi.stubGlobal('fetch', vi.fn(async url => {
             requests.push(new URL(url));
@@ -182,6 +192,7 @@ describe('Mobile scoreboard lifecycle', () => {
         app = null;
         document.body.innerHTML = '';
         vi.unstubAllGlobals();
+        vi.restoreAllMocks();
         vi.useRealTimers();
     });
     const mount = () => {
@@ -315,9 +326,8 @@ describe('Mobile scoreboard lifecycle', () => {
         await selectDate('2026-10-07');
         await selectDate('2026-11-04');
         await selectDate('2026-10-21');
-        expect(fetch).toHaveBeenCalledTimes(count + 1);
-        expect(requests.at(-1).searchParams.get('start')).toBe('2026-10-21');
-        expect(requests.at(-1).searchParams.get('end')).toBe('2026-10-22');
+        expect(fetch).toHaveBeenCalledTimes(count);
+        expect(resyncLive).toHaveBeenCalled();
         expect(document.querySelector('[data-slate-date="2026-10-07"]')).not.toBeNull();
         expect(document.querySelector('[data-slate-date="2026-11-04"]')).not.toBeNull();
     });
@@ -328,7 +338,7 @@ describe('Mobile scoreboard lifecycle', () => {
         await selectDate('2026-10-21');
         expect(document.querySelector('a[href="/games/1"]')).not.toBeNull();
         await selectDate('2026-12-15');
-        expect(fetch).toHaveBeenCalledTimes(count + 1);
+        expect(fetch).toHaveBeenCalledTimes(count);
         expect(document.querySelector('input[type="date"]').value).toBe('2026-12-15');
     });
     it('continues loading complete weeks beyond stored schedule bounds with explicit empty dates', async () => {
@@ -352,55 +362,33 @@ describe('Mobile scoreboard lifecycle', () => {
         expect(document.querySelector('[data-slate-date="2026-10-07"]')).not.toBeNull();
         expect(document.querySelector('a[href="/games/1"]')).not.toBeNull();
     });
-    it('keeps today and yesterday fresh while browsing a cached historical slate', async () => {
-        mount(); await settle();
-        await selectDate('2026-10-19');
+    it('receives pushed live games while browsing cached historical dates', async () => {
+        mount(); await settle(); await selectDate('2026-10-19');
         const count = fetch.mock.calls.length;
-        await vi.advanceTimersByTimeAsync(15000); await settle();
-        expect(fetch).toHaveBeenCalledTimes(count + 1);
-        expect(requests.at(-1).searchParams.get('start')).toBe('2026-10-21');
-        expect(requests.at(-1).searchParams.get('end')).toBe('2026-10-22');
+        pushLive({ game: game(2, '2026-10-22', { game_state: 'LIVE', time_remaining: '12:34', period_number: 1, period_type: 'REG' }) });
+        await settle(); expect(fetch).toHaveBeenCalledTimes(count);
+        expect(document.querySelector('a[href="/games/2"]').textContent).toContain('12:34 | 1st');
         expect(document.querySelector('input[type="date"]').value).toBe('2026-10-19');
     });
-    it('updates cached starting-soon games every fifteen seconds while another date is selected', async () => {
-        let live = false;
-        fetch.mockImplementation(async url => {
-            const parsed = new URL(url); requests.push(parsed);
-            const row = game(2, '2026-10-22', { game_state: live ? 'LIVE' : 'PRE',
-                time_remaining: live ? '12:34' : null, period_number: 1, period_type: 'REG' });
-            return { ok: true, json: async () => ({ games: [row] }) };
-        });
-        mount(); await settle();
-        await selectDate('2026-10-23'); live = true;
-        const count = fetch.mock.calls.length;
-        await vi.advanceTimersByTimeAsync(14999); await settle();
-        expect(fetch).toHaveBeenCalledTimes(count);
-        await vi.advanceTimersByTimeAsync(1); await settle();
-        const tile = document.querySelector('a[href="/games/2"]');
-        expect(tile.textContent).toContain('12:34 | 1st');
-        expect(tile.querySelector('.text-emerald-400')).not.toBeNull();
-        expect(document.querySelector('input[type="date"]').value).toBe('2026-10-23');
+    it('updates starting-soon games immediately from the stream', async () => {
+        mount(); await settle(); await selectDate('2026-10-23');
+        pushLive({ game: game(2, '2026-10-22', { game_state: 'LIVE', time_remaining: '12:34', period_number: 1, period_type: 'REG' }) });
+        await settle(); const tile = document.querySelector('a[href="/games/2"]');
+        expect(tile.textContent).toContain('12:34 | 1st'); expect(tile.querySelector('.text-emerald-400')).not.toBeNull();
     });
-    it('reports failed live refreshes and retries without discarding existing games', async () => {
-        mount(); await settle();
-        fetch.mockResolvedValueOnce({ ok: false });
-        await vi.advanceTimersByTimeAsync(15000); await settle();
-        expect(document.querySelector('[role="status"]').textContent).toContain('Unable to refresh live scores');
+    it('reports interrupted streams and permits shared-snapshot retry', async () => {
+        mount(); await settle(); liveWarning.value = 'Live updates delayed. Reconnecting…'; await settle();
+        expect(document.querySelector('[role="status"]').textContent).toContain('Live updates delayed');
         expect(document.querySelector('a[href="/games/2"]')).not.toBeNull();
         [...document.querySelectorAll('button')].find(button => button.textContent === 'Retry').click(); await settle();
-        expect(document.querySelector('[role="status"]')).toBeNull();
+        expect(resyncLive).toHaveBeenCalled(); expect(document.querySelector('[role="status"]')).toBeNull();
     });
-    it('does not let a slower initial range response overwrite newer live facts', async () => {
-        let finish;
-        fetch.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    it('does not let a slower initial range response overwrite newer pushed facts', async () => {
+        let finish; fetch.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
         mount(); await settle();
-        fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ games: [game(2, '2026-10-22', {
-            game_state: 'LIVE', time_remaining: '12:34', period_number: 1, period_type: 'REG',
-        })] }) });
-        await vi.advanceTimersByTimeAsync(15000); await settle();
+        pushLive({ game: game(2, '2026-10-22', { game_state: 'LIVE', time_remaining: '12:34', period_number: 1, period_type: 'REG' }) });
         finish({ ok: true, json: async () => ({ games: [game(2, '2026-10-22', { game_state: 'PRE' })] }) });
-        await settle();
-        expect(document.querySelector('a[href="/games/2"]').textContent).toContain('12:34 | 1st');
+        await settle(); expect(document.querySelector('a[href="/games/2"]').textContent).toContain('12:34 | 1st');
     });
     it('times out a stuck range request and lets the user retry', async () => {
         let signal;

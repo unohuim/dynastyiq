@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { useLiveGameFeed } from '../../layouts/live-game-feed';
 import ToggleSwitch from '../../components/ToggleSwitch.vue';
 import GameCard from './GameCard.vue';
 
@@ -10,7 +11,7 @@ const props = defineProps({
 });
 const payload = ref(props.initialPayload);
 const gameOrder = (game) => {
-  if (game.game_state === 'FINAL') return 2;
+  if (['FINAL', 'OFF'].includes(game.game_state)) return 2;
   if (game.live_mode || (game.game_state && !['FUT', 'PRE'].includes(game.game_state))) return 0;
   return 1;
 };
@@ -73,7 +74,19 @@ async function changeDate(value, background = false) {
     if (version === requestVersion) { loading.value = false; payloadRequest = null; }
   }
 }
-onMounted(() => { refreshTimer = window.setInterval(() => changeDate(date.value, true), 30000); });
+const { warning: liveWarning } = useLiveGameFeed({
+  full: true,
+  accept: game => payload.value.games.some(row => Number(row.nhl_game_id) === Number(game.nhl_game_id)),
+  update(snapshot, detail) {
+    const index = payload.value.games.findIndex(row => Number(row.nhl_game_id) === Number(snapshot.game.nhl_game_id));
+    if (index < 0) return;
+    const current = payload.value.games[index];
+    if (snapshot.game.mode === 'preview') { current.game_state = snapshot.game.game_state; return; }
+    payload.value.games[index] = { ...current, ...snapshot.game, live_mode: true, live_data_unavailable: false,
+      away: detail ? snapshot.game.away : { ...current.away, ...snapshot.game.away },
+      home: detail ? snapshot.game.home : { ...current.home, ...snapshot.game.home } };
+  },
+});
 async function persistSchedule(nextEnabled) {
   const response = await fetch(props.gameSyncScheduleUrl, { method: 'PUT', headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content ?? '' }, body: JSON.stringify({ enabled: nextEnabled, timing: { start_before_minutes: startBeforeMinutes.value, pregame_seconds: timerSeconds(pregame), live_seconds: timerSeconds(live) } }) });
   if (!response.ok) throw new Error('Unable to update game synchronization.');
@@ -124,6 +137,7 @@ onBeforeUnmount(() => {
         </button>
       </div>
     </div>
+    <p v-if="liveWarning && sortedGames.some(game => game.live_mode)" role="status" class="mb-3 text-xs text-amber-700">{{ liveWarning }}</p>
     <p v-if="loading" class="mb-4 text-sm text-gray-500">Loading games…</p>
     <div v-if="sortedGames.length" class="grid gap-5 lg:grid-cols-2"><GameCard v-for="game in sortedGames" :key="game.nhl_game_id" :game="game" :can-manage-lineups="canManageGameSync" @lineup-submitted="applyManualLineup" @goalie-selected="applyGoalie" /></div>
     <div v-else class="rounded-lg border border-gray-200 bg-white px-4 py-10 text-center text-sm text-gray-600">No NHL games are scheduled for this date.</div>

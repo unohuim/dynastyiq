@@ -137,6 +137,8 @@ class ImportNhlBoxscore
             $playerCount++;
         }
 
+        app(NhlPublicGamePage::class)->refreshAfterCommit((int) $nhlGameId);
+
         return $playerCount;
     }
 
