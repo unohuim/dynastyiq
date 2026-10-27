@@ -3404,6 +3404,10 @@ it('rejects failed-only NHL game import reruns when there are no failed candidat
 it('allows super admins to queue NHL game processing for each date in a range', function () {
     Bus::fake();
     Event::fake([NhlGameImportStatusUpdated::class]);
+    DB::table('nhl_import_progress')->insert([
+        'season_id' => '20252026', 'game_date' => '2026-01-15', 'game_id' => '2025020001',
+        'game_type' => 2, 'import_type' => 'pbp', 'status' => 'scheduled',
+    ]);
 
     $this->actingAs(($this->makeSuperAdmin)())
         ->postJson(route('admin.nhl-game-imports.process'), [
@@ -3607,6 +3611,10 @@ it('queues NHL game processing from a discovery run without creating a second ru
         'queued_jobs' => 1,
         'payload' => ['start' => '2026-01-17', 'end' => '2026-01-15'],
     ]);
+    DB::table('nhl_import_progress')->insert([
+        'run_id' => $run->id, 'season_id' => '20252026', 'game_date' => '2026-01-15', 'game_id' => '2025020001',
+        'game_type' => 2, 'import_type' => 'pbp', 'status' => 'scheduled',
+    ]);
     $orchestrator = Mockery::mock(NhlImportOrchestrator::class);
     $orchestrator->shouldReceive('fillActiveGameSlotsForRun')
         ->once()
@@ -3654,6 +3662,7 @@ it('recreates missing run-scoped NHL import progress rows when processing a disc
             'nhl_game_id' => $game['id'],
             'season_id' => '20252026',
             'game_type' => 2,
+            'game_state' => 'OFF',
             'game_date' => $game['date'],
             'game_dow' => 'Thu',
             'game_month' => 'Jan',
@@ -3695,6 +3704,10 @@ it('recreates missing run-scoped NHL import progress rows when processing a disc
 it('defaults NHL game processing to today when no date option is provided', function () {
     Bus::fake();
     $this->travelTo('2026-01-15 12:00:00');
+    DB::table('nhl_import_progress')->insert([
+        'season_id' => '20252026', 'game_date' => '2026-01-15', 'game_id' => '2025020001',
+        'game_type' => 2, 'import_type' => 'pbp', 'status' => 'scheduled',
+    ]);
 
     $this->actingAs(($this->makeSuperAdmin)())
         ->postJson(route('admin.nhl-game-imports.process'), [])

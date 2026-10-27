@@ -550,37 +550,37 @@ class NhlGameImportController extends Controller
         }
 
         if ($discoveryRun) {
-            if ($reprocessExisting) {
-                $reprocessCount = $progress->rescheduleExistingRowsForRun(
-                    $discoveryRun->id,
-                    $range['start']->toDateString(),
-                    $range['end']->toDateString()
-                );
-
-                if ($reprocessCount === 0) {
-                    $reprocessCount = $this->seedMissingRunProgressRowsFromGames($discoveryRun, $progress);
-
-                    if ($reprocessCount === 0) {
-                        throw ValidationException::withMessages([
-                            'run_id' => 'No existing NHL games were found for this run range.',
-                        ]);
-                    }
-                }
+            $recoverMissingWork = ! $this->hasRunScopedProgress($discoveryRun)
+                || ! empty($discoveryRun->payload['overlap_excluded_games']);
+            if (! $reprocessExisting && ! $recoverMissingWork && ! $progress->hasOpenRowsForRun($discoveryRun->id)) {
+                throw ValidationException::withMessages([
+                    'run_id' => 'No pending stages remain for this run. Choose Re Run to import these games again.',
+                ]);
             }
-
             $payload = $discoveryRun->payload ?? [];
-            if ($reprocessExisting || $discoveryRun->status === 'cancelled') {
+            if ($reprocessExisting || $recoverMissingWork) {
+                // Reset the generation and exclusions BEFORE admission consults the saved payload.
                 $payload = app(\App\Services\NhlGameImportRunControl::class)->freshPayload($payload);
             }
             $payload['processing_started_at'] = now()->toIso8601String();
             $payload['processing_requested_by'] = $request->user()?->id;
             $payload['reprocess_existing'] = $reprocessExisting;
-
             $discoveryRun->update([
                 'status' => NhlGameImportRun::STATUS_RUNNING,
-                'queued_jobs' => count($dates),
-                'payload' => $payload,
+                'queued_jobs' => count($dates), 'payload' => $payload, 'last_error' => null,
             ]);
+
+            if ($reprocessExisting) {
+                $progress->rescheduleExistingRowsForRun(
+                    $discoveryRun->id,
+                    $range['start']->toDateString(),
+                    $range['end']->toDateString()
+                );
+            }
+            if ($reprocessExisting || $recoverMissingWork) {
+                $this->seedMissingRunProgressRowsFromGames($discoveryRun, $progress);
+            }
+            $this->requirePreparedFullWork($discoveryRun, $progress);
 
             $run = $discoveryRun->refresh();
         }
@@ -594,6 +594,8 @@ class NhlGameImportController extends Controller
             DB::table('nhl_import_progress')->whereNull('run_id')->whereBetween('game_date', $bounds)
                 ->whereIn('status', ['scheduled', 'completed', 'skipped', 'error'])
                 ->update(['run_id' => $run->id, 'updated_at' => now()]);
+            $this->seedMissingRunProgressRowsFromGames($run, $progress);
+            $this->requirePreparedFullWork($run, $progress);
             foreach ($dates as $date) {
                 NhlOrchestratorJob::dispatch($date, $run->id);
             }
@@ -1405,7 +1407,10 @@ class NhlGameImportController extends Controller
             'skipped_stage_rows' => $skipped,
             'failed_stage_rows' => $failed,
             'percentage' => $percentage,
-            'last_error' => $latestError?->last_error,
+            'last_error' => $latestError?->last_error ?? $run->last_error
+                ?? ($total === 0 && $run->action === NhlGameImportRun::ACTION_DISCOVER
+                    && ! empty($payload['processing_started_at']) && $run->status === NhlGameImportRun::STATUS_COMPLETED
+                        ? 'No game stages were prepared for this Full import. Retry Full processing.' : null),
             'sentry_event_id' => $latestError?->sentry_event_id,
             'sentry_url' => $this->sentryEventUrl($latestError?->sentry_event_id),
             'failure_category' => $latestError?->failure_category,
@@ -2038,6 +2043,7 @@ class NhlGameImportController extends Controller
                 $range['start']->toDateString(),
             ])
             ->whereIn('game_type', NhlGameImportEligibility::ALLOWED_GAME_TYPES)
+            ->whereIn('game_state', ['OFF', 'FINAL'])
             ->orderBy('game_date')
             ->orderBy('nhl_game_id')
             ->get(['season_id', 'game_date', 'nhl_game_id', 'game_type'])
@@ -2062,9 +2068,28 @@ class NhlGameImportController extends Controller
             return 0;
         }
 
+        $before = DB::table('nhl_import_progress')->where('run_id', $run->id)->count();
         $progress->insertScheduledRows($rows);
 
-        return count($rows);
+        return DB::table('nhl_import_progress')->where('run_id', $run->id)->count() - $before;
+    }
+
+    /** Reject an empty Full request instead of publishing a successful zero-game import. */
+    private function requirePreparedFullWork(NhlGameImportRun $run, NhlImportProgressRepo $progress): void
+    {
+        if ($progress->hasOpenRowsForRun($run->id)) {
+            return;
+        }
+        $owners = array_unique(array_values($run->fresh()->payload['overlap_excluded_games'] ?? []));
+        $message = $owners === []
+            ? 'No pending NHL import stages were prepared. No eligible completed games were available for this selection.'
+            : 'No import work was queued. Selected games are owned by active runs #'.implode(', #', $owners).'.';
+        app(\App\Services\NhlGameImportRunControl::class)->saveWorkerRun($run, [
+            'status' => NhlGameImportRun::STATUS_FAILED, 'last_error' => $message,
+        ]);
+        broadcast(new NhlGameImportStatusUpdated('processing-failed', $run->id));
+
+        throw ValidationException::withMessages(['run_id' => $message]);
     }
 
     /**
@@ -2644,7 +2669,7 @@ class NhlGameImportController extends Controller
         int $skipped,
         int $failed
     ): string {
-        if ($failed > 0) {
+        if ($failed > 0 || ($run->status === NhlGameImportRun::STATUS_FAILED && $run->last_error !== null)) {
             return NhlGameImportRun::STATUS_FAILED;
         }
 
@@ -2655,7 +2680,7 @@ class NhlGameImportController extends Controller
         }
 
         if ($run->action === NhlGameImportRun::ACTION_DISCOVER && $processingStarted && $total === 0) {
-            return NhlGameImportRun::STATUS_COMPLETED;
+            return $run->status === NhlGameImportRun::STATUS_COMPLETED ? NhlGameImportRun::STATUS_FAILED : $run->status;
         }
 
         if ($total > 0 && ($completed + $skipped) === $total) {

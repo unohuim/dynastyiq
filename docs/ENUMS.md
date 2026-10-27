@@ -922,6 +922,10 @@ Existing duplicate pending stages use `skipped`; completed stages remain intact.
 Exclusions survive Resume and are cleared by an explicit fresh rerun. Scoped
 processing does not acquire Full ownership. Full post-processing excludes these
 games even when historical completed stages remain in the duplicate run.
+An explicit Full recovery of absent or excluded work clears exclusions before
+seeding replacement stages. Completed discoveries do not reserve games. Empty or
+fully blocked Full preparation uses existing `failed` status with an explanation;
+zero-game enrichment and a historical processing timestamp are not completion evidence.
 
 ---
 

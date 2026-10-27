@@ -161,6 +161,94 @@ it('omits manually owned games from a scheduled range while retaining the other 
     expect($savedAutomatic['payload']['overlap_excluded_games']['2026020009'])->toBe($manualId);
 });
 
+it('recovers a zero-work completed discovery and queues real PBP work on Full', function (bool $explicitReprocess, bool $excluded): void {
+    Event::fake();
+    $old = ($this->run)(['end_date' => '2026-10-07', 'date_count' => 3, 'payload' => ['auto_process' => false]]);
+    $repo = app(\App\Repositories\NhlImportProgressRepo::class);
+    $oldRows = array_map(fn (string $stage): array => [
+        'run_id' => $old->id, 'season_id' => '20262027', 'game_date' => '2026-10-09',
+        'game_id' => '2026020009', 'game_type' => 2, 'import_type' => $stage, 'status' => 'scheduled',
+    ], \App\Support\NhlImportStages::ordered());
+    $repo->insertScheduledRows($oldRows);
+    DB::table('nhl_games')->insert([
+        'nhl_game_id' => 2026020009, 'season_id' => '20262027', 'game_date' => '2026-10-09',
+        'game_type' => 2, 'game_state' => 'OFF', 'game_dow' => 'Fri', 'game_month' => 'Oct',
+        'home_team_id' => 1, 'away_team_id' => 2,
+    ]);
+    $retry = ($this->run)(['mode' => 'date', 'payload' => [
+        'auto_process' => false, 'processing_started_at' => '2026-10-09T12:00:00Z',
+        'post_process_enrichment_completed_at' => '2026-10-09T12:00:01Z',
+        ...($excluded ? ['overlap_excluded_games' => ['2026020009' => $old->id]] : []),
+    ]]);
+    $this->mock(\App\Services\NhlGameSourcePreflight::class)->shouldReceive('check', 'storedOrCheck')->andReturn([
+        'allowed' => true, 'core_allowed' => true, 'on_ice_allowed' => true,
+        'statuses' => [], 'message' => null, 'core_message' => null, 'on_ice_message' => null,
+    ]);
+
+    $this->actingAs($this->admin)->postJson(route('admin.nhl-game-imports.process'), [
+        'run_id' => $retry->id, 'reprocess_existing' => $explicitReprocess,
+    ])->assertAccepted()->assertJsonPath('run.processing_started', true)->assertJsonPath('run.status', 'running');
+
+    Bus::assertDispatched(\App\Jobs\ImportPbpNhlJob::class, fn ($job): bool => $job->runId === $retry->id && $job->gameId === 2026020009);
+    expect(DB::table('nhl_import_progress')->where('run_id', $retry->id)->count())->toBe(9)
+        ->and(DB::table('nhl_import_progress')->where('run_id', $retry->id)->where('status', 'running')->count())->toBe(1)
+        ->and(DB::table('nhl_import_progress')->where('run_id', $old->id)->where('status', 'scheduled')->count())->toBe(9)
+        ->and($retry->fresh()->payload)->not->toHaveKey('overlap_excluded_games')->not->toHaveKey('post_process_enrichment_completed_at');
+    $read = collect($this->getJson(route('admin.nhl-game-imports.status'))->assertOk()->json('runs'))->firstWhere('id', $retry->id);
+    expect($read['progress']['running_stage_rows'])->toBe(1)->and($read['status'])->toBe('running');
+})->with([[false, false], [false, true], [true, false], [true, true]]);
+
+it('explains a Full request blocked entirely by a paused owner and does not publish a false completion', function (): void {
+    Event::fake();
+    $owner = ($this->run)(['status' => 'paused', 'end_date' => '2026-10-07', 'date_count' => 3]);
+    DB::table('nhl_import_progress')->insert([
+        'run_id' => $owner->id, 'season_id' => '20262027', 'game_date' => '2026-10-09',
+        'game_id' => '2026020009', 'game_type' => 2, 'import_type' => 'pbp', 'status' => 'scheduled',
+    ]);
+    DB::table('nhl_games')->insert([
+        'nhl_game_id' => 2026020009, 'season_id' => '20262027', 'game_date' => '2026-10-09',
+        'game_type' => 2, 'game_state' => 'OFF', 'game_dow' => 'Fri', 'game_month' => 'Oct',
+        'home_team_id' => 1, 'away_team_id' => 2,
+    ]);
+    $retry = ($this->run)(['mode' => 'date', 'payload' => ['overlap_excluded_games' => ['2026020009' => $owner->id]]]);
+    $response = $this->actingAs($this->admin)->postJson(route('admin.nhl-game-imports.process'), ['run_id' => $retry->id])
+        ->assertUnprocessable()->assertJsonValidationErrors('run_id');
+    expect($response->json('errors.run_id.0'))->toContain('active runs #'.$owner->id)
+        ->and($retry->fresh()->status)->toBe('failed')->and($owner->fresh()->status)->toBe('paused')
+        ->and(DB::table('nhl_import_progress')->where('run_id', $retry->id)->count())->toBe(0);
+    Bus::assertNotDispatched(\App\Jobs\ImportPbpNhlJob::class);
+    $read = collect($this->getJson(route('admin.nhl-game-imports.status'))->assertOk()->json('runs'))->firstWhere('id', $retry->id);
+    expect($read['status'])->toBe('failed')->and($read['progress']['last_error'])->toContain('active runs #'.$owner->id);
+});
+
+it('rejects Full when the selected date has no eligible completed games', function (): void {
+    Event::fake();
+    $run = ($this->run)(['mode' => 'date']);
+    $this->actingAs($this->admin)->postJson(route('admin.nhl-game-imports.process'), ['run_id' => $run->id])
+        ->assertUnprocessable()->assertJsonValidationErrors('run_id');
+    expect($run->fresh()->status)->toBe('failed')->and($run->fresh()->last_error)->toContain('No eligible completed games');
+    Bus::assertNotDispatched(\App\Jobs\ImportPbpNhlJob::class);
+});
+
+it('rejects a direct date Full request with no prepared work instead of dispatching an empty coordinator', function (): void {
+    Event::fake();
+    $this->actingAs($this->admin)->postJson(route('admin.nhl-game-imports.process'), ['date' => '2026-10-09'])
+        ->assertUnprocessable()->assertJsonValidationErrors('run_id');
+    $run = NhlGameImportRun::query()->sole();
+    expect($run->action)->toBe('process')->and($run->status)->toBe('failed')
+        ->and($run->last_error)->toContain('No pending NHL import stages');
+    Bus::assertNotDispatched(\App\Jobs\NhlOrchestratorJob::class);
+});
+
+it('shows historical zero-stage Full completions as failed while leaving empty discovery results valid', function (): void {
+    $bad = ($this->run)(['payload' => ['processing_started_at' => '2026-10-09T12:00:00Z']]);
+    $empty = ($this->run)(['start_date' => '2026-10-08', 'end_date' => '2026-10-08', 'payload' => ['auto_process' => false]]);
+    $runs = collect($this->actingAs($this->admin)->getJson(route('admin.nhl-game-imports.status'))->assertOk()->json('runs'));
+    expect($runs->firstWhere('id', $bad->id)['status'])->toBe('failed')
+        ->and($runs->firstWhere('id', $bad->id)['progress']['last_error'])->toContain('No game stages')
+        ->and($runs->firstWhere('id', $empty->id)['status'])->toBe('completed');
+});
+
 it('keeps the daily wall-clock time across daylight saving', function (): void {
     $next = $this->manager->nextDue($this->process, CarbonImmutable::parse('2026-10-31 07:50:00 UTC'));
     expect($next->toDateTimeString())->toBe('2026-11-01 08:50:00');

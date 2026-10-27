@@ -113,11 +113,7 @@ class NhlImportProgressRepo
         $owners = DB::table('nhl_import_progress as progress')->join('nhl_game_import_runs as runs', 'runs.id', '=', 'progress.run_id')
             ->where('progress.game_id', $gameId)->whereIn('progress.status', ['scheduled', 'running', 'completed'])
             ->whereIn('runs.action', ['discover', 'process'])->whereNull('runs.payload->process_scope')
-            ->where(function ($query): void {
-                $query->whereIn('runs.status', ['queued', 'running', 'pausing', 'paused', 'cancelling'])
-                    ->orWhere(fn ($ready) => $ready->where('runs.status', 'completed')->whereNull('runs.payload->processing_started_at')
-                        ->whereIn('progress.status', ['scheduled', 'running']));
-            })
+            ->whereIn('runs.status', ['queued', 'running', 'pausing', 'paused', 'cancelling'])
             ->orderBy('runs.id')->pluck('runs.id')->unique()->map(fn ($id): int => (int) $id);
         // Existing duplicates retain the earliest owner rather than excluding both runs.
         $owner = $owners->first();

@@ -1026,14 +1026,26 @@ it('does not reserve games for completed failed cancelled or scoped runs', funct
 })->with([['completed', null], ['failed', null], ['cancelled', null],
     ['running', 'shots'], ['running', 'faceoffs'], ['running', 'refs_staff'], ['running', 'on_ice']]);
 
-it('retains Ready discovery ownership until its manual processing action', function (): void {
+it('does not let a completed discovery with scheduled rows block a new explicit import', function (): void {
     Event::fake();
     $owner = ($this->overlapRun)(['status' => 'completed', 'payload' => ['auto_process' => false]]);
     $contender = ($this->overlapRun)();
     $repo = app(NhlImportProgressRepo::class);
     $repo->insertScheduledRows(($this->overlapRows)($owner->id, [2026020001]));
     $repo->insertScheduledRows(($this->overlapRows)($contender->id, [2026020001]));
-    expect(DB::table('nhl_import_progress')->where('run_id', $contender->id)->count())->toBe(0);
+    expect(DB::table('nhl_import_progress')->where('run_id', $contender->id)->count())->toBe(9)
+        ->and($repo->claim(2026020001, 'pbp', $contender->id))->toBeTrue()
+        ->and(DB::table('nhl_import_progress')->where('run_id', $owner->id)->where('status', 'scheduled')->count())->toBe(9);
+});
+
+it('reports empty Full imports as failed instead of enriching zero games successfully', function (): void {
+    Event::fake();
+    $run = ($this->overlapRun)(['payload' => ['processing_started_at' => '2026-06-29T12:00:00Z',
+        'overlap_excluded_games' => ['2026020001' => 128]]]);
+    app(NhlImportOrchestrator::class)->fillActiveGameSlotsForRun($run->id);
+    expect($run->fresh()->status)->toBe('failed')->and($run->fresh()->last_error)->toContain('#128')
+        ->and($run->fresh()->payload)->not->toHaveKey('post_process_enrichment_completed_at');
+    Bus::assertNothingDispatched();
 });
 
 it('fences predeployment duplicate claims without resetting committed stages or excluding the owner', function (): void {

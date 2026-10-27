@@ -522,16 +522,15 @@ class NhlImportOrchestrator
         $payload = $run->payload ?? [];
 
         if ($gameIds === []) {
-            $payload['post_process_enrichment_completed_at'] = now()->toIso8601String();
-            $payload['completed_at'] = now()->toIso8601String();
+            $owners = array_unique(array_values($payload['overlap_excluded_games'] ?? []));
+            $message = $owners === [] ? 'Full import has no prepared games; no game processing was performed.'
+                : 'Full import has no eligible games. Selected games are owned by runs #'.implode(', #', $owners).'.';
 
             app(NhlGameImportRunControl::class)->saveWorkerRun($run, [
-                'status' => NhlGameImportRun::STATUS_COMPLETED,
-                'payload' => $payload,
-                'updated_at' => now(),
+                'status' => NhlGameImportRun::STATUS_FAILED, 'last_error' => $message, 'updated_at' => now(),
             ]);
 
-            broadcast(new NhlGameImportStatusUpdated('processing-completed', (int) $run->id));
+            broadcast(new NhlGameImportStatusUpdated('processing-failed', (int) $run->id));
 
             return;
         }
