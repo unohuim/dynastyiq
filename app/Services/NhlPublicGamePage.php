@@ -250,7 +250,8 @@ final class NhlPublicGamePage
     {
         $row = DB::table('nhl_game_prediction_revisions')->where('nhl_game_id', $game->nhl_game_id)
             ->where('is_canonical', true)->where('prediction_available', true)->orderByDesc('id')
-            ->first(['payload->market_probabilities as markets', 'payload->prediction->predicted_score as score', 'predicted_at']);
+            ->first(['payload->market_probabilities as markets', 'payload->prediction->predicted_score as score',
+                'payload->prediction->predicted_total_goals as total_goals', 'predicted_at']);
         if ($row === null) {
             return null;
         }
@@ -269,7 +270,9 @@ final class NhlPublicGamePage
             }
         }
 
-        return ['probabilities' => $probabilities, 'score' => $score, 'predicted_at' => $row->predicted_at];
+        return ['probabilities' => $probabilities, 'score' => $score,
+            'total_goals' => is_numeric($row->total_goals) ? (float) $row->total_goals : null,
+            'predicted_at' => $row->predicted_at];
     }
 
     /** Summarize this season's completed games strictly before the selected matchup.

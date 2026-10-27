@@ -263,3 +263,23 @@ it('reads final scores only when the game is final', function (): void {
     NhlGame::where('nhl_game_id', 2026020001)->update(['game_state' => 'OFF']);
     ($this->index)()->assertJsonPath('games.0.actual_home', 4);
 });
+
+
+it('retains normalized totals and original selection evidence through publication and admin reads', function (): void {
+    $normalization = ['offense_percent' => 150, 'defense_percent' => 50, 'divisor' => 2, 'applied' => true];
+    $result = ($this->publish)(['prediction' => ['predicted_total_goals' => 5.3,
+        'selection_score' => ['away' => 4.4, 'home' => 6.2], 'totals_normalization' => $normalization]]);
+    $id = $result['meta']['prediction_revision_id'];
+    $row = DB::table('nhl_game_prediction_revisions')->find($id);
+    expect(json_decode($row->summary, true)['total_goals'])->toBe(5.3)
+        ->and(json_decode($row->payload, true)['prediction']['selection_score'])->toBe(['away' => 4.4, 'home' => 6.2]);
+    ($this->index)()->assertOk()->assertJsonPath('games.0.revision.total_goals', 5.3)
+        ->assertJsonPath('games.0.revision.away_goals', 2.2)->assertJsonPath('games.0.revision.home_goals', 3.1);
+    $this->getJson('/admin/game-predictions/games/2026020001/revisions')->assertOk()
+        ->assertJsonPath('revisions.0.totals_normalization.divisor', 2);
+    $this->getJson('/admin/game-predictions/revisions/'.$id)->assertOk()
+        ->assertJsonPath('payload.prediction.selection_score.home', 6.2)
+        ->assertJsonPath('payload.prediction.predicted_total_goals', 5.3);
+    ($this->publish)(['prediction' => ['predicted_total_goals' => 6.1]]);
+    expect(DB::table('nhl_game_prediction_revisions')->find($id)->payload)->toBe($row->payload);
+});

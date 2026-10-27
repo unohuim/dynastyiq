@@ -149,7 +149,7 @@ final class NhlGamePredictionResponseCache
     {
         ksort($input);
 
-        return 'nhl:game-prediction:production-qualified-upper1-boost7-history-v5:' . $gameId . ':' . hash('sha256', json_encode($input, JSON_THROW_ON_ERROR));
+        return 'nhl:game-prediction:production-qualified-upper1-boost7-normalized-totals-v6:' . $gameId . ':' . hash('sha256', json_encode($input, JSON_THROW_ON_ERROR));
     }
 
     /** @param array<string,mixed> $input */

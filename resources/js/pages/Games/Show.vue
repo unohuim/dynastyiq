@@ -156,6 +156,7 @@ onBeforeUnmount(() => { disposed = true; cancelPanels(); window.clearTimeout(tim
                 <p class="font-mono text-xs uppercase tracking-widest text-[#7890A4]">{{ mode === 'preview' ? 'at' : 'Final' === status ? 'Final' : 'vs' }}</p>
                 <p v-if="mode === 'preview' && game.prediction?.score" class="mt-2 whitespace-nowrap font-mono text-sm font-semibold text-sky-300">{{ number(game.prediction.score.away) }} – {{ number(game.prediction.score.home) }}</p>
                 <p v-if="mode === 'preview' && game.prediction?.score" class="mt-1 text-[10px] text-[#91A8BA]">Projected score</p>
+                <p v-if="mode === 'preview' && game.prediction?.total_goals != null" class="mt-1 text-[10px] text-[#91A8BA]">Total goals {{ number(game.prediction.total_goals) }}</p>
               </div>
               <div class="min-w-0 text-center">
                 <img v-if="game[side].team_logo" :src="game[side].team_logo" alt="" class="mx-auto mb-2 size-16 object-contain sm:size-24" />

@@ -314,3 +314,15 @@ it('exposes imported recap sections after the preparation job without changing t
     $this->getJson('/games/2026020001/details?section=boxscore')->assertOk()->assertJsonPath('data.away.boxscore.0.goals', 2);
     $this->get('/games/2026020001')->assertOk()->assertInertia(fn (Assert $page) => $page->where('game.home.score', 4));
 });
+
+
+it('shows the saved normalized goal total on the lightweight public preview', function (): void {
+    ($this->makeGame)(2026020001, ['game_state' => 'FUT', 'game_date' => '2026-10-28']);
+    ($this->savePrediction)([], ['prediction' => ['predicted_score' => ['away' => 2.4, 'home' => 3.1],
+        'predicted_total_goals' => 5.5, 'selection_score' => ['away' => 4.8, 'home' => 6.2]]]);
+    $this->assertDatabaseHas('nhl_game_prediction_revisions', ['nhl_game_id' => 2026020001, 'is_canonical' => true]);
+    $this->get('/games/2026020001')->assertOk()->assertInertia(fn (Assert $page) => $page
+        ->where('game.prediction.total_goals', 5.5)->where('game.prediction.score.home', 3.1)
+        ->missing('game.prediction.selection_score'));
+    Http::assertNothingSent();
+});

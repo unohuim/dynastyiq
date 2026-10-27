@@ -471,6 +471,10 @@ class NhlGamePredictionPayload
             $awaySide,
             $homeSide
         );
+        $weights = data_get($result, 'inputs.goal_weights')
+            ?? ($overrides['engine_weights'] ?? ($satModelId === null
+                ? ['offense' => 85, 'defense' => 15] : ['offense' => 88, 'defense' => 2]));
+        $prediction = $this->normalizeGoalTotals($prediction, $awayGoals, $homeGoals, $weights);
 
         $response = [
             'prediction_available' => true,
@@ -551,6 +555,33 @@ class NhlGamePredictionPayload
         }
 
         return $response;
+    }
+
+    /** Normalize final goals without changing the raw scores used to select or qualify the winner.
+     * @param array<string,mixed> $prediction
+     * @param array{offense:float|int,defense:float|int} $weights
+     * @return array<string,mixed>
+     */
+    private function normalizeGoalTotals(array $prediction, float $awayGoals, float $homeGoals, array $weights): array
+    {
+        $divisor = ((float) $weights['offense'] + (float) $weights['defense']) / 100;
+        $prediction['selection_score'] = ['away' => $awayGoals, 'home' => $homeGoals];
+        $prediction['selection_goal_differential'] = $prediction['goal_differential'];
+        $prediction['totals_normalization'] = [
+            'offense_percent' => (float) $weights['offense'],
+            'defense_percent' => (float) $weights['defense'],
+            'divisor' => $divisor,
+            'applied' => $divisor > 0,
+        ];
+        // A zero/zero engine has no defined normalized total; do not invent a divisor.
+        $prediction['predicted_score'] = [
+            'away' => $divisor > 0 ? round($awayGoals / $divisor, 2) : null,
+            'home' => $divisor > 0 ? round($homeGoals / $divisor, 2) : null,
+        ];
+        $prediction['predicted_total_goals'] = $divisor > 0 ? round(($awayGoals + $homeGoals) / $divisor, 2) : null;
+        $prediction['goal_differential'] = $divisor > 0 ? round(($homeGoals - $awayGoals) / $divisor, 4) : null;
+
+        return $prediction;
     }
 
     private function presentationConfidence(float $internalConfidence, NhlSatEngine $engine, bool $qualified): float
@@ -1383,10 +1414,16 @@ class NhlGamePredictionPayload
         }
 
         if (in_array('total', $markets, true)) {
+            $divisor = (float) data_get($prediction, 'totals_normalization.divisor', 1);
+            if ($divisor <= 0) {
+                return $probabilities;
+            }
+            $totalDistribution = $divisor === 1.0 ? $distribution
+                : $this->scoreDistribution($awayGoals / $divisor, $homeGoals / $divisor);
             foreach ($this->requestedTotalLines($overrides) as $line) {
                 array_push(
                     $probabilities,
-                    ...$this->totalMarketProbabilities($distribution, $line, $confidenceScore)
+                    ...$this->totalMarketProbabilities($totalDistribution, $line, $confidenceScore)
                 );
             }
         }
@@ -1503,7 +1540,7 @@ class NhlGamePredictionPayload
             'confidence_score' => $confidenceScore,
             'model' => [
                 'method' => 'poisson_projected_score_moneyline',
-                'source' => 'prediction.predicted_score',
+                'source' => 'prediction.selection_score',
                 'includes_overtime' => true,
                 'tie_resolution' => 'projected_goal_share',
                 'max_score' => self::MONEYLINE_SCORE_DISTRIBUTION_MAX_GOALS,
@@ -1762,7 +1799,7 @@ class NhlGamePredictionPayload
             'confidence_score' => $confidenceScore,
             'model' => [
                 'method' => $method,
-                'source' => 'prediction.predicted_score',
+                'source' => $marketKey === 'total' ? 'prediction.predicted_score' : 'prediction.selection_score',
                 'includes_overtime' => true,
                 'max_score' => self::MONEYLINE_SCORE_DISTRIBUTION_MAX_GOALS,
             ],

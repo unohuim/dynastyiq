@@ -18,6 +18,7 @@ when_not_to_use:
   - Saving every internal engine candidate, cache hit or historical engine evaluation as a live prediction.
   - Claiming current-input runs on past dates are point-in-time historical backtests.
 rules:
+  - New revisions retain normalized projected team goals and game total in payload and summary, with raw selection scores and weight/divisor evidence in the payload. Earlier revisions remain unchanged. Latest admin results, revision summaries and public game previews read the saved normalized output without recalculating it.
   - Each real API calculation appends a revision before cache publication; fresh and stale cache reads retain the same revision identity. Unavailable calculated responses are retained for diagnosis but never replace the latest successful canonical prediction in the admin list. Input changes detected during calculation publish neither a cache response nor a revision.
   - Revisions freeze the complete response, request inputs, input fingerprint, selected default stack with ordered member engine definitions, model identity/timestamps, lineup evidence identities, starter evidence and calculation time. Existing revision payloads and evidence are never updated or deleted by this workflow.
   - Partner responses expose additive meta.prediction_revision_id and meta.predicted_at. Existing probability, qualification, lineup and cache behavior remains unchanged. Manual runs force a new calculation through the same cache/build lock and builder, refreshing the corresponding default response cache.

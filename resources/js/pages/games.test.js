@@ -1055,6 +1055,17 @@ describe('public game preview and recap', () => {
         expect(document.querySelector('header').textContent).toContain('54.6%');
         expect(document.querySelector('#lineups')).not.toBeNull();
     });
+    it('shows saved normalized totals and updates them with a revised prediction', async () => {
+        mount({ mode: 'preview', prediction: { score: { away: 2.4, home: 3.1 }, total_goals: 5.5 } });
+        expect(document.querySelector('header').textContent).toContain('Total goals 5.50');
+        state.game.prediction.total_goals = 6.2;
+        await nextTick();
+        expect(document.querySelector('header').textContent).toContain('Total goals 6.20');
+    });
+    it('does not invent a total for older stored predictions', () => {
+        mount({ mode: 'preview', prediction: { score: { away: 2.4, home: 3.1 } } });
+        expect(document.querySelector('header').textContent).not.toContain('Total goals');
+    });
     it('labels missing predictions without inventing percentages', () => {
         mount({ mode: 'preview', prediction: null });
         expect(document.querySelector('header').textContent).toContain('Prediction not yet available');

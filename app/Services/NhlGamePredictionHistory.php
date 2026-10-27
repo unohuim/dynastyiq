@@ -81,6 +81,8 @@ final class NhlGamePredictionHistory
         return [
             'away_goals' => data_get($payload, 'prediction.predicted_score.away'),
             'home_goals' => data_get($payload, 'prediction.predicted_score.home'),
+            'total_goals' => data_get($payload, 'prediction.predicted_total_goals'),
+            'totals_normalization' => data_get($payload, 'prediction.totals_normalization'),
             'winner' => $winner, 'win_probability' => $moneyline['probability'] ?? null,
             'confidence' => data_get($payload, 'prediction.confidence_score'),
             'qualified' => $payload['pick_qualified'] ?? null,

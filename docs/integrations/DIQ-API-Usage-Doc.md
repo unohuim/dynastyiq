@@ -1167,12 +1167,18 @@ The `prediction` block contains the display headline:
 
 | Field | Meaning |
 | --- | --- |
-| `predicted_score.away` | Away projected goals per game. |
-| `predicted_score.home` | Home projected goals per game. |
-| `winner` | Higher projected-goal side. |
+| `predicted_score.away` | Away goals after dividing the weighted score by the combined offense/defense multiplier. |
+| `predicted_score.home` | Home goals after the same normalization. |
+| `predicted_total_goals` | Combined normalized game goals, summed before rounding. |
+| `selection_score` | Original unrounded away/home weighted goals used for winner selection and moneyline/puckline probabilities. |
+| `selection_goal_differential` | Original weighted home-minus-away gap used for selection. |
+| `totals_normalization` | Applied offense/defense percentages, their combined divisor, and whether normalization was applied. |
+| `winner` | Side selected using the original weighted scores before final goal normalization. |
 | `goal_differential` | Home projected goals minus away projected goals. |
 | `confidence_score` | `1` to `100`, averaging the two teams' weighted skater/goalie input confidence; not goal margin or win probability. |
 | `goalie_edge` | Selected-starter goalie edge in goals saved per game. |
+
+Final goal normalization leaves winner, win probability, confidence and qualification unchanged. For example, 150% offense plus 50% defense divides both team goals by 2. Over/under uses these normalized goals. With zero combined weights, normalized scores and total are null and total markets are omitted. Existing saved revisions retain their original outputs.
 
 `goalie_edge.score` scale:
 
@@ -1640,7 +1646,7 @@ Common row shape:
 | `fair_odds_decimal` | Decimal fair odds derived from probability, or `null` when probability is exactly `0` or `1` because fair odds are infinite. |
 | `confidence_score` | Presentation confidence from `0` to `100`. |
 | `model.method` | Probability method. See method values below. |
-| `model.source` | Source input path, currently `prediction.predicted_score`. |
+| `model.source` | `prediction.selection_score` for moneyline/puckline; `prediction.predicted_score` for totals. |
 | `model.includes_overtime` | Whether the probability includes overtime resolution in the score distribution. |
 | `model.max_score` | Highest score included in the finite Poisson score grid. |
 
@@ -1715,7 +1721,7 @@ Example:
       "confidence_score": 62,
       "model": {
         "method": "poisson_projected_score_moneyline",
-        "source": "prediction.predicted_score",
+        "source": "prediction.selection_score",
         "includes_overtime": true,
         "tie_resolution": "projected_goal_share",
         "max_score": 15
@@ -1736,7 +1742,7 @@ Example:
       "confidence_score": 62,
       "model": {
         "method": "projected_margin_distribution",
-        "source": "prediction.predicted_score",
+        "source": "prediction.selection_score",
         "includes_overtime": true,
         "max_score": 15
       },

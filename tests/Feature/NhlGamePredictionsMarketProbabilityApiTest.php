@@ -209,14 +209,15 @@ beforeEach(function (): void {
         return $token;
     };
 
-    $this->bindMatchupSimulator = function (float $awayGoals = 2.4, float $homeGoals = 3.2, float $confidence = 0.8): void {
+    $this->bindMatchupSimulator = function (float $awayGoals = 2.4, float $homeGoals = 3.2, float $confidence = 0.8, array $weights = ['offense' => 85, 'defense' => 15]): void {
         app()->bind(
             NhlProjectedTeamMatchupSimulator::class,
-            fn (): NhlProjectedTeamMatchupSimulator => new class($awayGoals, $homeGoals, $confidence) extends NhlProjectedTeamMatchupSimulator {
+            fn (): NhlProjectedTeamMatchupSimulator => new class($awayGoals, $homeGoals, $confidence, $weights) extends NhlProjectedTeamMatchupSimulator {
                 public function __construct(
                     private readonly float $awayGoals,
                     private readonly float $homeGoals,
-                    private readonly float $confidence
+                    private readonly float $confidence,
+                    private readonly array $weights
                 ) {
                 }
 
@@ -236,6 +237,7 @@ beforeEach(function (): void {
                 ): array {
                     return [
                         'is_available' => true,
+                        'inputs' => ['goal_weights' => $this->weights],
                         'sides' => [
                             [
                                 'offense_team' => $teamA,
@@ -752,7 +754,7 @@ it('includes fair odds and model metadata for line-dependent rows', function ():
         ->assertJson(fn (AssertableJson $json) => $json
             ->has('market_probabilities.0.fair_odds_american')
             ->has('market_probabilities.0.fair_odds_decimal')
-            ->where('market_probabilities.0.model.source', 'prediction.predicted_score')
+            ->where('market_probabilities.0.model.source', 'prediction.selection_score')
             ->where('market_probabilities.0.model.includes_overtime', true)
             ->etc()
         );
@@ -1231,3 +1233,57 @@ it('uses complete reported or manual override lineups for both teams in a presea
         ->assertJsonCount(18, 'teams.away.roster')
         ->assertJsonPath('teams.away.roster.0.projection_source', 'replacement_level');
 })->with([false, true]);
+
+
+it('normalizes final API goals using actual simulation weights and retains raw selection evidence', function (float $offense, float $defense): void {
+    $this->travelTo(\Illuminate\Support\Carbon::parse('2026-10-01 12:00:00 UTC'));
+    Http::preventStrayRequests();
+    $token = ($this->seedPredictionInputs)(4.8, 6.4);
+    ($this->bindMatchupSimulator)(4.8, 6.4, .68, ['offense' => $offense, 'defense' => $defense]);
+    DB::table('nhl_goalie_season_projections')->update(['confidence_score' => .68]);
+    $params = ['nhl_game_id' => 2026020001, 'source_season_id' => '20252026',
+        'target_season_id' => '20262027', 'projection_version' => 'skater-market',
+        'toi_projection_version' => 'toi-market', 'goalie_projection_version' => 'goalie-market',
+        'away_goalie_id' => 9001, 'home_goalie_id' => 9002, 'markets' => ['moneyline', 'puckline', 'total']];
+    $response = $this->withToken($token)->getJson('/api/nhl-game-predictions?'.http_build_query($params))->assertOk();
+    $divisor = ($offense + $defense) / 100;
+    $response->assertJsonPath('prediction.selection_score.away', 4.8)
+        ->assertJsonPath('prediction.selection_score.home', 6.4)
+        ->assertJsonPath('prediction.winner.side', 'home')
+        ->assertJsonPath('prediction.totals_normalization.divisor', fn ($value): bool => (float) $value === $divisor)
+        ->assertJsonPath('prediction.predicted_score.away', $divisor > 0 ? round(4.8 / $divisor, 2) : null)
+        ->assertJsonPath('prediction.predicted_score.home', $divisor > 0 ? round(6.4 / $divisor, 2) : null)
+        ->assertJsonPath('prediction.predicted_total_goals', $divisor > 0 ? round(11.2 / $divisor, 2) : null);
+
+    $service = app(NhlGamePredictionPayload::class);
+    $markets = new ReflectionMethod($service, 'marketProbabilities');
+    $raw = $markets->invoke($service, 'AWY', 'HOM', 4.8, 6.4, $response->json('prediction'), $params);
+    expect($response->json('market_probabilities'))->toEqual($raw);
+    $baseline = $response->json('prediction');
+    unset($baseline['totals_normalization']);
+    $unscaled = collect($markets->invoke($service, 'AWY', 'HOM', 4.8, 6.4, $baseline, $params));
+    foreach (collect($raw)->whereIn('market_key', ['moneyline', 'puckline']) as $index => $market) {
+        expect($market['probability'])->toEqual($unscaled[$index]['probability']);
+    }
+    if ($divisor === 0.0) {
+        expect(collect($raw)->where('market_key', 'total'))->toBeEmpty();
+    } else {
+        $normalizedBaseline = collect($markets->invoke($service, 'AWY', 'HOM', 4.8 / $divisor, 6.4 / $divisor, $baseline, $params));
+        expect(collect($raw)->where('market_key', 'total')->values()->all())
+            ->toEqual($normalizedBaseline->where('market_key', 'total')->values()->all());
+    }
+    $revision = DB::table('nhl_game_prediction_revisions')->latest('id')->first();
+    expect($revision)->not->toBeNull();
+    expect(json_decode($revision->payload, true)['prediction'])->toEqual($response->json('prediction'));
+    Http::assertNothingSent();
+    $this->travelBack();
+})->with([
+    '150 offense 50 defense' => [150.0, 50.0],
+    'double offense' => [200.0, 0.0],
+    'offense only' => [100.0, 0.0],
+    'defense only' => [0.0, 100.0],
+    'equal blend' => [50.0, 50.0],
+    'below combined 100' => [50.0, 25.0],
+    'SAT defaults' => [88.0, 2.0],
+    'no contributing weights' => [0.0, 0.0],
+]);

@@ -112,6 +112,10 @@ class NhlProjectedTeamMatchupSimulator
                 'toi_projection_version' => $toiProjectionVersion,
                 'goalie_projection_version' => $goalieProjectionVersion,
                 'sat_model_run_id' => $satModelId,
+                'goal_weights' => $satModelId === null
+                    ? ['offense' => self::OFFENSE_ENVIRONMENT_WEIGHT * 100, 'defense' => self::DEFENSE_ENVIRONMENT_WEIGHT * 100]
+                    : ['offense' => ($this->engineWeights['offense'] ?? 0.88) * 100,
+                        'defense' => ($this->engineWeights['defense'] ?? 0.02) * 100],
                 'team_a' => $teamA,
                 'team_b' => $teamB,
                 'team_a_goalie_id' => $teamAGoalieId,

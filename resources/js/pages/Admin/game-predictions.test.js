@@ -8,7 +8,7 @@ describe('Operational Game Predictions', () => {
     let list;
     let fetcher;
     const revision = { id: 4, source: 'api', prediction_available: true, is_canonical: true, away_goals: 2.2,
-        home_goals: 3.1, winner: 'TOR', win_probability: .61, confidence: 67, qualified: true, predicted_at: '2026-10-22T15:00:00Z' };
+        home_goals: 3.1, total_goals: 5.3, winner: 'TOR', win_probability: .61, confidence: 67, qualified: true, predicted_at: '2026-10-22T15:00:00Z' };
     const settle = async () => { for (let i = 0; i < 15; i++) await Promise.resolve(); await nextTick(); };
     const button = text => [...document.querySelectorAll('button')].find(node => node.textContent.trim() === text);
     const mount = async () => {
@@ -242,6 +242,19 @@ describe('Operational Game Predictions', () => {
     it('does not start predictions when a date field submits the form', async () => {
         await mount(); document.querySelector('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
         await settle(); expect(fetcher.mock.calls.every(([, options]) => !options.method)).toBe(true);
+    });
+
+    it('shows the saved total beside the normalized away-home score and in revisions', async () => {
+        await mount();
+        expect([...document.querySelectorAll('thead th')].map(node => node.textContent)).toContain('Total goals');
+        expect(document.querySelector('tbody').textContent).toContain('5.30');
+        button('Revisions').click(); await settle();
+        expect(document.body.textContent).toContain('Total 5.30');
+    });
+    it('leaves missing historical totals blank instead of recalculating them', async () => {
+        delete list.games[0].revision.total_goals;
+        await mount();
+        expect(document.querySelectorAll('tbody tr')[0].children[2].textContent).toBe('—');
     });
 
 });
