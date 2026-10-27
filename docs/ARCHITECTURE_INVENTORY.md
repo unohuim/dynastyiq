@@ -4249,7 +4249,7 @@ with legacy backfill compatibility. Authority:
 
 ### NHL Public Game Page
 
-**Purpose:** Cached previews, live game detail and imported recaps at the existing game URL, with saved public prediction outputs and preserved lineup controls.
+**Purpose:** Lightweight first-paint previews/live overviews/recaps, followed by independent deferred sections with cached detail, saved public prediction outputs and preserved lineup controls.
 **Location:** `app/Services/NhlPublicGamePage.php`, `app/Jobs/RefreshNhlPublicGamePageJob.php`, `resources/js/pages/Games/Show.vue`.
 **Public interface:** `GET /games/{nhlGameId}`, `NhlPublicGamePage::payload()`, `NhlPublicGamePage::forget()`.
 **Authority:** `docs/architecture/ui/NhlPublicGamePage.yaml`.

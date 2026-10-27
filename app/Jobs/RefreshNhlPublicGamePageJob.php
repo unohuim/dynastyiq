@@ -40,7 +40,7 @@ final class RefreshNhlPublicGamePageJob implements ShouldQueue, ShouldBeUniqueUn
     public function handle(NhlPublicGamePage $pages): void
     {
         if (NhlGame::query()->whereKey($this->gameId)->exists()) {
-            $pages->payload($this->gameId, true);
+            $pages->prepare($this->gameId, true);
         }
     }
 }

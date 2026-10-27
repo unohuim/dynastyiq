@@ -5,6 +5,8 @@ location:
   - app/Jobs/RefreshNhlPublicGamePageJob.php
   - app/Http/Controllers/NhlGamesController.php
   - resources/js/pages/Games/Show.vue
+  - resources/js/pages/Games/GameSectionState.vue
+  - resources/js/pages/Games/game-panels.js
   - resources/js/layouts/MobileScoreboard.vue
 purpose: Present fast public game previews, live detail and recaps through the existing game route.
 when_to_use:
@@ -14,6 +16,9 @@ when_not_to_use:
   - Calculating or changing engine predictions.
   - Replacing partner API payloads or private prediction evidence.
 rules:
+  - Initial game responses contain only lightweight schedule facts, saved public odds and the compact shared live overview. They must not build player projections, select projected rosters, aggregate team form, load previous meetings or assemble recap boxscores.
+  - Deferred sections have independent requests, loading placeholders, timeout/error feedback and per-section Retry. Matchup and meeting reads do not wait for player preparation. Cold player/recap payload misses queue the existing one-game preparation job and return a preparing response; queue and browser consumers never run concurrent preparation for one game.
+  - Deferred section fields are explicitly allowlisted on server and browser. They cannot overwrite score, clock, team identity, game state, probabilities or other overview fields. Navigation, authoritative full live updates and mode transitions cancel obsolete section work.
   - Preserve the existing numeric game URLs, public access and lineup mutation authorization. View modes are canonical in docs/ENUMS.md.
   - Upcoming pages show saved canonical prediction outputs only; never expose request inputs, evidence or run an engine on a public read. Moneyline rows must match the scheduled side and team identity. Missing predictions stay unavailable.
   - Team form and previous meetings use completed results strictly before the selected game date, with team form scoped to its season and game type. Do not include the selected game's result in its pregame form.
@@ -21,13 +26,18 @@ rules:
   - Recent unfinished detail consumes the shared five-second producer governed by imports/NhlLiveGameFeed.yaml, without making browser-driven NHL requests. Live identity, scores, rosters and events come exclusively from matching provider JSON; local goalie avatars retain their existing exception. Failed live evidence displays an unavailable state without substituting stale database results.
   - A provider final snapshot may bridge the interval before completed imports; subsequent import preparation replaces it with stored facts.
   - Prepared public payloads are shared, but authorization props are computed per request outside the cache. Preview payloads expire after five minutes and stored recaps after six hours; schedule state/timestamp changes use a new cache identity.
-  - Committed boxscore and shot imports, current-lineup or starter-observation writes, and successful canonical prediction revisions invalidate and queue one-game preparation on default, coalescing pending refreshes by game. Versioned invalidation fences in-flight builds from publishing over newer source changes. Read misses build and cache the requested game; no migration, import or prediction calculation is triggered.
+  - Committed boxscore and shot imports, current-lineup or starter-observation writes, and successful canonical prediction revisions invalidate and queue one-game preparation on default, coalescing pending refreshes by game. Versioned invalidation fences in-flight builds from publishing over newer source changes. Background preparation builds and caches missing detail; public section reads queue that work rather than performing heavy calculations. Versioned invalidation remains in effect; no migration, import or prediction calculation is triggered.
   - Scoreboard game links use Inertia navigation with short-lived hover prefetching for previews and recaps. Live tiles disable prefetch reuse and live detail responses use no-store. Live facts arrive through Reverb with shared-snapshot reads for initial load, reconnect and full-detail updates. Previews may refresh every minute while visible; finished pages stop polling. Timers and requests are disposed on unmount.
 public_interface:
   - GET /games/{nhlGameId}
+  - GET /games/{nhlGameId}/details?section={section}
+  - NhlPublicGamePage::overview
+  - NhlPublicGamePage::panel
+  - NhlPublicGamePage::prepare
   - NhlPublicGamePage::payload
   - NhlPublicGamePage::forget
   - NhlPublicGamePage::refreshAfterCommit
   - RefreshNhlPublicGamePageJob
 example_usage: |
-  Return Inertia::render('Games/Show', $pages->payload($nhlGameId)).
+  Return Inertia::render('Games/Show', $pages->overview($nhlGameId)).
+  The browser reads each section afterward through the details endpoint.

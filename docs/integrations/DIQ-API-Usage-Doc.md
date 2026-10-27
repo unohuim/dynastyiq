@@ -1777,3 +1777,12 @@ Each message contains `sequence`, `observed_at`, `changed` and `game` (game ID, 
 Read `GET /games/live` for recent compact snapshots, or `GET /games/live?game_id={nhl_game_id}` for one full public game snapshot. The response is `{ "snapshots": [...] }`; each snapshot includes `sequence`, `observed_at`, `game` and `stale`. These public reads require no partner credential and never calculate predictions or contact NHL. Existing partner authentication and prediction endpoints are unchanged.
 
 Subscribe before requesting the initial snapshot, then apply updates by increasing per-game sequence. Re-read on reconnect to recover missed changes. Live snapshots older than twenty seconds are explicitly stale; terminal results remain final. A five-second shared producer polls NHL independently of viewer count. PBP and boxscore are separate shared source requests, and provider/network latency still affects freshness.
+
+
+### Browser game overview and deferred details
+
+`GET /games/{nhl_game_id}` returns the Inertia game overview immediately from schedule facts, saved public probabilities and the shared live snapshot. Player projections, lineup panels, matchup form, previous meetings and recap details load separately through `GET /games/{nhl_game_id}/details?section={section}`. The section vocabulary is canonical in `docs/ENUMS.md`.
+
+A ready section returns `{ "nhl_game_id": 123, "mode": "preview", "section": "lineups", "data": { ... } }`. A cold prepared-payload miss returns HTTP 202 with `{ "status": "preparing" }` and queues background preparation. These responses use `Cache-Control: no-store`. Invalid section names return 422; missing games return 404. Guests and authenticated users share the same public read contract; lineup mutation authorization remains unchanged.
+
+Section data contains only that panel's fields. Clients must not replace game identity, score, clock, mode or odds with section responses. Ignore obsolete responses after navigation or a mode change, and keep live updates independent of section loading. Existing partner prediction payloads are unchanged.

@@ -11,6 +11,7 @@ import GameCard from './Games/GameCard.vue';
 import GamesIndex from './Games/Index.vue';
 import LineupTeam from './Games/LineupTeam.vue';
 import GameShow from './Games/Show.vue';
+import { applyGamePanel } from './Games/game-panels';
 import {
     createGameCard,
     formatGameDate,
@@ -1016,17 +1017,18 @@ describe('Inertia mobile navigation', () => {
 describe('public game preview and recap', () => {
     let app;
     let state;
-    const mount = (extra = {}) => {
+    const mount = (extra = {}, pageProps = {}) => {
         state = reactive({ game: {
             nhl_game_id: 2026020001, game_date: '2026-10-26', start_time_utc: '2026-10-26T23:00:00Z',
             mode: 'recap', status: 'Final', game_state: 'OFF', events: [], head_to_head: [], comparison: [],
             away: { team_abbrev: 'BOS', score: 0, sog: 22, boxscore: [] },
             home: { team_abbrev: 'TOR', score: 3, sog: 30, boxscore: [] }, ...extra,
-        } });
+        }, ...pageProps });
         app = createApp({ render: () => h(GameShow, state) });
         app.config.globalProperties.$headManager = { createProvider: () => ({ update: vi.fn(), disconnect: vi.fn() }) };
         app.mount('#game-show');
     };
+    const settle = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); await nextTick(); };
     beforeEach(() => {
         document.body.innerHTML = '<div id="game-show"></div>';
         vi.useFakeTimers();
@@ -1037,6 +1039,7 @@ describe('public game preview and recap', () => {
         app?.unmount();
         app = null;
         vi.useRealTimers();
+        vi.unstubAllGlobals();
         vi.restoreAllMocks();
         document.body.innerHTML = '';
     });
@@ -1108,4 +1111,68 @@ describe('public game preview and recap', () => {
         expect(document.querySelector('[role="status"]').textContent).toBeTruthy();
         expect(document.querySelector('header')).toBeNull();
     });
+    it('renders the overview while every deferred request is still pending', async () => {
+        vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
+        mount({}, { detailsUrl: '/games/2026020001/details' });
+        await settle();
+        expect(document.querySelector('header').textContent).toContain('BOS');
+        expect(document.querySelector('header').textContent).toContain('TOR');
+        expect(document.querySelector('#summary [role="status"]').textContent).toContain('Loading');
+        expect(fetch).toHaveBeenCalledTimes(3);
+    });
+    it('requests each deferred section independently', async () => {
+        vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
+        mount({ mode: 'preview' }, { detailsUrl: '/games/2026020001/details' });
+        await settle();
+        expect(fetch.mock.calls.map(([url]) => url.searchParams.get('section'))).toEqual(['matchup', 'lineups', 'meetings']);
+    });
+    it('shows a local error without removing the overview or successful sections', async () => {
+        vi.stubGlobal('fetch', vi.fn(async url => ({ ok: url.searchParams.get('section') !== 'goals', status: 200,
+            json: async () => ({ nhl_game_id: 2026020001, mode: 'recap', section: url.searchParams.get('section'), data: { comparison: [], away: { boxscore: [] }, home: { boxscore: [] } } }) })));
+        mount({}, { detailsUrl: '/games/2026020001/details' });
+        await settle();
+        expect(document.querySelector('header').textContent).toContain('TOR');
+        expect(document.querySelector('#goals [role="alert"]')).not.toBeNull();
+        expect(document.querySelector('#boxscore table')).toBeNull();
+        expect(document.querySelector('#summary [aria-busy="true"]')).toBeNull();
+    });
+    it('retries only the failed section', async () => {
+        let failed = true;
+        vi.stubGlobal('fetch', vi.fn(async url => ({ ok: !(failed && url.searchParams.get('section') === 'goals'), status: 200,
+            json: async () => ({ nhl_game_id: 2026020001, mode: 'recap', section: url.searchParams.get('section'), data: { events: [] } }) })));
+        mount({}, { detailsUrl: '/games/2026020001/details' }); await settle();
+        failed = false;
+        document.querySelector('[aria-label="Retry Scoring summary"]').click(); await settle();
+        expect(fetch).toHaveBeenCalledTimes(4);
+        expect(document.querySelector('#goals [role="alert"]')).toBeNull();
+    });
+    it('keeps preparation placeholders visible while the background worker builds details', async () => {
+        vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 202 })));
+        mount({}, { detailsUrl: '/games/2026020001/details' }); await settle();
+        expect(fetch).toHaveBeenCalledTimes(3);
+        await vi.advanceTimersByTimeAsync(2000); await settle();
+        expect(fetch).toHaveBeenCalledTimes(6);
+        expect(document.querySelector('header')).not.toBeNull();
+    });
+    it('aborts all deferred requests when navigating away', async () => {
+        vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
+        mount({}, { detailsUrl: '/games/2026020001/details' }); await settle();
+        const signals = fetch.mock.calls.map(([, options]) => options.signal);
+        app.unmount(); app = null;
+        expect(signals.every(signal => signal.aborted)).toBe(true);
+    });
+    it('prevents deferred player panels from overwriting scores clock or identity', () => {
+        const core = { nhl_game_id: 123, mode: 'live', game_state: 'LIVE', time_remaining: '12:34',
+            home: { team_abbrev: 'TOR', score: 3 }, away: { team_abbrev: 'BOS', score: 1 } };
+        const merged = applyGamePanel(core, 'lineups', { mode: 'preview', time_remaining: '00:00',
+            home: { team_abbrev: 'CHI', score: 99, predictions: [{ player_name: 'Player' }] } });
+        expect(merged.mode).toBe('live'); expect(merged.time_remaining).toBe('12:34');
+        expect(merged.home.team_abbrev).toBe('TOR'); expect(merged.home.score).toBe(3);
+        expect(merged.home.predictions).toHaveLength(1);
+    });
+    it('keeps matchup fields separate from unrelated player and scoring sections', () => {
+        const merged = applyGamePanel({ home: {}, away: {} }, 'matchup', { home: { form: { gp: 10 }, predictions: [1] }, events: [1] });
+        expect(merged.home.form.gp).toBe(10); expect(merged.home.predictions).toBeUndefined(); expect(merged.events).toBeUndefined();
+    });
+
 });

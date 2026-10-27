@@ -25,7 +25,8 @@ beforeEach(function (): void {
     $this->mock(\App\Services\PlatformState::class)->shouldReceive('seeded')->andReturn(true);
     $this->live = $this->mock(NhlGameLiveContext::class);
     $this->live->shouldReceive('publicDetail')->andReturnNull()->byDefault();
-    $this->mock(NhlAnticipatedLineupPayload::class)->shouldReceive('gamePage')->andReturn(['game' => ['away' => [], 'home' => []]]);
+    $this->lineups = $this->mock(NhlAnticipatedLineupPayload::class);
+    $this->lineups->shouldReceive('gamePage')->andReturn(['game' => ['away' => [], 'home' => []]])->byDefault();
     $this->mock(NhlStartingGoalieSelector::class)->shouldReceive('select')->andReturnNull();
     $this->makeGame = fn (int $id = 2026020001, array $extra = []): NhlGame => NhlGame::create([
         'nhl_game_id' => $id, 'season_id' => '20262027', 'game_type' => 2,
@@ -197,11 +198,12 @@ it('queues public page preparation after a canonical prediction', function (): v
 
 it('uses provider identities and boxscores for live games', function (): void {
     ($this->makeGame)(2026020001, ['game_date' => '2026-10-27', 'game_state' => 'LIVE']);
-    $this->live->shouldReceive('publicDetail')->once()->andReturn([
-        'game' => ['game_state' => 'LIVE', 'away' => ['team_abbrev' => 'MTL', 'score' => 0, 'sog' => 12],
+    Cache::put('nhl:live:snapshot:v1:2026020001', [
+        'sequence' => 1, 'observed_at' => now()->toIso8601String(),
+        'game' => ['nhl_game_id' => 2026020001, 'game_state' => 'LIVE', 'mode' => 'live',
+            'away' => ['team_abbrev' => 'MTL', 'score' => 0, 'sog' => 12],
             'home' => ['team_abbrev' => 'NYR', 'score' => 1, 'sog' => 14]],
-        'boxscore' => [], 'plays' => [], 'roster' => [],
-    ]);
+    ], 120);
     $this->get('/games/2026020001')->assertOk()->assertInertia(fn (Assert $page) => $page
         ->where('game.mode', 'live')->where('game.away.team_abbrev', 'MTL')->where('game.away.score', 0));
 });
@@ -232,4 +234,83 @@ it('keeps administrator controls outside the shared public payload cache', funct
         ->assertInertia(fn (Assert $page) => $page->where('canManageLineups', true));
     $this->actingAs(User::factory()->create())->get('/games/2026020001')->assertOk()
         ->assertInertia(fn (Assert $page) => $page->where('canManageLineups', false));
+});
+
+
+it('renders the overview without calling the player projection builder on a cold cache', function (): void {
+    ($this->makeGame)(2026020001, ['game_state' => 'FUT', 'game_date' => '2026-10-28']);
+    $this->lineups->shouldNotReceive('gamePage');
+    $this->get('/games/2026020001')->assertOk()->assertInertia(fn (Assert $page) => $page
+        ->where('game.away.team_abbrev', 'BOS')->where('game.home.team_abbrev', 'TOR')
+        ->where('detailsUrl', route('games.details', 2026020001))
+        ->missing('game.home.predictions')->missing('game.home.form')->missing('game.head_to_head'));
+    Http::assertNothingSent();
+});
+
+it('defers recap boxscores and events while showing the final result immediately', function (): void {
+    ($this->makeGame)();
+    $this->get('/games/2026020001')->assertOk()->assertInertia(fn (Assert $page) => $page
+        ->where('game.home.score', 4)->missing('game.events')->missing('game.home.boxscore'));
+});
+
+it('queues cold lineup preparation instead of calculating during the section request', function (): void {
+    ($this->makeGame)(2026020001, ['game_state' => 'FUT', 'game_date' => '2026-10-28']);
+    $this->lineups->shouldNotReceive('gamePage');
+    $this->getJson('/games/2026020001/details?section=lineups')->assertStatus(202)->assertJsonPath('status', 'preparing');
+    Bus::assertDispatched(RefreshNhlPublicGamePageJob::class);
+});
+
+it('returns prepared lineup data without leaking overview fields into the deferred response', function (): void {
+    ($this->makeGame)(2026020001, ['game_state' => 'FUT', 'game_date' => '2026-10-28']);
+    app(NhlPublicGamePage::class)->prepare(2026020001);
+    $this->getJson('/games/2026020001/details?section=lineups')->assertOk()
+        ->assertJsonPath('section', 'lineups')->assertJsonMissingPath('data.home.score')
+        ->assertJsonMissingPath('data.game_state')->assertJsonMissingPath('data.prediction');
+});
+
+it('allows guests to read matchup form without preparing player projections', function (): void {
+    ($this->makeGame)(2026020001, ['game_state' => 'FUT', 'game_date' => '2026-10-28']);
+    $this->lineups->shouldNotReceive('gamePage');
+    $this->getJson('/games/2026020001/details?section=matchup')->assertOk()->assertJsonPath('data.home.form.gp', 0);
+});
+
+it('allows ordinary authenticated viewers to read the same deferred sections', function (): void {
+    ($this->makeGame)();
+    $this->actingAs(User::factory()->create())->getJson('/games/2026020001/details?section=meetings')->assertOk();
+});
+
+it('reads previous meetings independently of lineup preparation', function (): void {
+    ($this->makeGame)(2026020001, ['game_state' => 'FUT', 'game_date' => '2026-10-28']);
+    ($this->makeGame)(2026020002, ['game_date' => '2026-10-25']);
+    $this->lineups->shouldNotReceive('gamePage');
+    $this->getJson('/games/2026020001/details?section=meetings')->assertOk()->assertJsonPath('data.head_to_head.0.id', 2026020002);
+});
+
+it('rejects missing or invalid deferred section names', function (string $suffix): void {
+    ($this->makeGame)();
+    $this->getJson('/games/2026020001/details'.$suffix)->assertUnprocessable()->assertJsonValidationErrors('section');
+})->with(['', '?section=private']);
+
+it('returns not found for deferred sections of an unknown game', function (): void {
+    $this->getJson('/games/9999999999/details?section=lineups')->assertNotFound();
+});
+
+it('does not run concurrent detail preparation while another builder holds the game lease', function (): void {
+    ($this->makeGame)();
+    $lock = Cache::lock('nhl:public-game:prepare:2026020001', 65);
+    $lock->get();
+    try {
+        expect(app(NhlPublicGamePage::class)->prepare(2026020001))->toBeNull();
+    } finally {
+        $lock->release();
+    }
+});
+
+it('exposes imported recap sections after the preparation job without changing the overview', function (): void {
+    ($this->makeGame)();
+    DB::table('nhl_boxscores')->insert(['nhl_game_id' => 2026020001, 'nhl_player_id' => 100,
+        'nhl_team_id' => 6, 'position' => 'C', 'goals' => 2]);
+    (new RefreshNhlPublicGamePageJob(2026020001))->handle(app(NhlPublicGamePage::class));
+    $this->getJson('/games/2026020001/details?section=boxscore')->assertOk()->assertJsonPath('data.away.boxscore.0.goals', 2);
+    $this->get('/games/2026020001')->assertOk()->assertInertia(fn (Assert $page) => $page->where('game.home.score', 4));
 });

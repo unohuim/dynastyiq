@@ -76,6 +76,7 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
     Route::get('/games/payload', [NhlGamesController::class, 'payload'])->name('games.payload');
     Route::get('/games/scoreboard', [NhlGamesController::class, 'scoreboard'])->name('games.scoreboard');
     Route::get('/games/live', [NhlGamesController::class, 'live'])->name('games.live');
+    Route::get('/games/{nhlGameId}/details', [NhlGamesController::class, 'details'])->whereNumber('nhlGameId')->name('games.details');
     Route::get('/games/{nhlGameId}', [NhlGamesController::class, 'show'])
         ->whereNumber('nhlGameId')
         ->name('games.show');

@@ -3528,6 +3528,12 @@ it('exposes game sync settings only to a super admin', function (): void {
 describe('public game detail roster previews', function (): void {
     beforeEach(function (): void {
         $this->travelTo(Carbon::parse('2026-09-23 12:00:00', 'UTC'));
+        $this->readDeferredLineups = function (string $url) {
+            $id = (int) substr($url, strrpos($url, '/') + 1);
+            app(\App\Services\NhlPublicGamePage::class)->prepare($id);
+
+            return $this->getJson($url.'/details?section=lineups');
+        };
         NhlGame::query()->create([
             'nhl_game_id' => 2026010900, 'season_id' => '20262027', 'game_type' => 1,
             'game_date' => '2026-09-24', 'game_dow' => 'Thursday', 'game_month' => 'September',
@@ -3548,17 +3554,17 @@ describe('public game detail roster previews', function (): void {
 
     it('shows an injury-filtered projected roster to guests without creating observations', function (): void {
         createCurrentInjury(['nhl_player_id' => 8489001, 'player_name' => 'Preview Player 1']);
-        $this->get('/games/2026010900')->assertOk()->assertInertia(fn (Assert $page) => $page
-            ->component('Games/Show')->where('game.home.lineup', null)
-            ->where('game.home.is_projected', true)
-            ->where('game.home.display_lineup.evidence_status', 'projected')
-            ->has('game.home.display_lineup.players', 18)
-            ->where('game.home.display_lineup.players.0.nhl_player_id', 8489002)
-            ->where('game.home.display_lineup.players.11.line_key', 'F4')
-            ->where('game.home.display_lineup.players.12.line_key', 'D1')
-            ->where('game.home.injuries.0.nhl_player_id', 8489001)
-            ->has('game.home.predictions', 18)
-            ->where('game.home.predictions.0.nhl_player_id', 8489002));
+        ($this->readDeferredLineups)('/games/2026010900')->assertOk()->assertJson(fn (\Illuminate\Testing\Fluent\AssertableJson $page) => $page
+            ->where('data.home.lineup', null)
+            ->where('data.home.is_projected', true)
+            ->where('data.home.display_lineup.evidence_status', 'projected')
+            ->has('data.home.display_lineup.players', 18)
+            ->where('data.home.display_lineup.players.0.nhl_player_id', 8489002)
+            ->where('data.home.display_lineup.players.11.line_key', 'F4')
+            ->where('data.home.display_lineup.players.12.line_key', 'D1')
+            ->where('data.home.injuries.0.nhl_player_id', 8489001)
+            ->has('data.home.predictions', 18)
+            ->where('data.home.predictions.0.nhl_player_id', 8489002)->etc());
         $this->assertDatabaseCount('nhl_lineup_observations', 0);
         $this->assertDatabaseCount('nhl_current_lineups', 0);
         Http::assertNothingSent();
@@ -3566,25 +3572,25 @@ describe('public game detail roster previews', function (): void {
 
     it('retains questionable players under the existing availability rule', function (): void {
         createCurrentInjury(['nhl_player_id' => 8489001, 'availability' => 'questionable']);
-        $this->get('/games/2026010900')->assertOk()->assertInertia(fn (Assert $page) => $page
-            ->where('game.home.display_lineup.players.0.nhl_player_id', 8489001)
-            ->where('game.home.injuries.0.availability', 'questionable'));
+        ($this->readDeferredLineups)('/games/2026010900')->assertOk()->assertJson(fn (\Illuminate\Testing\Fluent\AssertableJson $page) => $page
+            ->where('data.home.display_lineup.players.0.nhl_player_id', 8489001)
+            ->where('data.home.injuries.0.availability', 'questionable')->etc());
     });
 
     it('shows an empty projected roster for teams without TOI inputs', function (): void {
-        $this->get('/games/2026010900')->assertOk()->assertInertia(fn (Assert $page) => $page
-            ->where('game.away.is_projected', true)
-            ->has('game.away.display_lineup.players', 0)->has('game.away.predictions', 0));
+        ($this->readDeferredLineups)('/games/2026010900')->assertOk()->assertJson(fn (\Illuminate\Testing\Fluent\AssertableJson $page) => $page
+            ->where('data.away.is_projected', true)
+            ->has('data.away.display_lineup.players', 0)->has('data.away.predictions', 0)->etc());
     });
 
     it('preserves a reported roster instead of replacing it with projected players', function (): void {
         $current = createCurrentAnticipatedLineup();
         NhlGame::query()->whereKey($current->nhl_game_id)->update(['game_date' => '2026-09-24', 'game_state' => 'FUT']);
-        $this->get('/games/' . $current->nhl_game_id)->assertOk()->assertInertia(fn (Assert $page) => $page
-            ->where('game.home.is_projected', false)
-            ->where('game.home.display_lineup.evidence_status', 'corroborated')
-            ->where('game.home.display_lineup.players.0.player_name', 'Test Player 13')
-            ->has('game.home.predictions', 18));
+        ($this->readDeferredLineups)('/games/' . $current->nhl_game_id)->assertOk()->assertJson(fn (\Illuminate\Testing\Fluent\AssertableJson $page) => $page
+            ->where('data.home.is_projected', false)
+            ->where('data.home.display_lineup.evidence_status', 'corroborated')
+            ->where('data.home.display_lineup.players.0.player_name', 'Test Player 13')
+            ->has('data.home.predictions', 18)->etc());
     });
 
     it('uses same-model bucket rates and game minutes without goalie projections', function (int $gameType, float $sat, float $sog, float $goals, ?string $evaluationSeason, bool $withToi = true): void {
@@ -3621,18 +3627,18 @@ describe('public game detail roster previews', function (): void {
             $model->update(['metrics' => collect($model->metrics)->reject(fn ($value, string $key): bool => str_starts_with($key, 'toi_'))->all()]);
         }
         if (! $withToi) {
-            $this->get('/games/2026010900')->assertOk()->assertInertia(fn (Assert $page) => $page
-                ->where('game.home.predictions.0.projection_source', fn ($value): bool => $value !== 'sat_model')
-                ->where('game.home.predictions.0.model_projected_toi_per_game_seconds', null));
+            ($this->readDeferredLineups)('/games/2026010900')->assertOk()->assertJson(fn (\Illuminate\Testing\Fluent\AssertableJson $page) => $page
+                ->where('data.home.predictions.0.projection_source', fn ($value): bool => $value !== 'sat_model')
+                ->where('data.home.predictions.0.model_projected_toi_per_game_seconds', null)->etc());
 
             return;
         }
-        $this->get('/games/2026010900')->assertOk()->assertInertia(fn (Assert $page) => $page
-            ->where('game.home.predictions.0.projection_source', 'sat_model')
-            ->where('game.home.predictions.0.model_run_id', $model->id)
-            ->where('game.home.predictions.0.projected_sat', fn ($value): bool => abs($value - $sat) < 0.0001)
-            ->where('game.home.predictions.0.projected_sog', fn ($value): bool => abs($value - $sog) < 0.0001)
-            ->where('game.home.predictions.0.projected_goals', fn ($value): bool => abs($value - $goals) < 0.0001));
+        ($this->readDeferredLineups)('/games/2026010900')->assertOk()->assertJson(fn (\Illuminate\Testing\Fluent\AssertableJson $page) => $page
+            ->where('data.home.predictions.0.projection_source', 'sat_model')
+            ->where('data.home.predictions.0.model_run_id', $model->id)
+            ->where('data.home.predictions.0.projected_sat', fn ($value): bool => abs($value - $sat) < 0.0001)
+            ->where('data.home.predictions.0.projected_sog', fn ($value): bool => abs($value - $sog) < 0.0001)
+            ->where('data.home.predictions.0.projected_goals', fn ($value): bool => abs($value - $goals) < 0.0001)->etc());
         $this->assertDatabaseCount('nhl_goalie_season_projections', 0);
     })->with([
         'same-season preseason' => [1, 3.6, 1.8, 0.18, '20262027'],
@@ -3655,14 +3661,14 @@ describe('public game detail roster previews', function (): void {
             'season_id' => '20242025', 'nhl_player_id' => 8489003, 'nhl_team_id' => 10,
             'game_type' => 2, 'gp' => 10, 'toi' => 15000,
         ]);
-        $this->get('/games/2026010900')->assertOk()->assertInertia(fn (Assert $page) => $page
-            ->where('game.home.predictions.0.game_projected_toi_seconds', 600)
-            ->where('game.home.predictions.0.toi_source', 'previous_season')
-            ->where('game.home.predictions.1.game_projected_toi_seconds', 1200)
-            ->where('game.home.predictions.2.game_projected_toi_seconds', 900)
-            ->where('game.home.predictions.2.toi_source', 'linemate_average')
-            ->where('game.home.predictions.3.game_projected_toi_seconds', 990)
-            ->where('game.home.predictions.3.toi_source', 'line_estimate'));
+        ($this->readDeferredLineups)('/games/2026010900')->assertOk()->assertJson(fn (\Illuminate\Testing\Fluent\AssertableJson $page) => $page
+            ->where('data.home.predictions.0.game_projected_toi_seconds', 600)
+            ->where('data.home.predictions.0.toi_source', 'previous_season')
+            ->where('data.home.predictions.1.game_projected_toi_seconds', 1200)
+            ->where('data.home.predictions.2.game_projected_toi_seconds', 900)
+            ->where('data.home.predictions.2.toi_source', 'linemate_average')
+            ->where('data.home.predictions.3.game_projected_toi_seconds', 990)
+            ->where('data.home.predictions.3.toi_source', 'line_estimate')->etc());
     });
 });
 

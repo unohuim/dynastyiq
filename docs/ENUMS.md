@@ -2,6 +2,7 @@
 
 ## Public NHL game detail
 
+- Public game details `section`: `matchup`, `lineups`, `meetings`, `summary`, `goals`, `boxscore`. Browser section `status`: `loading`, `ready`, `error`; a pending preparation response uses HTTP 202 with `status=preparing`.
 - Public game `mode`: `preview`, `live`, `recap`. These are presentation modes, not stored schedule states.
 - Public Reverb channel: `nhl.games`; event: `nhl.game.updated`. Snapshot `changed` and `stale` are booleans; `sequence` increases per game.
 

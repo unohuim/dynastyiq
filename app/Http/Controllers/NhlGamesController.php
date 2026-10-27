@@ -74,15 +74,30 @@ class NhlGamesController extends Controller
     /** Display a cached preview, live game or completed-game recap. */
     public function show(int $nhlGameId, \App\Services\NhlPublicGamePage $payload): \Symfony\Component\HttpFoundation\Response
     {
-        $data = $payload->payload($nhlGameId);
+        $data = $payload->overview($nhlGameId);
         $response = Inertia::render('Games/Show', [...$data,
             'canManageLineups' => $this->canManageGameSync(request()),
+            'detailsUrl' => route('games.details', $nhlGameId),
         ])->toResponse(request());
         if (($data['game']['mode'] ?? null) === 'live') {
             $response->headers->set('Cache-Control', 'no-store');
         }
 
         return $response;
+    }
+
+    /** Deferred public sections cannot replace the independently updated game overview. */
+    public function details(Request $request, int $nhlGameId, \App\Services\NhlPublicGamePage $payload): JsonResponse
+    {
+        $input = $request->validate([
+            'section' => ['required', \Illuminate\Validation\Rule::in([
+                'matchup', 'lineups', 'meetings', 'summary', 'goals', 'boxscore',
+            ])],
+        ]);
+        $panel = $payload->panel($nhlGameId, $input['section']);
+
+        return response()->json($panel ?? ['status' => 'preparing'], $panel === null ? 202 : 200)
+            ->header('Cache-Control', 'no-store');
     }
 
     /** Latest shared public live snapshot; browser requests never poll NHL. */

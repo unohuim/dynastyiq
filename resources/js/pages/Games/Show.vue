@@ -1,25 +1,87 @@
 <script setup>
 import { Head, Link, router } from '@inertiajs/vue3';
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import LineupTeam from './LineupTeam.vue';
-import GameCard from './GameCard.vue';
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import GameSectionState from './GameSectionState.vue';
+import { applyGamePanel } from './game-panels';
+const LineupTeam = defineAsyncComponent(() => import('./LineupTeam.vue'));
+const GameCard = defineAsyncComponent(() => import('./GameCard.vue'));
 import { useLiveGameFeed } from '../../layouts/live-game-feed';
 import { scoreboardStatus } from '../../layouts/scoreboard';
 
-const props = defineProps({ game: { type: Object, required: true }, canManageLineups: { type: Boolean, default: false } });
+const props = defineProps({ game: { type: Object, required: true }, canManageLineups: { type: Boolean, default: false }, detailsUrl: { type: String, default: null } });
 const game = ref(props.game);
 watch(() => props.game, value => {
   if (game.value.mode !== 'preview' && value.mode === 'preview') return;
-  game.value = value;
+  game.value = { ...game.value, ...value, away: { ...game.value.away, ...value.away }, home: { ...game.value.home, ...value.home } };
 });
 const busy = ref(false);
 const mode = computed(() => game.value.mode ?? 'preview');
 const sides = ['away', 'home'];
 const title = computed(() => `${game.value.away.team_abbrev ?? 'Away'} at ${game.value.home.team_abbrev ?? 'Home'} · ${mode.value === 'recap' ? 'Recap' : mode.value === 'live' ? 'Live' : 'Preview'}`);
-const status = computed(() => mode.value === 'live' ? scoreboardStatus(props.game) : game.value.status);
+const status = computed(() => mode.value === 'live' ? scoreboardStatus(game.value) : game.value.status);
 const sections = computed(() => mode.value === 'preview'
   ? [['matchup', 'Matchup'], ['lineups', 'Lineups'], ['meetings', 'Head-to-head']]
   : [['summary', 'Game stats'], ['goals', 'Scoring'], ['boxscore', 'Boxscore']]);
+const panels = reactive({});
+const panelRequests = new Map();
+const panelTimers = new Map();
+const requestTimeouts = new Set();
+let panelGeneration = 0;
+const panelState = (name) => panels[name] ?? { status: props.detailsUrl ? 'loading' : 'ready' };
+const panelReady = (name) => panelState(name).status === 'ready';
+function cancelPanels() {
+  panelGeneration++;
+  panelRequests.forEach(controller => controller.abort());
+  panelRequests.clear();
+  panelTimers.forEach(window.clearTimeout);
+  panelTimers.clear();
+  requestTimeouts.forEach(window.clearTimeout);
+  requestTimeouts.clear();
+}
+async function loadPanel(name, attempt = 0) {
+  if (!props.detailsUrl || disposed) return;
+  const generation = panelGeneration;
+  const requestMode = mode.value;
+  const requestId = game.value.nhl_game_id;
+  panelRequests.get(name)?.abort();
+  window.clearTimeout(panelTimers.get(name));
+  panels[name] = { status: panelReady(name) ? 'ready' : 'loading' };
+  const controller = new AbortController();
+  panelRequests.set(name, controller);
+  const timeout = window.setTimeout(() => controller.abort(), 10000);
+  requestTimeouts.add(timeout);
+  try {
+    const url = new URL(props.detailsUrl, window.location.origin);
+    url.searchParams.set('section', name);
+    const response = await fetch(url, { headers: { Accept: 'application/json' }, cache: 'no-store', signal: controller.signal });
+    if (disposed || generation !== panelGeneration || panelRequests.get(name) !== controller) return;
+    if (response.status === 202) {
+      if (attempt >= 59) throw new Error('This section is taking longer than expected.');
+      panelTimers.set(name, window.setTimeout(() => { panelTimers.delete(name); void loadPanel(name, attempt + 1); }, 2000));
+      return;
+    }
+    if (!response.ok) throw new Error('Unable to load this section.');
+    const payload = await response.json();
+    if (disposed || generation !== panelGeneration || requestId !== game.value.nhl_game_id
+      || mode.value !== requestMode || panelRequests.get(name) !== controller) return;
+    if (payload.mode !== mode.value || payload.section !== name || Number(payload.nhl_game_id) !== Number(requestId))
+      throw new Error('This section changed while loading. Please retry.');
+    game.value = applyGamePanel(game.value, name, payload.data);
+    panels[name] = { status: 'ready' };
+  } catch (error) {
+    if (!disposed && generation === panelGeneration && panelRequests.get(name) === controller) {
+      panels[name] = { status: 'error', message: error?.name === 'AbortError' ? 'This section timed out.' : error.message };
+    }
+  } finally {
+    window.clearTimeout(timeout);
+    requestTimeouts.delete(timeout);
+    if (panelRequests.get(name) === controller) panelRequests.delete(name);
+  }
+}
+function loadPanels() {
+  cancelPanels();
+  for (const [name] of sections.value) void loadPanel(name);
+}
 const number = (value, digits = 2) => value == null || !Number.isFinite(Number(value)) ? '—' : Number(value).toFixed(digits);
 const probability = (side) => game.value.prediction?.probabilities?.[side] == null ? '—' : `${number(game.value.prediction.probabilities[side] * 100, 1)}%`;
 const record = (form, prefix = '') => form && Number(form[`${prefix}gp`]) > 0 ? `${form[`${prefix}wins`]}–${form[`${prefix}losses`]}–${form[`${prefix}otl`]}` : '—';
@@ -44,7 +106,7 @@ function refresh() {
   busy.value = true;
   router.reload({ only: ['game'], preserveScroll: true,
     onCancelToken: (token) => { request = token; },
-    onFinish: () => { busy.value = false; request = null; scheduleRefresh(); },
+    onFinish: () => { busy.value = false; request = null; scheduleRefresh(); loadPanels(); },
   });
 }
 const { warning: liveWarning } = useLiveGameFeed({
@@ -52,16 +114,24 @@ const { warning: liveWarning } = useLiveGameFeed({
   update(snapshot, detail) {
     if (snapshot.game.mode === 'preview') {
       game.value = { ...game.value, game_state: snapshot.game.game_state, status: snapshot.game.status };
-    } else if (detail) game.value = snapshot.game;
+    } else if (detail) {
+      game.value = snapshot.game;
+      cancelPanels();
+      for (const [name] of sections.value) panels[name] = { status: 'ready' };
+    }
     else {
       game.value = { ...game.value, ...snapshot.game,
         away: { ...game.value.away, ...snapshot.game.away }, home: { ...game.value.home, ...snapshot.game.home } };
     }
   },
 });
-watch(mode, scheduleRefresh);
-onMounted(scheduleRefresh);
-onBeforeUnmount(() => { disposed = true; window.clearTimeout(timer); request?.cancel(); });
+watch(mode, () => { scheduleRefresh(); loadPanels(); }, { flush: 'sync' });
+watch(() => props.game.nhl_game_id, () => {
+  for (const name of Object.keys(panels)) delete panels[name];
+  loadPanels();
+});
+onMounted(() => { scheduleRefresh(); loadPanels(); });
+onBeforeUnmount(() => { disposed = true; cancelPanels(); window.clearTimeout(timer); request?.cancel(); });
 </script>
 
 <template>
@@ -107,7 +177,8 @@ onBeforeUnmount(() => { disposed = true; window.clearTimeout(timer); request?.ca
           <a v-for="[id, label] in sections" :key="id" :href="`#${id}`" class="shrink-0 border-b-2 border-transparent pb-3 text-[#A6B9C9] transition-colors duration-150 hover:border-sky-400 hover:text-white focus-visible:ring-2 focus-visible:ring-sky-400 motion-reduce:transition-none">{{ label }}</a>
         </nav>
         <template v-if="mode === 'preview'">
-          <section id="matchup" class="scroll-mt-5 rounded-xl border border-[#29404F] bg-[#172534] p-4 sm:p-6">
+          <GameSectionState name="matchup" title="The matchup" :state="panelState('matchup')" @retry="loadPanel('matchup')" />
+          <section v-if="panelReady('matchup')" id="matchup" class="scroll-mt-5 rounded-xl border border-[#29404F] bg-[#172534] p-4 sm:p-6">
             <h2 class="text-sm font-semibold">The matchup</h2>
             <div class="mt-4 grid grid-cols-2 gap-4 sm:gap-8">
               <div v-for="side in sides" :key="side">
@@ -117,12 +188,14 @@ onBeforeUnmount(() => { disposed = true; window.clearTimeout(timer); request?.ca
               </div>
             </div>
           </section>
-          <section id="lineups" class="mt-5 scroll-mt-5">
+          <GameSectionState name="lineups" title="Lineups" :state="panelState('lineups')" @retry="loadPanel('lineups')" />
+          <section v-if="panelReady('lineups')" id="lineups" class="mt-5 scroll-mt-5">
             <h2 class="mb-3 text-sm font-semibold">Lineups</h2>
             <details v-if="canManageLineups" class="mb-4 rounded-lg border border-[#29404F] p-3"><summary class="cursor-pointer text-xs font-semibold text-sky-300">Manage lineups and starters</summary><GameCard :game="game" :can-manage-lineups="true" class="mt-3" @lineup-submitted="refresh" @goalie-selected="refresh" /></details>
             <div class="grid gap-4 xl:grid-cols-2"><LineupTeam :team="game.away" side="Away" /><LineupTeam :team="game.home" side="Home" /></div>
           </section>
-          <section id="meetings" class="mt-5 scroll-mt-5 rounded-xl border border-[#29404F] bg-[#172534] p-4 sm:p-6">
+          <GameSectionState name="meetings" title="Last five meetings" :state="panelState('meetings')" @retry="loadPanel('meetings')" />
+          <section v-if="panelReady('meetings')" id="meetings" class="mt-5 scroll-mt-5 rounded-xl border border-[#29404F] bg-[#172534] p-4 sm:p-6">
             <h2 class="mb-3 text-sm font-semibold">Last five meetings</h2>
             <div v-if="game.head_to_head?.length" class="divide-y divide-[#29404F]">
               <Link v-for="meeting in game.head_to_head" :key="meeting.id" :href="`/games/${meeting.id}`" prefetch class="flex items-center justify-between gap-3 rounded py-3 text-xs transition-colors duration-150 hover:text-sky-300 focus-visible:ring-2 focus-visible:ring-sky-400 motion-reduce:transition-none"><span class="text-[#91A8BA]">{{ shortDate(meeting.date) }}</span><span>{{ meeting.away }} <b class="font-mono">{{ meeting.away_score }}–{{ meeting.home_score }}</b> {{ meeting.home }}</span><span aria-hidden="true">›</span></Link>
@@ -130,18 +203,21 @@ onBeforeUnmount(() => { disposed = true; window.clearTimeout(timer); request?.ca
           </section>
         </template>
         <template v-else>
-          <section id="summary" class="scroll-mt-5 rounded-xl border border-[#29404F] bg-[#172534] p-4 sm:p-6">
+          <GameSectionState name="summary" title="Game stats" :state="panelState('summary')" @retry="loadPanel('summary')" />
+          <section v-if="panelReady('summary')" id="summary" class="scroll-mt-5 rounded-xl border border-[#29404F] bg-[#172534] p-4 sm:p-6">
             <h2 class="text-lg font-semibold">{{ game.recap ?? (mode === 'live' ? 'Game in progress' : 'Final result') }}</h2>
             <div class="mt-4 grid grid-cols-[1fr_2fr_1fr] gap-3 border-b border-[#29404F] pb-2 text-xs font-semibold text-[#91A8BA]"><span>{{ game.away.team_abbrev }}</span><span class="text-center">Game stats</span><span class="text-right">{{ game.home.team_abbrev }}</span></div>
             <div v-for="row in game.comparison" :key="row.label" class="grid grid-cols-[1fr_2fr_1fr] gap-3 border-b border-[#29404F]/60 py-3 text-sm"><span class="font-mono font-semibold">{{ row.away ?? '—' }}</span><span class="text-center text-xs text-[#A6B9C9]">{{ row.label }}</span><span class="text-right font-mono font-semibold">{{ row.home ?? '—' }}</span></div>
             <div v-if="game.away.pp_opportunities != null || game.home.pp_opportunities != null" class="grid grid-cols-[1fr_2fr_1fr] gap-3 pt-3 text-sm"><span class="font-mono">{{ game.away.pp_goals ?? '—' }}/{{ game.away.pp_opportunities ?? '—' }}</span><span class="text-center text-xs text-[#A6B9C9]">Power play</span><span class="text-right font-mono">{{ game.home.pp_goals ?? '—' }}/{{ game.home.pp_opportunities ?? '—' }}</span></div>
           </section>
-          <section id="goals" class="mt-5 scroll-mt-5 rounded-xl border border-[#29404F] bg-[#172534] p-4 sm:p-6">
+          <GameSectionState name="goals" title="Scoring summary" :state="panelState('goals')" @retry="loadPanel('goals')" />
+          <section v-if="panelReady('goals')" id="goals" class="mt-5 scroll-mt-5 rounded-xl border border-[#29404F] bg-[#172534] p-4 sm:p-6">
             <h2 class="mb-3 text-sm font-semibold">Scoring summary</h2>
             <ol v-if="game.events?.length" class="divide-y divide-[#29404F]"><li v-for="event in game.events" :key="event.id" class="flex items-start gap-4 py-3"><div class="w-16 shrink-0 font-mono text-xs text-[#91A8BA]"><p>{{ event.period > 3 ? 'OT' : `P${event.period}` }}</p><p class="mt-1">{{ event.time ?? '—' }}</p></div><div class="min-w-0 flex-1"><p class="text-sm font-semibold">{{ event.scorer }}</p><p class="mt-1 text-xs text-[#91A8BA]">{{ event.assists?.length ? event.assists.join(', ') : 'Unassisted' }}</p></div><span class="font-mono text-sm font-semibold">{{ event.away_score ?? '—' }}–{{ event.home_score ?? '—' }}</span></li></ol>
             <p v-else class="text-xs text-[#91A8BA]">{{ game.events_available === false ? 'Scoring details are temporarily unavailable.' : 'No scoring events available yet.' }}</p>
           </section>
-          <section id="boxscore" class="mt-5 scroll-mt-5"><h2 class="mb-3 text-sm font-semibold">Boxscore</h2><div class="grid items-start gap-4 xl:grid-cols-2"><article v-for="side in sides" :key="side" class="overflow-hidden rounded-xl border border-[#29404F] bg-[#172534]"><h3 class="border-b border-[#29404F] px-4 py-3 text-sm font-semibold">{{ game[side].team_abbrev }}</h3><div v-if="game[side].boxscore?.length" class="overflow-x-auto"><table class="w-full text-left text-xs"><thead class="bg-[#111E2B] text-[10px] uppercase text-[#91A8BA]"><tr><th class="px-4 py-2 font-medium">Player</th><th class="px-2 py-2 font-medium">G / A</th><th class="px-2 py-2 font-medium">SOG</th><th class="px-4 py-2 text-right font-medium">TOI</th></tr></thead><tbody class="divide-y divide-[#29404F]/70"><tr v-for="player in game[side].boxscore" :key="player.id"><td class="whitespace-nowrap px-4 py-2.5"><span class="font-medium">{{ player.name ?? '—' }}</span><span class="ml-1 text-[10px] text-[#7890A4]">{{ player.position }}</span></td><td class="whitespace-nowrap px-2 py-2.5 font-mono">{{ playerStat(player) }}</td><td class="px-2 py-2.5 font-mono">{{ player.position === 'G' ? '—' : player.sog ?? '—' }}</td><td class="whitespace-nowrap px-4 py-2.5 text-right font-mono text-[#A6B9C9]">{{ player.toi ?? '—' }}</td></tr></tbody></table></div><p v-else class="px-4 py-5 text-xs text-[#91A8BA]">Boxscore details have not been imported yet.</p></article></div></section>
+          <GameSectionState name="boxscore" title="Boxscore" :state="panelState('boxscore')" @retry="loadPanel('boxscore')" />
+          <section v-if="panelReady('boxscore')" id="boxscore" class="mt-5 scroll-mt-5"><h2 class="mb-3 text-sm font-semibold">Boxscore</h2><div class="grid items-start gap-4 xl:grid-cols-2"><article v-for="side in sides" :key="side" class="overflow-hidden rounded-xl border border-[#29404F] bg-[#172534]"><h3 class="border-b border-[#29404F] px-4 py-3 text-sm font-semibold">{{ game[side].team_abbrev }}</h3><div v-if="game[side].boxscore?.length" class="overflow-x-auto"><table class="w-full text-left text-xs"><thead class="bg-[#111E2B] text-[10px] uppercase text-[#91A8BA]"><tr><th class="px-4 py-2 font-medium">Player</th><th class="px-2 py-2 font-medium">G / A</th><th class="px-2 py-2 font-medium">SOG</th><th class="px-4 py-2 text-right font-medium">TOI</th></tr></thead><tbody class="divide-y divide-[#29404F]/70"><tr v-for="player in game[side].boxscore" :key="player.id"><td class="whitespace-nowrap px-4 py-2.5"><span class="font-medium">{{ player.name ?? '—' }}</span><span class="ml-1 text-[10px] text-[#7890A4]">{{ player.position }}</span></td><td class="whitespace-nowrap px-2 py-2.5 font-mono">{{ playerStat(player) }}</td><td class="px-2 py-2.5 font-mono">{{ player.position === 'G' ? '—' : player.sog ?? '—' }}</td><td class="whitespace-nowrap px-4 py-2.5 text-right font-mono text-[#A6B9C9]">{{ player.toi ?? '—' }}</td></tr></tbody></table></div><p v-else class="px-4 py-5 text-xs text-[#91A8BA]">Boxscore details have not been imported yet.</p></article></div></section>
         </template>
       </template>
     </div>

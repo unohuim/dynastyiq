@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Models\NhlGame;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -17,6 +18,112 @@ final class NhlPublicGamePage
         private readonly NhlAnticipatedLineupPayload $lineups,
         private readonly NhlGameLiveContext $live,
     ) {
+    }
+
+    /** First paint reads only schedule facts, saved public odds and the shared live envelope.
+     * @return array<string,mixed>
+     */
+    public function overview(int $gameId): array
+    {
+        $game = NhlGame::query()->findOrFail($gameId);
+        $feed = app(NhlLiveGameFeed::class);
+        $snapshot = $feed->snapshot($gameId);
+        $state = strtoupper((string) $game->game_state);
+        $final = in_array($state, ['OFF', 'FINAL'], true);
+        $live = ! in_array($state, ['', 'FUT', 'PRE', 'OFF', 'FINAL', 'PPD', 'CNCL'], true);
+        if (! $final && $snapshot !== null && ($feed->fresh($snapshot) || ($snapshot['game']['mode'] ?? null) === 'recap')
+            && ($snapshot['game']['mode'] ?? null) !== 'preview') {
+            $compact = $feed->compact($snapshot)['game'];
+
+            return ['game' => [...$compact, 'venue' => $snapshot['game']['venue'] ?? null, 'prediction' => null]];
+        }
+        $teams = [];
+        foreach (['away', 'home'] as $side) {
+            $teams[$side] = [
+                'team_abbrev' => $live ? null : $game->{$side.'_team_abbrev'},
+                'team_name' => $live ? null : $game->{$side.'_team_common_name'},
+                'team_logo' => $live ? null : $game->{$side.'_team_logo'},
+                'score' => $final ? $game->{$side.'_team_score'} : null,
+                'sog' => $final ? $game->{$side.'_team_sog'} : null,
+            ];
+        }
+
+        return ['game' => [
+            'nhl_game_id' => $gameId, 'game_date' => $game->game_date->toDateString(),
+            'start_time_utc' => $game->start_time_utc?->toIso8601String(), 'venue' => $live ? null : $game->venue,
+            'game_state' => $state, 'mode' => $final ? 'recap' : ($live ? 'live' : 'preview'),
+            'live_data_unavailable' => $live,
+            'status' => $final ? ($game->shootout_in_use ? 'Final / SO' : ($game->ot_in_use ? 'Final / OT' : 'Final'))
+                : ($live ? 'Live' : match ($state) { 'PRE' => 'Starting soon', 'PPD' => 'Postponed', 'CNCL' => 'Cancelled', default => 'Preview' }),
+            ...$teams, 'prediction' => ! $final && ! $live ? $this->prediction($game) : null,
+        ]];
+    }
+
+    /** Read one deferred section without rebuilding unrelated preview sections.
+     * @return array<string,mixed>|null Null means another builder already owns preparation.
+     */
+    public function panel(int $gameId, string $section): ?array
+    {
+        $game = NhlGame::query()->findOrFail($gameId);
+        $feed = app(NhlLiveGameFeed::class);
+        $snapshot = $feed->snapshot($gameId);
+        $current = $snapshot !== null && ($feed->fresh($snapshot) || ($snapshot['game']['mode'] ?? null) === 'recap')
+            && ($snapshot['game']['mode'] ?? null) !== 'preview' ? $snapshot['game'] : null;
+        if ($current === null && ! in_array(strtoupper((string) $game->game_state), ['', 'FUT', 'PRE', 'OFF', 'FINAL', 'PPD', 'CNCL'], true)) {
+            abort(503, 'Live details temporarily unavailable.');
+        }
+        if ($current === null && $section === 'matchup') {
+            $current = ['mode' => 'preview'];
+            foreach (['away', 'home'] as $side) {
+                $current[$side] = ['form' => $this->form($game, (int) $game->{$side.'_team_id'}),
+                    'starting_goalie' => app(NhlStartingGoalieSelector::class)->select($gameId, (string) $game->{$side.'_team_abbrev'}, (string) $game->season_id)];
+            }
+        } elseif ($current === null && $section === 'meetings') {
+            $current = ['mode' => 'preview', 'head_to_head' => $this->meetings($game)];
+        } elseif ($current === null) {
+            $prepared = Cache::get($this->cacheKey($game));
+            if (! is_array($prepared)) {
+                \App\Jobs\RefreshNhlPublicGamePageJob::dispatch($gameId)->afterCommit();
+
+                return null;
+            }
+            $current = $prepared['game'];
+        }
+        $keys = match ($section) {
+            'matchup' => ['form', 'starting_goalie'],
+            'lineups' => ['lineup', 'display_lineup', 'is_projected', 'predictions', 'injuries'],
+            'summary' => ['pp_goals', 'pp_opportunities'],
+            'boxscore' => ['boxscore'],
+            default => [],
+        };
+        $data = [];
+        foreach (['away', 'home'] as $side) {
+            if ($keys !== []) {
+                $data[$side] = Arr::only($current[$side] ?? [], $keys);
+            }
+        }
+        $data = [...$data, ...Arr::only($current, match ($section) {
+            'meetings' => ['head_to_head'], 'summary' => ['recap', 'comparison'],
+            'goals' => ['events', 'events_available'], default => [],
+        })];
+
+        return ['nhl_game_id' => $gameId, 'mode' => $current['mode'], 'section' => $section, 'data' => $data];
+    }
+
+    /** Serialize cold detail builds across queue workers and deferred browser requests.
+     * @return array<string,mixed>|null
+     */
+    public function prepare(int $gameId, bool $refresh = false): ?array
+    {
+        $lock = Cache::lock('nhl:public-game:prepare:'.$gameId, 65);
+        if (! $lock->get()) {
+            return null;
+        }
+        try {
+            return $this->payload($gameId, $refresh);
+        } finally {
+            $lock->release();
+        }
     }
 
     /** Read a prepared game, refreshing only recent unfinished provider evidence.
@@ -143,13 +250,14 @@ final class NhlPublicGamePage
     {
         $row = DB::table('nhl_game_prediction_revisions')->where('nhl_game_id', $game->nhl_game_id)
             ->where('is_canonical', true)->where('prediction_available', true)->orderByDesc('id')
-            ->first(['payload', 'predicted_at']);
+            ->first(['payload->market_probabilities as markets', 'payload->prediction->predicted_score as score', 'predicted_at']);
         if ($row === null) {
             return null;
         }
-        $saved = json_decode($row->payload, true, 512, JSON_THROW_ON_ERROR);
+        $markets = is_string($row->markets) ? json_decode($row->markets, true, 512, JSON_THROW_ON_ERROR) : $row->markets;
+        $score = is_string($row->score) ? json_decode($row->score, true, 512, JSON_THROW_ON_ERROR) : $row->score;
         $probabilities = [];
-        foreach ($saved['market_probabilities'] ?? [] as $market) {
+        foreach ($markets ?? [] as $market) {
             if (($market['market_key'] ?? null) !== 'moneyline' || ($market['period_key'] ?? null) !== 'full_game'
                 || ! in_array($market['selection_key'] ?? null, ['away', 'home'], true)
                 || ($market['team_abbrev'] ?? null) !== $game->{$market['selection_key'].'_team_abbrev'}) {
@@ -161,7 +269,7 @@ final class NhlPublicGamePage
             }
         }
 
-        return ['probabilities' => $probabilities, 'score' => data_get($saved, 'prediction.predicted_score'), 'predicted_at' => $row->predicted_at];
+        return ['probabilities' => $probabilities, 'score' => $score, 'predicted_at' => $row->predicted_at];
     }
 
     /** Summarize this season's completed games strictly before the selected matchup.
