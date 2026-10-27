@@ -104,7 +104,9 @@ const sortPredictions = (section, key) => {
 const cancelPredictions = () => { stopRequested.value = true; };
 const newSection = member => ({
     member: { id: member.id, engine: { id: member.engine.id, name: member.engine.name,
-        settings: { ...copy(member.engine.settings), diagnostic_confidence_upper_tolerance: 1 },
+        settings: { ...copy(member.engine.settings), diagnostic_confidence_upper_tolerance: 1,
+            diagnostic_gap_lower_tolerance: member.engine.settings?.gap_unit === 'percent'
+                && (member.engine.settings?.gap_operator ?? '>') === '>' ? 1.5 : 0 },
         model_run_id: member.engine.model_run_id, test_model_run_id: member.engine.test_model_run_id } },
     date: null, rows: [], sort: { key: 'game', direction: 1 }, open: true, error: '', status: 'Waiting',
 });
@@ -355,8 +357,9 @@ const reorder = (from, to) => {
                     <p class="mt-2 inline-flex rounded-lg bg-indigo-50 px-3 py-1.5 text-sm font-semibold tabular-nums text-indigo-800">Defined confidence range: {{ section.member.engine.settings?.confidence_min ?? '—' }}%–{{ section.member.engine.settings?.confidence_max ?? '—' }}%</p>
                     <p v-if="section.member.engine.settings?.diagnostic_confidence_upper_tolerance" class="mt-1 text-xs text-gray-500">Qualification allows +1 percentage point above the defined upper limit (maximum 100%).</p>
                     <p class="mt-2 text-sm font-semibold tabular-nums text-indigo-800">Required spread: {{ gapLabel(section.member.engine.settings ?? { gap: null }) }}</p>
+                    <p v-if="section.member.engine.settings?.diagnostic_gap_lower_tolerance" class="mt-1 text-xs text-gray-500">Qualification accepts {{ Number(Math.max(0, Number(section.member.engine.settings.gap) - section.member.engine.settings.diagnostic_gap_lower_tolerance).toFixed(6)) }}% or higher (1.5 percentage points below the defined spread). Exact ties remain excluded.</p>
                     <p v-if="restoredName" class="mt-2 text-sm text-gray-600">Saved snapshot: {{ restoredName }} · {{ capturedStack?.name }} · Historical results, not recalculated</p>
-                    <p class="mt-1 text-xs text-gray-500">Production determines qualification and outcome. Saved snapshots retain the rules used when captured. Scores are away–home; spread uses this Engine's saved units. Games picked earlier show that Engine's name without another prediction.</p></div>
+                    <p class="mt-1 text-xs text-gray-500">Production determines qualification and outcome. Saved snapshots retain the rules used when captured. Scores are away–home; spread uses the original weighted scores in this Engine's saved units, before score normalization. Games picked earlier show that Engine's name without another prediction.</p></div>
             </div>
             <p v-if="section.error" role="alert" class="px-5 pb-4 text-sm text-red-700">{{ section.error }}</p>
             <p role="status" aria-live="polite" class="px-5 pb-4 text-sm text-gray-500">{{ section.status === 'Predicting' ? 'Calculating one game at a time…' : section.status }}</p>

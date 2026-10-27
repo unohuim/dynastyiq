@@ -592,3 +592,28 @@ it('keeps the chosen creation candidate stable across polling updates', async ()
     root.querySelector('dialog form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
     expect(transport.post.mock.calls[0][0]).toBe('/admin/nhl-sat-engines/runs/7/candidates/12/apply');
 });
+
+
+it('explains the runtime percentage-gap allowance and captures it without changing saved thresholds', async () => {
+    prepareStackRequests();
+    const props = stackWorkspace();
+    props.stack.members.forEach(member => {
+        member.engine.settings = { ...settings, gap: 6.9, gap_unit: 'percent', gap_operator: '>' };
+    });
+    const root = mount(Stack, props);
+    root.querySelector('header button.bg-indigo-600').click();
+    await flushStack();
+    expect(root.textContent).toContain('Qualification accepts 5.4% or higher');
+    expect(root.textContent).toContain('before score normalization');
+    const saved = http.post.mock.calls.filter(([url]) => url === '/admin/admin-engine-game-predictions').at(-1)[1].snapshot;
+    expect(saved.sections[0].member.engine.settings).toMatchObject({ gap: 6.9, diagnostic_gap_lower_tolerance: 1.5 });
+    expect(props.stack.members[0].engine.settings).not.toHaveProperty('diagnostic_gap_lower_tolerance');
+});
+
+it('does not show a percentage-gap allowance for goal-unit engine settings', async () => {
+    prepareStackRequests();
+    const root = mount(Stack, stackWorkspace());
+    root.querySelector('header button.bg-indigo-600').click();
+    await flushStack();
+    expect(root.textContent).not.toContain('1.5 percentage points below');
+});

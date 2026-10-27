@@ -8,8 +8,13 @@ may be evaluated in saved priority order, but only one Engine may be selected to
 make a stack prediction: the first whose internal confidence window and score-gap
 rule qualifies the game using its effective Production Model. If none qualifies, no Engine prediction is selected.
 Runtime Engine qualification adds one percentage point to the configured upper
-confidence bound, capped at 100; the lower bound and strict spread requirement
-are unchanged. For example, a saved 74–76 range accepts 74–77 inclusive. This does
+confidence bound, capped at 100; the lower confidence bound is unchanged.
+For saved minimum percentage-gap rules, it also accepts gaps at or above
+`max(0, saved gap - 1.5)` percentage points, using six-decimal precision.
+For example, a saved 6.9% minimum accepts 5.4% or higher. Exact ties remain
+excluded. Goal-unit and less-than gap rules retain their strict comparisons.
+Qualification gaps use original unrounded weighted goals before score normalization.
+For example, a saved 74–76 confidence range accepts 74–77 inclusive. This does
 not alter stored Engine settings or discovery records, or the no-Engine legacy range.
 Engine selection is not a partner request parameter. Historical Engine discovery
 and testing use an Engine's Test Model; they do not change API predictions.
@@ -20,9 +25,9 @@ override and does not change the saved Production Model on any Engine.
 The returned `prediction.confidence_score` and each market row's `confidence_score`
 are presentation confidence, not the Engine's internal qualification confidence:
 for a qualified Engine, `min(95, max(70, blend(min(100, internal + 3), observed_win_pct,
-coverage^(1/5))))`, using the Engine's frozen discovery percentages as
+coverage^(1/5))) + 3)`, using the Engine's frozen discovery percentages as
 decimals. An Engine without frozen discovery metrics uses its internal score plus
-three with no post-blend lift, within the same 70–95 range. A normal response with
+three before the presentation bounds. Qualified results receive another three points after the 70-point floor, capped at 95; for example, 70 becomes 73. This presentation boost does not change qualification or win probability. A normal response with
 `pick_qualified: false` subtracts 20 percentage points from this outward-facing
 confidence (floored at zero); this does not alter internal qualification. If no default stack is available,
 ordinary predictions retain the legacy fallback: no engine model or weights are

@@ -44,6 +44,20 @@ class NhlSatEngineSettings
             ? $gap < (float) $settings['gap'] : $gap > (float) $settings['gap'];
     }
 
+    /** Allow 1.5 points below a saved minimum percentage gap only for runtime predictions.
+     * @param array<string,mixed> $settings
+     */
+    public function runtimeGapQualifies(float $gap, array $settings): bool
+    {
+        if (($settings['gap_unit'] ?? 'goals') === 'percent' && ($settings['gap_operator'] ?? '>') === '>') {
+            $minimum = round(max(0.0, (float) $settings['gap'] - 1.5), 6);
+
+            return $gap > 0 && $gap >= $minimum;
+        }
+
+        return $this->gapQualifies($gap, $settings);
+    }
+
     /** Normalize score separation without changing the predicted winner or score. */
     public function scoreGap(float $away, float $home, string $unit = 'goals'): float
     {

@@ -476,6 +476,11 @@ class NhlGamePredictionPayload
                 ? ['offense' => 85, 'defense' => 15] : ['offense' => 88, 'defense' => 2]));
         $prediction = $this->normalizeGoalTotals($prediction, $awayGoals, $homeGoals, $weights,
             $awaySide['goal_totals_normalization'] ?? null, $homeSide['goal_totals_normalization'] ?? null);
+        $engineSettings = app(NhlSatEngineSettings::class);
+        $qualificationSpread = $engineSettings->scoreGap($awayGoals, $homeGoals, $defaultEngine?->settings['gap_unit'] ?? 'goals');
+        $gapQualified = $defaultEngine === null
+            ? $engineSettings->gapQualifies($qualificationSpread, ['gap' => 0])
+            : $engineSettings->runtimeGapQualifies($qualificationSpread, $defaultEngine->settings);
 
         $response = [
             'prediction_available' => true,
@@ -484,9 +489,7 @@ class NhlGamePredictionPayload
                     ? self::PICK_CONFIDENCE_MAX
                     : min(100, (float) ($defaultEngine->settings['confidence_max'] ?? self::PICK_CONFIDENCE_MAX) + 1))
                 && abs($homeGoals - $awayGoals) > 0
-                && app(NhlSatEngineSettings::class)->gapQualifies(
-                    app(NhlSatEngineSettings::class)->scoreGap($awayGoals, $homeGoals, $defaultEngine?->settings['gap_unit'] ?? 'goals'),
-                    $defaultEngine?->settings ?? ['gap' => 0]),
+                && $gapQualified,
             'game' => $this->gamePayload($game),
             'inputs' => [
                 'engine_id' => $defaultEngine?->id,
@@ -538,8 +541,7 @@ class NhlGamePredictionPayload
         ];
 
         if (($overrides['_include_confidence_components'] ?? false) === true) {
-            $response['_qualification_spread'] = app(NhlSatEngineSettings::class)->scoreGap(
-                $awayGoals, $homeGoals, $defaultEngine?->settings['gap_unit'] ?? 'goals');
+            $response['_qualification_spread'] = $qualificationSpread;
             $resultSkaterConfidence = ($this->weightedSkaterConfidence($awaySide)
                 + $this->weightedSkaterConfidence($homeSide)) / 2 * 100;
             $resultGoalieConfidence = (max(0.0, min(100.0, (float) ($awayGoalie['confidence_score'] ?? 50)))
@@ -618,13 +620,13 @@ class NhlGamePredictionPayload
         $adjustedInternalConfidence = min(100.0, $internalConfidence + 3.0);
 
         if ($engine->discovery_win_pct === null || $engine->discovery_coverage_pct === null) {
-            return round(min(95.0, max(70.0, $adjustedInternalConfidence)), 4);
+            return round(min(95.0, max(70.0, $adjustedInternalConfidence) + 3.0), 4);
         }
         $weight = pow(max(0.0, min(100.0, (float) $engine->discovery_coverage_pct)) / 100, 1 / 5);
         $blendedConfidence = $adjustedInternalConfidence * (1 - $weight)
             + (float) $engine->discovery_win_pct * $weight;
 
-        return round(min(95.0, max(70.0, $blendedConfidence)), 4);
+        return round(min(95.0, max(70.0, $blendedConfidence) + 3.0), 4);
     }
 
     /**

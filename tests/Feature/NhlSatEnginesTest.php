@@ -151,7 +151,7 @@ it('previews the selected non-default stack through the shared delegation and st
             ->and($attempt['engine_name'])->toBe('Priority ' . ($index + 1))
             ->and($attempt['internal_confidence'])->toBe(80)
             ->and($attempt['pick_qualified'])->toBe($index + 1 === $winner)
-            ->and($attempt['prediction']['confidence_score'])->toEqual($index + 1 === $winner ? 83 : 80);
+            ->and($attempt['prediction']['confidence_score'])->toEqual($index + 1 === $winner ? 86 : 80);
     }
     Bus::assertNothingDispatched();
 })->with([1, 2, 3]);
@@ -1998,4 +1998,41 @@ it('prevents deletion of an engine that remains in a saved stack', function (): 
 
     $this->actingAs($this->admin)->deleteJson('/admin/nhl-sat-engines/' . $this->engine->id)
         ->assertUnprocessable()->assertJsonValidationErrors('engine');
+});
+
+
+it('allows only runtime minimum percentage gaps 1.5 points below the saved threshold', function (
+    float $gap,
+    array $settings,
+    bool $expected
+): void {
+    $service = app(NhlSatEngineSettings::class);
+    $original = $settings;
+    expect($service->runtimeGapQualifies($gap, $settings))->toBe($expected)
+        ->and($settings)->toBe($original);
+})->with([
+    'inclusive reduced boundary' => [5.4, ['gap' => 6.9, 'gap_unit' => 'percent', 'gap_operator' => '>'], true],
+    'below reduced boundary' => [5.399999, ['gap' => 6.9, 'gap_unit' => 'percent'], false],
+    'above reduced boundary' => [5.400001, ['gap' => 6.9, 'gap_unit' => 'percent'], true],
+    'saved boundary now qualifies' => [6.9, ['gap' => 6.9, 'gap_unit' => 'percent'], true],
+    'six decimal boundary' => [5.401163, ['gap' => 6.901163, 'gap_unit' => 'percent'], true],
+    'below six decimal boundary' => [5.401162, ['gap' => 6.901163, 'gap_unit' => 'percent'], false],
+    'small minimum still excludes exact ties' => [0.0, ['gap' => 1.0, 'gap_unit' => 'percent'], false],
+    'small minimum allows nonzero gap' => [.000001, ['gap' => 1.0, 'gap_unit' => 'percent'], true],
+    'goal-unit gap is not relaxed' => [5.4, ['gap' => 6.9, 'gap_unit' => 'goals'], false],
+    'missing unit retains legacy goals' => [5.4, ['gap' => 6.9], false],
+    'less-than percentage rule is not relaxed' => [6.9, ['gap' => 6.9, 'gap_unit' => 'percent', 'gap_operator' => '<'], false],
+    'less-than percentage interior remains allowed' => [6.8, ['gap' => 6.9, 'gap_unit' => 'percent', 'gap_operator' => '<'], true],
+]);
+
+it('keeps discovery percentage comparisons strict while runtime predictions receive the allowance', function (): void {
+    $service = app(NhlSatEngineSettings::class);
+    $settings = [...$this->settings, 'confidence_min' => 75, 'confidence_max' => 76,
+        'gap' => 6.9, 'gap_unit' => 'percent', 'gap_operator' => '>'];
+    $rawSpread = $service->scoreGap(4.73, 5.27, 'percent');
+    expect($rawSpread)->toBe(5.4)
+        ->and($service->runtimeGapQualifies($rawSpread, $settings))->toBeTrue()
+        ->and($service->gapQualifies($rawSpread, $settings))->toBeFalse()
+        ->and($service->gapQualifies(6.9, $settings))->toBeFalse()
+        ->and($service->qualifies(75, $rawSpread, $settings))->toBeFalse();
 });

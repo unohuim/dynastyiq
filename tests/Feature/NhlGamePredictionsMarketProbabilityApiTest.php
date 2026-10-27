@@ -687,7 +687,7 @@ it('floors and caps qualified engine presentation confidence after the approved 
         'discovery_coverage_pct' => 100.0,
     ]);
 
-    expect($method->invoke($service, 60.0, $floorEngine, true))->toBe(70.0)
+    expect($method->invoke($service, 60.0, $floorEngine, true))->toBe(73.0)
         ->and($method->invoke($service, 90.0, $capEngine, true))->toBe(95.0)
         ->and($method->invoke($service, 60.0, $floorEngine, false))->toBeLessThan(60.0);
 });
@@ -1292,7 +1292,7 @@ it('normalizes final API goals using actual simulation weights and retains raw s
 ]);
 
 
-it('adds only three points before blending qualified confidence with no post-blend lift', function (
+it('adds three presentation points to qualified confidence after its floor while preserving unqualified confidence', function (
     float $internal,
     ?float $winPct,
     ?float $coveragePct,
@@ -1304,12 +1304,12 @@ it('adds only three points before blending qualified confidence with no post-ble
     $method = new ReflectionMethod($service, 'presentationConfidence');
     expect($method->invoke($service, $internal, $engine, $qualified))->toBe($expected);
 })->with([
-    'qualified no historical metrics' => [75.0, null, null, true, 78.0],
-    'qualified blend without a post-blend addition' => [80.0, 75.0, 3.125, true, 79.0],
-    'qualified lower limit' => [60.0, null, null, true, 70.0],
+    'qualified no historical metrics' => [75.0, null, null, true, 81.0],
+    'qualified blend receives full three-point boost' => [80.0, 75.0, 3.125, true, 82.0],
+    'qualified lower limit' => [60.0, null, null, true, 73.0],
     'qualified upper limit' => [99.0, null, null, true, 95.0],
-    'zero coverage retains the three-point uplift' => [80.0, 75.0, 0.0, true, 83.0],
-    'full coverage uses historical win rate' => [80.0, 75.0, 100.0, true, 75.0],
+    'zero coverage retains the three-point uplift' => [80.0, 75.0, 0.0, true, 86.0],
+    'full coverage uses historical win rate' => [80.0, 75.0, 100.0, true, 78.0],
     'unqualified no historical metrics is unchanged before penalty' => [75.0, null, null, false, 75.0],
     'unqualified historical blend has no uplift' => [80.0, 75.0, 3.125, false, 77.5],
 ]);
