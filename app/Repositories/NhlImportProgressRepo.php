@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Repositories;
 
 use App\Events\NhlGameImportStatusUpdated;
+use App\Models\NhlGameImportRun;
 use Illuminate\Support\Facades\DB;
 
 class NhlImportProgressRepo
@@ -20,9 +21,28 @@ class NhlImportProgressRepo
 
         $inserted = 0;
 
-        foreach (array_chunk($rows, $chunk) as $part) {
-            $inserted += DB::table('nhl_import_progress')->insertOrIgnore($part);
-            $this->attachRunToLegacyRows($part);
+        foreach (collect($rows)->groupBy('game_id')->sortKeys() as $gameId => $gameRows) {
+            $inserted += DB::transaction(function () use ($gameId, $gameRows, $chunk): int {
+                $this->lockGameAdmission((int) $gameId);
+                $count = 0;
+                foreach ($gameRows->groupBy(fn (array $row) => $row['run_id'] ?? 'legacy')->sortKeys() as $runRows) {
+                    $runId = isset($runRows[0]['run_id']) ? (int) $runRows[0]['run_id'] : null;
+                    $owner = $this->otherFullRunOwner((int) $gameId, $runId);
+                    if ($owner !== null) {
+                        if ($runId !== null) {
+                            $this->recordOverlap($runId, (int) $gameId, $owner);
+                        }
+                        continue;
+                    }
+                    // Insert each accepted owner before evaluating another run in the same batch.
+                    foreach (array_chunk($runRows->all(), $chunk) as $part) {
+                        $count += DB::table('nhl_import_progress')->insertOrIgnore($part);
+                        $this->attachRunToLegacyRows($part);
+                    }
+                }
+
+                return $count;
+            });
         }
 
         if ($inserted > 0) {
@@ -34,6 +54,19 @@ class NhlImportProgressRepo
     public function claim(int $gameId, string $type, ?int $runId = null): bool
     {
         $claimed = DB::transaction(function () use ($gameId, $type, $runId) {
+            $this->lockGameAdmission($gameId);
+            $owner = $this->otherFullRunOwner($gameId, $runId);
+            if ($owner !== null) {
+                if ($runId !== null) {
+                    // Preserve committed stages; obsolete pending work must not advance or enrich this game.
+                    DB::table('nhl_import_progress')->where('run_id', $runId)->where('game_id', $gameId)
+                        ->where('status', 'scheduled')->update(['status' => 'skipped',
+                            'last_error' => 'Handled by active full import run #'.$owner.'.', 'updated_at' => now()]);
+                    $this->recordOverlap($runId, $gameId, $owner);
+                }
+
+                return false;
+            }
             $query = DB::table('nhl_import_progress')
                 ->where('game_id', $gameId)
                 ->where('import_type', $type)
@@ -56,6 +89,53 @@ class NhlImportProgressRepo
         }
 
         return $claimed;
+    }
+
+    /** Serialize only short game admission decisions; never hold this lock during source imports. */
+    private function lockGameAdmission(int $gameId): void
+    {
+        if (DB::getDriverName() === 'pgsql') {
+            DB::select('SELECT pg_advisory_xact_lock(73104, ?)', [$gameId]);
+        }
+    }
+
+    /** Find another full run owning this game; scoped processing never competes for full ownership. */
+    private function otherFullRunOwner(int $gameId, ?int $runId): ?int
+    {
+        $run = $runId === null ? null : NhlGameImportRun::query()->find($runId);
+        if ($run !== null && (! in_array($run->action, ['discover', 'process'], true)
+            || data_get($run->payload, 'process_scope') !== null)) {
+            return null;
+        }
+        if (isset($run?->payload['overlap_excluded_games'][(string) $gameId])) {
+            return (int) $run->payload['overlap_excluded_games'][(string) $gameId];
+        }
+        $owners = DB::table('nhl_import_progress as progress')->join('nhl_game_import_runs as runs', 'runs.id', '=', 'progress.run_id')
+            ->where('progress.game_id', $gameId)->whereIn('progress.status', ['scheduled', 'running', 'completed'])
+            ->whereIn('runs.action', ['discover', 'process'])->whereNull('runs.payload->process_scope')
+            ->where(function ($query): void {
+                $query->whereIn('runs.status', ['queued', 'running', 'pausing', 'paused', 'cancelling'])
+                    ->orWhere(fn ($ready) => $ready->where('runs.status', 'completed')->whereNull('runs.payload->processing_started_at')
+                        ->whereIn('progress.status', ['scheduled', 'running']));
+            })
+            ->orderBy('runs.id')->pluck('runs.id')->unique()->map(fn ($id): int => (int) $id);
+        // Existing duplicates retain the earliest owner rather than excluding both runs.
+        $owner = $owners->first();
+
+        return $owner === null || $owner === $runId ? null : $owner;
+    }
+
+    /** Keep the skipped game's owner visible without changing historical progress or imported results. */
+    private function recordOverlap(int $runId, int $gameId, int $owner): void
+    {
+        $run = NhlGameImportRun::query()->whereKey($runId)
+            ->lock(DB::getDriverName() === 'pgsql' ? 'for no key update' : true)->first();
+        if ($run === null || isset($run->payload['overlap_excluded_games'][(string) $gameId])) {
+            return;
+        }
+        $payload = $run->payload ?? [];
+        $payload['overlap_excluded_games'][(string) $gameId] = $owner;
+        $run->update(['payload' => $payload]);
     }
 
     /** Verify row is currently running. */

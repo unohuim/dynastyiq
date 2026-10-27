@@ -583,8 +583,11 @@ class NhlImportOrchestrator
      */
     private function gameIdsForRun(int $runId): array
     {
+        $excluded = array_keys(NhlGameImportRun::query()->find($runId)?->payload['overlap_excluded_games'] ?? []);
+
         return DB::table('nhl_import_progress')
             ->where('run_id', $runId)
+            ->whereNotIn('game_id', $excluded)
             ->distinct()
             ->orderBy('game_id')
             ->pluck('game_id')
@@ -601,12 +604,7 @@ class NhlImportOrchestrator
         }
 
         $payload = $run->payload ?? [];
-        $gameIds = DB::table('nhl_import_progress')
-            ->where('run_id', $runId)
-            ->distinct()
-            ->pluck('game_id')
-            ->map(fn (mixed $gameId): int => (int) $gameId)
-            ->all();
+        $gameIds = app(self::class)->gameIdsForRun($runId);
 
         $payload['post_process_enrichment_batch_id'] = $batchId;
         $payload['post_process_enrichment_completed_at'] = now()->toIso8601String();

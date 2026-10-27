@@ -24,6 +24,7 @@ rules:
   - Discovery must not perform downstream stage transformations.
   - Discovery output must remain compatible with NhlImportOrchestrator.
   - Discovery must seed import progress rows from NhlImportStages instead of maintaining its own stage list.
+  - Manual and automatic discovery share the repository's per-game Full ownership admission. Overlapping ranges retain independently available games rather than duplicating another active run's games or rejecting the whole range. Excluded games retain owning-run references for inspection; date completion still accounts for every selected discovery date.
   - Command-line discovery must record an admin-visible nhl_game_import_runs row before dispatching so CLI and UI discovery share the same orchestration ledger.
   - Discovery jobs must write nhl_import_progress.run_id when an admin-visible run created the discovery work.
   - Discovery coordinators and day jobs obey NhlGameImportRunControl.yaml. Resume retains resolved discovery dates and only dispatches unfinished dates. A paused completed discovery waits for Resume before emitting processing readiness, and cancellation cannot be overwritten by late date completions.

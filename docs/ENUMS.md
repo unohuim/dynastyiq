@@ -916,6 +916,13 @@ Resume and explicit reruns rotate the generation;
 worker updates must not revive a cancelled run or cross generations. These controls
 apply to discovery and game-processing runs, not unrelated orchestration actions.
 
+`nhl_game_import_runs.payload.overlap_excluded_games` maps a game ID to its
+owning Full run ID when discovery or stage admission excludes duplicate work.
+Existing duplicate pending stages use `skipped`; completed stages remain intact.
+Exclusions survive Resume and are cleared by an explicit fresh rerun. Scoped
+processing does not acquire Full ownership. Full post-processing excludes these
+games even when historical completed stages remain in the duplicate run.
+
 ---
 
 ### NHL Game Validation Type

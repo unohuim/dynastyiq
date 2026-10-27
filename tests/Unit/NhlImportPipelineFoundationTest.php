@@ -107,6 +107,23 @@ beforeEach(function (): void {
             'updated_at' => now(),
         ], $overrides));
     };
+    $this->overlapRun = static fn (array $attributes = []): NhlGameImportRun => NhlGameImportRun::create([
+        'action' => 'discover', 'mode' => 'range', 'status' => 'running',
+        'start_date' => '2026-10-01', 'end_date' => '2026-10-03', 'date_count' => 3,
+        'payload' => ['processing_started_at' => '2026-06-29T12:00:00Z'], ...$attributes,
+    ]);
+    $this->overlapRows = static function (int $runId, array $gameIds): array {
+        $rows = [];
+        foreach ($gameIds as $gameId) {
+            foreach (NhlImportStages::ordered() as $stage) {
+                $rows[] = ['run_id' => $runId, 'season_id' => '20262027', 'game_date' => '2026-10-01',
+                    'game_id' => (string) $gameId, 'game_type' => 2, 'import_type' => $stage,
+                    'items_count' => 0, 'status' => 'scheduled', 'discovered_at' => now(), 'created_at' => now(), 'updated_at' => now()];
+            }
+        }
+
+        return $rows;
+    };
 });
 
 afterEach(function (): void {
@@ -954,6 +971,135 @@ it('filters deleted run ids before inserting scheduled progress rows', function 
         'run_id' => 36,
         'game_id' => '2026020001',
     ]);
+});
+
+it('keeps overlapping games with their existing full owner and admits unrelated games', function (bool $automaticFirst): void {
+    Event::fake();
+    $first = ($this->overlapRun)(['payload' => $automaticFirst ? ['scheduled_process' => 'nhl-game-discovery'] : []]);
+    $second = ($this->overlapRun)(['payload' => $automaticFirst ? [] : ['scheduled_process' => 'nhl-game-discovery']]);
+    $repo = app(NhlImportProgressRepo::class);
+    $repo->insertScheduledRows(($this->overlapRows)($first->id, [2026020001]));
+    $repo->insertScheduledRows(($this->overlapRows)($second->id, [2026020001, 2026020002]));
+    expect(DB::table('nhl_import_progress')->where('run_id', $first->id)->count())->toBe(9)
+        ->and(DB::table('nhl_import_progress')->where('run_id', $second->id)->count())->toBe(9)
+        ->and($second->fresh()->payload['overlap_excluded_games']['2026020001'])->toBe($first->id);
+    expect($repo->claim(2026020001, 'pbp', $first->id))->toBeTrue()
+        ->and($repo->claim(2026020001, 'pbp', $second->id))->toBeFalse()
+        ->and($repo->claim(2026020002, 'pbp', $second->id))->toBeTrue();
+})->with([false, true]);
+
+it('reserves unfinished full games during Pause and cancellation cleanup', function (string $status): void {
+    Event::fake();
+    $owner = ($this->overlapRun)(['status' => $status]);
+    $contender = ($this->overlapRun)();
+    $repo = app(NhlImportProgressRepo::class);
+    $repo->insertScheduledRows(($this->overlapRows)($owner->id, [2026020001]));
+    $repo->insertScheduledRows(($this->overlapRows)($contender->id, [2026020001]));
+    expect(DB::table('nhl_import_progress')->where('run_id', $contender->id)->count())->toBe(0)
+        ->and($contender->fresh()->payload['overlap_excluded_games']['2026020001'])->toBe($owner->id);
+})->with(['queued', 'running', 'pausing', 'paused', 'cancelling']);
+
+it('accepts only one full owner when competing runs arrive in the same insertion batch', function (): void {
+    Event::fake();
+    $first = ($this->overlapRun)();
+    $second = ($this->overlapRun)();
+    app(NhlImportProgressRepo::class)->insertScheduledRows([
+        ...($this->overlapRows)($second->id, [2026020001]),
+        ...($this->overlapRows)($first->id, [2026020001]),
+    ]);
+    expect(DB::table('nhl_import_progress')->where('run_id', $first->id)->count())->toBe(9)
+        ->and(DB::table('nhl_import_progress')->where('run_id', $second->id)->count())->toBe(0)
+        ->and($second->fresh()->payload['overlap_excluded_games']['2026020001'])->toBe($first->id);
+});
+
+it('does not reserve games for completed failed cancelled or scoped runs', function (string $status, ?string $scope): void {
+    Event::fake();
+    $owner = ($this->overlapRun)(['status' => $status, 'payload' => [
+        'processing_started_at' => '2026-06-29T12:00:00Z', 'process_scope' => $scope,
+    ]]);
+    $contender = ($this->overlapRun)();
+    $repo = app(NhlImportProgressRepo::class);
+    $repo->insertScheduledRows(($this->overlapRows)($owner->id, [2026020001]));
+    $repo->insertScheduledRows(($this->overlapRows)($contender->id, [2026020001]));
+    expect(DB::table('nhl_import_progress')->where('run_id', $contender->id)->count())->toBe(9)
+        ->and($repo->claim(2026020001, 'pbp', $contender->id))->toBeTrue();
+})->with([['completed', null], ['failed', null], ['cancelled', null],
+    ['running', 'shots'], ['running', 'faceoffs'], ['running', 'refs_staff'], ['running', 'on_ice']]);
+
+it('retains Ready discovery ownership until its manual processing action', function (): void {
+    Event::fake();
+    $owner = ($this->overlapRun)(['status' => 'completed', 'payload' => ['auto_process' => false]]);
+    $contender = ($this->overlapRun)();
+    $repo = app(NhlImportProgressRepo::class);
+    $repo->insertScheduledRows(($this->overlapRows)($owner->id, [2026020001]));
+    $repo->insertScheduledRows(($this->overlapRows)($contender->id, [2026020001]));
+    expect(DB::table('nhl_import_progress')->where('run_id', $contender->id)->count())->toBe(0);
+});
+
+it('fences predeployment duplicate claims without resetting committed stages or excluding the owner', function (): void {
+    Event::fake();
+    $owner = ($this->overlapRun)();
+    $duplicate = ($this->overlapRun)();
+    // Existing rows simulate the duplicate orchestration present before admission protection deployed.
+    DB::table('nhl_import_progress')->insert(($this->overlapRows)($owner->id, [2026020001]));
+    DB::table('nhl_import_progress')->insert(($this->overlapRows)($duplicate->id, [2026020001]));
+    DB::table('nhl_import_progress')->where('run_id', $duplicate->id)->where('import_type', 'boxscore')
+        ->update(['status' => 'completed', 'items_count' => 42]);
+    $repo = app(NhlImportProgressRepo::class);
+    expect($repo->claim(2026020001, 'pbp', $duplicate->id))->toBeFalse()
+        ->and($repo->claim(2026020001, 'pbp', $owner->id))->toBeTrue();
+    $this->assertDatabaseHas('nhl_import_progress', ['run_id' => $duplicate->id, 'import_type' => 'boxscore',
+        'status' => 'completed', 'items_count' => 42]);
+    expect(DB::table('nhl_import_progress')->where('run_id', $duplicate->id)->where('status', 'skipped')->count())->toBe(8);
+    $owner->update(['status' => 'completed']);
+    // A late loader cannot silently reacquire work intentionally excluded from this generation.
+    $repo->insertScheduledRows(($this->overlapRows)($duplicate->id, [2026020001]));
+    expect($repo->claim(2026020001, 'pbp', $duplicate->id))->toBeFalse();
+});
+
+it('serializes overlapping admission transactions on the game rather than the selected range', function (): void {
+    if (DB::getDriverName() !== 'pgsql') {
+        $this->markTestSkipped('Production admission uses PostgreSQL transaction advisory locks.');
+    }
+    Event::fake();
+    $run = ($this->overlapRun)();
+    app(NhlImportProgressRepo::class)->insertScheduledRows(($this->overlapRows)($run->id, [2026020001]));
+    $configuration = config('database.connections.'.DB::getDefaultConnection());
+    config(['database.connections.overlap_lock_probe' => $configuration]);
+    try {
+        // This separate connection cannot acquire the first transaction's still-held game fence.
+        $probe = DB::connection('overlap_lock_probe');
+        $sameGame = $probe->selectOne('SELECT pg_try_advisory_xact_lock(73104, ?) AS acquired', [2026020001]);
+        $otherGame = $probe->selectOne('SELECT pg_try_advisory_xact_lock(73104, ?) AS acquired', [2026020002]);
+        expect($sameGame->acquired)->toBeFalse()->and($otherGame->acquired)->toBeTrue();
+    } finally {
+        DB::purge('overlap_lock_probe');
+        config(['database.connections.overlap_lock_probe' => null]);
+    }
+});
+
+it('clears overlap exclusions for an explicit fresh rerun without changing manual processing preferences', function (): void {
+    $control = app(\App\Services\NhlGameImportRunControl::class);
+    $payload = ['overlap_excluded_games' => ['2026020001' => 17], 'auto_process' => false,
+        'run_control' => ['generation' => 'old'], 'completed_at' => '2026-06-29T12:00:00Z'];
+    $fresh = $control->freshPayload($payload);
+    expect($fresh)->not->toHaveKey('overlap_excluded_games')->not->toHaveKey('completed_at')
+        ->and($fresh['auto_process'])->toBeFalse()->and($fresh['run_control']['generation'])->not->toBe('old');
+});
+
+it('excludes overlap-owned games from full post-processing without dropping their completed stage history', function (): void {
+    Event::fake();
+    $run = ($this->overlapRun)(['payload' => ['processing_started_at' => '2026-06-29T12:00:00Z',
+        'overlap_excluded_games' => ['2026020001' => 17]]]);
+    DB::table('nhl_import_progress')->insert(($this->overlapRows)($run->id, [2026020001, 2026020002]));
+    DB::table('nhl_import_progress')->where('run_id', $run->id)->update(['status' => 'completed']);
+
+    app(NhlImportOrchestrator::class)->fillActiveGameSlotsForRun($run->id);
+
+    Bus::assertBatched(fn (\Illuminate\Bus\PendingBatch $batch): bool => $batch->name === 'NHL:FullPostProcess:'.$run->id
+        && count($batch->jobs) === 3 && collect($batch->jobs)->every(fn ($job): bool => $job->nhlGameId === 2026020002));
+    expect(DB::table('nhl_import_progress')->where('run_id', $run->id)->where('status', 'completed')->count())->toBe(18)
+        ->and($run->fresh()->payload['post_process_enrichment_game_count'])->toBe(1);
 });
 
 it('does not seed unfinished discovered games', function (): void {

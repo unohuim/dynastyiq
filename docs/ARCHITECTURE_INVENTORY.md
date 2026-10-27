@@ -2334,6 +2334,7 @@ app()->make(SumNhlGameStrengthUnits::class, ['gameId' => $gameId])->sum();
 
 **Purpose:**
 Centralize reads and writes to `nhl_import_progress` for import claim, status, dependency, stale-job behavior, run-aware game/stage uniqueness, rerun row seeding without historical run reassignment, and persisted failure diagnostics.
+Full discovery and claims share atomic per-game admission across manual and scheduled runs. Overlapping games retain their active owner while other games continue; excluded games stay outside duplicate enrichment. Completed stage history remains intact, and scoped processing retains its separate lifecycle.
 
 **When to Use:**
 Any code that mutates or checks NHL import progress state.

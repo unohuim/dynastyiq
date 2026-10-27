@@ -132,6 +132,35 @@ it('does not overlap an active automatic discovery run', function (): void {
     Bus::assertNothingDispatched();
 });
 
+it('omits manually owned games from a scheduled range while retaining the other dates', function (): void {
+    Event::fake();
+    $response = $this->actingAs($this->admin)->postJson(route('admin.nhl-game-imports.discover'), [
+        'date' => '2026-10-09',
+    ])->assertAccepted();
+    $manualId = $response->json('run.id');
+    $discovery = Mockery::mock(NhlDiscoverGames::class, [app(\App\Repositories\NhlImportProgressRepo::class)])->makePartial();
+    $discovery->shouldReceive('getAPIData')->times(4)->andReturnUsing(function ($service, $endpoint, $parameters): array {
+        $date = $parameters['date'];
+        $gameId = ['2026-10-07' => 2026020007, '2026-10-08' => 2026020008, '2026-10-09' => 2026020009][$date];
+
+        return ['games' => [['id' => $gameId, 'season' => 20262027, 'gameDate' => $date,
+            'gameType' => 2, 'gameState' => 'OFF']]];
+    });
+    $discovery->discoverDay('2026-10-09', $manualId);
+    $this->manager->tick();
+    $automatic = NhlGameImportRun::query()->where('payload->scheduled_process', 'nhl-game-discovery')->sole();
+    foreach (['2026-10-07', '2026-10-08', '2026-10-09'] as $date) {
+        $discovery->discoverDay($date, $automatic->id);
+    }
+
+    expect(DB::table('nhl_import_progress')->where('run_id', $manualId)->count())->toBe(9)
+        ->and(DB::table('nhl_import_progress')->where('run_id', $automatic->id)->count())->toBe(18)
+        ->and($automatic->fresh()->payload['overlap_excluded_games']['2026020009'])->toBe($manualId);
+    $status = $this->getJson(route('admin.nhl-game-imports.status'))->assertOk()->json('runs');
+    $savedAutomatic = collect($status)->firstWhere('id', $automatic->id);
+    expect($savedAutomatic['payload']['overlap_excluded_games']['2026020009'])->toBe($manualId);
+});
+
 it('keeps the daily wall-clock time across daylight saving', function (): void {
     $next = $this->manager->nextDue($this->process, CarbonImmutable::parse('2026-10-31 07:50:00 UTC'));
     expect($next->toDateTimeString())->toBe('2026-11-01 08:50:00');
