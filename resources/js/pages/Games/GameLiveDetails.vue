@@ -17,6 +17,7 @@ const shots = computed(() => (props.game.shots ?? []).filter(row => inPeriod(row
   && (team.value === 'all' || row.side === team.value)
   && (shotType.value === 'all' || row.type === 'goal' || (shotType.value === 'sog' && row.type === 'shot-on-goal'))));
 const selected = computed(() => shots.value.find(row => String(row.id) === String(selectedId.value)));
+const selectedBuckets = computed(() => [selected.value?.distance_bucket, selected.value?.angle_bucket].filter(Boolean).join(' · '));
 const plays = computed(() => (props.game.plays ?? []).filter(row => inPeriod(row)
   && (playType.value === 'all' || (playType.value === 'shots' ? ['goal', 'shot-on-goal', 'missed-shot', 'blocked-shot'].includes(row.type) : row.type === playType.value))).slice().reverse());
 const goals = computed(() => [...(props.game.events ?? [])].reverse());
@@ -112,8 +113,8 @@ watch(shots, () => { if (!selected.value) selectedId.value = null; });
                 <span v-for="side in sides" :key="side" class="inline-flex items-center gap-1"><svg aria-hidden="true" viewBox="0 0 10 10" class="size-2.5"><circle cx="5" cy="5" r="5" :fill="color(side)" /></svg>{{ game[side]?.team_abbrev }}<span class="hidden lg:inline">shot</span></span>
                 <span class="inline-flex items-center gap-1"><i aria-hidden="true" class="size-2 rounded-full border border-white" /><span class="sr-only sm:not-sr-only">Goal</span></span>
               </div>
-              <p aria-live="polite" aria-atomic="true" class="min-w-0 truncate text-center" :title="selected ? `${selected.player ?? 'Player unavailable'} · ${selected.label} · ${periodLabel(selected.period)} ${selected.time ?? ''}${selected.detail ? ' · ' + selected.detail : ''}` : undefined">
-                <template v-if="selected"><span class="font-semibold text-[#E7EEF6]">{{ selected.player ?? 'Player unavailable' }}</span> · {{ selected.label }} · {{ periodLabel(selected.period) }} {{ selected.time }}<span v-if="selected.detail"> · {{ selected.detail }}</span></template>
+              <p aria-live="polite" aria-atomic="true" class="min-w-0 truncate text-center" :title="selected ? `${selected.player ?? 'Player unavailable'} · ${selected.label} · ${periodLabel(selected.period)} ${selected.time ?? ''}${selected.detail ? ' · ' + selected.detail : ''}${selectedBuckets ? ' · ' + selectedBuckets : ''}` : undefined">
+                <template v-if="selected"><span class="font-semibold text-[#E7EEF6]">{{ selected.player ?? 'Player unavailable' }}</span> · {{ selected.label }} · {{ periodLabel(selected.period) }} {{ selected.time }}<span v-if="selected.detail"> · {{ selected.detail }}</span><span v-if="selectedBuckets"> · {{ selectedBuckets }}</span></template>
                 <span v-else class="text-[#7890A4]">Select a shot</span>
               </p>
               <span class="whitespace-nowrap text-right">{{ shots.length }}<span class="sr-only sm:not-sr-only"> shots plotted</span><span class="hidden xl:inline"> · {{ game.mode === 'live' ? 'updates live' : 'final' }}</span></span>

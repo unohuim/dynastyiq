@@ -347,6 +347,7 @@ final class NhlPublicGamePage
 
             return ['eventId' => $row->nhl_event_id ?? $row->id, 'typeDescKey' => $row->type_desc_key,
                 'periodDescriptor' => ['number' => $row->period, 'periodType' => $row->period_type],
+                'homeTeamDefendingSide' => $row->home_team_defending_side,
                 'timeInPeriod' => $row->time_in_period, 'details' => $details];
         })->all();
 
@@ -408,7 +409,12 @@ final class NhlPublicGamePage
             if (in_array($type, ['goal', 'shot-on-goal', 'missed-shot', 'blocked-shot'], true)
                 && $play['period_type'] !== 'SO' && $side !== null && is_numeric($x) && is_numeric($y)
                 && abs((float) $x) <= 100 && abs((float) $y) <= 42.5) {
-                $shots[] = [...$play, 'x' => (float) $x, 'y' => (float) $y];
+                $geometry = app(ShotGeometryService::class)->computeFromContext(
+                    (int) $x, (int) $y, (int) $teamId, $row['homeTeamDefendingSide'] ?? null, $period,
+                    (int) $teams['home']['team_id'], (int) $teams['away']['team_id'],
+                );
+                $buckets = app(BuildNhlShotAttemptFacts::class)->geometryBucketLabels($geometry);
+                $shots[] = [...$play, 'x' => (float) $x, 'y' => (float) $y, ...$buckets];
             }
         }
         if ($currentPeriod !== null && $currentPeriodType !== null) {
