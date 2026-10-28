@@ -42,7 +42,8 @@ class ScoreNhlPredictionGameSatJob implements ShouldQueue
     public function middleware(): array
     {
         return [(new WithoutOverlapping('nhl-prediction-sat:'.$this->modelRunId.':'.$this->nhlGameId))
-            ->releaseAfter(15)->expireAfter(240)];
+            ->releaseAfter(15)->expireAfter(240),
+            (new WithoutOverlapping('nhl-game-import:'.$this->nhlGameId))->shared()->releaseAfter(5)->expireAfter(720)];
     }
 
     /** Expose model and source identities in Horizon. */

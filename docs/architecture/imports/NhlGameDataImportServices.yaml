@@ -55,6 +55,7 @@ rules:
   - Live duplicate play-by-play repairs must preserve the affected game ids for targeted derived-data rebuilds after dedupe.
   - Duplicate play-by-play repair may be initiated from admin UI or CLI, but duplicate-row removal must remain separate from affected-game rebuild queueing.
   - Play-by-play imports must preserve raw provider event and details payloads in play_by_plays.metadata for audit and validation context.
+  - Live and ordinary PBP ingestion use NhlLivePbpReconciliation for versioned corrections and withdrawal history. Ordinary imports synchronously consume their accepted checkpoint before later stages advance.
   - Derived play-by-play summaries must use NhlPbpEventNormalizer for boxscore-comparable shot, shootout, empty-net, and penalty-minute semantics.
   - Player game summaries are naturally identified by nhl_game_id plus nhl_player_id.
   - Raw shift imports must update player game summary time on ice and shift counts for the same game and player.

@@ -4263,3 +4263,6 @@ with legacy backfill compatibility. Authority:
 **Public interface:** `GET /games/live`, `NhlLiveGameUpdated`, `NhlLiveGameFeed::dispatchDue()`.
 **Authority:** `docs/architecture/imports/NhlLiveGameFeed.yaml`.
 **Example:** One producer fetches each live game; all browser surfaces receive its updates through the layout's Echo connection.
+
+
+- Live PBP reconciliation: `docs/architecture/imports/NhlLivePbpReconciliation.yaml` defines event revisions, withdrawals, durable game checkpoints and isolated live shot scoring.

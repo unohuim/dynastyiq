@@ -15,6 +15,12 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  */
 class PlayByPlay extends Model
 {
+    /** Keep withdrawn provider events available for audit but out of active reads. */
+    protected static function booted(): void
+    {
+        static::addGlobalScope('active', fn ($query) => $query->whereNull('play_by_plays.withdrawn_at'));
+    }
+
     // Allow mass assignment on all attributes
     protected $guarded = [];
 

@@ -49,7 +49,7 @@ class SumNhlGameUnits
         // 2) Aggregate events that occurred while each unit was on-ice.
         $eventAgg = DB::table('event_unit_shifts as eus')
             ->join('nhl_unit_shifts as us', 'us.id', '=', 'eus.unit_shift_id')
-            ->join('play_by_plays as p', 'p.id', '=', 'eus.event_id')
+            ->join('play_by_plays as p', 'p.id', '=', 'eus.event_id')->whereNull('p.withdrawn_at')
             ->where('us.nhl_game_id', $this->gameId)
             ->groupBy('us.unit_id')
             ->selectRaw(<<<SQL

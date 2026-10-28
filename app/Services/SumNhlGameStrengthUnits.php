@@ -84,7 +84,7 @@ class SumNhlGameStrengthUnits
         $eventAgg = DB::table('event_unit_shifts as eus')
             ->join('nhl_unit_shifts as us', 'us.id', '=', 'eus.unit_shift_id')
             ->join('nhl_units as u', 'u.id', '=', 'us.unit_id')
-            ->join('play_by_plays as p', 'p.id', '=', 'eus.event_id')
+            ->join('play_by_plays as p', 'p.id', '=', 'eus.event_id')->whereNull('p.withdrawn_at')
             ->where('us.nhl_game_id', $gameId)
             ->groupBy('us.unit_id', DB::raw($strengthExpression))
             ->selectRaw(<<<SQL
@@ -222,7 +222,7 @@ class SumNhlGameStrengthUnits
             ->join('nhl_units as u', 'u.id', '=', 'us.unit_id')
             ->join('nhl_unit_players as up', 'up.unit_id', '=', 'u.id')
             ->join('players as player', 'player.id', '=', 'up.player_id')
-            ->join('play_by_plays as p', 'p.id', '=', 'eus.event_id')
+            ->join('play_by_plays as p', 'p.id', '=', 'eus.event_id')->whereNull('p.withdrawn_at')
             ->where('us.nhl_game_id', $gameId)
             ->where('p.nhl_game_id', $gameId)
             ->where('p.type_desc_key', 'goal')

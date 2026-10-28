@@ -47,3 +47,13 @@ Schedule::call(fn () => app(\App\Services\NhlLiveGameFeed::class)->dispatchDue()
     ->everyFiveSeconds()
     ->onOneServer()
     ->withoutOverlapping(1);
+
+// Revisit tracked recent finals for provider corrections after the live window.
+Schedule::call(function (): void {
+    \App\Models\NhlGame::query()->whereIn('game_state', ['OFF', 'FINAL'])
+        ->whereBetween('game_date', [now('America/Toronto')->subDays(3)->toDateString(), now('America/Toronto')->toDateString()])
+        ->whereIn('nhl_game_id', \Illuminate\Support\Facades\DB::table('nhl_pbp_processing_states')->select('nhl_game_id'))
+        ->pluck('nhl_game_id')->each(function ($id): void {
+            \App\Jobs\PollNhlLiveGameJob::dispatch((int) $id, now()->timestamp, true);
+        });
+})->name('nhl-live-final-reconciliation')->dailyAt('04:00')->timezone('America/Toronto')->onOneServer();

@@ -122,15 +122,38 @@ class ImportNHLPlayByPlay
             || str_starts_with(strtolower((string) ($details['descKey'] ?? '')), 'ps-');
     }
 
-    public function import($gameId): int
+    public function import($gameId, ?array $snapshot = null): int
     {
         $shotGeometryService = app(ShotGeometryService::class);
 
         try {
             \Log::warning("Trying Pbp import for game {$gameId}");
 
-            $response = $this->getAPIData('nhl', 'pbp', ['gameId' => $gameId]);
+            $sourceVersion = (int) floor(microtime(true) * 1000000);
+            $response = $snapshot ?? $this->getAPIData('nhl', 'pbp', ['gameId' => $gameId]);
 
+            if ($snapshot === null && ! empty($response['plays'])) {
+                $reconciler = app(NhlPbpReconciliation::class);
+                $version = $sourceVersion;
+                $reconciler->accept((int) $gameId, $response, $version, true);
+                $state = \Illuminate\Support\Facades\DB::table('nhl_pbp_processing_states')->where('nhl_game_id', $gameId)->first();
+                if ($state->fingerprint !== hash('sha256', json_encode($response['plays'], JSON_THROW_ON_ERROR))) {
+                    $version = (int) floor(microtime(true) * 1000000);
+                    $response = $this->getAPIData('nhl', 'pbp', ['gameId' => $gameId]);
+                    $reconciler->accept((int) $gameId, $response, $version, true);
+                    $state = \Illuminate\Support\Facades\DB::table('nhl_pbp_processing_states')->where('nhl_game_id', $gameId)->first();
+                }
+                if ($state->fingerprint !== hash('sha256', json_encode($response['plays'], JSON_THROW_ON_ERROR))) {
+                    throw new \RuntimeException('PBP removal requires another complete source snapshot before import can advance.');
+                }
+                (new \App\Jobs\ProcessNhlLivePbpJob((int) $gameId))->handle($reconciler, app(BuildNhlShotAttemptFacts::class));
+                try {
+                    app(NhlGameContextImporter::class)->import((int) $gameId);
+                } catch (\Throwable $exception) {
+                    report($exception);
+                }
+                return count($response['plays']);
+            }
             if (empty($response['plays'])) {
                 return 0;
             }
@@ -206,7 +229,9 @@ class ImportNHLPlayByPlay
             );
 
             try {
-                app(NhlGameContextImporter::class)->import((int) $gameId);
+                if ($snapshot === null) {
+                    app(NhlGameContextImporter::class)->import((int) $gameId);
+                }
             } catch (\Throwable $throwable) {
                 \Log::warning('NHL right-rail game context import failed without blocking PBP import.', [
                     'game_id' => $gameId,
@@ -214,10 +239,16 @@ class ImportNHLPlayByPlay
                 ]);
             }
 
+            $existing = PlayByPlay::withoutGlobalScope('active')->where('nhl_game_id', $gameId)->get()->keyBy('nhl_event_id');
             $playCount = 0;
             $penaltyShotSituationCodes = $this->penaltyShotSituationCodesByKey($response['plays']);
 
             foreach ($response['plays'] as $event) {
+                $old = $existing->get($event['eventId'] ?? null);
+                if ($old !== null && $old->withdrawn_at === null && ($old->metadata['event'] ?? null) == $event) {
+                    $playCount++;
+                    continue;
+                }
                 $details = $event['details'] ?? [];
 
                 $timeInPeriod = $event['timeInPeriod'] ?? null;
@@ -237,6 +268,7 @@ class ImportNHLPlayByPlay
                 }
 
                 $data = [
+                    'withdrawn_at' => null,
                     'nhl_game_id' => $gameId,
                     'nhl_event_id' => $event['eventId'] ?? null,
                     
@@ -326,7 +358,7 @@ class ImportNHLPlayByPlay
                     }
                 }
 
-                PlayByPlay::updateOrCreate(
+                PlayByPlay::withoutGlobalScope('active')->updateOrCreate(
                     [
                         'nhl_game_id' => $gameId,
                         'nhl_event_id' => $data['nhl_event_id'],

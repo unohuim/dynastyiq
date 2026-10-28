@@ -55,6 +55,7 @@ class BuildNhlShotAttemptFactsJob implements ShouldQueue
     {
         return [
             new \App\Jobs\Middleware\ControlNhlGameImportRun(),
+            (new WithoutOverlapping('nhl-game-import:'.$this->nhlGameId))->shared()->releaseAfter(5)->expireAfter(720),
             (new WithoutOverlapping('nhl-shot-attempt-facts:' . $this->nhlGameId))
                 ->expireAfter(300),
         ];

@@ -326,7 +326,7 @@ final class NhlPublicGamePage
      */
     private function storedTimeline(int $gameId, array $teams): array
     {
-        $rows = DB::table('play_by_plays')->where('nhl_game_id', $gameId)
+        $rows = DB::table('play_by_plays')->whereNull('withdrawn_at')->where('nhl_game_id', $gameId)
             ->orderBy('period')->orderBy('sort_order')->orderBy('id')->get();
         $fields = ['scoringPlayerId' => 'scoring_player_id', 'shootingPlayerId' => 'shooting_player_id',
             'assist1PlayerId' => 'assist1_player_id', 'assist2PlayerId' => 'assist2_player_id',

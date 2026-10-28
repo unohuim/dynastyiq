@@ -2999,3 +2999,11 @@ are preparation metadata, separate from canonical import-run statuses.
 RefreshNhlStatsDashboardJob targets include existing dashboard views plus internal
 `highlights` and `table` tasks; `table` carries a guest-visible perspective ID and
 game type. They do not add public `/stats?view=` values.
+
+### NHL PBP revision actions
+
+`nhl_pbp_event_revisions.action`: `added`, `changed`, `withdrawn`. Restoring a withdrawn event records `changed` with its restored payload.
+
+### NHL live statistics queue
+
+`nhl-live-stats` processes changed game snapshots independently of the bounded `nhl-live` provider polling queue.

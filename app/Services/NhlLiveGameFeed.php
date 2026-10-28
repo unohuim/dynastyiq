@@ -21,6 +21,12 @@ final class NhlLiveGameFeed
     /** Admit imminent games and repair recent finals whose terminal snapshot was missed. */
     public function dispatchDue(): void
     {
+        \Illuminate\Support\Facades\DB::table('nhl_pbp_processing_states')->whereColumn('pending_version', '>', 'processed_version')
+            ->orderBy('nhl_game_id')->chunk(100, function ($states): void {
+                foreach ($states as $state) {
+                    \App\Jobs\ProcessNhlLivePbpJob::dispatch((int) $state->nhl_game_id);
+                }
+            });
         $games = NhlGame::query()->whereBetween('game_date', [now('UTC')->subDay()->toDateString(), now('UTC')->toDateString()])
             ->where(fn ($query) => $query->whereNotIn('game_state', ['PPD', 'CNCL'])->orWhereNull('game_state'))
             ->where('start_time_utc', '<=', now('UTC')->addMinutes((int) config('nhl_live.start_before_minutes', 30)))
@@ -34,7 +40,7 @@ final class NhlLiveGameFeed
     }
 
     /** Fetch both endpoint snapshots once, in parallel, behind a cross-server game lock. */
-    public function poll(int $gameId): void
+    public function poll(int $gameId, bool $reconcileFinal = false): void
     {
         $lock = Cache::lock('nhl:live:poll:'.$gameId, 15);
         if (! $lock->get()) {
@@ -43,9 +49,10 @@ final class NhlLiveGameFeed
         try {
             $game = NhlGame::query()->find($gameId);
             if ($game === null || in_array($game->game_state, ['PPD', 'CNCL'], true)
-                || (in_array($game->game_state, ['OFF', 'FINAL'], true) && $this->hasFinalSnapshot($gameId))) {
+                || (! $reconcileFinal && in_array($game->game_state, ['OFF', 'FINAL'], true) && $this->hasFinalSnapshot($gameId))) {
                 return;
             }
+            $sourceVersion = (int) floor(microtime(true) * 1000000);
             $timeout = (int) config('nhl_live.request_timeout_seconds', 4);
             $responses = Http::pool(fn (Pool $pool): array => [
                 $pool->as('box')->acceptJson()->connectTimeout(2)->timeout($timeout)->get($this->getApiUrl('nhl', 'boxscore', ['gameId' => $gameId])),
@@ -91,6 +98,14 @@ final class NhlLiveGameFeed
             $snapshot = ['sequence' => $sequence, 'observed_at' => now()->toIso8601String(),
                 'fingerprint' => $fingerprint, 'game' => $detail, 'boxscore' => $box, 'pbp' => $pbp];
             Cache::put($this->key($gameId), $snapshot, 172800);
+            if (in_array($box['gameState'] ?? '', ['LIVE', 'CRIT', 'OFF', 'FINAL'], true)) {
+                try {
+                    app(NhlPbpReconciliation::class)->accept($gameId, $pbp, $sourceVersion);
+                    \App\Jobs\ProcessNhlLivePbpJob::dispatch($gameId);
+                } catch (\InvalidArgumentException $exception) {
+                    report($exception);
+                }
+            }
             // Refresh shared legacy source evidence too; no extra requests are needed by scheduled consumers.
             Cache::put('nhl:gamecenter:boxscore:'.$gameId, $box, 15);
             NhlLiveGameUpdated::dispatch([...$this->compact($snapshot), 'changed' => ($previous['fingerprint'] ?? null) !== $fingerprint]);
@@ -107,7 +122,29 @@ final class NhlLiveGameFeed
      */
     public function snapshot(int $gameId): ?array
     {
-        return Cache::get($this->key($gameId));
+        $snapshot = Cache::get($this->key($gameId));
+        if ($snapshot === null) {
+            return null;
+        }
+        $state = \Illuminate\Support\Facades\DB::table('nhl_pbp_processing_states')->where('nhl_game_id', $gameId)->first();
+        if ($state?->metrics !== null) {
+            $metrics = json_decode($state->metrics, true, 512, JSON_THROW_ON_ERROR);
+            $snapshot['game']['advanced_stats'] = [...$metrics, 'version' => $state->processed_version,
+                'pending' => $state->pending_version > $state->processed_version, 'processed_at' => $state->processed_at];
+            foreach (['away', 'home'] as $side) {
+                foreach ($snapshot['game'][$side]['boxscore'] ?? [] as $index => $player) {
+                    if (isset($metrics['goalies'][$player['id'] ?? 0])) {
+                        $snapshot['game'][$side]['boxscore'][$index] = [...$player, ...$metrics['goalies'][$player['id']]];
+                    }
+                }
+            }
+            foreach (['xgf' => 'xGF', 'xga' => 'xGA'] as $key => $label) {
+                $snapshot['game']['comparison'][] = ['label' => $label,
+                    'away' => $metrics['teams'][$snapshot['game']['away']['team_id']][$key] ?? null,
+                    'home' => $metrics['teams'][$snapshot['game']['home']['team_id']][$key] ?? null];
+            }
+        }
+        return $snapshot;
     }
 
     /** A stored final schedule state alone does not prove the public recap was captured. */
@@ -115,7 +152,8 @@ final class NhlLiveGameFeed
     {
         $snapshot = $this->snapshot($gameId);
 
-        return (int) ($snapshot['game']['nhl_game_id'] ?? 0) === $gameId
+        $candidate = \Illuminate\Support\Facades\DB::table('nhl_pbp_processing_states')->where('nhl_game_id', $gameId)->value('removal_candidate');
+        return $candidate === null && (int) ($snapshot['game']['nhl_game_id'] ?? 0) === $gameId
             && ($snapshot['game']['mode'] ?? null) === 'recap'
             && in_array($snapshot['game']['game_state'] ?? '', ['OFF', 'FINAL'], true);
     }

@@ -24,7 +24,7 @@ class NhlPlusMinusCalculator
                 'updated_at' => now(),
             ]);
 
-        $events = DB::table('play_by_plays')
+        $events = DB::table('play_by_plays')->whereNull('withdrawn_at')
             ->where('nhl_game_id', $gameId)
             ->get([
                 'id',

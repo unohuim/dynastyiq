@@ -499,7 +499,7 @@ class NhlStatsDashboardPayload
             ->groupBy('nhl_game_id', 'team_id')->selectRaw("nhl_game_id, team_id,
                 SUM(CASE WHEN (CASE WHEN UPPER(strength) IN ('EV','PP','PK') THEN UPPER(strength) ELSE UPPER(strength_bucket) END) = 'EV' THEN 1 ELSE 0 END) AS ev_sat")
             ->get()->keyBy(static fn (object $row): string => $row->nhl_game_id.':'.$row->team_id);
-        $ends = DB::table('play_by_plays')->whereIn('nhl_game_id', $ids)->where('period_type', 'OT')
+        $ends = DB::table('play_by_plays')->whereNull('withdrawn_at')->whereIn('nhl_game_id', $ids)->where('period_type', 'OT')
             ->whereIn('type_desc_key', ['goal', 'game-end', 'period-end'])->groupBy('nhl_game_id')
             ->selectRaw('nhl_game_id, MAX(seconds_in_game) AS elapsed')->get()->keyBy('nhl_game_id');
         $rows = [];

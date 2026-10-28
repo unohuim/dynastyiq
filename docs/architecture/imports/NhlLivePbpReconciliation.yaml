@@ -1,0 +1,34 @@
+name: NHL Live PBP Reconciliation
+type: Versioned Game Reconciliation
+location:
+  - app/Services/NhlPbpReconciliation.php
+  - app/Services/NhlLiveGameStatistics.php
+  - app/Jobs/ProcessNhlLivePbpJob.php
+purpose: Maintain corrected active game events and game-scoped shot expectations during live play without rebuilding season aggregates.
+when_to_use:
+  - Processing changed provider event snapshots during live games.
+  - Recovering pending live processing after worker restarts.
+  - Reconciling recent final games overnight.
+when_not_to_use:
+  - Training probability models.
+  - Computing player on-ice metrics without verified shift evidence.
+rules:
+  - Validate game identity, unique event identities and goal timeline agreement before accepting a snapshot. Empty event lists cannot withdraw stored events.
+  - Confirm missing active event IDs in two successive valid observations before accepting removals. Provider completeness cannot be proven by HTTP success alone.
+  - Keep one durable pending snapshot per game. Clock-only changes do not create work. Source request ordering fences older observations.
+  - Processing shares the ordinary import game lock, commits events and derived facts atomically, and advances only the version actually processed. A newer pending version survives that commit.
+  - Preserve event revisions and withdrawn source rows; active Eloquent and raw analytical reads exclude withdrawn events. Restore source IDs if an event reappears.
+  - Rebuild game shot context after corrections, including score state and rebounds. Remove obsolete derived attempt facts and their dependent ratings.
+  - Pin existing trained model identities after selection. Conditional SOG goal probabilities contribute only on actual SOG; missing scoring coverage produces unavailable expectations.
+  - Live processing suppresses SatImported and season refresh events. Ordinary completed import stages retain responsibility for nightly season aggregation.
+  - Recover pending work through the existing shared scheduler; use a separate statistics queue so calculations cannot consume polling workers.
+  - Public advanced statistics carry processing version, processing time and pending status. Team xGA is opponent xGF from the same model and version.
+public_interface:
+  - NhlPbpReconciliation::accept
+  - NhlPbpReconciliation::reconcile
+  - ProcessNhlLivePbpJob
+  - nhl_pbp_processing_states
+  - nhl_pbp_event_revisions
+example_usage: |
+  A shared provider poll accepts changed events and queues one game job.
+  Later snapshots replace pending evidence while the active job finishes its captured version.

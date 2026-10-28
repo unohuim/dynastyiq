@@ -1797,3 +1797,7 @@ Subscribe before requesting the initial snapshot, then apply updates by increasi
 A ready section returns `{ "nhl_game_id": 123, "mode": "preview", "section": "lineups", "data": { ... } }`. A cold prepared-payload miss returns HTTP 202 with `{ "status": "preparing" }` and queues background preparation. These responses use `Cache-Control: no-store`. Invalid section names return 422; missing games return 404. Guests and authenticated users share the same public read contract; lineup mutation authorization remains unchanged.
 
 Section data contains only that panel's fields. Clients must not replace game identity, score, clock, mode or odds with section responses. Ignore obsolete responses after navigation or a mode change, and keep live updates independent of section loading. Existing partner prediction payloads are unchanged.
+
+### Live advanced game statistics
+
+The full `/games/live?game_id={id}` snapshot may include `game.advanced_stats` with `available`, pinned `model_ids`, `teams` keyed by NHL team ID, `goalies` keyed by NHL player ID, processing `version`, `processed_at`, and `pending`. Team values include xGF/xGA and EV/PP/PK splits. Goalie values include xGA and GSAx. These are observed-event expectations, not forecasts. Null expectations mean incomplete scoring coverage; missing models are explicitly unavailable. A pending result describes the previous completed processing version. The compact Reverb envelope remains unchanged; clients fetch full details after its changed notification.

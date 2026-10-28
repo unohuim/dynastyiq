@@ -22,7 +22,7 @@ final class PollNhlLiveGameJob implements ShouldQueue, ShouldBeUnique
     public int $tries = 1;
 
     /** Drop obsolete queued ticks rather than replaying a backlog of live polls. */
-    public function __construct(public int $gameId, public int $queuedAt)
+    public function __construct(public int $gameId, public int $queuedAt, public bool $reconcileFinal = false)
     {
         $this->onQueue('nhl-live');
     }
@@ -42,8 +42,8 @@ final class PollNhlLiveGameJob implements ShouldQueue, ShouldBeUnique
     /** The scheduler will admit a new tick after failure or a skipped stale tick. */
     public function handle(NhlLiveGameFeed $feed): void
     {
-        if (now()->timestamp - $this->queuedAt <= 10) {
-            $feed->poll($this->gameId);
+        if ($this->reconcileFinal || now()->timestamp - $this->queuedAt <= 10) {
+            $feed->poll($this->gameId, $this->reconcileFinal);
         }
     }
 }

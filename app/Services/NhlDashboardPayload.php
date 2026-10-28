@@ -253,7 +253,7 @@ class NhlDashboardPayload
         $members = DB::table('nhl_unit_players as up')->join('players as p', 'p.id', '=', 'up.player_id')
             ->whereIn('up.unit_id', $shifts->pluck('unit_id')->unique())
             ->orderBy('p.id')->get(['up.unit_id', 'p.id', 'p.nhl_id', 'p.full_name', 'p.first_name', 'p.last_name', 'p.position'])->groupBy('unit_id');
-        $faceoffs = DB::table('play_by_plays')->whereIn('nhl_game_id', $games->pluck('nhl_game_id'))
+        $faceoffs = DB::table('play_by_plays')->whereNull('withdrawn_at')->whereIn('nhl_game_id', $games->pluck('nhl_game_id'))
             ->where('type_desc_key', 'faceoff')->get(['nhl_game_id', 'fo_winning_player_id', 'fo_losing_player_id'])
             ->groupBy('nhl_game_id')->map(fn (Collection $plays): Collection => $plays
                 ->flatMap(fn (object $play): array => [$play->fo_winning_player_id, $play->fo_losing_player_id])
@@ -308,7 +308,7 @@ class NhlDashboardPayload
 
         $attemptPredicate = app(NhlPbpEventNormalizer::class)->shotAttemptSqlPredicate('p');
         $events = DB::table('event_unit_shifts as e')->join('nhl_unit_shifts as s', 's.id', '=', 'e.unit_shift_id')
-            ->join('play_by_plays as p', 'p.id', '=', 'e.event_id')->join('nhl_units as u', 'u.id', '=', 's.unit_id')
+            ->join('play_by_plays as p', 'p.id', '=', 'e.event_id')->whereNull('p.withdrawn_at')->join('nhl_units as u', 'u.id', '=', 's.unit_id')
             ->whereIn('s.nhl_game_id', $games->pluck('nhl_game_id'))->whereColumn('p.nhl_game_id', 's.nhl_game_id')
             ->where('u.unit_type', 'F')->where('p.situation_code', '1551')->whereRaw($attemptPredicate)
             ->distinct()->get(['s.nhl_game_id', 's.unit_id', 's.team_id', 'p.id', 'p.event_owner_team_id', 'p.type_desc_key']);

@@ -22,7 +22,7 @@ class BuildNhlShotAttemptFacts
     /**
      * Upsert shot-attempt facts for one NHL game.
      */
-    public function buildForGame(int $gameId): int
+    public function buildForGame(int $gameId, bool $emitImportEvent = true): int
     {
         $game = NhlGame::query()->find($gameId);
 
@@ -83,18 +83,22 @@ class BuildNhlShotAttemptFacts
             $previousPlay = $play;
         }
 
-        if ($rows === []) {
-            return 0;
-        }
-
-        DB::transaction(function () use ($rows, $game): void {
+        DB::transaction(function () use ($rows, $game, $emitImportEvent): void {
+            // Corrections may withdraw an attempt or turn it into a non-shot event.
+            DB::table('nhl_shot_attempts_facts')->where('nhl_game_id', $game->nhl_game_id)
+                ->whereNotIn('play_by_play_id', array_column($rows, 'play_by_play_id'))->delete();
+            if ($rows === []) {
+                return;
+            }
             DB::table('nhl_shot_attempts_facts')->upsert(
                 $rows,
                 ['play_by_play_id'],
                 array_values(array_diff(array_keys($rows[0]), ['play_by_play_id', 'created_at']))
             );
 
-            SatImported::dispatch((int) $game->nhl_game_id, (string) $game->season_id, (int) $game->game_type);
+            if ($emitImportEvent) {
+                SatImported::dispatch((int) $game->nhl_game_id, (string) $game->season_id, (int) $game->game_type);
+            }
         });
 
         return count($rows);

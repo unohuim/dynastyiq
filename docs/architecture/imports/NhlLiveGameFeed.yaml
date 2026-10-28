@@ -11,6 +11,7 @@ location:
 purpose: Fetch live NHL evidence once per game and distribute it to all public consumers without viewer-driven provider requests.
 when_to_use:
   - Updating public scoreboard, games index and game detail during active games.
+  - Supplying validated source snapshots to the separate live PBP reconciliation process.
   - Letting internal listeners or partner clients consume the same public live update.
 when_not_to_use:
   - Historical import processing or season-stat aggregation.

@@ -5117,3 +5117,8 @@ stack, or player-evaluation records.
   input rows. Shared NHL facts, pregame contexts, engines and evaluations remain.
 
 **End of DB_SCHEMA**
+
+
+## Live PBP reconciliation
+
+Migration `2026_10_28_000001_create_nhl_pbp_reconciliation_records.php` adds nullable `play_by_plays.withdrawn_at`, game-keyed `nhl_pbp_processing_states` checkpoints (pending/processed versions, newest payload, model provenance, metrics and errors), and game/event/version-keyed `nhl_pbp_event_revisions` preserving correction evidence. There is no historical data backfill. Withdrawn events remain stored but are excluded from active analytical reads.
