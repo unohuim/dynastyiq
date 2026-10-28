@@ -53,11 +53,11 @@ it('does not poll games whose puck drop is outside the monitoring window', funct
     Bus::assertNotDispatched(PollNhlLiveGameJob::class);
 });
 
-it('does not admit terminal postponed or cancelled schedule rows', function (string $state): void {
+it('does not admit postponed or cancelled schedule rows', function (string $state): void {
     $this->game->update(['game_state' => $state]);
     $this->feed->dispatchDue();
     Bus::assertNotDispatched(PollNhlLiveGameJob::class);
-})->with(['OFF', 'FINAL', 'PPD', 'CNCL']);
+})->with(['PPD', 'CNCL']);
 
 it('continues to monitor yesterday unfinished games across midnight', function (): void {
     $this->game->update(['game_date' => '2026-10-26', 'game_state' => 'LIVE']);
@@ -202,4 +202,73 @@ it('keeps raw source rows and player details out of compact broadcasts', functio
     $compact = $this->feed->compact($this->feed->snapshot(2026020001));
     expect($compact)->not->toHaveKey('boxscore')->not->toHaveKey('pbp')
         ->and($compact['game']['home'])->not->toHaveKey('boxscore');
+});
+
+
+it('admits recent stored finals until their final public snapshot exists', function (string $state): void {
+    $this->game->update(['game_state' => $state]);
+    $this->feed->dispatchDue();
+    Bus::assertDispatched(PollNhlLiveGameJob::class, fn ($job): bool => $job->gameId === 2026020001);
+})->with(['OFF', 'FINAL']);
+
+it('repairs a stale live snapshot after imports mark the game final', function (bool $authenticated): void {
+    if ($authenticated) {
+        $this->actingAs(\App\Models\User::factory()->create());
+    }
+    ($this->provider)();
+    $this->feed->poll(2026020001);
+    $this->travel(21)->seconds();
+    $this->game->update(['game_state' => 'FINAL']);
+    ($this->provider)(['gameState' => 'FINAL', 'plays' => [
+        ['eventId' => 1, 'typeDescKey' => 'goal', 'periodDescriptor' => ['number' => 1, 'periodType' => 'REG'],
+            'timeInPeriod' => '01:00', 'details' => ['eventOwnerTeamId' => 10, 'xCoord' => 70, 'yCoord' => 10,
+                'homeScore' => 1, 'awayScore' => 0]],
+    ]]);
+    $this->feed->dispatchDue();
+    Bus::assertDispatched(PollNhlLiveGameJob::class);
+    $this->feed->poll(2026020001);
+    $this->assertDatabaseHas('nhl_games', ['nhl_game_id' => 2026020001, 'game_state' => 'FINAL']);
+    $this->assertDatabaseCount('play_by_plays', 0);
+    $this->getJson('/games/2026020001/details?section=play_by_play')->assertOk()
+        ->assertJsonPath('mode', 'recap')->assertJsonPath('data.plays_available', true)
+        ->assertJsonCount(1, 'data.shots')->assertJsonCount(1, 'data.plays');
+    $this->getJson('/games/2026020001/details?section=goals')->assertOk()->assertJsonCount(1, 'data.events');
+    $this->getJson('/games/live?game_id=2026020001')->assertOk()
+        ->assertJsonPath('snapshots.0.game.mode', 'recap')->assertJsonPath('snapshots.0.stale', false);
+    Event::assertDispatched(NhlLiveGameUpdated::class, fn ($event): bool => $event->snapshot['game']['mode'] === 'recap');
+})->with(['guest' => [false], 'ordinary user' => [true]]);
+
+it('does not enqueue more work once the final snapshot is captured', function (): void {
+    ($this->provider)(['gameState' => 'FINAL']);
+    $this->feed->poll(2026020001);
+    $this->travel(30)->seconds();
+    $this->feed->dispatchDue();
+    Bus::assertNotDispatched(PollNhlLiveGameJob::class);
+    $this->feed->poll(2026020001);
+    Http::assertSentCount(2);
+});
+
+it('does not downgrade a stored final when provider evidence still says live', function (): void {
+    ($this->provider)();
+    $this->feed->poll(2026020001);
+    $previous = $this->feed->snapshot(2026020001);
+    $this->game->update(['game_state' => 'FINAL']);
+    expect(fn () => $this->feed->poll(2026020001))->toThrow(\RuntimeException::class, 'Awaiting final NHL provider snapshot');
+    $this->assertDatabaseHas('nhl_games', ['nhl_game_id' => 2026020001, 'game_state' => 'FINAL']);
+    expect($this->feed->snapshot(2026020001))->toBe($previous);
+});
+
+it('keeps final snapshot repair limited to the recent schedule window', function (): void {
+    $this->game->update(['game_state' => 'FINAL', 'game_date' => '2026-10-24']);
+    $this->feed->dispatchDue();
+    Bus::assertNotDispatched(PollNhlLiveGameJob::class);
+});
+
+it('allows a later scheduled tick to retry failed final snapshot recovery', function (): void {
+    $this->game->update(['game_state' => 'FINAL']);
+    Http::fake(['api-web.nhle.com/*' => Http::response([], 503)]);
+    expect(fn () => $this->feed->poll(2026020001))->toThrow(\RuntimeException::class);
+    expect($this->feed->snapshot(2026020001))->toBeNull();
+    $this->feed->dispatchDue();
+    Bus::assertDispatched(PollNhlLiveGameJob::class);
 });

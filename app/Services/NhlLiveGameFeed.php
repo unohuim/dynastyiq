@@ -18,15 +18,18 @@ final class NhlLiveGameFeed
 {
     use HasAPITrait;
 
-    /** Admit only imminent or unfinished games, including games spanning midnight. */
+    /** Admit imminent games and repair recent finals whose terminal snapshot was missed. */
     public function dispatchDue(): void
     {
         $games = NhlGame::query()->whereBetween('game_date', [now('UTC')->subDay()->toDateString(), now('UTC')->toDateString()])
-            ->where(fn ($query) => $query->whereNotIn('game_state', ['OFF', 'FINAL', 'PPD', 'CNCL'])->orWhereNull('game_state'))
+            ->where(fn ($query) => $query->whereNotIn('game_state', ['PPD', 'CNCL'])->orWhereNull('game_state'))
             ->where('start_time_utc', '<=', now('UTC')->addMinutes((int) config('nhl_live.start_before_minutes', 30)))
-            ->pluck('nhl_game_id');
-        foreach ($games as $id) {
-            PollNhlLiveGameJob::dispatch((int) $id, now()->timestamp);
+            ->get(['nhl_game_id', 'game_state']);
+        foreach ($games as $game) {
+            if (in_array($game->game_state, ['OFF', 'FINAL'], true) && $this->hasFinalSnapshot((int) $game->nhl_game_id)) {
+                continue;
+            }
+            PollNhlLiveGameJob::dispatch((int) $game->nhl_game_id, now()->timestamp);
         }
     }
 
@@ -39,7 +42,8 @@ final class NhlLiveGameFeed
         }
         try {
             $game = NhlGame::query()->find($gameId);
-            if ($game === null || in_array($game->game_state, ['OFF', 'FINAL', 'PPD', 'CNCL'], true)) {
+            if ($game === null || in_array($game->game_state, ['PPD', 'CNCL'], true)
+                || (in_array($game->game_state, ['OFF', 'FINAL'], true) && $this->hasFinalSnapshot($gameId))) {
                 return;
             }
             $timeout = (int) config('nhl_live.request_timeout_seconds', 4);
@@ -70,6 +74,13 @@ final class NhlLiveGameFeed
                     }
                 }
             }
+            // Imports can mark a game final while this provider request is in flight.
+            // Wait for terminal provider evidence instead of reverting the stored final.
+            $game->refresh();
+            if (in_array($game->game_state, ['OFF', 'FINAL'], true)
+                && ! in_array($box['gameState'] ?? '', ['OFF', 'FINAL'], true)) {
+                throw new \RuntimeException('Awaiting final NHL provider snapshot for game '.$gameId);
+            }
             $context = app(NhlGameLiveContext::class);
             $context->persistShared($game, $box);
             $provider = $context->detailFromProvider($box, $pbp);
@@ -97,6 +108,16 @@ final class NhlLiveGameFeed
     public function snapshot(int $gameId): ?array
     {
         return Cache::get($this->key($gameId));
+    }
+
+    /** A stored final schedule state alone does not prove the public recap was captured. */
+    private function hasFinalSnapshot(int $gameId): bool
+    {
+        $snapshot = $this->snapshot($gameId);
+
+        return (int) ($snapshot['game']['nhl_game_id'] ?? 0) === $gameId
+            && ($snapshot['game']['mode'] ?? null) === 'recap'
+            && in_array($snapshot['game']['game_state'] ?? '', ['OFF', 'FINAL'], true);
     }
 
     /** Freshness is explicit; an old snapshot is never advertised as current live data. */

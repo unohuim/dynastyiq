@@ -30,6 +30,7 @@ rules:
   - Horizon must isolate model builds, profiles, projections, comparisons, SAT Engine discovery/ranking, next-game evaluations, and historical pregame-context builds and manual admin game-prediction runs on the projections queue. Coordinators, loaders, continuations, and child batches must retain that queue; NHL schedule discovery and ordinary import/fact-building pipelines remain on default.
   - Time-sensitive anticipated-lineup work and live prediction cache refreshes remain on lineups; Fantrax provider work remains on fantrax; unrelated work remains on default.
   - Horizon retains twenty-five projections workers, five to ten default workers, five Fantrax workers and two lineup workers, and adds four to eight dedicated nhl-live workers in every environment. These are per-instance allocations rather than cross-server limits. Shared live-feed production is governed by imports/NhlLiveGameFeed.yaml.
+  - Horizon enables fast termination for graceful deployments so a replacement master can start while old workers finish their claimed jobs. Deployment must use normal horizon:terminate without --wait; a blocking process-manager stop/restart can still delay replacement. Job timeouts and queue assignments remain unchanged.
   - Queue routing changes do not relocate previously serialized jobs or existing batches. Default workers must remain available to drain them; existing batch options remain authoritative for their child additions.
 public_interface:
   - Laravel route definitions
