@@ -24,8 +24,24 @@ const status = computed(() => mode.value === 'live' ? scoreboardStatus(game.valu
 const sections = computed(() => mode.value === 'preview'
   ? [['matchup', 'Matchup'], ['lineups', 'Lineups'], ['meetings', 'Head-to-head']]
   : [['summary', 'Game stats'], ['goals', 'Scoring'], ['boxscore', 'Boxscore'], ['play_by_play', 'Play-by-play']]);
-const liveTabs = [['summary', 'Summary'], ['boxscore', 'Boxscore'], ['play_by_play', 'Play-by-play']];
+const liveTabs = [['summary', 'Summary'], ['boxscore', 'Boxscore'], ['play_by_play', 'Play-by-play'], ['shot_map', 'Shot map'], ['game_flow', 'Game flow']];
 const activeTab = ref('summary');
+function selectLiveTab(name) {
+  if (!liveTabs.some(([id]) => id === name)) return;
+  activeTab.value = name;
+  void nextTick(() => document.getElementById(`tab-${name}`)?.focus());
+}
+const clockLabel = computed(() => {
+  if (mode.value !== 'live') return status.value;
+  if (game.value.in_intermission) return status.value;
+  return game.value.period_type === 'SO' ? 'Shootout' : game.value.time_remaining ?? 'Live';
+});
+const periodHeading = computed(() => {
+  if (mode.value !== 'live') return 'Game';
+  const period = Number(game.value.period_number);
+  if (game.value.period_type === 'SO') return 'Shootout';
+  return period > 3 ? `${period === 4 ? '' : period - 3}Overtime` : ['1st period', '2nd period', '3rd period'][period - 1] ?? 'In progress';
+});
 const detailStates = computed(() => Object.fromEntries(sections.value.map(([name]) => [name, panelState(name)])));
 function navigateTabs(event) {
   const index = liveTabs.findIndex(([name]) => name === activeTab.value);
@@ -152,36 +168,39 @@ onBeforeUnmount(() => { disposed = true; cancelPanels(); window.clearTimeout(tim
 
 <template>
   <Head :title="title" />
-  <main class="min-h-screen bg-[#101923] text-[#E7EEF6]">
-    <div class="mx-auto max-w-7xl px-4 py-5 sm:px-6 sm:py-7 lg:px-8">
-      <div class="mb-4 flex items-center justify-between gap-3 text-xs">
+  <main class="min-h-screen bg-[#08141E] text-[#E7EEF6]">
+    <div class="mx-auto max-w-[1536px] px-3 py-3 sm:px-4 sm:py-4">
+      <div class="mb-2 flex items-center justify-between gap-3 text-xs">
         <Link :href="game.game_date ? `/games?date=${game.game_date}` : '/games'" class="rounded text-[#91A8BA] transition-colors duration-150 hover:text-white focus-visible:ring-2 focus-visible:ring-sky-400 motion-reduce:transition-none">‹ All games</Link>
         <span role="status" class="text-[#91A8BA]">{{ busy ? 'Updating…' : dateTime }}</span>
       </div>
       <p v-if="liveWarning && mode === 'live'" role="status" class="mb-3 text-xs text-amber-300">{{ liveWarning }}</p>
-      <p v-if="game.live_data_unavailable" role="status" class="rounded-xl border border-[#29404F] bg-[#172534] p-6 text-sm text-[#B6C7D5]">Live NHL data is temporarily unavailable. This page will retry automatically.</p>
+      <p v-if="game.live_data_unavailable" role="status" class="rounded-xl border border-[#29404F] bg-[#0D1D29] p-6 text-sm text-[#B6C7D5]">Live NHL data is temporarily unavailable. This page will retry automatically.</p>
       <template v-else>
-        <header class="overflow-hidden rounded-xl border border-[#29404F] bg-[#172534]">
-          <div class="flex items-center justify-between gap-3 border-b border-[#29404F] bg-[#13202D] px-4 py-2.5 sm:px-6">
-            <h1 class="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#A6B9C9]">{{ mode === 'recap' ? 'Game recap' : mode === 'live' ? 'Live game' : 'Game preview' }}</h1>
-            <span class="inline-flex items-center gap-1.5 text-[10px] font-semibold" :class="mode === 'live' ? 'text-emerald-400' : 'text-[#91A8BA]'"><i v-if="mode === 'live'" aria-hidden="true" class="size-1.5 rounded-full bg-emerald-400" />{{ mode === 'live' ? 'IN PROGRESS' : game.status }}</span>
+        <header class="overflow-hidden rounded-xl border border-[#29404F] bg-[#0D1D29]">
+          <div class="flex items-center justify-between gap-3 border-b border-[#29404F] bg-[#0B1924] px-4 py-2.5 sm:px-6">
+            <h1 class="inline-flex shrink-0 items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-[#B8D5EA] sm:text-base"><i v-if="mode === 'live'" aria-hidden="true" class="size-3 rounded-full bg-rose-500" />{{ mode === 'recap' ? 'Game recap' : mode === 'live' ? 'Live game' : 'Game preview' }}</h1>
+            <span class="inline-flex items-center gap-1.5 text-[10px] font-semibold" :class="mode === 'live' ? 'text-emerald-400' : 'text-[#91A8BA]'"><i v-if="mode === 'live'" aria-hidden="true" class="size-1.5 rounded-full bg-emerald-400" />{{ mode === 'live' ? status : game.status }}<span class="hidden font-normal text-[#A6B9C9] md:inline">｜ {{ game.venue }} · {{ dateTime }}</span></span>
           </div>
-          <div class="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 px-3 py-5 sm:gap-6 sm:px-8 sm:py-6">
+          <div class="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 px-3 py-5 sm:gap-5 sm:px-8 sm:py-3 lg:px-20">
             <template v-for="(side, index) in sides" :key="side">
               <div v-if="index === 1" class="max-w-24 text-center sm:max-w-none">
-                <span class="inline-block rounded-md px-2 py-1.5 font-mono text-[10px] font-semibold leading-relaxed sm:px-3 sm:text-sm" :class="mode === 'live' ? 'bg-emerald-400/10 text-emerald-400' : 'bg-[#101D2A] text-[#A6B9C9]'">{{ mode === 'preview' ? 'VS' : status }}</span>
+                <div class="rounded-xl border border-[#29404F] bg-[#0A1823] px-2 py-2.5 sm:min-w-48 sm:px-6 sm:py-3">
+                  <p v-if="mode !== 'preview'" class="text-[9px] uppercase text-[#B8D5EA] sm:text-xs">{{ periodHeading }}</p>
+                  <p class="font-mono text-[13px] font-bold tabular-nums sm:mt-1 sm:text-3xl" :class="mode === 'live' ? 'text-emerald-400' : 'text-[#B8D5EA]'">{{ mode === 'preview' ? 'VS' : clockLabel }}</p>
+                </div>
               </div>
               <div class="flex min-w-0 items-center justify-center gap-2 sm:gap-5" :class="side === 'home' ? 'flex-row-reverse' : ''">
                 <div class="flex min-w-0 flex-col items-center gap-1.5 text-center sm:gap-3" :class="side === 'home' ? 'sm:flex-row-reverse sm:text-right' : 'sm:flex-row sm:text-left'">
-                  <img v-if="game[side].team_logo" :src="game[side].team_logo" alt="" class="size-10 shrink-0 object-contain sm:size-16 lg:size-20" />
-                  <div class="min-w-0"><p class="hidden truncate text-base font-bold sm:block lg:text-xl">{{ game[side].team_name ?? game[side].team_abbrev }}</p><p class="font-semibold tracking-wide sm:mt-1 sm:text-xs sm:text-[#91A8BA]">{{ game[side].team_abbrev ?? '—' }}</p><p v-if="mode !== 'preview'" class="mt-1 whitespace-nowrap font-mono text-[10px] text-[#91A8BA]">SOG {{ game[side].sog ?? '—' }}</p></div>
+                  <img v-if="game[side].team_logo" :src="game[side].team_logo" alt="" class="size-10 shrink-0 object-contain sm:size-20 lg:size-32" />
+                  <div class="min-w-0"><p class="hidden truncate text-base font-bold sm:block lg:text-2xl">{{ game[side].team_name ?? game[side].team_abbrev }}</p><p class="font-semibold tracking-wide sm:mt-1 sm:text-xs sm:text-[#91A8BA]">{{ game[side].team_abbrev ?? '—' }}</p><p v-if="mode !== 'preview'" class="mt-1 whitespace-nowrap font-mono text-[10px] text-[#91A8BA]">SOG {{ game[side].sog ?? '—' }}</p></div>
                 </div>
-                <p v-if="mode !== 'preview'" class="shrink-0 font-mono text-[38px] font-bold leading-none tabular-nums sm:text-6xl">{{ game[side].score ?? '—' }}</p>
+                <p v-if="mode !== 'preview'" class="shrink-0 font-mono text-[38px] font-bold leading-none tabular-nums sm:text-7xl lg:text-[84px]">{{ game[side].score ?? '—' }}</p>
                 <div v-else class="min-w-0 text-center"><p class="font-mono text-lg font-semibold tabular-nums text-sky-300 sm:text-3xl">{{ probability(side) }}</p><p class="mt-1 text-[8px] uppercase tracking-wider text-[#91A8BA] sm:text-[9px]">Win probability</p></div>
               </div>
             </template>
           </div>
-          <div class="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 border-t border-[#29404F] px-3 py-2.5 text-[10px] text-[#91A8BA] sm:text-xs">
+          <div v-if="mode === 'preview'" class="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 border-t border-[#29404F] px-3 py-2.5 text-[10px] text-[#91A8BA] sm:text-xs">
             <span>{{ dateTime }}</span><span v-if="game.venue">· {{ game.venue }}</span>
             <span v-if="mode === 'preview' && !game.prediction">· Prediction not yet available</span>
             <template v-if="mode === 'preview' && game.prediction?.score"><span class="font-mono text-sky-300">Projected score {{ number(game.prediction.score.away) }} – {{ number(game.prediction.score.home) }}</span><span v-if="game.prediction?.total_goals != null" class="font-mono">Total goals {{ number(game.prediction.total_goals) }}</span></template>
@@ -191,11 +210,11 @@ onBeforeUnmount(() => { disposed = true; cancelPanels(); window.clearTimeout(tim
           <a v-for="[id, label] in sections" :key="id" :href="`#${id}`" class="shrink-0 border-b-2 border-transparent pb-3 text-[#A6B9C9] transition-colors duration-150 hover:border-sky-400 hover:text-white focus-visible:ring-2 focus-visible:ring-sky-400 motion-reduce:transition-none">{{ label }}</a>
         </nav>
         <div v-else role="tablist" aria-label="Game sections" class="my-4 flex overflow-x-auto border-b border-[#29404F] sm:my-5" @keydown="navigateTabs">
-          <button v-for="[id, label] in liveTabs" :id="`tab-${id}`" :key="id" type="button" role="tab" :aria-selected="activeTab === id" :aria-controls="`panel-${id}`" :tabindex="activeTab === id ? 0 : -1" class="min-h-11 shrink-0 border-b-2 px-4 text-xs font-semibold transition-colors duration-200 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-400 motion-reduce:transition-none sm:px-6 sm:text-sm" :class="activeTab === id ? 'border-sky-400 text-sky-300' : 'border-transparent text-[#91A8BA]'" @click="activeTab = id">{{ label }}</button>
+          <button v-for="[id, label] in liveTabs" :id="`tab-${id}`" :key="id" type="button" role="tab" :aria-selected="activeTab === id" :aria-controls="`panel-${id === 'shot_map' ? 'summary' : id}`" :tabindex="activeTab === id ? 0 : -1" class="min-h-11 shrink-0 border-b-2 px-4 text-xs font-semibold transition-colors duration-200 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-400 motion-reduce:transition-none sm:px-6 sm:text-sm" :class="activeTab === id ? 'border-sky-400 text-sky-300' : 'border-transparent text-[#91A8BA]'" @click="activeTab = id">{{ label }}</button>
         </div>
         <template v-if="mode === 'preview'">
           <GameSectionState name="matchup" title="The matchup" :state="panelState('matchup')" @retry="loadPanel('matchup')" />
-          <section v-if="panelReady('matchup')" id="matchup" class="scroll-mt-5 rounded-xl border border-[#29404F] bg-[#172534] p-4 sm:p-6">
+          <section v-if="panelReady('matchup')" id="matchup" class="scroll-mt-5 rounded-xl border border-[#29404F] bg-[#0D1D29] p-4 sm:p-6">
             <h2 class="text-sm font-semibold">The matchup</h2>
             <div class="mt-4 grid grid-cols-2 gap-4 sm:gap-8">
               <div v-for="side in sides" :key="side">
@@ -212,14 +231,14 @@ onBeforeUnmount(() => { disposed = true; cancelPanels(); window.clearTimeout(tim
             <div class="grid gap-4 xl:grid-cols-2"><LineupTeam :team="game.away" side="Away" /><LineupTeam :team="game.home" side="Home" /></div>
           </section>
           <GameSectionState name="meetings" title="Last five meetings" :state="panelState('meetings')" @retry="loadPanel('meetings')" />
-          <section v-if="panelReady('meetings')" id="meetings" class="mt-5 scroll-mt-5 rounded-xl border border-[#29404F] bg-[#172534] p-4 sm:p-6">
+          <section v-if="panelReady('meetings')" id="meetings" class="mt-5 scroll-mt-5 rounded-xl border border-[#29404F] bg-[#0D1D29] p-4 sm:p-6">
             <h2 class="mb-3 text-sm font-semibold">Last five meetings</h2>
             <div v-if="game.head_to_head?.length" class="divide-y divide-[#29404F]">
               <Link v-for="meeting in game.head_to_head" :key="meeting.id" :href="`/games/${meeting.id}`" prefetch class="flex items-center justify-between gap-3 rounded py-3 text-xs transition-colors duration-150 hover:text-sky-300 focus-visible:ring-2 focus-visible:ring-sky-400 motion-reduce:transition-none"><span class="text-[#91A8BA]">{{ shortDate(meeting.date) }}</span><span>{{ meeting.away }} <b class="font-mono">{{ meeting.away_score }}–{{ meeting.home_score }}</b> {{ meeting.home }}</span><span aria-hidden="true">›</span></Link>
             </div><p v-else class="text-xs text-[#91A8BA]">No previous completed meetings available.</p>
           </section>
         </template>
-        <GameLiveDetails v-else :game="game" :tab="activeTab" :states="detailStates" @retry="loadPanel" />
+        <GameLiveDetails v-else :game="game" :tab="activeTab" :states="detailStates" @retry="loadPanel" @navigate="selectLiveTab" />
       </template>
     </div>
   </main>

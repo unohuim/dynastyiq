@@ -116,7 +116,7 @@ The default desktop dashboard overview should fit above the fold, with a compact
 performers/signings/injuries row. Shorter viewports may scroll panel contents;
 explicitly expanded content remains accessible through normal page scrolling.
 
-Public numeric game detail pages retain graphite surfaces and take structural inspiration from NHL Gamecenter and Pucks & Stats: compact logo/score/SOG header, centered green live clock, blue active tabs, rink shot locations, period scoring, recent goals and team comparison bars. Use Summary, Boxscore and Play-by-play tabs for live and recap modes. Mobile stacks the panels without page overflow. The header scoreboard identifies the currently viewed game with a blue bottom underline and subtle blue surface. These approvals apply to game detail and its selected scoreboard tile.
+Public numeric live-game detail uses `docs/designs/live-nhl-game-dashboard.png` as its visual authority: compact full-width score header, large team logos, centered green clock, cyan active tabs, a large dark rink on the left and linescore/team stats on the right. Scoring summary and recent plays sit side by side below the rink; goalie SV, SA and SV% with rate bars occupy the lower right. Use legible team-colored accents (contrasting alternate accents when both match), outlined goal markers and thin split stat bars. Summary, Boxscore, Play-by-play, Shot map and Game flow tabs retain local state; Game flow shows cumulative recorded shot attempts. Mobile stacks panels without document overflow. The header scoreboard retains its selected-game blue underline. Preview behavior and the shared live-update pipeline remain unchanged.
 
 Its purpose is to:
 

@@ -1269,4 +1269,64 @@ describe('public game preview and recap', () => {
         expect(merged.time_remaining).toBe('01:00'); expect(merged.mode).toBe('live');
     });
 
+    it('opens the dedicated shot map using the existing markers and retained filters', async () => {
+        mount({ plays_available: true, shots: [{ id: 1, type: 'goal', side: 'away', period: 1, x: 20, y: 10 }] });
+        const filter = document.querySelector('[aria-label="Shot map team"]');
+        filter.value = 'away'; filter.dispatchEvent(new Event('change', { bubbles: true }));
+        document.querySelector('#tab-shot_map').click(); await nextTick();
+        expect(document.querySelector('#panel-summary').getAttribute('aria-labelledby')).toBe('tab-shot_map');
+        expect(document.querySelector('#panel-summary').style.display).not.toBe('none');
+        expect(document.querySelectorAll('svg g[role=button]')).toHaveLength(1);
+        expect(filter.value).toBe('away');
+        expect(inertia.router.reload).not.toHaveBeenCalled();
+    });
+    it('opens all plays from the summary recent plays card', async () => {
+        mount({ plays_available: true, plays: [{ id: 1, type: 'hit', label: 'Hit', player: 'Hitter', period: 1, time: '01:00' }] });
+        expect(document.querySelector('[aria-label="Recent plays"]').textContent).toContain('Hitter');
+        document.querySelector('[aria-label="Recent plays"] button').click(); await nextTick();
+        expect(document.querySelector('#tab-play_by_play').getAttribute('aria-selected')).toBe('true');
+        expect(document.querySelector('#panel-play_by_play').style.display).not.toBe('none');
+    });
+    it('limits recent plays to four newest meaningful events', () => {
+        mount({ plays: Array.from({ length: 6 }, (_, i) => ({ id: i, type: i === 5 ? 'stoppage' : 'hit', label: 'Hit', player: `Player ${i}`, period: 1 })) });
+        const rows = document.querySelectorAll('[aria-label="Recent plays"] li');
+        expect(rows).toHaveLength(4);
+        expect(rows[0].textContent).toContain('Player 4');
+        expect(rows[3].textContent).toContain('Player 1');
+    });
+    it('shows individual goalie saves shots against and save rate without treating zero shots as a rate', () => {
+        mount({ away: { team_abbrev: 'BOS', boxscore: [{ id: 1, name: 'Starter', position: 'G', toi: '20:00', saves: 19, goals_against: 1 }] },
+            home: { team_abbrev: 'TOR', boxscore: [{ id: 2, name: 'Relief', position: 'G', toi: '00:30', saves: 0, shots_against: 0, goals_against: 0 }] } });
+        const card = document.querySelector('[aria-label="Game goalies"]');
+        expect(card.textContent).toContain('19'); expect(card.textContent).toContain('20');
+        expect(card.textContent).toContain('.950'); expect(card.textContent).toContain('Relief');
+        expect(card.textContent).toContain('—'); expect(card.textContent).not.toContain('NaN');
+    });
+    it('builds game flow from all timed attempts including unlocated events but excluding shootouts', async () => {
+        mount({ plays_available: true, shots: [], plays: [
+            { id: 1, type: 'blocked-shot', side: 'away', period: 1, time: '01:00' },
+            { id: 2, type: 'missed-shot', side: 'away', period: 2, time: '01:00' },
+            { id: 3, type: 'goal', side: 'home', period: 5, period_type: 'SO', time: '00:00' },
+        ] });
+        document.querySelector('#tab-game_flow').click(); await nextTick();
+        const panel = document.querySelector('#panel-game_flow');
+        expect(panel.style.display).not.toBe('none');
+        expect(panel.textContent).toContain('BOS 2'); expect(panel.textContent).toContain('TOR 0');
+        expect(panel.querySelectorAll('polyline')).toHaveLength(2);
+        expect(panel.querySelector('polyline').getAttribute('points')).not.toContain('NaN');
+    });
+    it('shows unavailable game flow instead of invented zeros when play evidence is missing', async () => {
+        mount({ plays_available: false });
+        document.querySelector('#tab-game_flow').click(); await nextTick();
+        expect(document.querySelector('#panel-game_flow').textContent).toContain('temporarily unavailable');
+        expect(document.querySelector('#panel-game_flow polyline')).toBeNull();
+    });
+    it('displays the live clock separately from the period and handles intermission', async () => {
+        mount({ mode: 'live', game_state: 'LIVE', period_number: 2, time_remaining: '00:35' });
+        const header = document.querySelector('header');
+        expect(header.textContent).toContain('2nd period'); expect(header.textContent).toContain('00:35');
+        state.game.in_intermission = true; await nextTick();
+        expect(header.textContent).toContain('2nd Int.');
+    });
+
 });

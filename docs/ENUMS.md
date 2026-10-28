@@ -4,6 +4,7 @@
 
 - Public game details `section`: `matchup`, `lineups`, `meetings`, `summary`, `goals`, `boxscore`. Browser section `status`: `loading`, `ready`, `error`; a pending preparation response uses HTTP 202 with `status=preparing`.
 - Public game detail `section`: `matchup`, `lineups`, `meetings`, `summary`, `goals`, `boxscore`, `play_by_play`. These identify allowlisted deferred sections; `play_by_play` carries public plays and rink shot locations.
+- Public game local tab: `summary`, `boxscore`, `play_by_play`, `shot_map`, `game_flow`. Shot map and game flow reuse the play-by-play detail; they are not new HTTP sections.
 - Public game `mode`: `preview`, `live`, `recap`. These are presentation modes, not stored schedule states.
 - Public Reverb channel: `nhl.games`; event: `nhl.game.updated`. Snapshot `changed` and `stale` are booleans; `sequence` increases per game.
 

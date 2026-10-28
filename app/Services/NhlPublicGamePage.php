@@ -472,7 +472,10 @@ final class NhlPublicGamePage
                     $rows->push(['id' => $row['playerId'] ?? null, 'name' => data_get($row, 'name.default'),
                         'position' => $group === 'goalies' ? 'G' : ($row['position'] ?? null),
                         'goals' => $row['goals'] ?? null, 'assists' => $row['assists'] ?? null, 'points' => $row['points'] ?? null,
-                        'sog' => $row['sog'] ?? null, 'toi' => $row['toi'] ?? null, 'saves' => $row['saves'] ?? null,
+                        'sog' => $row['sog'] ?? null, 'toi' => $row['toi'] ?? null,
+                        'saves' => $row['saves'] ?? (isset($row['shotsAgainst'], $row['goalsAgainst'])
+                            ? max(0, (int) $row['shotsAgainst'] - (int) $row['goalsAgainst']) : null),
+                        'shots_against' => $row['shotsAgainst'] ?? null,
                         'hits' => $row['hits'] ?? null, 'blocks' => $row['blockedShots'] ?? null, 'pim' => $row['pim'] ?? null,
                         'goals_against' => $row['goalsAgainst'] ?? null]);
                 }
@@ -488,6 +491,12 @@ final class NhlPublicGamePage
         ]);
         $timeline = $this->timeline($provider['plays'] ?? [], $teams, $names,
             (bool) ($provider['events_available'] ?? false), data_get($box, 'periodDescriptor.number'), data_get($box, 'periodDescriptor.periodType'));
+        foreach (['away', 'home'] as $side) {
+            // Count every attempt, including unlocated shots; shootouts are not SAT.
+            $teams[$side]['sat'] = ! $timeline['plays_available'] ? null : collect($timeline['plays'])
+                ->where('side', $side)->where('period_type', '!=', 'SO')
+                ->whereIn('type', ['goal', 'shot-on-goal', 'missed-shot', 'blocked-shot'])->count();
+        }
 
         return ['game' => [...$game, ...$teams, ...$timeline, 'nhl_game_id' => $gameId, 'mode' => $final ? 'recap' : ($pregame ? 'preview' : 'live'),
             'status' => $final ? 'Final' : ($pregame ? ($state === 'PRE' ? 'Starting soon' : 'Preview') : 'Live'), 'venue' => data_get($box, 'venue.default'),

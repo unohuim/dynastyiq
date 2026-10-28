@@ -426,3 +426,66 @@ it('reads prepared imported play-by-play publicly with batched participant names
         ->missing('game.plays')->missing('game.shots')->missing('game.period_scores'));
     Http::assertNothingSent();
 })->with(['guest' => [false], 'ordinary user' => [true]]);
+
+
+it('counts live attempts independently of rink coordinates and excludes shootouts and unknown teams', function (): void {
+    $provider = ($this->timelineProvider)();
+    foreach (['missed-shot', 'blocked-shot'] as $index => $type) {
+        $provider['plays'][] = ['eventId' => 3 + $index, 'typeDescKey' => $type,
+            'periodDescriptor' => ['number' => 1, 'periodType' => 'REG'],
+            'details' => ['eventOwnerTeamId' => 6]];
+    }
+    $provider['plays'][] = ['eventId' => 5, 'typeDescKey' => 'goal',
+        'periodDescriptor' => ['number' => 5, 'periodType' => 'SO'], 'details' => ['eventOwnerTeamId' => 6]];
+    $provider['plays'][] = ['eventId' => 6, 'typeDescKey' => 'shot-on-goal',
+        'periodDescriptor' => ['number' => 1, 'periodType' => 'REG'], 'details' => ['eventOwnerTeamId' => 999]];
+    $game = app(NhlPublicGamePage::class)->livePayload(2026020001, $provider)['game'];
+    expect($game['away']['sat'])->toBe(3)->and($game['home']['sat'])->toBe(1)
+        ->and($game['shots'])->toHaveCount(2)
+        ->and(collect($game['comparison'])->firstWhere('label', 'Shot attempts'))
+        ->toBe(['label' => 'Shot attempts', 'away' => 3, 'home' => 1]);
+    Http::assertNothingSent();
+});
+
+it('distinguishes unknown live attempts from a genuine recorded zero', function (): void {
+    $provider = ($this->timelineProvider)();
+    $provider['plays'] = [];
+    $game = app(NhlPublicGamePage::class)->livePayload(2026020001, $provider)['game'];
+    expect($game['away']['sat'])->toBe(0);
+    $provider['events_available'] = false;
+    $game = app(NhlPublicGamePage::class)->livePayload(2026020001, $provider)['game'];
+    expect($game['away']['sat'])->toBeNull()->and($game['home']['sat'])->toBeNull();
+});
+
+it('derives goalie saves only from known provider shot and goal counts', function (): void {
+    $provider = ($this->timelineProvider)();
+    $provider['boxscore']['playerByGameStats']['awayTeam']['goalies'] = [
+        ['playerId' => 301, 'shotsAgainst' => 20, 'goalsAgainst' => 1],
+        ['playerId' => 302, 'shotsAgainst' => 10],
+        ['playerId' => 303, 'shotsAgainst' => 0, 'goalsAgainst' => 0],
+    ];
+    $rows = app(NhlPublicGamePage::class)->livePayload(2026020001, $provider)['game']['away']['boxscore'];
+    expect($rows[0]['saves'])->toBe(19)->and($rows[0]['shots_against'])->toBe(20)
+        ->and($rows[1]['saves'])->toBeNull()->and($rows[2]['saves'])->toBe(0);
+});
+
+it('serves newly calculated live SAT and goalie facts through public deferred reads', function (bool $authenticated): void {
+    if ($authenticated) {
+        $this->actingAs(User::factory()->create());
+    }
+    ($this->makeGame)(2026020001, ['game_date' => '2026-10-27', 'game_state' => 'LIVE']);
+    $provider = ($this->timelineProvider)();
+    $provider['boxscore']['playerByGameStats']['awayTeam']['goalies'] = [
+        ['playerId' => 301, 'shotsAgainst' => 20, 'goalsAgainst' => 1, 'toi' => '20:00'],
+    ];
+    $game = app(NhlPublicGamePage::class)->livePayload(2026020001, $provider)['game'];
+    Cache::put('nhl:live:snapshot:v1:2026020001', [
+        'sequence' => 1, 'observed_at' => now()->toIso8601String(), 'game' => $game,
+    ], 120);
+    $this->getJson('/games/2026020001/details?section=summary')->assertOk()
+        ->assertJsonPath('data.comparison.1.label', 'Shot attempts')
+        ->assertJsonPath('data.comparison.1.away', 1)->assertJsonPath('data.comparison.1.home', 1);
+    $this->getJson('/games/2026020001/details?section=boxscore')->assertOk()
+        ->assertJsonPath('data.away.boxscore.0.saves', 19)->assertJsonPath('data.away.boxscore.0.shots_against', 20);
+    Http::assertNothingSent();
+})->with(['guest' => [false], 'ordinary user' => [true]]);
