@@ -103,7 +103,8 @@ final class NhlPublicGamePage
             }
         }
         $data = [...$data, ...Arr::only($current, match ($section) {
-            'meetings' => ['head_to_head'], 'summary' => ['recap', 'comparison'],
+            'meetings' => ['head_to_head'], 'summary' => ['recap', 'comparison', 'period_scores'],
+            'play_by_play' => ['plays', 'shots', 'plays_available'],
             'goals' => ['events', 'events_available'], default => [],
         })];
 
@@ -179,7 +180,7 @@ final class NhlPublicGamePage
     {
         $version = Cache::get('nhl:public-game:version:'.$game->nhl_game_id, 'initial');
 
-        return 'nhl:public-game:v1:'.$game->nhl_game_id.':'.sha1($game->game_state.':'.(string) $game->updated_at.':'.$version);
+        return 'nhl:public-game:v2:'.$game->nhl_game_id.':'.sha1($game->game_state.':'.(string) $game->updated_at.':'.$version);
     }
 
     /** Build only the requested game's public facts; never run a prediction engine.
@@ -226,7 +227,8 @@ final class NhlPublicGamePage
                 ])->all(),
             ];
         }
-        $events = $final ? $this->storedGoals((int) $game->nhl_game_id) : [];
+        $timeline = $final ? $this->storedTimeline((int) $game->nhl_game_id, $teams) : [];
+        $events = $timeline['events'] ?? [];
 
         return ['game' => [
             'nhl_game_id' => (int) $game->nhl_game_id, 'game_date' => $game->game_date->toDateString(),
@@ -236,7 +238,7 @@ final class NhlPublicGamePage
                 'OFF', 'FINAL' => $game->shootout_in_use ? 'Final / SO' : ($game->ot_in_use ? 'Final / OT' : 'Final'),
                 'PPD' => 'Postponed', 'CNCL' => 'Cancelled', default => 'Preview',
             },
-            ...$teams, 'prediction' => $prediction, 'events' => $events,
+            ...$teams, ...$timeline, 'prediction' => $prediction, 'events' => $events,
             'comparison' => $final ? $this->comparison($teams) : [],
             'head_to_head' => $this->meetings($game),
             'recap' => $final ? $this->recap($teams) : null,
@@ -318,22 +320,119 @@ final class NhlPublicGamePage
                 'away_score' => $row->away_team_score, 'home_score' => $row->home_team_score])->all();
     }
 
-    /** Normalize imported goals and resolve all participant names in one query.
-     * @return array<int,array<string,mixed>>
+    /** Read imported plays once and resolve all participant names in one batch.
+     * @param array<string,array<string,mixed>> $teams
+     * @return array<string,mixed>
      */
-    private function storedGoals(int $gameId): array
+    private function storedTimeline(int $gameId, array $teams): array
     {
-        $goals = DB::table('play_by_plays')->where('nhl_game_id', $gameId)->where('type_desc_key', 'goal')
+        $rows = DB::table('play_by_plays')->where('nhl_game_id', $gameId)
             ->orderBy('period')->orderBy('sort_order')->orderBy('id')->get();
-        $ids = $goals->flatMap(fn ($row): array => [$row->scoring_player_id, $row->assist1_player_id, $row->assist2_player_id])->filter()->unique();
+        $fields = ['scoringPlayerId' => 'scoring_player_id', 'shootingPlayerId' => 'shooting_player_id',
+            'assist1PlayerId' => 'assist1_player_id', 'assist2PlayerId' => 'assist2_player_id',
+            'hittingPlayerId' => 'hitting_player_id', 'hitteePlayerId' => 'hittee_player_id',
+            'committedByPlayerId' => 'committed_by_player_id', 'drawnByPlayerId' => 'drawn_by_player_id',
+            'winningPlayerId' => 'fo_winning_player_id', 'losingPlayerId' => 'fo_losing_player_id',
+            'blockingPlayerId' => 'blocking_player_id'];
+        $ids = $rows->flatMap(fn ($row): array => array_values(array_map(fn ($field) => $row->{$field}, $fields)))->filter()->unique();
         $names = DB::table('players')->whereIn('nhl_id', $ids)->pluck('full_name', 'nhl_id');
+        $plays = $rows->map(function ($row) use ($fields): array {
+            $details = ['eventOwnerTeamId' => $row->event_owner_team_id,
+                'awayScore' => $row->away_score, 'homeScore' => $row->home_score,
+                'xCoord' => $row->x_coord, 'yCoord' => $row->y_coord, 'shotType' => $row->shot_type,
+                'descKey' => $row->desc_key, 'duration' => $row->duration];
+            foreach ($fields as $key => $field) {
+                $details[$key] = $row->{$field};
+            }
 
-        return $goals->map(fn ($row): array => [
-            'id' => $row->id, 'period' => $row->period, 'time' => $row->time_in_period,
-            'team_id' => $row->event_owner_team_id, 'scorer' => $names->get($row->scoring_player_id, 'Player #'.$row->scoring_player_id),
-            'assists' => collect([$row->assist1_player_id, $row->assist2_player_id])->filter()->map(fn ($id) => $names->get($id, 'Player #'.$id))->all(),
-            'away_score' => $row->away_score, 'home_score' => $row->home_score,
-        ])->all();
+            return ['eventId' => $row->nhl_event_id ?? $row->id, 'typeDescKey' => $row->type_desc_key,
+                'periodDescriptor' => ['number' => $row->period, 'periodType' => $row->period_type],
+                'timeInPeriod' => $row->time_in_period, 'details' => $details];
+        })->all();
+
+        return $this->timeline($plays, $teams, $names, $rows->isNotEmpty());
+    }
+
+    /** Build bounded public event, rink and period projections from already loaded source facts.
+     * @param array<int,array<string,mixed>> $source
+     * @param array<string,array<string,mixed>> $teams
+     * @param \Illuminate\Support\Collection<int,string> $names
+     * @return array<string,mixed>
+     */
+    private function timeline(
+        array $source,
+        array $teams,
+        \Illuminate\Support\Collection $names,
+        bool $available,
+        ?int $currentPeriod = null,
+        ?string $currentPeriodType = null
+    ): array
+    {
+        $plays = [];
+        $shots = [];
+        $events = [];
+        $periodTypes = [];
+        foreach ($source as $index => $row) {
+            $type = (string) ($row['typeDescKey'] ?? 'unknown');
+            $period = (int) data_get($row, 'periodDescriptor.number', 0);
+            if ($period < 1 || ! isset($row['eventId'])) {
+                continue;
+            }
+            $periodTypes[$period] = data_get($row, 'periodDescriptor.periodType');
+            $teamId = data_get($row, 'details.eventOwnerTeamId');
+            $side = null;
+            foreach (['away', 'home'] as $candidate) {
+                if ($teamId !== null && isset($teams[$candidate]['team_id']) && (int) $teamId === (int) $teams[$candidate]['team_id']) {
+                    $side = $candidate;
+                }
+            }
+            $playerId = data_get($row, 'details.scoringPlayerId') ?? data_get($row, 'details.shootingPlayerId')
+                ?? data_get($row, 'details.committedByPlayerId') ?? data_get($row, 'details.hittingPlayerId')
+                ?? data_get($row, 'details.winningPlayerId') ?? data_get($row, 'details.playerId');
+            $play = ['id' => $row['eventId'], 'order' => $index, 'type' => $type,
+                'label' => ucfirst(str_replace('-', ' ', $type)), 'period' => $period,
+                'period_type' => $periodTypes[$period], 'time' => $row['timeInPeriod'] ?? null,
+                'side' => $side, 'team_id' => $teamId,
+                'player' => $playerId === null ? null : $names->get($playerId, 'Player #'.$playerId),
+                'detail' => str_replace('-', ' ', (string) (data_get($row, 'details.descKey') ?? data_get($row, 'details.shotType') ?? '')),
+                'duration' => data_get($row, 'details.duration'),
+                'away_score' => data_get($row, 'details.awayScore'), 'home_score' => data_get($row, 'details.homeScore')];
+            $plays[] = $play;
+            if ($type === 'goal' && $play['period_type'] !== 'SO') {
+                $events[] = [...$play, 'scorer' => $play['player'] ?? 'Scorer unavailable',
+                    'assists' => collect([data_get($row, 'details.assist1PlayerId'), data_get($row, 'details.assist2PlayerId')])
+                        ->filter()->map(fn ($id) => $names->get($id, 'Player #'.$id))->values()->all()];
+            }
+            $x = data_get($row, 'details.xCoord');
+            $y = data_get($row, 'details.yCoord');
+            if (in_array($type, ['goal', 'shot-on-goal', 'missed-shot', 'blocked-shot'], true)
+                && $play['period_type'] !== 'SO' && $side !== null && is_numeric($x) && is_numeric($y)
+                && abs((float) $x) <= 100 && abs((float) $y) <= 42.5) {
+                $shots[] = [...$play, 'x' => (float) $x, 'y' => (float) $y];
+            }
+        }
+        if ($currentPeriod !== null && $currentPeriodType !== null) {
+            $periodTypes[$currentPeriod] = $currentPeriodType;
+        }
+        $lastPeriod = $currentPeriod ?? (empty($periodTypes) ? 0 : max(array_keys($periodTypes)));
+        $periods = [];
+        for ($period = 1; $period <= max(3, $lastPeriod); $period++) {
+            $line = ['period' => $period, 'label' => ($periodTypes[$period] ?? null) === 'SO' ? 'SO'
+                : ($period <= 3 ? ['1st', '2nd', '3rd'][$period - 1] : ($period === 4 ? 'OT' : ($period - 3).'OT'))];
+            foreach (['away', 'home'] as $side) {
+                $goals = collect($events)->where('side', $side);
+                $score = $teams[$side]['score'] ?? null;
+                $shootout = in_array('SO', $periodTypes, true);
+                $difference = $score === null ? null : (int) $score - $goals->count();
+                $consistent = $difference === 0 || ($shootout && $difference === 1);
+                $line[$side] = ! $available || ! $consistent || $period > $lastPeriod ? null
+                    : ($line['label'] === 'SO' ? $difference : $goals->where('period', $period)->count());
+            }
+            $periods[] = $line;
+        }
+
+        return ['plays' => $plays, 'shots' => $shots, 'events' => $events,
+            'plays_available' => $available, 'events_available' => $available, 'period_scores' => $periods];
     }
 
     /** @param array<string,array<string,mixed>> $teams @return array<int,array<string,mixed>> */
@@ -387,20 +486,14 @@ final class NhlPublicGamePage
         $names = collect($provider['roster'] ?? [])->mapWithKeys(fn ($row): array => [
             $row['playerId'] => trim(data_get($row, 'firstName.default', '').' '.data_get($row, 'lastName.default', '')),
         ]);
-        $events = collect($provider['plays'] ?? [])->where('typeDescKey', 'goal')->map(fn ($row): array => [
-            'id' => $row['eventId'], 'period' => data_get($row, 'periodDescriptor.number'), 'time' => $row['timeInPeriod'] ?? null,
-            'team_id' => data_get($row, 'details.eventOwnerTeamId'),
-            'scorer' => $names->get(data_get($row, 'details.scoringPlayerId'), 'Scorer unavailable'),
-            'assists' => collect([data_get($row, 'details.assist1PlayerId'), data_get($row, 'details.assist2PlayerId')])
-                ->filter()->map(fn ($id) => $names->get($id, 'Player #'.$id))->all(),
-            'away_score' => data_get($row, 'details.awayScore'), 'home_score' => data_get($row, 'details.homeScore'),
-        ])->values()->all();
+        $timeline = $this->timeline($provider['plays'] ?? [], $teams, $names,
+            (bool) ($provider['events_available'] ?? false), data_get($box, 'periodDescriptor.number'), data_get($box, 'periodDescriptor.periodType'));
 
-        return ['game' => [...$game, ...$teams, 'nhl_game_id' => $gameId, 'mode' => $final ? 'recap' : ($pregame ? 'preview' : 'live'),
+        return ['game' => [...$game, ...$teams, ...$timeline, 'nhl_game_id' => $gameId, 'mode' => $final ? 'recap' : ($pregame ? 'preview' : 'live'),
             'status' => $final ? 'Final' : ($pregame ? ($state === 'PRE' ? 'Starting soon' : 'Preview') : 'Live'), 'venue' => data_get($box, 'venue.default'),
             'time_remaining' => data_get($box, 'clock.timeRemaining'), 'in_intermission' => data_get($box, 'clock.inIntermission'),
             'period_number' => data_get($box, 'periodDescriptor.number'), 'period_type' => data_get($box, 'periodDescriptor.periodType'),
-            'prediction' => null, 'head_to_head' => [], 'events_available' => $provider['events_available'] ?? false, 'comparison' => $this->comparison($teams), 'events' => $events,
+            'prediction' => null, 'head_to_head' => [], 'comparison' => $this->comparison($teams),
             'recap' => $final ? $this->recap($teams) : null]];
     }
 }

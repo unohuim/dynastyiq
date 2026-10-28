@@ -10,6 +10,7 @@ import {
 const props = defineProps({
     endpoint: { type: String, required: true },
     gamesUrl: { type: String, required: true },
+    selectedGameId: { type: [Number, String], default: null },
 });
 const selectedDate = ref(defaultSlateDate());
 const clock = ref(new Date());
@@ -289,7 +290,8 @@ onBeforeUnmount(() => {
                     <div class="flex w-8 shrink-0 items-center justify-center border-r border-[#1F2B37] bg-white/[0.025]">
                         <span class="whitespace-nowrap font-mono text-[9px] text-[#788997] [writing-mode:vertical-rl]">{{ day.labels.weekday }} {{ day.labels.date }}</span>
                     </div>
-                    <Link v-for="game in day.games" :prefetch="isLive(game) ? false : 'hover'" :cache-for="isLive(game) ? 0 : 15000" :key="game.nhl_game_id" :href="game.href" :aria-label="gameLabel(game)" class="relative w-32 shrink-0 border-r border-[#1F2B37] px-3.5 py-2.5 transition-colors duration-150 hover:bg-white/5 focus-visible:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-400 motion-reduce:transition-none">
+                    <Link v-for="game in day.games" :prefetch="isLive(game) ? false : 'hover'" :cache-for="isLive(game) ? 0 : 15000" :key="game.nhl_game_id" :href="game.href" :aria-label="gameLabel(game)" :aria-current="Number(selectedGameId) === Number(game.nhl_game_id) ? 'page' : undefined" :class="Number(selectedGameId) === Number(game.nhl_game_id) ? 'bg-sky-400/[0.08]' : ''" class="relative w-32 shrink-0 border-r border-[#1F2B37] px-3.5 py-2.5 transition-colors duration-150 hover:bg-white/5 focus-visible:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-400 motion-reduce:transition-none">
+                        <span v-if="Number(selectedGameId) === Number(game.nhl_game_id)" aria-hidden="true" class="absolute inset-x-0 bottom-0 h-[3px] bg-sky-400" />
                         <div class="mb-1.5 font-mono text-[10px] font-semibold" :class="isLive(game) ? 'text-emerald-400' : 'text-[#788997]'">{{ scoreboardStatus(game) }}</div>
                         <div v-for="side in ['away', 'home']" :key="side" class="flex h-5 items-center gap-1.5 font-mono text-[13px] font-semibold" :class="isLoser(game, side) ? 'text-[#788997]' : 'text-[#E7EEF6]'">
                             <img v-if="game[side].team_logo" :src="game[side].team_logo" alt="" class="h-[18px] w-[18px] shrink-0 object-contain" :class="isLoser(game, side) ? 'opacity-50' : ''" loading="lazy" />

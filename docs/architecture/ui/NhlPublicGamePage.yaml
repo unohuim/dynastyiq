@@ -6,6 +6,7 @@ location:
   - app/Http/Controllers/NhlGamesController.php
   - resources/js/pages/Games/Show.vue
   - resources/js/pages/Games/GameSectionState.vue
+  - resources/js/pages/Games/GameLiveDetails.vue
   - resources/js/pages/Games/game-panels.js
   - resources/js/layouts/MobileScoreboard.vue
 purpose: Present fast public game previews, live detail and recaps through the existing game route.
@@ -16,6 +17,9 @@ when_not_to_use:
   - Calculating or changing engine predictions.
   - Replacing partner API payloads or private prediction evidence.
 rules:
+  - Live and recap views use a compact graphite score header with team logos, scores, SOG and a green live clock, followed by accessible Summary, Boxscore and Play-by-play tabs. Summary combines a selectable rink shot map, newest-first scoring rows, a period linescore and team comparison bars. Rink filters use recorded team, period and event type; preserve recorded coordinates and explain that teams change ends. Do not invent player tracking positions. Mobile keeps the compact header and stacks panels without document overflow.
+  - The layout scoreboard marks only the current Games/Show game with aria-current page, a blue bottom underline and subtle highlight. Selection follows Inertia page props and survives live updates independently of scoreboard date navigation. Other pages have no selected game.
+  - Public timeline fields are projected once from shared provider plays for live games, or batched imported plays and participant names for stored recaps. Scoring goals and rink shots exclude shootouts; a shootout-deciding goal is represented in its period line only. Omit unlocated or unknown-team shot markers. Missing or score-inconsistent period evidence remains unknown instead of fabricated zeros. Detailed plays, shot markers and period scores are never part of the compact broadcast or first-paint payload.
   - Initial game responses contain only lightweight schedule facts, saved public odds and the compact shared live overview. They must not build player projections, select projected rosters, aggregate team form, load previous meetings or assemble recap boxscores.
   - Deferred sections have independent requests, loading placeholders, timeout/error feedback and per-section Retry. Matchup and meeting reads do not wait for player preparation. Cold player/recap payload misses queue the existing one-game preparation job and return a preparing response; queue and browser consumers never run concurrent preparation for one game.
   - Deferred section fields are explicitly allowlisted on server and browser. They cannot overwrite score, clock, team identity, game state, probabilities or other overview fields. Navigation, authoritative full live updates and mode transitions cancel obsolete section work.

@@ -37,6 +37,22 @@ beforeEach(function (): void {
         'away_team_score' => 2, 'home_team_score' => 4, 'away_team_sog' => 20, 'home_team_sog' => 30,
         ...$extra,
     ]);
+    $this->timelineProvider = static function (): array {
+        return ['game' => ['game_state' => 'LIVE', 'game_date' => '2026-10-27',
+            'away' => ['team_id' => 6, 'team_abbrev' => 'BOS', 'score' => 1, 'sog' => 1],
+            'home' => ['team_id' => 10, 'team_abbrev' => 'TOR', 'score' => 0, 'sog' => 1]],
+            'boxscore' => ['clock' => ['timeRemaining' => '18:00'], 'periodDescriptor' => ['number' => 1]],
+            'events_available' => true,
+            'roster' => [['playerId' => 100, 'firstName' => ['default' => 'First'], 'lastName' => ['default' => 'Scorer']]],
+            'plays' => [
+                ['eventId' => 1, 'typeDescKey' => 'goal', 'periodDescriptor' => ['number' => 1, 'periodType' => 'REG'],
+                    'timeInPeriod' => '01:00', 'details' => ['scoringPlayerId' => 100, 'eventOwnerTeamId' => 6,
+                        'xCoord' => 0, 'yCoord' => 0, 'awayScore' => 1, 'homeScore' => 0]],
+                ['eventId' => 2, 'typeDescKey' => 'shot-on-goal', 'periodDescriptor' => ['number' => 1, 'periodType' => 'REG'],
+                    'timeInPeriod' => '02:00', 'details' => ['shootingPlayerId' => 200, 'eventOwnerTeamId' => 10,
+                        'xCoord' => 75, 'yCoord' => 10, 'private_field' => 'never public']],
+            ]];
+    };
     $this->readGame = fn (int $id = 2026020001, bool $refresh = false): array => app(NhlPublicGamePage::class)->payload($id, $refresh)['game'];
     $this->savePrediction = function (array $inputs = [], array $extra = []): array {
         return app(NhlGamePredictionHistory::class)->record(2026020001, ['nhl_game_id' => 2026020001, ...$inputs],
@@ -326,3 +342,87 @@ it('shows the saved normalized goal total on the lightweight public preview', fu
         ->missing('game.prediction.selection_score'));
     Http::assertNothingSent();
 });
+
+
+it('projects shared live plays shot locations and names without exposing raw provider details', function (): void {
+    $result = app(NhlPublicGamePage::class)->livePayload(2026020001, ($this->timelineProvider)())['game'];
+    expect($result['plays'])->toHaveCount(2)
+        ->and($result['plays'][0]['player'])->toBe('First Scorer')
+        ->and($result['plays'][1]['player'])->toBe('Player #200')
+        ->and($result['plays'][1])->not->toHaveKey('details')
+        ->and($result['shots'][0]['x'])->toBe(0.0)
+        ->and($result['shots'][0]['y'])->toBe(0.0)
+        ->and($result['shots'][0]['side'])->toBe('away');
+    Http::assertNothingSent();
+});
+
+it('omits invalid or unknown-team rink coordinates', function (mixed $x, mixed $y, ?int $team): void {
+    $provider = ($this->timelineProvider)();
+    $provider['plays'][1]['details'] = ['xCoord' => $x, 'yCoord' => $y, 'eventOwnerTeamId' => $team];
+    $result = app(NhlPublicGamePage::class)->livePayload(2026020001, $provider)['game'];
+    expect($result['plays'])->toHaveCount(2)->and($result['shots'])->toHaveCount(1);
+})->with([[null, 10, 10], [101, 10, 10], [20, 43, 10], [20, -43, 10], [20, 10, null], [20, 10, 999]]);
+
+it('keeps unstarted periods unknown while showing verified current-period goals', function (): void {
+    $result = app(NhlPublicGamePage::class)->livePayload(2026020001, ($this->timelineProvider)())['game'];
+    expect($result['period_scores'][0])->toBe(['period' => 1, 'label' => '1st', 'away' => 1, 'home' => 0])
+        ->and($result['period_scores'][1]['away'])->toBeNull()
+        ->and($result['period_scores'][2]['home'])->toBeNull();
+});
+
+it('does not publish period zeros when the score and play source are inconsistent', function (): void {
+    $provider = ($this->timelineProvider)();
+    $provider['game']['away']['score'] = 2;
+    $result = app(NhlPublicGamePage::class)->livePayload(2026020001, $provider)['game'];
+    expect($result['period_scores'][0]['away'])->toBeNull()->and($result['away']['score'])->toBe(2);
+});
+
+it('keeps missing play-by-play explicitly unavailable', function (): void {
+    $provider = ($this->timelineProvider)();
+    $provider['events_available'] = false;
+    $provider['plays'] = [];
+    $result = app(NhlPublicGamePage::class)->livePayload(2026020001, $provider)['game'];
+    expect($result['plays_available'])->toBeFalse()->and($result['plays'])->toBeEmpty()
+        ->and($result['period_scores'][0]['home'])->toBeNull();
+});
+
+it('excludes shootout attempts from normal shot and scoring rows while showing the deciding goal separately', function (): void {
+    $provider = ($this->timelineProvider)();
+    $provider['game']['away']['score'] = 2;
+    $provider['boxscore']['periodDescriptor'] = ['number' => 5, 'periodType' => 'SO'];
+    $provider['game']['home']['score'] = 1;
+    $homeGoal = $provider['plays'][0];
+    $homeGoal['eventId'] = 3;
+    $homeGoal['periodDescriptor'] = ['number' => 3, 'periodType' => 'REG'];
+    $homeGoal['details']['eventOwnerTeamId'] = 10;
+    $provider['plays'][] = $homeGoal;
+    $shootout = $provider['plays'][0];
+    $shootout['eventId'] = 4;
+    $shootout['periodDescriptor'] = ['number' => 5, 'periodType' => 'SO'];
+    $provider['plays'][] = $shootout;
+    $result = app(NhlPublicGamePage::class)->livePayload(2026020001, $provider)['game'];
+    expect($result['events'])->toHaveCount(2)->and($result['shots'])->toHaveCount(3)
+        ->and($result['period_scores'][4])->toBe(['period' => 5, 'label' => 'SO', 'away' => 1, 'home' => 0]);
+});
+
+it('reads prepared imported play-by-play publicly with batched participant names and an allowlisted payload', function (bool $authenticated): void {
+    if ($authenticated) {
+        $this->actingAs(User::factory()->create());
+    }
+    ($this->makeGame)(2026020001, ['away_team_score' => 2, 'home_team_score' => 0]);
+    foreach ([100 => 'First Scorer', 101 => 'Second Scorer'] as $id => $name) {
+        DB::table('players')->insert(['nhl_id' => $id, 'full_name' => $name, 'first_name' => 'Scorer', 'last_name' => (string) $id]);
+        DB::table('play_by_plays')->insert(['nhl_game_id' => 2026020001, 'nhl_event_id' => (string) $id,
+            'type_desc_key' => 'goal', 'period' => 1, 'period_type' => 'REG', 'scoring_player_id' => $id,
+            'event_owner_team_id' => 6, 'time_in_period' => '01:00', 'x_coord' => 70, 'y_coord' => 10]);
+    }
+    $this->assertDatabaseCount('play_by_plays', 2);
+    (new RefreshNhlPublicGamePageJob(2026020001))->handle(app(NhlPublicGamePage::class));
+    $this->getJson('/games/2026020001/details?section=play_by_play')->assertOk()
+        ->assertJsonPath('data.plays_available', true)->assertJsonCount(2, 'data.shots')
+        ->assertJsonPath('data.plays.0.player', 'First Scorer')->assertJsonPath('data.plays.1.player', 'Second Scorer')
+        ->assertJsonMissingPath('data.away')->assertJsonMissingPath('data.evidence');
+    $this->get('/games/2026020001')->assertOk()->assertInertia(fn (Assert $page) => $page
+        ->missing('game.plays')->missing('game.shots')->missing('game.period_scores'));
+    Http::assertNothingSent();
+})->with(['guest' => [false], 'ordinary user' => [true]]);

@@ -91,7 +91,7 @@ class NhlGamesController extends Controller
     {
         $input = $request->validate([
             'section' => ['required', \Illuminate\Validation\Rule::in([
-                'matchup', 'lineups', 'meetings', 'summary', 'goals', 'boxscore',
+                'matchup', 'lineups', 'meetings', 'summary', 'goals', 'boxscore', 'play_by_play',
             ])],
         ]);
         $panel = $payload->panel($nhlGameId, $input['section']);

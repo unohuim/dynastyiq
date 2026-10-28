@@ -1129,7 +1129,7 @@ describe('public game preview and recap', () => {
         expect(document.querySelector('header').textContent).toContain('BOS');
         expect(document.querySelector('header').textContent).toContain('TOR');
         expect(document.querySelector('#summary [role="status"]').textContent).toContain('Loading');
-        expect(fetch).toHaveBeenCalledTimes(3);
+        expect(fetch).toHaveBeenCalledTimes(4);
     });
     it('requests each deferred section independently', async () => {
         vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
@@ -1154,15 +1154,15 @@ describe('public game preview and recap', () => {
         mount({}, { detailsUrl: '/games/2026020001/details' }); await settle();
         failed = false;
         document.querySelector('[aria-label="Retry Scoring summary"]').click(); await settle();
-        expect(fetch).toHaveBeenCalledTimes(4);
+        expect(fetch).toHaveBeenCalledTimes(5);
         expect(document.querySelector('#goals [role="alert"]')).toBeNull();
     });
     it('keeps preparation placeholders visible while the background worker builds details', async () => {
         vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 202 })));
         mount({}, { detailsUrl: '/games/2026020001/details' }); await settle();
-        expect(fetch).toHaveBeenCalledTimes(3);
+        expect(fetch).toHaveBeenCalledTimes(4);
         await vi.advanceTimersByTimeAsync(2000); await settle();
-        expect(fetch).toHaveBeenCalledTimes(6);
+        expect(fetch).toHaveBeenCalledTimes(8);
         expect(document.querySelector('header')).not.toBeNull();
     });
     it('aborts all deferred requests when navigating away', async () => {
@@ -1184,6 +1184,89 @@ describe('public game preview and recap', () => {
     it('keeps matchup fields separate from unrelated player and scoring sections', () => {
         const merged = applyGamePanel({ home: {}, away: {} }, 'matchup', { home: { form: { gp: 10 }, predictions: [1] }, events: [1] });
         expect(merged.home.form.gp).toBe(10); expect(merged.home.predictions).toBeUndefined(); expect(merged.events).toBeUndefined();
+    });
+
+    it('switches accessible live tabs without navigating or changing the selected game', async () => {
+        mount({ mode: 'live', game_state: 'LIVE' });
+        const tabs = document.querySelectorAll('[role=tab]');
+        expect(tabs[0].getAttribute('aria-selected')).toBe('true');
+        tabs[1].click(); await nextTick();
+        expect(tabs[1].getAttribute('aria-selected')).toBe('true');
+        expect(document.querySelector('#panel-summary').style.display).toBe('none');
+        expect(document.querySelector('#panel-boxscore').style.display).not.toBe('none');
+        expect(inertia.router.reload).not.toHaveBeenCalled();
+    });
+    it('supports keyboard navigation between live tabs', async () => {
+        mount();
+        document.querySelector('[role=tab]').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+        await nextTick(); await nextTick();
+        expect(document.querySelector('#tab-boxscore').getAttribute('aria-selected')).toBe('true');
+        expect(document.activeElement.id).toBe('tab-boxscore');
+    });
+    it('filters shot locations by period and team without fetching new data', async () => {
+        mount({ plays_available: true, shots: [
+            { id: 1, type: 'shot-on-goal', label: 'Shot on goal', player: 'Away shot', side: 'away', period: 1, x: 0, y: 0 },
+            { id: 2, type: 'goal', label: 'Goal', player: 'Home goal', side: 'home', period: 2, x: 75, y: -10 },
+        ] });
+        expect(document.querySelectorAll('svg g[role=button]')).toHaveLength(2);
+        const period = document.querySelector('[aria-label="Shot map period"]');
+        period.value = '2'; period.dispatchEvent(new Event('change', { bubbles: true })); await nextTick();
+        expect(document.querySelectorAll('svg g[role=button]')).toHaveLength(1);
+        const team = document.querySelector('[aria-label="Shot map team"]');
+        team.value = 'away'; team.dispatchEvent(new Event('change', { bubbles: true })); await nextTick();
+        expect(document.querySelectorAll('svg g[role=button]')).toHaveLength(0);
+        expect(document.body.textContent).toContain('No recorded shots match these filters.');
+    });
+    it('shows selected shot details for zero rink coordinates using keyboard input', async () => {
+        mount({ plays_available: true, shots: [{ id: 1, type: 'goal', label: 'Goal', player: 'Scorer', side: 'away', period: 1, time: '01:00', x: 0, y: 0 }] });
+        const marker = document.querySelector('svg g[role=button]');
+        expect(marker.querySelector('circle').getAttribute('cx')).toBe('100');
+        marker.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); await nextTick();
+        expect(document.querySelector('[aria-live=polite]').textContent).toContain('Scorer');
+    });
+    it('filters the live event timeline by event type', async () => {
+        mount({ plays_available: true, plays: [
+            { id: 1, type: 'goal', label: 'Goal', player: 'Goal scorer', period: 1 },
+            { id: 2, type: 'penalty', label: 'Penalty', player: 'Penalty taker', period: 1, duration: 2 },
+        ] });
+        document.querySelector('#tab-play_by_play').click(); await nextTick();
+        const filter = document.querySelector('[aria-label="Play-by-play event type"]');
+        filter.value = 'penalty'; filter.dispatchEvent(new Event('change', { bubbles: true })); await nextTick();
+        expect(document.querySelectorAll('#play_by_play li')).toHaveLength(1);
+        expect(document.querySelector('#play_by_play').textContent).toContain('Penalty taker');
+        expect(document.querySelector('#play_by_play').textContent).not.toContain('Goal scorer');
+    });
+    it('keeps live shot filters as newer scores and markers arrive', async () => {
+        mount({ mode: 'live', game_state: 'LIVE', plays_available: true, shots: [{ id: 1, side: 'away', type: 'goal', period: 1, x: 20, y: 10 }] });
+        const filter = document.querySelector('[aria-label="Shot map team"]');
+        filter.value = 'away'; filter.dispatchEvent(new Event('change', { bubbles: true })); await nextTick();
+        state.game.away.score = 2;
+        state.game.shots.push({ id: 2, side: 'home', type: 'goal', period: 1, x: 20, y: 10 });
+        await nextTick();
+        expect(filter.value).toBe('away');
+        expect(document.querySelectorAll('svg g[role=button]')).toHaveLength(1);
+    });
+    it('accepts navigation from a live game to a different upcoming game', async () => {
+        mount({ mode: 'live', game_state: 'LIVE' });
+        state.game = { ...state.game, nhl_game_id: 2026020002, mode: 'preview', game_state: 'FUT' };
+        await nextTick();
+        expect(document.querySelector('h1').textContent).toBe('Game preview');
+        expect(document.querySelector('[role=tablist]')).toBeNull();
+    });
+    it('clears the previous games shot locations when navigating to another live game', async () => {
+        mount({ mode: 'live', game_state: 'LIVE', shots: [{ id: 1, side: 'away', type: 'goal', period: 1, x: 20, y: 10 }] });
+        expect(document.querySelectorAll('svg g[role=button]')).toHaveLength(1);
+        state.game = { nhl_game_id: 2026020002, mode: 'live', game_state: 'LIVE', away: { team_abbrev: 'CBJ' }, home: { team_abbrev: 'PHI' } };
+        await nextTick();
+        expect(document.querySelectorAll('svg g[role=button]')).toHaveLength(0);
+        expect(document.querySelector('header').textContent).toContain('CBJ');
+    });
+    it('limits deferred timeline fields to the timeline without replacing the authoritative score', () => {
+        const original = { away: { score: 2 }, home: { score: 1 }, time_remaining: '01:00', mode: 'live' };
+        const merged = applyGamePanel(original, 'play_by_play', { plays: [{ id: 1 }], shots: [], plays_available: true,
+            away: { score: 99 }, time_remaining: '00:00', mode: 'recap' });
+        expect(merged.plays).toHaveLength(1); expect(merged.away.score).toBe(2);
+        expect(merged.time_remaining).toBe('01:00'); expect(merged.mode).toBe('live');
     });
 
 });

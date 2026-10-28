@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createApp, nextTick, ref } from 'vue';
+import { createApp, h, nextTick, ref } from 'vue';
 import * as liveFeed from './live-game-feed';
 import MobileScoreboard from './MobileScoreboard.vue';
 import {
@@ -195,8 +195,8 @@ describe('Mobile scoreboard lifecycle', () => {
         vi.restoreAllMocks();
         vi.useRealTimers();
     });
-    const mount = () => {
-        app = createApp(MobileScoreboard, { endpoint: '/games/scoreboard', gamesUrl: '/games' });
+    const mount = (props = {}) => {
+        app = createApp(MobileScoreboard, { endpoint: '/games/scoreboard', gamesUrl: '/games', ...props });
         app.mount('#scoreboard');
     };
     const scrollToEdge = async side => {
@@ -433,6 +433,25 @@ describe('Mobile scoreboard lifecycle', () => {
         mount(); await settle(); const tile = document.querySelector('a[href="/games/1"]');
         expect(tile.textContent).toContain('45.4%'); expect(tile.textContent).toContain('54.6%');
         expect(tile.getAttribute('aria-label')).toContain('TOR win probability 54.6%');
+    });
+
+    it('marks the selected game with aria-current and a blue underline', async () => {
+        mount({ selectedGameId: 1 }); await settle();
+        const selected = document.querySelector('a[aria-current=page]');
+        expect(selected.getAttribute('href')).toBe('/games/1');
+        expect(selected.querySelector('.bg-sky-400')).not.toBeNull();
+        expect(document.querySelectorAll('a[aria-current=page]')).toHaveLength(1);
+    });
+    it('moves the selected marker when navigation changes the current game', async () => {
+        const selected = ref(1);
+        app = createApp({ render: () => h(MobileScoreboard, { endpoint: '/games/scoreboard', gamesUrl: '/games', selectedGameId: selected.value }) });
+        app.mount('#scoreboard'); await settle();
+        selected.value = 2; await nextTick();
+        expect(document.querySelector('a[aria-current=page]').getAttribute('href')).toBe('/games/2');
+    });
+    it('does not mark a selected game on other pages', async () => {
+        mount(); await settle();
+        expect(document.querySelector('a[aria-current=page]')).toBeNull();
     });
 
 });

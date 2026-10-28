@@ -4,7 +4,7 @@ const teamFields = {
     summary: ['pp_goals', 'pp_opportunities'],
     boxscore: ['boxscore'],
 };
-const pageFields = { meetings: ['head_to_head'], summary: ['recap', 'comparison'], goals: ['events', 'events_available'] };
+const pageFields = { meetings: ['head_to_head'], summary: ['recap', 'comparison', 'period_scores'], play_by_play: ['plays', 'shots', 'plays_available'], goals: ['events', 'events_available'] };
 
 /** Deferred sections may fill their own fields, never replace the live overview. */
 export function applyGamePanel(game, section, data) {
