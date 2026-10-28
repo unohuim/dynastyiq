@@ -174,7 +174,7 @@ onBeforeUnmount(() => { disposed = true; cancelPanels(); window.clearTimeout(tim
         <Link :href="game.game_date ? `/games?date=${game.game_date}` : '/games'" class="rounded text-[#91A8BA] transition-colors duration-150 hover:text-white focus-visible:ring-2 focus-visible:ring-sky-400 motion-reduce:transition-none">‹ All games</Link>
         <span role="status" class="text-[#91A8BA]">{{ busy ? 'Updating…' : dateTime }}</span>
       </div>
-      <p v-if="liveWarning && mode === 'live'" role="status" class="mb-3 text-xs text-amber-300">{{ liveWarning }}</p>
+      <p v-if="liveWarning && mode === 'live'" role="status" class="pointer-events-none fixed bottom-24 right-3 z-40 max-w-[calc(100vw-1.5rem)] rounded-md border border-amber-300/25 bg-[#172534] px-3 py-2 text-xs text-amber-300 shadow-lg md:bottom-3">{{ liveWarning }}</p>
       <p v-if="game.live_data_unavailable" role="status" class="rounded-xl border border-[#29404F] bg-[#0D1D29] p-6 text-sm text-[#B6C7D5]">Live NHL data is temporarily unavailable. This page will retry automatically.</p>
       <template v-else>
         <header class="shrink-0 overflow-hidden rounded-xl border border-[#29404F] bg-[#0D1D29]">

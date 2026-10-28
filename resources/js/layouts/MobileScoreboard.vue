@@ -308,6 +308,6 @@ onBeforeUnmount(() => {
             <span aria-hidden="true" class="h-5 w-5 animate-spin rounded-full border-2 border-sky-400/20 border-t-sky-300 motion-reduce:animate-none" />
             <span>{{ loadingEdge === 'previous' ? 'Loading previous week…' : 'Loading next week…' }}</span>
         </div>
-        <div v-if="error || liveError" role="status" class="flex items-center justify-center gap-2 border-t border-[#1F2B37] px-3 py-1 text-xs text-gray-300 md:absolute md:inset-x-40 md:top-full md:z-20 md:bg-[#101923]">{{ error || liveError }} <button type="button" class="min-h-11 underline" @click="retryRange">Retry</button></div>
+        <div v-if="error || liveError" role="status" class="absolute inset-x-2 top-full z-20 flex items-center justify-center gap-2 rounded-b-md border border-[#1F2B37] bg-[#101923] px-3 py-1 text-xs text-gray-300 shadow-lg md:inset-x-40">{{ error || liveError }} <button type="button" class="min-h-11 underline" @click="retryRange">Retry</button></div>
     </header>
 </template>

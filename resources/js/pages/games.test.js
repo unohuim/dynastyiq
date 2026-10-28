@@ -1,7 +1,7 @@
 /* @vitest-environment jsdom */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createApp, h, nextTick, reactive } from 'vue';
+import { createApp, h, nextTick, reactive, ref } from 'vue';
 import * as inertia from '@inertiajs/vue3';
 import * as shellRealtime from '../layouts/shell-realtime';
 import AppLayout from '../layouts/AppLayout.vue';
@@ -1017,7 +1017,7 @@ describe('Inertia mobile navigation', () => {
 describe('public game preview and recap', () => {
     let app;
     let state;
-    const mount = (extra = {}, pageProps = {}) => {
+    const mount = (extra = {}, pageProps = {}, live = null) => {
         state = reactive({ game: {
             nhl_game_id: 2026020001, game_date: '2026-10-26', start_time_utc: '2026-10-26T23:00:00Z',
             mode: 'recap', status: 'Final', game_state: 'OFF', events: [], head_to_head: [], comparison: [],
@@ -1026,6 +1026,10 @@ describe('public game preview and recap', () => {
         }, ...pageProps });
         app = createApp({ render: () => h(GameShow, state) });
         app.config.globalProperties.$headManager = { createProvider: () => ({ update: vi.fn(), disconnect: vi.fn() }) };
+        if (live) {
+            app.provide('nhlLiveGame', live.incoming);
+            app.provide('nhlLiveConnected', live.connected);
+        }
         app.mount('#game-show');
     };
     const settle = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); await nextTick(); };
@@ -1327,6 +1331,39 @@ describe('public game preview and recap', () => {
         expect(header.textContent).toContain('2nd period'); expect(header.textContent).toContain('00:35');
         state.game.in_intermission = true; await nextTick();
         expect(header.textContent).toContain('2nd Int.');
+    });
+
+    it('reuses the reserved footer detail slot when selecting and clearing a shot', async () => {
+        mount({ plays_available: true, shots: [{ id: 1, type: 'goal', label: 'Goal', player: 'A long player name', side: 'away', period: 1, x: 0, y: 0, time: '01:00' }] });
+        const footer = document.querySelector('[aria-label="Shot map footer"]');
+        const details = footer.querySelector('[aria-live=polite]');
+        expect(details.textContent).toContain('Select a shot');
+        expect(footer.children).toHaveLength(3);
+        document.querySelector('svg g[role=button]').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        await nextTick();
+        expect(footer.querySelector('[aria-live=polite]')).toBe(details);
+        expect(details.textContent).toContain('A long player name');
+        expect(details.title).toContain('P1 01:00');
+        const filter = document.querySelector('[aria-label="Shot map team"]');
+        filter.value = 'home'; filter.dispatchEvent(new Event('change', { bubbles: true })); await nextTick();
+        expect(footer.querySelector('[aria-live=polite]')).toBe(details);
+        expect(details.textContent).toContain('Select a shot');
+        expect(footer.children).toHaveLength(3);
+    });
+    it('announces connection loss in an overlay and removes it on a fresh connected update', async () => {
+        const live = { incoming: ref(null), connected: ref(true) };
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ snapshots: [] }) }));
+        mount({ mode: 'live', game_state: 'LIVE' }, {}, live);
+        await settle();
+        live.connected.value = false; await nextTick();
+        const message = [...document.querySelectorAll('[role=status]')].find(node => node.textContent.includes('Live connection interrupted'));
+        expect(message).toBeDefined();
+        expect(message.classList.contains('fixed')).toBe(true);
+        expect(message.classList.contains('pointer-events-none')).toBe(true);
+        live.connected.value = true;
+        live.incoming.value = { sequence: 1, observed_at: '2026-10-27T23:00:00Z', game: { nhl_game_id: 2026020001, mode: 'live', game_state: 'LIVE' } };
+        await settle();
+        expect(document.body.contains(message)).toBe(false);
     });
 
 });
