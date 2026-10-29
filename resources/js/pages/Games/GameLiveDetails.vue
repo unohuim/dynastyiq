@@ -46,28 +46,25 @@ const shotLocation = shot => {
 // Gaussian kernel density in rink feet. The shared scale compares both ends equally.
 const heatCells = computed(() => {
   if (!heatMap.value || !shots.value.length) return [];
-  const points = shots.value.map(shotLocation);
   const cells = [];
   let peak = 0;
-  for (let y = 0; y < 85; y += 3) {
-    for (let x = 0; x < 200; x += 3) {
-      let density = 0;
-      for (const point of points) {
-        const squared = (x + 1.5 - point.x) ** 2 + (y + 1.5 - point.y) ** 2;
-        if (squared <= 441) density += Math.exp(-squared / 98);
+  for (const side of sides) {
+    const points = shots.value.filter(shot => shot.side === side).map(shotLocation);
+    for (let y = 0; y < 85; y += 3) {
+      for (let x = 0; x < 200; x += 3) {
+        let density = 0;
+        for (const point of points) {
+          const squared = (x + 1.5 - point.x) ** 2 + (y + 1.5 - point.y) ** 2;
+          if (squared <= 441) density += Math.exp(-squared / 98);
+        }
+        peak = Math.max(peak, density);
+        cells.push({ x, y, side, density });
       }
-      peak = Math.max(peak, density);
-      cells.push({ x, y, density });
     }
   }
-  const stops = [[22, 75, 140], [11, 171, 164], [176, 213, 61], [255, 177, 39], [250, 64, 42]];
-  return cells.filter(cell => peak && cell.density / peak > .035).map(cell => {
-    const intensity = cell.density / peak;
-    const position = Math.min(3.999, intensity * 4);
-    const index = Math.floor(position);
-    const rgb = stops[index].map((channel, i) => Math.round(channel + (stops[index + 1][i] - channel) * (position - index)));
-    return { ...cell, fill: `rgb(${rgb.join(',')})`, opacity: Math.min(.88, intensity * 2) };
-  });
+  return cells.filter(cell => peak && cell.density / peak > .035).map(cell => ({
+    ...cell, fill: color(cell.side), opacity: .9 * Math.sqrt(cell.density / peak),
+  }));
 });
 const heatId = computed(() => `game-map-heat-${props.game.nhl_game_id}`);
 watch(heatMap, () => { selectedId.value = null; });
@@ -142,20 +139,20 @@ watch(shots, () => { if (!selected.value) selectedId.value = null; });
   <div v-show="tab === 'summary' || tab === 'shot_map'" class="min-h-0 lg:flex-1 lg:overflow-y-auto" role="tabpanel" id="panel-summary" :aria-labelledby="`tab-${shotPanel}`">
     <div class="grid min-h-0 gap-2 lg:h-full" :class="tab === 'summary' ? 'lg:grid-cols-[minmax(0,1.86fr)_minmax(300px,1fr)] lg:grid-rows-[minmax(0,1fr)_minmax(172px,0.5fr)]' : ''">
         <section aria-labelledby="rink-heading" class="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-[#29404F] bg-[#0D1D29]">
-          <div class="flex flex-wrap items-center justify-between gap-2 border-b border-[#29404F] px-3 py-2">
-            <h2 id="rink-heading" class="text-sm font-semibold">Game map</h2>
-            <div class="flex flex-wrap items-center gap-2 text-[11px]">
-              <div class="mr-1 border-r border-[#385166] pr-3">
+          <div class="flex shrink-0 items-center gap-3 border-b border-[#29404F] px-3 py-2">
+            <h2 id="rink-heading" class="shrink-0 text-sm font-semibold">Game map</h2>
+            <div class="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto whitespace-nowrap text-[11px]">
+              <div class="mr-1 shrink-0 border-r border-[#385166] pr-3">
                 <button type="button" :aria-pressed="heatMap" class="rounded-md border px-2 py-1.5 text-[11px] transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 motion-reduce:transition-none" :class="heatMap ? 'border-sky-400 bg-sky-500/20 text-sky-300' : 'border-[#385166] bg-[#0A1823] text-[#DBE7F1] hover:bg-[#213442]'" @click="heatMap = !heatMap">Heat Map</button>
               </div>
-              <select v-model="period" aria-label="Game map period" class="rounded-md border-[#385166] bg-[#0A1823] py-1.5 pl-2 pr-7 text-[11px] text-[#DBE7F1] focus:border-sky-400 focus:ring-sky-400"><option value="all">All periods</option><option v-for="value in periods" :key="value" :value="String(value)">{{ periodLabel(value) }}</option></select>
-              <select v-model="team" aria-label="Game map team" class="rounded-md border-[#385166] bg-[#0A1823] py-1.5 pl-2 pr-7 text-[11px] text-[#DBE7F1] focus:border-sky-400 focus:ring-sky-400"><option value="all">Both teams</option><option v-for="side in sides" :key="side" :value="side">{{ game[side]?.team_abbrev }}</option></select>
-
-            </div>
-          </div>
-              <div class="flex flex-wrap gap-1 border-b border-[#29404F] px-3 py-2" role="group" aria-label="Game map events">
+              <select v-model="period" aria-label="Game map period" class="shrink-0 rounded-md border-[#385166] bg-[#0A1823] py-1.5 pl-2 pr-7 text-[11px] text-[#DBE7F1] focus:border-sky-400 focus:ring-sky-400"><option value="all">All periods</option><option v-for="value in periods" :key="value" :value="String(value)">{{ periodLabel(value) }}</option></select>
+              <select v-model="team" aria-label="Game map team" class="shrink-0 rounded-md border-[#385166] bg-[#0A1823] py-1.5 pl-2 pr-7 text-[11px] text-[#DBE7F1] focus:border-sky-400 focus:ring-sky-400"><option value="all">Both teams</option><option v-for="side in sides" :key="side" :value="side">{{ game[side]?.team_abbrev }}</option></select>
+              <div class="ml-1 flex shrink-0 gap-1 border-l border-[#385166] pl-3" role="group" aria-label="Game map events">
                 <button v-for="[mode, label] in mapModes" :key="mode" type="button" :aria-pressed="eventFilterSelected(mode)" class="rounded-md border px-2 py-1.5 text-[11px] transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 motion-reduce:transition-none" :class="eventFilterSelected(mode) ? 'border-sky-400 bg-sky-500/20 text-sky-300' : 'border-[#385166] bg-[#0A1823] text-[#DBE7F1] hover:bg-[#213442]'" @click="toggleEventFilter(mode)">{{ label }}</button>
               </div>
+            </div>
+          </div>
+
           <div class="flex min-h-0 flex-col px-3 pb-2 pt-2 lg:flex-1">
             <svg viewBox="-3 -3 206 91" role="group" aria-labelledby="rink-title rink-description" class="w-full lg:min-h-0 lg:flex-1 lg:basis-0">
               <title id="rink-title">Game event locations</title><desc id="rink-description">Event locations oriented toward the home team’s attacking net on the left and the away team’s attacking net on the right. Select a marker for event details.</desc>
@@ -165,7 +162,7 @@ watch(shots, () => { if (!selected.value) selectedId.value = null; });
                 <filter :id="heatId + '-blur'" x="-10%" y="-10%" width="120%" height="120%"><feGaussianBlur stdDeviation="1.2" /></filter>
               </defs>
               <g v-if="heatMap" :clip-path="`url(#${heatId}-clip)`" aria-label="Event density heat map" pointer-events="none">
-                <g :filter="`url(#${heatId}-blur)`"><rect v-for="cell in heatCells" :key="`${cell.x}-${cell.y}`" :x="cell.x" :y="cell.y" width="3.1" height="3.1" :fill="cell.fill" :opacity="cell.opacity" /></g>
+                <g :filter="`url(#${heatId}-blur)`"><rect v-for="cell in heatCells" :key="`${cell.side}-${cell.x}-${cell.y}`" :x="cell.x" :y="cell.y" width="3.1" height="3.1" :fill="cell.fill" :opacity="cell.opacity" /></g>
               </g>
               <path d="M75 .5v84M125 .5v84" stroke="#246DCC" stroke-width="1.2" />
               <path d="M100 .5v84M11 9v67M189 9v67" stroke="#F32C60" stroke-width=".55" />
@@ -185,14 +182,15 @@ watch(shots, () => { if (!selected.value) selectedId.value = null; });
                 <span class="inline-flex items-center gap-1"><i aria-hidden="true" class="size-2 rounded-full border border-white" /><span class="sr-only sm:not-sr-only">Goal</span></span>
               </div>
               <p aria-live="polite" aria-atomic="true" class="min-w-0 truncate text-center" :title="selected ? `${selected.player ?? 'Player unavailable'}${selected.goal_strength ? ' · ' + selected.goal_strength : ''} · ${selected.label} · ${periodLabel(selected.period)} ${selected.time ?? ''}${selected.detail ? ' · ' + selected.detail : ''}${selectedGeometry ? ' · ' + selectedGeometry : ''}` : undefined">
-                <template v-if="selected"><span class="font-semibold text-[#E7EEF6]">{{ selected.player ?? 'Player unavailable' }}</span><span v-if="selected.goal_strength" class="ml-1 inline-flex rounded border border-sky-400/40 bg-sky-500/10 px-1 py-0.5 align-middle text-[9px] leading-none font-semibold text-sky-300">{{ selected.goal_strength }}</span> · {{ selected.label }} · {{ periodLabel(selected.period) }} {{ selected.time }}<span v-if="selected.detail"> · {{ selected.detail }}</span><span v-if="selectedGeometry"> · {{ selectedGeometry }}</span></template>
-                <span v-else-if="heatMap" class="inline-flex items-center gap-2"><span>Low</span><span class="inline-block h-1.5 w-16 rounded-full" style="background: linear-gradient(90deg, #164b8c, #0baba4, #b0d53d, #ffb127, #fa402a)" /><span>High</span><span class="sr-only">Relative event density</span></span>
+                <template v-if="!ready('play_by_play')"><span>{{ state('play_by_play').status === 'error' ? state('play_by_play').message : 'Loading event locations…' }}</span><button v-if="state('play_by_play').status === 'error'" type="button" class="ml-2 text-sky-300 focus-visible:ring-2 focus-visible:ring-sky-400" @click="$emit('retry', 'play_by_play')">Retry</button></template>
+                <span v-else-if="!shots.length" class="text-[#7890A4]">{{ game.plays_available !== true ? 'Event locations are temporarily unavailable.' : 'No recorded events match these filters.' }}</span>
+                <template v-else-if="selected"><span class="font-semibold text-[#E7EEF6]">{{ selected.player ?? 'Player unavailable' }}</span><span v-if="selected.goal_strength" class="ml-1 inline-flex rounded border border-sky-400/40 bg-sky-500/10 px-1 py-0.5 align-middle text-[9px] leading-none font-semibold text-sky-300">{{ selected.goal_strength }}</span> · {{ selected.label }} · {{ periodLabel(selected.period) }} {{ selected.time }}<span v-if="selected.detail"> · {{ selected.detail }}</span><span v-if="selectedGeometry"> · {{ selectedGeometry }}</span></template>
+                <span v-else-if="heatMap" class="inline-flex items-center gap-2"><span>Low</span><span v-for="side in sides" :key="side" class="inline-block h-1.5 w-8 rounded-full" :title="game[side]?.team_abbrev" :style="{ background: `linear-gradient(90deg, ${color(side)}18, ${color(side)})` }" /><span>High</span><span class="sr-only">Relative event density</span></span>
                 <span v-else class="text-[#7890A4]">Select an event</span>
               </p>
               <span class="whitespace-nowrap text-right">{{ shots.length }}<span class="sr-only sm:not-sr-only"> events plotted</span><span class="hidden xl:inline"> · {{ game.mode === 'live' ? 'updates live' : 'final' }}</span></span>
             </div>
-            <div v-if="!ready('play_by_play')" class="mt-3 flex items-center justify-between gap-3 text-xs text-[#91A8BA]" :role="state('play_by_play').status === 'error' ? 'alert' : 'status'"><span>{{ state('play_by_play').status === 'error' ? state('play_by_play').message : 'Loading shot locations…' }}</span><button v-if="state('play_by_play').status === 'error'" type="button" class="rounded px-2 py-1 text-sky-300 focus-visible:ring-2 focus-visible:ring-sky-400" @click="$emit('retry', 'play_by_play')">Retry</button></div>
-            <p v-else-if="!shots.length" class="mt-3 text-xs text-[#91A8BA]">{{ game.plays_available !== true ? 'Event locations are temporarily unavailable.' : 'No recorded events match these filters.' }}</p>
+
           </div>
         </section>
 
