@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, watch } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import GameSectionState from './GameSectionState.vue';
 
 const props = defineProps({ game: { type: Object, required: true }, tab: { type: String, default: 'summary' }, states: { type: Object, required: true } });
@@ -9,16 +9,27 @@ const period = ref('all');
 const team = ref('all');
 const eventFilters = ref(['saves', 'goals']);
 const heatMap = ref(false);
-const mapModes = [['sog', 'SOG'], ['blocks', 'Blocks'], ['misses', 'Misses'], ['hits', 'Hits'], ['goals', 'Goals'], ['saves', 'Saves']];
-const eventFilterSelected = mode => mode === 'sog'
-  ? eventFilters.value.includes('saves') && eventFilters.value.includes('goals')
-  : eventFilters.value.includes(mode);
+const mapModes = [['goals', 'Goals'], ['saves', 'Saves'], ['blocks', 'Blocks'], ['misses', 'Misses'], ['hits', 'Hits']];
+const eventFilterSelected = mode => eventFilters.value.includes(mode);
+const mapPreferenceKey = 'diq:game-map:preferences:v1';
+onMounted(() => {
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(mapPreferenceKey) ?? 'null');
+    if (Array.isArray(saved?.events)) {
+      eventFilters.value = [...new Set(saved.events.filter(mode => mapModes.some(([key]) => key === mode)))];
+    }
+    if (typeof saved?.heatMap === 'boolean') heatMap.value = saved.heatMap;
+  } catch { /* Restricted storage or invalid preferences retain the defaults. */ }
+});
+watch([eventFilters, heatMap], () => {
+  try {
+    window.localStorage.setItem(mapPreferenceKey, JSON.stringify({ events: eventFilters.value, heatMap: heatMap.value }));
+  } catch { /* Filters continue working when browser storage is unavailable. */ }
+}, { deep: true });
 function toggleEventFilter(mode) {
   const next = new Set(eventFilters.value);
   const enabled = eventFilterSelected(mode);
-  for (const key of mode === 'sog' ? ['saves', 'goals'] : [mode]) {
-    if (enabled) next.delete(key); else next.add(key);
-  }
+  if (enabled) next.delete(mode); else next.add(mode);
   eventFilters.value = [...next];
 }
 const eventFilterType = { 'shot-on-goal': 'saves', goal: 'goals', 'blocked-shot': 'blocks', 'missed-shot': 'misses', hit: 'hits' };
@@ -63,7 +74,7 @@ const heatCells = computed(() => {
     }
   }
   return cells.filter(cell => peak && cell.density / peak > .035).map(cell => ({
-    ...cell, fill: color(cell.side), opacity: .9 * Math.sqrt(cell.density / peak),
+    ...cell, fill: color(cell.side), opacity: .9 * Math.pow(cell.density / peak, .3),
   }));
 });
 const heatId = computed(() => `game-map-heat-${props.game.nhl_game_id}`);
@@ -131,7 +142,7 @@ const flow = computed(() => {
     }),
   };
 });
-watch(() => props.game.nhl_game_id, () => { period.value = 'all'; team.value = 'all'; selectedId.value = null; playType.value = 'all'; eventFilters.value = ['saves', 'goals']; heatMap.value = false; });
+watch(() => props.game.nhl_game_id, () => { period.value = 'all'; team.value = 'all'; selectedId.value = null; playType.value = 'all'; });
 watch(shots, () => { if (!selected.value) selectedId.value = null; });
 </script>
 
@@ -141,7 +152,7 @@ watch(shots, () => { if (!selected.value) selectedId.value = null; });
         <section aria-labelledby="rink-heading" class="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-[#29404F] bg-[#0D1D29]">
           <div class="flex shrink-0 items-center gap-3 border-b border-[#29404F] px-3 py-2">
             <h2 id="rink-heading" class="shrink-0 text-sm font-semibold">Game map</h2>
-            <div class="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto whitespace-nowrap text-[11px]">
+            <div class="ml-auto flex min-w-0 items-center gap-2 overflow-x-auto whitespace-nowrap text-[11px]">
               <div class="mr-1 shrink-0 border-r border-[#385166] pr-3">
                 <button type="button" :aria-pressed="heatMap" class="rounded-md border px-2 py-1.5 text-[11px] transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 motion-reduce:transition-none" :class="heatMap ? 'border-sky-400 bg-sky-500/20 text-sky-300' : 'border-[#385166] bg-[#0A1823] text-[#DBE7F1] hover:bg-[#213442]'" @click="heatMap = !heatMap">Heat Map</button>
               </div>
