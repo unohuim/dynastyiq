@@ -18,7 +18,8 @@ class ImportNHLPlayByPlay
         return ((int)$minutes * 60) + (int)$seconds;
     }
 
-    protected function determineStrength(?string $situationCode, ?int $eventOwnerTeamId, ?int $homeTeamId, ?int $awayTeamId): string
+    /** Resolve event-owner strength using canonical provider manpower semantics. */
+    public function determineStrength(?string $situationCode, ?int $eventOwnerTeamId, ?int $homeTeamId, ?int $awayTeamId): string
     {
         if (!$situationCode || !$eventOwnerTeamId || !$homeTeamId || !$awayTeamId) {
             return 'EV';

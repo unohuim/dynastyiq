@@ -347,7 +347,7 @@ final class NhlPublicGamePage
 
             return ['eventId' => $row->nhl_event_id ?? $row->id, 'typeDescKey' => $row->type_desc_key,
                 'periodDescriptor' => ['number' => $row->period, 'periodType' => $row->period_type],
-                'homeTeamDefendingSide' => $row->home_team_defending_side,
+                'homeTeamDefendingSide' => $row->home_team_defending_side, 'situationCode' => $row->situation_code,
                 'timeInPeriod' => $row->time_in_period, 'details' => $details];
         })->all();
 
@@ -399,6 +399,16 @@ final class NhlPublicGamePage
                 'detail' => str_replace('-', ' ', (string) (data_get($row, 'details.descKey') ?? data_get($row, 'details.shotType') ?? '')),
                 'duration' => data_get($row, 'details.duration'),
                 'away_score' => data_get($row, 'details.awayScore'), 'home_score' => data_get($row, 'details.homeScore')];
+            $play['goal_strength'] = null;
+            $situation = (string) ($row['situationCode'] ?? '');
+            if ($type === 'goal' && $play['period_type'] !== 'SO' && $side !== null && preg_match('/^\d{4}$/', $situation)) {
+                $strength = app(ImportNHLPlayByPlay::class)->determineStrength($situation, (int) $teamId,
+                    (int) $teams['home']['team_id'], (int) $teams['away']['team_id']);
+                $opponentGoalie = $side === 'home' ? $situation[0] : $situation[3];
+                $play['goal_strength'] = $opponentGoalie === '0' ? 'ENG' : match ($strength) {
+                    'PP' => 'PPG', 'PK' => 'SHG', default => 'EVG',
+                };
+            }
             $plays[] = $play;
             if ($type === 'goal' && $play['period_type'] !== 'SO') {
                 $events[] = [...$play, 'scorer' => $play['player'] ?? 'Scorer unavailable',

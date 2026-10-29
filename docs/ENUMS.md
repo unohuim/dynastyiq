@@ -3007,3 +3007,7 @@ game type. They do not add public `/stats?view=` values.
 ### NHL live statistics queue
 
 `nhl-live-stats` processes changed game snapshots independently of the bounded `nhl-live` provider polling queue.
+
+### Public game goal-strength badges
+
+`goal_strength` on public goal events is nullable: `PPG` (power play), `SHG` (shorthanded), `EVG` (even strength), or `ENG` (empty net). Missing or invalid manpower evidence leaves the badge unavailable.
