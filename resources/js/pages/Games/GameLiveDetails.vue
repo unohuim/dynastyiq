@@ -74,7 +74,7 @@ const heatCells = computed(() => {
     }
   }
   return cells.filter(cell => peak && cell.density / peak > .035).map(cell => ({
-    ...cell, fill: color(cell.side), opacity: .9 * Math.pow(cell.density / peak, .3),
+    ...cell, fill: color(cell.side), opacity: .9 * (cell.density / peak),
   }));
 });
 const heatId = computed(() => `game-map-heat-${props.game.nhl_game_id}`);
