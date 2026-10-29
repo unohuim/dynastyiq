@@ -104,7 +104,7 @@ final class NhlPublicGamePage
         }
         $data = [...$data, ...Arr::only($current, match ($section) {
             'meetings' => ['head_to_head'], 'summary' => ['recap', 'comparison', 'period_scores'],
-            'play_by_play' => ['plays', 'shots', 'plays_available'],
+            'play_by_play' => ['plays', 'shots', 'map_events', 'plays_available'],
             'goals' => ['events', 'events_available'], default => [],
         })];
 
@@ -371,6 +371,7 @@ final class NhlPublicGamePage
     {
         $plays = [];
         $shots = [];
+        $mapEvents = [];
         $events = [];
         $periodTypes = [];
         foreach ($source as $index => $row) {
@@ -406,7 +407,7 @@ final class NhlPublicGamePage
             }
             $x = data_get($row, 'details.xCoord');
             $y = data_get($row, 'details.yCoord');
-            if (in_array($type, ['goal', 'shot-on-goal', 'missed-shot', 'blocked-shot'], true)
+            if (in_array($type, ['goal', 'shot-on-goal', 'missed-shot', 'blocked-shot', 'hit'], true)
                 && $play['period_type'] !== 'SO' && $side !== null && is_numeric($x) && is_numeric($y)
                 && abs((float) $x) <= 100 && abs((float) $y) <= 42.5) {
                 $geometry = app(ShotGeometryService::class)->computeFromContext(
@@ -419,8 +420,14 @@ final class NhlPublicGamePage
                 $attackingSide = $side === 'away' ? $homeDefending : ($homeDefending === 'left' ? 'right' : 'left');
                 $rawAngle = $geometry['angle'] ?? null;
                 $angle = $rawAngle === null ? null : min(abs($rawAngle), abs(180.0 - abs($rawAngle)));
-                $shots[] = [...$play, 'x' => (float) $x, 'y' => (float) $y,
-                    'distance' => $geometry['distance'] ?? null, 'angle' => $angle, 'attacking_net_side' => $attackingSide];
+                $marker = [...$play, 'x' => (float) $x, 'y' => (float) $y,
+                    'distance' => $type === 'hit' ? null : ($geometry['distance'] ?? null),
+                    'angle' => $type === 'hit' ? null : $angle, 'attacking_net_side' => $attackingSide,
+                    'blocking_player' => ($blocker = data_get($row, 'details.blockingPlayerId')) === null ? null : $names->get($blocker, 'Player #'.$blocker)];
+                $mapEvents[] = $marker;
+                if ($type !== 'hit') {
+                    $shots[] = $marker;
+                }
             }
         }
         if ($currentPeriod !== null && $currentPeriodType !== null) {
@@ -443,7 +450,7 @@ final class NhlPublicGamePage
             $periods[] = $line;
         }
 
-        return ['plays' => $plays, 'shots' => $shots, 'events' => $events,
+        return ['plays' => $plays, 'shots' => $shots, 'map_events' => $mapEvents, 'events' => $events,
             'plays_available' => $available, 'events_available' => $available, 'period_scores' => $periods];
     }
 

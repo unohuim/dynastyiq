@@ -7,15 +7,21 @@ defineEmits(['retry', 'navigate']);
 const sides = ['away', 'home'];
 const period = ref('all');
 const team = ref('all');
-const shotType = ref('sog');
+const shotType = ref('sat');
+const mapModes = [['sat', 'SAT'], ['hits', 'Hits'], ['blocks', 'Blocks']];
 const playType = ref('all');
 const selectedId = ref(null);
 const periodLabel = value => props.game.period_scores?.some(row => Number(row.period) === Number(value) && row.label === 'SO') ? 'SO' : Number(value) > 3 ? (Number(value) === 4 ? 'OT' : `${Number(value) - 3}OT`) : `P${value}`;
 const periods = computed(() => [...new Set([...(props.game.plays ?? []), ...(props.game.shots ?? [])].map(row => Number(row.period)))].sort((a, b) => a - b));
 const inPeriod = row => period.value === 'all' || Number(row.period) === Number(period.value);
-const shots = computed(() => (props.game.shots ?? []).filter(row => inPeriod(row)
-  && (team.value === 'all' || row.side === team.value)
-  && (shotType.value === 'all' || row.type === 'goal' || (shotType.value === 'sog' && row.type === 'shot-on-goal'))));
+const shots = computed(() => (props.game.map_events ?? props.game.shots ?? [])
+  .filter(row => shotType.value === 'hits' ? row.type === 'hit' : shotType.value === 'blocks'
+    ? row.type === 'blocked-shot' : ['goal', 'shot-on-goal', 'missed-shot', 'blocked-shot'].includes(row.type))
+  .map(row => shotType.value === 'blocks' ? { ...row,
+    side: row.side === 'home' ? 'away' : 'home', player: row.blocking_player ?? 'Blocker unavailable',
+    attacking_net_side: row.attacking_net_side === 'left' ? 'right' : 'left', distance: null, angle: null,
+  } : row)
+  .filter(row => inPeriod(row) && (team.value === 'all' || row.side === team.value)));
 // Rotate both axes together so period changes preserve shot geometry and lateral position.
 const shotLocation = shot => {
   const homeDefending = Number(shot.period) % 2 === 0 ? 'right' : 'left';
@@ -87,7 +93,7 @@ const flow = computed(() => {
     }),
   };
 });
-watch(() => props.game.nhl_game_id, () => { period.value = 'all'; team.value = 'all'; selectedId.value = null; playType.value = 'all'; shotType.value = 'sog'; });
+watch(() => props.game.nhl_game_id, () => { period.value = 'all'; team.value = 'all'; selectedId.value = null; playType.value = 'all'; shotType.value = 'sat'; });
 watch(shots, () => { if (!selected.value) selectedId.value = null; });
 </script>
 
@@ -96,16 +102,18 @@ watch(shots, () => { if (!selected.value) selectedId.value = null; });
     <div class="grid min-h-0 gap-2 lg:h-full" :class="tab === 'summary' ? 'lg:grid-cols-[minmax(0,1.86fr)_minmax(300px,1fr)] lg:grid-rows-[minmax(0,1fr)_minmax(172px,0.5fr)]' : ''">
         <section aria-labelledby="rink-heading" class="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-[#29404F] bg-[#0D1D29]">
           <div class="flex flex-wrap items-center justify-between gap-2 border-b border-[#29404F] px-3 py-2">
-            <h2 id="rink-heading" class="text-sm font-semibold">Shot map</h2>
+            <h2 id="rink-heading" class="text-sm font-semibold">Game map</h2>
             <div class="flex flex-wrap gap-2 text-[11px]">
-              <select v-model="period" aria-label="Shot map period" class="rounded-md border-[#385166] bg-[#0A1823] py-1.5 pl-2 pr-7 text-[11px] text-[#DBE7F1] focus:border-sky-400 focus:ring-sky-400"><option value="all">All periods</option><option v-for="value in periods" :key="value" :value="String(value)">{{ periodLabel(value) }}</option></select>
-              <select v-model="team" aria-label="Shot map team" class="rounded-md border-[#385166] bg-[#0A1823] py-1.5 pl-2 pr-7 text-[11px] text-[#DBE7F1] focus:border-sky-400 focus:ring-sky-400"><option value="all">Both teams</option><option v-for="side in sides" :key="side" :value="side">{{ game[side]?.team_abbrev }}</option></select>
-              <select v-model="shotType" aria-label="Shot map attempts" class="rounded-md border-[#385166] bg-[#0A1823] py-1.5 pl-2 pr-7 text-[11px] text-[#DBE7F1] focus:border-sky-400 focus:ring-sky-400"><option value="sog">SOG + goals</option><option value="goal">Goals</option><option value="all">All attempts</option></select>
+              <select v-model="period" aria-label="Game map period" class="rounded-md border-[#385166] bg-[#0A1823] py-1.5 pl-2 pr-7 text-[11px] text-[#DBE7F1] focus:border-sky-400 focus:ring-sky-400"><option value="all">All periods</option><option v-for="value in periods" :key="value" :value="String(value)">{{ periodLabel(value) }}</option></select>
+              <select v-model="team" aria-label="Game map team" class="rounded-md border-[#385166] bg-[#0A1823] py-1.5 pl-2 pr-7 text-[11px] text-[#DBE7F1] focus:border-sky-400 focus:ring-sky-400"><option value="all">Both teams</option><option v-for="side in sides" :key="side" :value="side">{{ game[side]?.team_abbrev }}</option></select>
+              <div class="inline-flex gap-1" role="group" aria-label="Game map events">
+                <button v-for="[mode, label] in mapModes" :key="mode" type="button" :aria-pressed="shotType === mode" class="rounded-md border px-2 py-1.5 text-[11px] transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 motion-reduce:transition-none" :class="shotType === mode ? 'border-sky-400 bg-sky-500/20 text-sky-300' : 'border-[#385166] bg-[#0A1823] text-[#DBE7F1] hover:bg-[#213442]'" @click="shotType = mode">{{ label }}</button>
+              </div>
             </div>
           </div>
           <div class="flex min-h-0 flex-col px-3 pb-2 pt-2 lg:flex-1">
             <svg viewBox="-3 -3 206 91" role="group" aria-labelledby="rink-title rink-description" class="w-full lg:min-h-0 lg:flex-1 lg:basis-0">
-              <title id="rink-title">Game shot locations</title><desc id="rink-description">Shot locations oriented toward the home team’s attacking net on the left and the away team’s attacking net on the right. Select a marker for event details.</desc>
+              <title id="rink-title">Game event locations</title><desc id="rink-description">Event locations oriented toward the home team’s attacking net on the left and the away team’s attacking net on the right. Select a marker for event details.</desc>
               <rect x="0" y="0" width="200" height="85" rx="22" fill="#0C1C29" stroke="#799BB4" stroke-width=".6" />
               <path d="M75 .5v84M125 .5v84" stroke="#246DCC" stroke-width="1.2" />
               <path d="M100 .5v84M11 9v67M189 9v67" stroke="#F32C60" stroke-width=".55" />
@@ -119,19 +127,19 @@ watch(shots, () => { if (!selected.value) selectedId.value = null; });
                 <circle :cx="shotLocation(shot).x" :cy="shotLocation(shot).y" :r="shot.type === 'goal' ? 2.5 : 1.2" :fill="color(shot.side)" :stroke="shot.type === 'goal' || String(selectedId) === String(shot.id) ? '#F3F8FC' : '#102132'" :stroke-width="shot.type === 'goal' || String(selectedId) === String(shot.id) ? .85 : .18" :opacity="1" />
               </g>
             </svg>
-            <div class="mt-2 grid h-5 shrink-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 text-[10px] text-[#A6B9C9]" aria-label="Shot map footer">
+            <div class="mt-2 grid h-5 shrink-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 text-[10px] text-[#A6B9C9]" aria-label="Game map footer">
               <div class="flex items-center gap-1.5 whitespace-nowrap sm:gap-3">
-                <span v-for="side in sides" :key="side" class="inline-flex items-center gap-1"><svg aria-hidden="true" viewBox="0 0 10 10" class="size-2.5"><circle cx="5" cy="5" r="5" :fill="color(side)" /></svg>{{ game[side]?.team_abbrev }}<span class="hidden lg:inline">shot</span></span>
+                <span v-for="side in sides" :key="side" class="inline-flex items-center gap-1"><svg aria-hidden="true" viewBox="0 0 10 10" class="size-2.5"><circle cx="5" cy="5" r="5" :fill="color(side)" /></svg>{{ game[side]?.team_abbrev }}<span class="hidden lg:inline">event</span></span>
                 <span class="inline-flex items-center gap-1"><i aria-hidden="true" class="size-2 rounded-full border border-white" /><span class="sr-only sm:not-sr-only">Goal</span></span>
               </div>
               <p aria-live="polite" aria-atomic="true" class="min-w-0 truncate text-center" :title="selected ? `${selected.player ?? 'Player unavailable'} · ${selected.label} · ${periodLabel(selected.period)} ${selected.time ?? ''}${selected.detail ? ' · ' + selected.detail : ''}${selectedGeometry ? ' · ' + selectedGeometry : ''}` : undefined">
                 <template v-if="selected"><span class="font-semibold text-[#E7EEF6]">{{ selected.player ?? 'Player unavailable' }}</span> · {{ selected.label }} · {{ periodLabel(selected.period) }} {{ selected.time }}<span v-if="selected.detail"> · {{ selected.detail }}</span><span v-if="selectedGeometry"> · {{ selectedGeometry }}</span></template>
-                <span v-else class="text-[#7890A4]">Select a shot</span>
+                <span v-else class="text-[#7890A4]">Select an event</span>
               </p>
-              <span class="whitespace-nowrap text-right">{{ shots.length }}<span class="sr-only sm:not-sr-only"> shots plotted</span><span class="hidden xl:inline"> · {{ game.mode === 'live' ? 'updates live' : 'final' }}</span></span>
+              <span class="whitespace-nowrap text-right">{{ shots.length }}<span class="sr-only sm:not-sr-only"> events plotted</span><span class="hidden xl:inline"> · {{ game.mode === 'live' ? 'updates live' : 'final' }}</span></span>
             </div>
             <div v-if="!ready('play_by_play')" class="mt-3 flex items-center justify-between gap-3 text-xs text-[#91A8BA]" :role="state('play_by_play').status === 'error' ? 'alert' : 'status'"><span>{{ state('play_by_play').status === 'error' ? state('play_by_play').message : 'Loading shot locations…' }}</span><button v-if="state('play_by_play').status === 'error'" type="button" class="rounded px-2 py-1 text-sky-300 focus-visible:ring-2 focus-visible:ring-sky-400" @click="$emit('retry', 'play_by_play')">Retry</button></div>
-            <p v-else-if="!shots.length" class="mt-3 text-xs text-[#91A8BA]">{{ game.plays_available !== true ? 'Shot locations are temporarily unavailable.' : 'No recorded shots match these filters.' }}</p>
+            <p v-else-if="!shots.length" class="mt-3 text-xs text-[#91A8BA]">{{ game.plays_available !== true ? 'Event locations are temporarily unavailable.' : 'No recorded events match these filters.' }}</p>
           </div>
         </section>
 

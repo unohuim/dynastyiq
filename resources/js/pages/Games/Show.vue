@@ -24,7 +24,7 @@ const status = computed(() => mode.value === 'live' ? scoreboardStatus(game.valu
 const sections = computed(() => mode.value === 'preview'
   ? [['matchup', 'Matchup'], ['lineups', 'Lineups'], ['meetings', 'Head-to-head']]
   : [['summary', 'Game stats'], ['goals', 'Scoring'], ['boxscore', 'Boxscore'], ['play_by_play', 'Play-by-play']]);
-const liveTabs = [['summary', 'Summary'], ['boxscore', 'Boxscore'], ['play_by_play', 'Play-by-play'], ['shot_map', 'Shot map'], ['game_flow', 'Game flow']];
+const liveTabs = [['summary', 'Summary'], ['boxscore', 'Boxscore'], ['play_by_play', 'Play-by-play'], ['shot_map', 'Game map'], ['game_flow', 'Game flow']];
 const activeTab = ref('summary');
 function selectLiveTab(name) {
   if (!liveTabs.some(([id]) => id === name)) return;
