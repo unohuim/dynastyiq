@@ -16,6 +16,14 @@ const inPeriod = row => period.value === 'all' || Number(row.period) === Number(
 const shots = computed(() => (props.game.shots ?? []).filter(row => inPeriod(row)
   && (team.value === 'all' || row.side === team.value)
   && (shotType.value === 'all' || row.type === 'goal' || (shotType.value === 'sog' && row.type === 'shot-on-goal'))));
+// Rotate both axes together so period changes preserve shot geometry and lateral position.
+const shotLocation = shot => {
+  const homeDefending = Number(shot.period) % 2 === 0 ? 'right' : 'left';
+  const attackingSide = shot.attacking_net_side ?? (shot.side === 'away' ? homeDefending : (homeDefending === 'left' ? 'right' : 'left'));
+  const desiredSide = shot.side === 'away' ? 'right' : 'left';
+  const direction = attackingSide === desiredSide ? 1 : -1;
+  return { x: Number(shot.x) * direction + 100, y: 42.5 - Number(shot.y) * direction };
+};
 const selected = computed(() => shots.value.find(row => String(row.id) === String(selectedId.value)));
 const selectedGeometry = computed(() => [
   selected.value?.distance == null ? null : `${Number(selected.value.distance).toFixed(1)} ft`,
@@ -97,7 +105,7 @@ watch(shots, () => { if (!selected.value) selectedId.value = null; });
           </div>
           <div class="flex min-h-0 flex-col px-3 pb-2 pt-2 lg:flex-1">
             <svg viewBox="-3 -3 206 91" role="group" aria-labelledby="rink-title rink-description" class="w-full lg:min-h-0 lg:flex-1 lg:basis-0">
-              <title id="rink-title">Game shot locations</title><desc id="rink-description">Official rink coordinates. Teams change ends between periods. Select a marker for event details.</desc>
+              <title id="rink-title">Game shot locations</title><desc id="rink-description">Shot locations oriented toward the home team’s attacking net on the left and the away team’s attacking net on the right. Select a marker for event details.</desc>
               <rect x="0" y="0" width="200" height="85" rx="22" fill="#0C1C29" stroke="#799BB4" stroke-width=".6" />
               <path d="M75 .5v84M125 .5v84" stroke="#246DCC" stroke-width="1.2" />
               <path d="M100 .5v84M11 9v67M189 9v67" stroke="#F32C60" stroke-width=".55" />
@@ -107,8 +115,8 @@ watch(shots, () => { if (!selected.value) selectedId.value = null; });
               <path d="M11 39.5H8v6h3M189 39.5h3v6h-3" fill="none" stroke="#B9C9D8" stroke-width=".65" />
               <g v-for="shot in shots" :key="shot.id" role="button" tabindex="0" :aria-label="`${shot.player ?? 'Player unavailable'}, ${shot.label}, ${periodLabel(shot.period)} ${shot.time ?? ''}`" :aria-pressed="String(selectedId) === String(shot.id)" class="cursor-pointer focus:outline-none" @focus="selectedId = shot.id" @click="selectedId = shot.id" @keydown.enter.prevent="selectedId = shot.id" @keydown.space.prevent="selectedId = shot.id">
                 <title>{{ shot.player ?? 'Player unavailable' }} · {{ shot.label }} · {{ periodLabel(shot.period) }} {{ shot.time }}</title>
-                <circle :cx="shot.x + 100" :cy="42.5 - shot.y" r="3.2" fill="transparent" stroke="none" />
-                <circle :cx="shot.x + 100" :cy="42.5 - shot.y" :r="shot.type === 'goal' ? 2.5 : 1.2" :fill="color(shot.side)" :stroke="shot.type === 'goal' || String(selectedId) === String(shot.id) ? '#F3F8FC' : '#102132'" :stroke-width="shot.type === 'goal' || String(selectedId) === String(shot.id) ? .85 : .18" :opacity="1" />
+                <circle :cx="shotLocation(shot).x" :cy="shotLocation(shot).y" r="3.2" fill="transparent" stroke="none" />
+                <circle :cx="shotLocation(shot).x" :cy="shotLocation(shot).y" :r="shot.type === 'goal' ? 2.5 : 1.2" :fill="color(shot.side)" :stroke="shot.type === 'goal' || String(selectedId) === String(shot.id) ? '#F3F8FC' : '#102132'" :stroke-width="shot.type === 'goal' || String(selectedId) === String(shot.id) ? .85 : .18" :opacity="1" />
               </g>
             </svg>
             <div class="mt-2 grid h-5 shrink-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 text-[10px] text-[#A6B9C9]" aria-label="Shot map footer">

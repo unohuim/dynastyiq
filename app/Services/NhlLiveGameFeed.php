@@ -138,7 +138,7 @@ final class NhlLiveGameFeed
                     }
                 }
             }
-            foreach (['xgf' => 'xGF', 'xga' => 'xGA'] as $key => $label) {
+            foreach (['xgf' => 'xGF'] as $key => $label) {
                 $snapshot['game']['comparison'][] = ['label' => $label,
                     'away' => $metrics['teams'][$snapshot['game']['away']['team_id']][$key] ?? null,
                     'home' => $metrics['teams'][$snapshot['game']['home']['team_id']][$key] ?? null];

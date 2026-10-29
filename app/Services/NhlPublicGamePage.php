@@ -413,10 +413,14 @@ final class NhlPublicGamePage
                     (int) $x, (int) $y, (int) $teamId, $row['homeTeamDefendingSide'] ?? null, $period,
                     (int) $teams['home']['team_id'], (int) $teams['away']['team_id'],
                 );
+                $homeDefending = strtolower((string) ($row['homeTeamDefendingSide'] ?? ''));
+                $homeDefending = str_starts_with($homeDefending, 'l') ? 'left'
+                    : (str_starts_with($homeDefending, 'r') ? 'right' : ($period % 2 === 0 ? 'right' : 'left'));
+                $attackingSide = $side === 'away' ? $homeDefending : ($homeDefending === 'left' ? 'right' : 'left');
                 $rawAngle = $geometry['angle'] ?? null;
                 $angle = $rawAngle === null ? null : min(abs($rawAngle), abs(180.0 - abs($rawAngle)));
                 $shots[] = [...$play, 'x' => (float) $x, 'y' => (float) $y,
-                    'distance' => $geometry['distance'] ?? null, 'angle' => $angle];
+                    'distance' => $geometry['distance'] ?? null, 'angle' => $angle, 'attacking_net_side' => $attackingSide];
             }
         }
         if ($currentPeriod !== null && $currentPeriodType !== null) {
