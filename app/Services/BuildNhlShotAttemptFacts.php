@@ -606,23 +606,6 @@ class BuildNhlShotAttemptFacts
         };
     }
 
-    /** Present the canonical fact geometry buckets for a public shot detail.
-     * @param array<string,float>|null $geometry
-     * @return array<string,string|null>
-     */
-    public function geometryBucketLabels(?array $geometry): array
-    {
-        $distance = $this->distanceBucket($geometry['distance'] ?? null);
-        $angle = $this->angleBucket($this->foldedAbsoluteShotAngle($geometry['angle'] ?? null));
-        $label = static function (string $bucket, string $unit): ?string {
-            if (preg_match('/^[da]_(\d+)_(\d+)$/', $bucket, $matches)) {
-                return (int) $matches[1].'–'.(int) $matches[2].$unit;
-            }
-            return $bucket === 'd_060_plus' ? '60+ ft' : null;
-        };
-        return ['distance_bucket' => $label($distance, ' ft'), 'angle_bucket' => $label($angle, '°')];
-    }
-
     private function distanceBucket(mixed $distance): string
     {
         if ($distance === null) {

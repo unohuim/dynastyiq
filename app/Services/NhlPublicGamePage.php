@@ -413,8 +413,10 @@ final class NhlPublicGamePage
                     (int) $x, (int) $y, (int) $teamId, $row['homeTeamDefendingSide'] ?? null, $period,
                     (int) $teams['home']['team_id'], (int) $teams['away']['team_id'],
                 );
-                $buckets = app(BuildNhlShotAttemptFacts::class)->geometryBucketLabels($geometry);
-                $shots[] = [...$play, 'x' => (float) $x, 'y' => (float) $y, ...$buckets];
+                $rawAngle = $geometry['angle'] ?? null;
+                $angle = $rawAngle === null ? null : min(abs($rawAngle), abs(180.0 - abs($rawAngle)));
+                $shots[] = [...$play, 'x' => (float) $x, 'y' => (float) $y,
+                    'distance' => $geometry['distance'] ?? null, 'angle' => $angle];
             }
         }
         if ($currentPeriod !== null && $currentPeriodType !== null) {
