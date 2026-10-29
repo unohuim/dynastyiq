@@ -73,9 +73,14 @@ const heatCells = computed(() => {
       }
     }
   }
-  return cells.filter(cell => peak && cell.density / peak > .035).map(cell => ({
-    ...cell, fill: color(cell.side), opacity: .9 * (cell.density / peak),
-  }));
+  const palette = [[253, 224, 71], [251, 146, 60], [239, 68, 68]];
+  return cells.filter(cell => peak && cell.density / peak > .035).map(cell => {
+    const intensity = cell.density / peak;
+    const position = Math.min(1.999, intensity * 2);
+    const index = Math.floor(position);
+    const rgb = palette[index].map((channel, i) => Math.round(channel + (palette[index + 1][i] - channel) * (position - index)));
+    return { ...cell, fill: `rgb(${rgb.join(',')})`, opacity: .9 * intensity };
+  });
 });
 const heatId = computed(() => `game-map-heat-${props.game.nhl_game_id}`);
 watch(heatMap, () => { selectedId.value = null; });
@@ -165,6 +170,13 @@ watch(shots, () => { if (!selected.value) selectedId.value = null; });
           </div>
 
           <div class="flex min-h-0 flex-col px-3 pb-2 pt-2 lg:flex-1">
+            <div class="mb-1 grid h-6 shrink-0 grid-cols-2 items-center text-[11px] font-semibold text-[#DBE7F1]" aria-label="Rink team orientation">
+              <div v-for="side in ['home', 'away']" :key="side" class="flex min-w-0 items-center justify-center gap-1.5">
+                <img v-if="game[side]?.team_logo" :src="game[side].team_logo" alt="" class="size-5 object-contain" />
+                <span>{{ game[side]?.team_abbrev ?? (side === 'home' ? 'Home' : 'Away') }}</span>
+                <span class="text-[9px] font-normal text-[#7890A4]">{{ side === 'home' ? 'Home' : 'Away' }}</span>
+              </div>
+            </div>
             <svg viewBox="-3 -3 206 91" role="group" aria-labelledby="rink-title rink-description" class="w-full lg:min-h-0 lg:flex-1 lg:basis-0">
               <title id="rink-title">Game event locations</title><desc id="rink-description">Event locations oriented toward the home team’s attacking net on the left and the away team’s attacking net on the right. Select a marker for event details.</desc>
               <rect x="0" y="0" width="200" height="85" rx="22" fill="#0C1C29" stroke="#799BB4" stroke-width=".6" />
@@ -196,7 +208,7 @@ watch(shots, () => { if (!selected.value) selectedId.value = null; });
                 <template v-if="!ready('play_by_play')"><span>{{ state('play_by_play').status === 'error' ? state('play_by_play').message : 'Loading event locations…' }}</span><button v-if="state('play_by_play').status === 'error'" type="button" class="ml-2 text-sky-300 focus-visible:ring-2 focus-visible:ring-sky-400" @click="$emit('retry', 'play_by_play')">Retry</button></template>
                 <span v-else-if="!shots.length" class="text-[#7890A4]">{{ game.plays_available !== true ? 'Event locations are temporarily unavailable.' : 'No recorded events match these filters.' }}</span>
                 <template v-else-if="selected"><span class="font-semibold text-[#E7EEF6]">{{ selected.player ?? 'Player unavailable' }}</span><span v-if="selected.goal_strength" class="ml-1 inline-flex rounded border border-sky-400/40 bg-sky-500/10 px-1 py-0.5 align-middle text-[9px] leading-none font-semibold text-sky-300">{{ selected.goal_strength }}</span> · {{ selected.label }} · {{ periodLabel(selected.period) }} {{ selected.time }}<span v-if="selected.detail"> · {{ selected.detail }}</span><span v-if="selectedGeometry"> · {{ selectedGeometry }}</span></template>
-                <span v-else-if="heatMap" class="inline-flex items-center gap-2"><span>Low</span><span v-for="side in sides" :key="side" class="inline-block h-1.5 w-8 rounded-full" :title="game[side]?.team_abbrev" :style="{ background: `linear-gradient(90deg, ${color(side)}18, ${color(side)})` }" /><span>High</span><span class="sr-only">Relative event density</span></span>
+                <span v-else-if="heatMap" class="inline-flex items-center gap-2"><span>Low</span><span class="inline-block h-1.5 w-16 rounded-full" style="background: linear-gradient(90deg, #fde04718, #fde047, #fb923c, #ef4444)" /><span>High</span><span class="sr-only">Relative event density</span></span>
                 <span v-else class="text-[#7890A4]">Select an event</span>
               </p>
               <span class="whitespace-nowrap text-right">{{ shots.length }}<span class="sr-only sm:not-sr-only"> events plotted</span><span class="hidden xl:inline"> · {{ game.mode === 'live' ? 'updates live' : 'final' }}</span></span>
