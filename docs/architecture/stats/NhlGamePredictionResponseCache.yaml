@@ -4,20 +4,25 @@ location:
   - app/Services/NhlGamePredictionResponseCache.php
   - app/Jobs/RefreshNhlGamePredictionJob.php
   - app/Http/Controllers/Api/NhlGamePredictionsController.php
-purpose: Serve bounded cached partner prediction responses without blocking requests on repeated full matchup assembly.
+purpose: Publish immutable revisions and bounded cached responses from the single default pregame engine.
+when_to_use:
+  - Serving partner game predictions and explicit manual admin recalculations.
+  - Refreshing a matching stale response through the existing lineup queue.
+when_not_to_use:
+  - Selecting a legacy stack engine or substituting old prediction math.
+  - Rewriting a saved revision on a cache hit.
 rules:
-  - Final goal normalization uses a new response-cache namespace so pre-normalization cached responses cannot satisfy the updated contract. Stored historical revisions remain immutable.
-  - Fingerprints include effective Production Model state for qualification and forecasting. Test Model rebuilds do not invalidate live results solely through their timestamps. Qualification-policy changes version the response-cache namespace so earlier selection results cannot be reused.
-  - Cache the partner API path and explicitly forced operational admin runs through the same default-stack pathway. Historical engine evaluations call the uncached payload builder and retain deterministic pinned inputs.
-  - A matching response is fresh for one minute. Only a response with the current fingerprint may be served stale for at most five minutes after an identical refresh is queued or already queued. Changed Engine settings, stack membership/order/default selection, or production model must never reuse a mismatched stale response.
-  - A cache miss, expired stale response, or refresh-dispatch failure calculates synchronously and replaces the cached response on success.
-  - Cache identity includes normalized request inputs, default-stack membership/order/Engine metrics and model state, game/starter state, selected current-lineup evidence, and stored starting-goalie evidence. Both synchronous and queued builds verify their fingerprint before and after building; changed inputs prevent publication. Synchronous callers receive a retryable 503 rather than obsolete results.
-  - The authenticated force_refresh boolean bypasses existing response reuse and shares the ordinary cache entry. It is removed before constructing prediction inputs and cache identity. It does not bypass authentication, authorization, source-data caches or qualification rules.
-  - All synchronous, forced and queued builds use one atomic game-level lock with a 600-second lease. Contending HTTP requests receive 503 with Retry-After 2; queued refreshes yield without duplicating work. Successful queued refreshes recheck for an already-fresh result after acquiring the lock. Locks release in finally; process death relies on lease expiry. Deployment execution limits must keep builds below the lease.
-  - Concurrent stale reads deduplicate refresh jobs. Refreshes use the existing lineups queue so discovery work on default cannot delay them.
-  - Every new publishable calculation is archived through NhlGamePredictionHistory before entering the cache; cache hits do not append revisions. Operational manual runs carry an optional run id and force a calculation, with run/game retry idempotency. Revision ownership and latest selection are defined in stats/NhlGamePredictionHistory.yaml.
-  - Responses expose meta.cache as fresh or stale. Cached payloads retain all ordinary prediction fields and errors remain uncached.
+  - All builds use NhlCustomGamePrediction.yaml through the existing payload builder. No saved stack or legacy confidence qualification is a prerequisite.
+  - Use a separately versioned response namespace for the default-engine transition so old calculated responses cannot satisfy new requests. Earlier immutable revisions remain readable.
+  - Fingerprints include the selected eligible SAT model, current algorithm/configuration, source-game updates, game/starter state, current lineup evidence and starting-goalie observations. Retired stack weights do not choose or alter a new prediction. Verify the fingerprint before publication; changed inputs return a retryable response.
+  - A matching response is fresh for one minute and may be stale for at most five minutes only while its deduplicated refresh is queued or already queued. A miss or expired response calculates synchronously. The authenticated force-refresh option bypasses response reuse, not source evidence caches.
+  - Synchronous, forced and queued builds share the existing game-level atomic lock and release it in finally. Contending requests and cold shared-input preparation are retryable, never fabricated predictions.
+  - Every newly published calculation is recorded through NhlGamePredictionHistory before caching. Private custom input evidence is archived separately from the public payload. Cache hits retain their revision identity; manual run/game retries remain idempotent.
+  - Refresh jobs retain the existing lineups queue. Manual admin game jobs retain projections. No imports, migrations or context rebuilds are dispatched by this cache boundary.
 public_interface:
   - GET /api/nhl-game-predictions
   - NhlGamePredictionResponseCache
   - RefreshNhlGamePredictionJob
+example_usage: |
+  A current cache hit returns its existing revision.
+  An explicit refresh calculates with the default pregame engine and appends a new revision.

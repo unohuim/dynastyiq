@@ -14,8 +14,9 @@ final class RefreshNhlGamePredictionJob implements ShouldQueue
 {
     use Queueable;
 
-    public int $tries = 1;
+    public int $tries = 10;
     public int $timeout = 120;
+    public array $backoff = [10, 30, 60];
 
     /** @param array<string,mixed> $input */
     public function __construct(public int $gameId, public array $input, public string $fingerprint)

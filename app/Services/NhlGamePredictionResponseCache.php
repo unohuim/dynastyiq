@@ -5,8 +5,6 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Jobs\RefreshNhlGamePredictionJob;
-use App\Models\NhlModelRun;
-use App\Models\NhlSatEngineStack;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpKernel\Exception\ServiceUnavailableHttpException;
@@ -46,9 +44,6 @@ final class NhlGamePredictionResponseCache
                 }
             }
             $evidence = $this->evidence($gameId, $input);
-            if ($runId !== null && ($evidence['stack'] === null || $evidence['stack']->members->isEmpty())) {
-                throw \Illuminate\Validation\ValidationException::withMessages(['stack' => 'A non-empty default stack is required.']);
-            }
             $fingerprint = hash('sha256', json_encode($evidence, JSON_THROW_ON_ERROR));
             $current = Cache::get($key);
             if ($runId === null && $this->matches($current, $fingerprint, self::FRESH_SECONDS)
@@ -129,18 +124,19 @@ final class NhlGamePredictionResponseCache
     private function evidence(int $gameId, array $input): array
     {
         ksort($input);
-        $game = DB::table('nhl_games')->where('nhl_game_id', $gameId)->first(['updated_at', 'away_starter_lock', 'home_starter_lock']);
-        $stack = NhlSatEngineStack::query()->where('is_default', true)->with('members.engine')->first();
-        $modelIds = $stack?->production_model_run_id !== null
-            ? [$stack->production_model_run_id]
-            : ($stack?->members->pluck('engine.model_run_id')->filter()->unique()->values()->all() ?? []);
-        $models = NhlModelRun::query()->whereIn('id', $modelIds)->orderBy('id')->get(['id', 'updated_at']);
+        $game = DB::table('nhl_games')->where('nhl_game_id', $gameId)->first(['updated_at', 'season_id', 'away_starter_lock', 'home_starter_lock']);
+        $model = app(NhlCustomGameForecast::class)->model(isset($input['sat_model_run_id']) ? (int) $input['sat_model_run_id'] : null, $game?->season_id);
+        $models = collect([['id' => $model->id, 'updated_at' => $model->updated_at, 'train_season_ids' => $model->train_season_ids]]);
         $lineups = DB::table('nhl_current_lineups')->where('nhl_game_id', $gameId)
             ->orderBy('team_id')->get(['team_id', 'nhl_lineup_observation_id', 'structure_hash', 'last_observed_at', 'updated_at']);
         $goalies = DB::table('nhl_starting_goalie_observations')->where('nhl_game_id', $gameId)
             ->orderBy('id')->get(['id', 'team_abbrev', 'nhl_player_id', 'updated_at']);
 
-        return ['request' => $input, 'game' => $game, 'stack' => $stack, 'models' => $models,
+        $source = DB::table('nhl_games')->where('game_type', 2)->whereIn('game_state', ['OFF', 'FINAL'])
+            ->selectRaw('COUNT(*) AS games, MAX(updated_at) AS changed')->first();
+
+        return ['request' => $input, 'game' => $game, 'stack' => null, 'models' => $models,
+            'algorithm' => config('nhl-custom-prediction'), 'source' => $source,
             'lineups' => $lineups, 'goalies' => $goalies];
     }
 
@@ -149,7 +145,7 @@ final class NhlGamePredictionResponseCache
     {
         ksort($input);
 
-        return 'nhl:game-prediction:production-qualified-upper1-gapallowance15-preblend3-qualifiedboost3-participating-totals-v10:' . $gameId . ':' . hash('sha256', json_encode($input, JSON_THROW_ON_ERROR));
+        return 'nhl:game-prediction:custom-filled-inputs-v11:' . $gameId . ':' . hash('sha256', json_encode($input, JSON_THROW_ON_ERROR));
     }
 
     /** @param array<string,mixed> $input */

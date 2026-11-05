@@ -207,7 +207,7 @@ onBeforeUnmount(() => {
     <section aria-label="Game Predictions" class="space-y-4">
         <div class="border-y border-gray-200 bg-white px-4 py-4">
             <h3 class="text-sm font-semibold text-gray-900">Run Game Predictions</h3>
-            <p class="mt-1 text-sm text-gray-600">Use the current default stack. Each new calculation is saved; the latest successful prediction is shown below.</p>
+            <p class="mt-1 text-sm text-gray-600">Use the default pregame engine. Each new calculation is saved; the latest successful prediction is shown below.</p>
             <p class="mt-1 text-xs text-gray-500">Past dates use currently available inputs. These runs are not historical backtests.</p>
             <form class="mt-4 flex flex-wrap items-end gap-3" @submit.prevent>
                 <div>

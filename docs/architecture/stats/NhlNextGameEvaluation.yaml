@@ -26,6 +26,7 @@ when_not_to_use:
   - Predicting roster participation, production ice time, game winners, or goalie performance.
   - Applying context effects to production predictions or tuning formulas on test outcomes.
 rules:
+  - Current default game-prediction rollout is owned by NhlCustomGamePrediction.yaml. All requested scheduled games use custom_ev_pp_v2 with one hundred percent effective inputs after fallback; observed ninety-percent research cohorts below are historical measurements, not runtime admission gates. Earlier isolated research and live-path separation statements describe those experiments only. No historical win percentage is assigned to the new rollout.
   - Game Evaluation skater shot evidence ALWAYS retains only this evaluation model's level-one SAT buckets with pre-determined Train confidence >= 0.50, including exactly 0.50. Freeze the feature mapping, retained keys, model identity and Train seasons once per saved game in existing lineup JSON. The source SAT model must match the evaluation's frozen Train seasons. Missing model evidence fails visibly; it never falls back to all attempts or Test confidence. Exclude shootouts and empty-net attempts; unmatched or low-confidence buckets never merge into Other or a league fallback.
   - Apply the identical frozen bucket set to Train, Train H/A, L5/L10/L20, LSeason, LSeason H/A, opponent L10, Previous, Current quarter and Actual, separately by selected strength. Derived SAT/GP, quarter blends, team sums, league rows and errors inherit those counts. Keep appearance selection and full matching-strength ice-time denominators; excluded attempts do not remove appearances, and measured zero-attempt appearances remain zero. Missing facts/exposure and unclassified strength remain unavailable. TOI/GP and TOI Share are not bucket-filtered. Model-owned pregame snapshots and goalie calculations are unchanged by this evaluation correction.
   - Context version 6 upgrades measured evidence without rewriting saved game projection values, original prediction windows/Previous, or initial outlooks. Filtered Previous lives in context.previous. Recalculate context and then comparison in the existing one-player-per-job chain; replace only older comparison evidence, and mark the game current only after every player finishes. Old shot windows/actuals are withheld from tables until upgraded; raw inputs remain available for audit but are not sent to the browser. Opening a stale saved forecast requests the existing authorized context POST once; GET remains read-only. No migration or model/projection rebuild is required.
@@ -260,6 +261,37 @@ rules:
     with its actual full-season average. These team-average comparisons do not
     establish individual-game accuracy or change existing UI error conventions.
   - >-
+    Custom prediction engine — PP opportunities and regulation time. Adopted
+    November 2, 2026 for the developing custom algorithm, not legacy engines or
+    live prediction code. For Sep2026, allocate the initial 5.9 combined game PP
+    opportunities using the two teams' normalized Train PP-opportunity shares.
+    Each team's share is its own opportunities divided by combined opportunities
+    in its historical games. Final team opportunities equal 25% of that team's
+    allocated baseline plus 75% of its opponent's pregame L10 PK opportunities
+    per game, meaning opportunities allowed to that opponent's adversaries.
+    Use prior regular-season games across season boundaries. Missing L10 retains
+    the baseline; unavailable Train shares are not invented. Calculate both sides
+    independently without forcing their adjusted sum back to 5.9.
+  - >-
+    Convert adjusted team opportunities into PP minutes using the frozen pooled
+    Train PP minutes/opportunity reference; Sep2026's measured reference is
+    1.6367061050638902. Team PK minutes equal opposing PP minutes. Regulation EV
+    minutes equal 60 minus own PP and PK minutes. This adopts the opportunity
+    adjustment through the time calculation rather than silently retaining a
+    different PP-time prediction. The 5.9 benchmark and duration are identified
+    source-model values, not universal constants for all future models.
+  - >-
+    November 2 production evidence selected this opportunity rule from 141
+    configurations on 2024-25 within Train, then evaluated 2025-26 Test. On 2430
+    team-games in 1215 games, opportunity p20 rose from 669 (27.53%) to 718
+    (29.55%), while p10 fell from 27.28% to 15.60%. PP-time p20 fell from 748
+    (30.78%) to 700 (28.81%); derived EV-time p20 fell from 2406 (99.01%) to 2404
+    (98.93%). Errors use prediction denominators and strict thresholds. The
+    cohort excludes 16 incomplete strength-clock games and 81 games without
+    required Train shares. The prior 56.40% winner result and game-opportunity
+    p20 are not measurements of this adjusted configuration. The complete
+    winner replay remains unreproduced.
+  - >-
     Custom prediction engine — opposing defensive buckets. Agreed for the new
     custom research engine after reviewing the CHI/FLA and PIT/NYR examples.
     Adopt the tested defensive adjustment as its current research pathway,
@@ -288,6 +320,16 @@ rules:
     cross season boundaries and update only after the current game's forecasts
     for both sides are frozen. Target outcomes cannot select an adjustment.
   - >-
+    Missing defensive evidence follows the intended recent team period, team
+    Train, then league Train for the same retained bucket and attacking
+    strength. The adopted PP defense window starts at team Train. Empty or
+    incomplete windows and absent strength exposure trigger fallback; measured
+    zero attempts with positive complete exposure retain the existing neutral
+    prior calculation. Never replace missing history with zero or borrow
+    another bucket/strength. Use this chain for historical opponent references
+    too, and retain source provenance. A supported league fallback prevents a
+    defensive-history gap from excluding the whole game.
+  - >-
     The adopted tested defensive windows are opponent L20 at EV, opponent PK
     Train when projecting the attacking team's PP, and opponent PP LSeason when
     projecting short-handed PK production. The 2025-26 replay coefficients are
@@ -306,6 +348,75 @@ rules:
     Retain per-player/bucket offensive rate, defensive reference, opponent effect,
     coefficient, multiplier and adjusted production for diagnosis. This stage
     introduces no additional goalie or post-odds adjustment.
+  - >-
+    Custom prediction engine — SOG conversion recency. Adopted November 5 for
+    the developing custom research engine: convert each player's retained EV
+    bucket attempts using that player's L20 bucket SOG/SAT, and PP bucket
+    attempts using that player's L5 bucket SOG/SAT. Pool SOG and SAT counts
+    within each source window before dividing. Windows contain preceding player
+    appearances across season and team boundaries; forecast before adding the
+    target game. Keep strengths and player buckets separate, retain only frozen
+    Train-confidence >= 0.50 keys, and exclude empty nets and shootouts.
+  - >-
+    Missing personal bucket SAT denominators or unavailable source windows use
+    the same strength and bucket's frozen Train league SOG/SAT. A supported
+    zero SOG count is a measured zero conversion, not missing history. Missing
+    league SAT evidence remains unavailable. Preserve the existing SAT forecasts
+    and TOI calculations when applying this conversion rule. Sum resulting
+    player-bucket SOG into team and game totals. This selects SOG/SAT sources;
+    goals/SOG, goalie effects and final PP-goal allocation remain separately
+    governed. Subsequent goal estimates must use the resulting SOG, and their
+    combined accuracy must be measured rather than copied from older baselines.
+  - >-
+    Recency evidence uses the 2025-26 production replay's 90%-input-complete
+    cohorts with Train league fallback for missing SAT/usage inputs, before
+    opposing defense and goalie adjustments. EV total-game SOG changes from
+    48.36 predicted versus 44.57 actual with Train conversion to 46.60 with L20;
+    pooled err% changes from 7.83% to 4.35%, p10 from 39.44% to 41.76%, and p20
+    from 732/1032 (70.93%) to 764/1032 (74.03%). PP changes from 8.67 predicted
+    versus 8.09 actual to 8.57 with L5; err% changes from 6.66% to 5.55%, p10
+    from 15.02% to 13.87%, and p20 from 251/959 (26.17%) to 265/959 (27.63%).
+    These are adopted Test-observed source choices, not Train-selected effects
+    or a newly measured winner improvement. Legacy engines, saved evaluations
+    and production/API predictions remain isolated from this research rule.
+  - >-
+    Custom prediction engine — shooting-percentage sources. Adopted November 5:
+    after the adopted EV L20 / PP L5 player-bucket SOG conversion, use each
+    player's LSeason bucket goals/SOG for EV and current-season-to-date bucket
+    goals/SOG for PP. LSeason is the season immediately preceding the target
+    season; season-to-date includes only earlier appearances in the target
+    model season. Pool retained raw goals and SOG counts within the source
+    before dividing. Multiply each bucket's predicted SOG by that bucket's SH%,
+    then sum players into teams and games. Preserve strength separation and
+    the frozen Train-confidence >= 0.50 bucket set, excluding empty nets and
+    shootouts. Do not add a current-quarter correction or extrapolate a
+    season-end outcome into the next-game input.
+  - >-
+    For an unavailable personal SH% window or bucket SOG denominator, use the
+    frozen Train league goals/SOG for the same strength and bucket. If that
+    bucket also has no Train SOG and projected SOG is positive, use the frozen
+    Train league SH% pooled across retained buckets at that strength. This last
+    fallback resolves the zero-Train-SOG bucket gap without removing games or
+    adding low-confidence buckets. A measured zero goals count with positive
+    SOG stays zero. Zero predicted SOG produces zero expected goals without
+    requiring a SH% denominator; missing even the strength-level league SOG
+    evidence remains unavailable. This rule governs baseline goals; the goalie
+    stage preserves them with multiplier 1.0 under the November 5 decision
+    below. The separate final team/game PP-goal allocation retains its own
+    stage and must not be counted as additional goals.
+  - >-
+    With the adopted SOG sources held fixed, the same 2025-26 90%-input-complete
+    cohorts establish a Train SH% baseline of 4.35 EV goals/game against 4.24
+    actual: err% 2.55%, p10 15.99%, p20 333/1032 (32.27%). Adopted EV LSeason
+    SH% gives 4.40 goals/game: err% 3.72%, p10 16.38%, p20 337/1032 (32.66%).
+    Its four additional p20 hits accompany worse pooled error. PP Train gives
+    1.30 goals/game against 1.17 actual: err% 9.40%, p10 6.99%, p20 171/959
+    (17.83%). Adopted PP season-to-date SH% gives 1.26 goals/game: err% 7.13%,
+    p10 10.01%, p20 199/959 (20.75%), adding 28 p20 hits. These total-game
+    strength results precede opposing defense, goalie and final PP allocation;
+    they do not establish official-score or winner accuracy. Source choices
+    were observed on Test and adopted by the human, not selected within Train.
+    This research rule does not alter legacy or production/API predictions.
   - >-
     Custom prediction engine — team PP goals/game. For each side, first make a
     team split estimate: use the attacking lineup's summed individual L20 PP
@@ -331,29 +442,63 @@ rules:
     selection; prospective use must supply the expected PP lineup before puck
     drop. One zero-sum initial matchup used an equal split of its game total.
   - >-
-    Custom prediction engine — EV goalie impact on goals per SOG. Agreed for the
-    new custom engine only; it does not alter legacy engines, saved evaluations,
-    production/API predictions, or PP/PK calculations. Keep projected EV SOG
-    unchanged. After offensive and defensive bucket calculations produce baseline
-    EV goals, adjust goals per SOG by the square root of the opposing starter's
-    LSeason EV goal rate divided by the shooting team's LSeason goal rate against
-    the starting goalies it faced. Equivalently, adjusted EV goals equal baseline
-    EV goals times sqrt((1 - opposing goalie LSeason EV SV%) /
-    (1 - faced-goalie LSeason EV SV%)). Use the season immediately preceding
-    the target season, only completed games before puck drop, and 100-shot
-    shrinkage toward league EV SV% for both save-rate estimates. Missing required
-    history leaves the goalie factor neutral. Apply this after bucket-level SOG
-    and baseline goal conversion; it changes EV goals only, never SAT or SOG.
+    Custom prediction engine — neutral goalie stage. Adopted November 5, 2026:
+    retain each player's predicted bucket SOG times their adopted bucket SH%
+    (EV LSeason, PP current-season-to-date), with the documented league fallback
+    chain. Sum buckets and players into teams, then teams into game goals. The
+    goalie multiplier is 1.0. This supersedes the former LSeason faced-goalie
+    square-root multiplier. Do not replace the player-bucket baseline with
+    direct starter SV% or GSAx probabilities or add the tested possession
+    multipliers. Starting-goalie identity and context remain evidence. Upstream
+    SAT, SOG, TOI and opposing-defense calculations are unchanged, as is the
+    separately governed final PP-goal allocation. This custom-engine definition
+    does not implement the full predictor or change legacy engines, saved
+    evaluations or production/API predictions.
   - >-
-    Rule 8 evidence: on the 2025-26 test season, this LSeason matchup changed
-    aggregate EV goals/SOG from 0.11828 to 0.11652 against 0.11412 actual; pooled
-    goal error fell from 3.65% to 2.11%. Across 1,312 games, full-game P20 moved
-    from 33.16% to 32.70%, so this does not establish improved game-total P20.
-    The faced-goalie reference uses opposing starting goalies from the shooting
-    team's prior-season games; do not substitute the shooting team's own goalie
-    history. These results require that corrected opponent-history comparison.
+    Neutral-goalie evidence uses Sep2026 model 1, Train 2022-23 through 2024-25,
+    Test 2025-26 and the same frozen 93 Train-confidence >= 0.50 buckets. In the
+    intersection of the 90%-input-complete EV and PP cohorts, 905 games give
+    5140.780717686158 predicted retained regulation EV + PP goals versus 4910
+    actual (5.68 versus 5.43 per game). Pooled err% is 4.49%, p10 is 164/905
+    (18.12%), and p20 is 340/905 (37.57%). Direct starter Train/LSeason/L20 SV%
+    and GSAx candidates hold SOG fixed; none improves that combined-game p20.
+    These figures describe the fixed SOG handoff before separate final PP
+    allocation, not all official goals, a new defense calibration or winners.
+    The older faced-goalie Rule 8 result is superseded, not a current multiplier.
   - >-
-    Custom prediction engine — 2025-26 winner configuration. Starting from the
+    Starter-specific context and league-relative possession remain research
+    only. Attribute actual goals to the starter separately from relief; never
+    label full opposing-team goals as the starter's own goals allowed. On 874
+    later starter-games from January 3, 2026, baseline retained EV + PP goals
+    average 2.86 predicted versus 2.65 actual, err% 7.55%, p10 15.10%, and p20
+    246/874 (28.15%). The earlier-fitted small EV-only opponent-L5-Corsi
+    adjustment gives p20 250/874 (28.60%), but worsens err% to 7.87%; the stronger
+    early-p20-selected EV + PP adjustment falls to 240/874 (27.46%). Retain no
+    possession multiplier. This Test-season exploratory evidence does not
+    establish a general absence of possession relationships or a prospective
+    improvement. The working guide preserves the formulas and comparison scope.
+  - >-
+    Goal-stage comparison errors always use predicted goals versus actual goals,
+    not predicted SV% versus actual SV% or predicted GSAx versus actual GSAx.
+    Pooled err% is 100 times abs(sum predicted minus sum actual) divided by sum
+    predicted. P10/P20 use individual-comparison absolute error divided by that
+    prediction, strictly below 10%/20%, with unrounded inputs. Keep game,
+    team-game and starter-game units and their matching cohorts separate.
+  - >-
+    Custom prediction engine — active schedule adjustment. Adopted for the new
+    custom runner: an exact fourth-game-in-seven back-to-back multiplies that
+    team's forward bucket SAT by 0.98 and defenseman bucket SAT by 0.97 at EV
+    and PP before SOG and goal conversion. Keep player TOI and opposing-player
+    attempts unchanged. If the away team qualifies, add 0.0433712599 to the
+    home win probability after scores are calculated, clamp to [0,1], and use
+    its complement for away. Apply no standalone-B2B, third-in-seven,
+    three-in-four, fifth-in-seven, general home/away, kilometre or road-day
+    adjustment. This adopts these recorded schedule coefficients only; it
+    does not restore the old goalie/PDO calculation or its historical win rate.
+  - >-
+    Custom prediction engine — historical 2025-26 winner configuration. This
+    records the earlier replay, not the current neutral-goalie configuration;
+    it cannot supply a current win-rate claim. Starting from the
     Train-selected goalie reconstruction with EV season-gap and PDO finishing,
     apply the frozen position context to player bucket production: forwards use
     a 1.5% home SAT multiplier and reciprocal away multiplier, plus a 2% SAT

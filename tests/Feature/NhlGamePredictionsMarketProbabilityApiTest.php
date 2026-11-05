@@ -3,590 +3,283 @@
 declare(strict_types=1);
 
 use App\Models\ApiClient;
+use App\Models\NhlGame;
 use App\Models\NhlModelRun;
 use App\Models\NhlSatEngine;
+use App\Models\NhlSatEngineStack;
+use App\Services\NhlCustomGameForecast;
+use App\Services\NhlCustomGamePredictionEngine;
 use App\Services\NhlGamePredictionPayload;
 use App\Services\NhlProjectedTeamMatchupSimulator;
+use App\Services\NhlStartingGoalieSelector;
+use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Testing\Fluent\AssertableJson;
-use Symfony\Component\HttpFoundation\Response;
-
-it('exposes NHL ids on legacy prediction and dressed rosters for both teams', function (): void {
-    ($this->predictionRequest)()->assertOk()
-        ->assertJsonPath('teams.away.roster.0.nhl_player_id', 8482155)
-        ->assertJsonPath('teams.away.roster.0.player_id', 8482155)
-        ->assertJsonPath('teams.away.dressed_roster.0.nhl_player_id', 8482155)
-        ->assertJsonPath('teams.home.roster.0.nhl_player_id', 8482156)
-        ->assertJsonPath('teams.home.dressed_roster.0.nhl_player_id', 8482156);
-});
-
-it('builds a prediction cache fingerprint from canonical goalie identity', function (): void {
-    $token = ($this->seedPredictionInputs)();
-    \App\Models\NhlStartingGoalieObservation::query()->create([
-        'nhl_game_id' => 2026020001,
-        'game_date' => '2026-10-10',
-        'team_abbrev' => 'AWY',
-        'opponent_abbrev' => 'HOM',
-        'is_home' => false,
-        'nhl_player_id' => 9001,
-        'player_name' => 'Away Starter',
-        'provider' => 'manual',
-        'status' => 'expected',
-        'fetched_at' => now(),
-        'raw_evidence' => [],
-    ]);
-
-    $this->withToken($token)->getJson('/api/nhl-game-predictions?' . http_build_query([
-        'nhl_game_id' => 2026020001,
-        'source_season_id' => '20252026',
-        'target_season_id' => '20262027',
-        'projection_version' => 'skater-market',
-        'toi_projection_version' => 'toi-market',
-        'goalie_projection_version' => 'goalie-market',
-        'away_goalie_id' => 9001,
-        'home_goalie_id' => 9002,
-    ]))->assertOk()->assertJsonPath('meta.cache', 'fresh');
-});
-
-it('preserves explicit NHL identity and unresolved null without leaking internal ids', function (bool $collection): void {
-    $rows = [
-        ['player_id' => 8482155, 'player_name' => 'Legacy skater'],
-        ['player_id' => 12, 'nhl_player_id' => '8482156', 'player_name' => 'Reported skater'],
-        ['player_id' => 13, 'nhl_player_id' => null, 'player_name' => 'Unresolved skater'],
-    ];
-    $service = app(\App\Services\NhlGamePredictionPayload::class);
-    $team = (new ReflectionMethod($service, 'teamPayload'))->invoke($service, [
-        'roster' => $collection ? collect($rows) : $rows,
-    ]);
-    $team = (new ReflectionMethod($service, 'withDressedRoster'))->invoke($service, $team, null, [
-        'nhl_player_id' => 9001, 'name' => 'Starting Goalie', 'selection_source' => 'provided',
-    ]);
-    foreach (['roster', 'dressed_roster'] as $key) {
-        expect($team[$key][0]['nhl_player_id'])->toBe(8482155)
-            ->and($team[$key][1]['nhl_player_id'])->toBe(8482156)
-            ->and($team[$key][1]['player_id'])->toBe(12)
-            ->and($team[$key][2]['nhl_player_id'])->toBeNull()
-            ->and($team[$key][2]['player_id'])->toBe(13);
-    }
-    expect($team['dressed_roster'][3]['nhl_player_id'])->toBe(9001);
-})->with([false, true]);
-
-it('keeps an unmodelled manual starter with labelled league average predictions', function (?int $goalieId): void {
-    $this->travelTo(\Illuminate\Support\Carbon::parse('2026-10-10 12:00:00 America/Toronto'));
-    $token = ($this->seedPredictionInputs)();
-    \App\Models\NhlStartingGoalieObservation::query()->create([
-        'nhl_game_id' => 2026020001, 'game_date' => '2026-10-10', 'team_abbrev' => 'AWY',
-        'opponent_abbrev' => 'HOM', 'is_home' => false, 'nhl_player_id' => $goalieId,
-        'player_name' => 'Joshua Kotai', 'provider' => 'manual', 'status' => 'expected',
-        'fetched_at' => now(), 'raw_evidence' => [],
-    ]);
-    $this->withToken($token)->getJson('/api/nhl-game-predictions?' . http_build_query([
-        'nhl_game_id' => 2026020001, 'source_season_id' => '20252026', 'target_season_id' => '20262027',
-        'projection_version' => 'skater-market', 'toi_projection_version' => 'toi-market',
-        'goalie_projection_version' => 'goalie-market', 'home_goalie_id' => 9002,
-    ]))->assertOk()->assertJsonPath('goalies.away.name', 'Joshua Kotai')
-        ->assertJsonPath('goalies.away.nhl_player_id', $goalieId)
-        ->assertJsonPath('goalies.away.projection_source', 'league_average')
-        ->assertJsonPath('goalies.away.projected_games', null)
-        ->assertJsonPath('goalies.away.confidence_bucket', 'low')
-        ->assertJsonPath('goalies.home.projection_source', 'goalie_model');
-    $this->assertDatabaseCount('nhl_goalie_season_projections', 2);
-    $this->travelBack();
-})->with(['canonical rookie' => [9999], 'name only starter' => [null]]);
-
-it('uses neutral league expected rates without saving a goalie projection', function (): void {
-    ($this->seedPredictionInputs)();
-    $baseline = (new NhlProjectedTeamMatchupSimulator())->leagueAverageGoalieProjection('20262027', 'goalie-market');
-    expect(round($baseline->projected_xga / $baseline->projected_games, 4))->toBe(2.8)
-        ->and(round($baseline->projected_pk_xga / $baseline->projected_games, 4))->toBe(0.8)
-        ->and($baseline->projected_ga)->toBe($baseline->projected_xga)
-        ->and($baseline->projected_pk_ga)->toBe($baseline->projected_pk_xga)
-        ->and($baseline->projected_gsax)->toBe(0.0);
-    $this->assertDatabaseCount('nhl_goalie_season_projections', 2);
-});
-
-it('uses the designated boxscore starter in live predictions and dressed rosters', function (string $state): void {
-    $this->travelTo(\Illuminate\Support\Carbon::parse('2026-10-10 23:00:00 UTC'));
-    $token = ($this->seedPredictionInputs)();
-    \App\Models\NhlStartingGoalieObservation::query()->create([
-        'nhl_game_id' => 2026020001, 'game_date' => '2026-10-10', 'team_abbrev' => 'AWY',
-        'opponent_abbrev' => 'HOM', 'is_home' => false, 'nhl_player_id' => 9003,
-        'player_name' => 'Old Manual Goalie', 'provider' => 'manual', 'status' => 'expected',
-        'fetched_at' => now(), 'raw_evidence' => [],
-    ]);
-    Http::fake(['api-web.nhle.com/*' => Http::response([
-        'id' => 2026020001, 'gameState' => $state,
-        'awayTeam' => ['abbrev' => 'AWY'], 'homeTeam' => ['abbrev' => 'HOM'],
-        'playerByGameStats' => [
-            'awayTeam' => ['goalies' => [
-                ['playerId' => 9003, 'starter' => false, 'toi' => '45:00'],
-                ['playerId' => 9001, 'starter' => true, 'toi' => '15:00'],
-            ]],
-            'homeTeam' => ['goalies' => [['playerId' => 9002, 'starter' => true]]],
-        ],
-    ])]);
-    $this->withToken($token)->getJson('/api/nhl-game-predictions?' . http_build_query([
-        'nhl_game_id' => 2026020001, 'source_season_id' => '20252026', 'target_season_id' => '20262027',
-        'projection_version' => 'skater-market', 'toi_projection_version' => 'toi-market',
-        'goalie_projection_version' => 'goalie-market', 'away_goalie_id' => 9003,
-    ]))->assertOk()->assertJsonPath('goalies.away.nhl_player_id', 9001)
-        ->assertJsonPath('goalies.away.selection_source', 'nhl_boxscore')
-        ->assertJsonPath('inputs.away_goalie_id', 9001)
-        ->assertJsonFragment(['nhl_player_id' => 9001, 'is_starter' => true]);
-    Http::assertSentCount(1);
-    $lock = json_decode(DB::table('nhl_games')->where('nhl_game_id', 2026020001)->value('away_starter_lock'), true);
-    expect($lock['nhl_player_id'])->toBe(9001);
-    app(\App\Services\NhlStartingGoalieSelector::class)->lockBoxscoreStarters(2026020001, [
-        'id' => 2026020001, 'gameState' => 'LIVE', 'awayTeam' => ['abbrev' => 'AWY'],
-        'playerByGameStats' => ['awayTeam' => ['goalies' => [['playerId' => 9003, 'starter' => true]]]],
-    ]);
-    \Illuminate\Support\Facades\Cache::flush();
-    Http::fake(['api-web.nhle.com/*' => Http::response([], 503)]);
-    $this->withToken($token)->getJson('/api/nhl-game-predictions?' . http_build_query([
-        'nhl_game_id' => 2026020001, 'source_season_id' => '20252026', 'target_season_id' => '20262027',
-        'projection_version' => 'skater-market', 'toi_projection_version' => 'toi-market',
-        'goalie_projection_version' => 'goalie-market', 'away_goalie_id' => 9003,
-    ]))->assertOk()->assertJsonPath('goalies.away.nhl_player_id', 9001);
-    $this->withToken($token)->getJson('/api/nhl-starting-goalies?nhl_game_id=2026020001&date=2026-10-10')
-        ->assertOk()->assertJsonFragment(['nhl_player_id' => 9001, 'status' => 'confirmed']);
-    Http::assertNothingSent();
-    $this->assertDatabaseHas('nhl_starting_goalie_observations', ['nhl_player_id' => 9003, 'provider' => 'manual']);
-    $this->travelBack();
-})->with(['LIVE', 'CRIT', 'FINAL', 'OFF']);
-
-it('retains pregame or unavailable boxscore fallback selection', function (string $state, bool $starter): void {
-    ($this->seedPredictionInputs)();
-    Http::fake(['api-web.nhle.com/*' => Http::response([
-        'id' => 2026020001, 'gameState' => $state, 'awayTeam' => ['abbrev' => 'AWY'],
-        'playerByGameStats' => ['awayTeam' => ['goalies' => [['playerId' => 9001, 'starter' => $starter]]]],
-    ])]);
-    $result = app(\App\Services\NhlStartingGoalieSelector::class)->selectForPrediction(
-        2026020001, 'AWY', providedGoalieId: 9003
-    );
-    if ($state === 'LIVE') {
-        expect($result)->toBeNull();
-    } else {
-        expect($result['nhl_player_id'])->toBe(9003)->and($result['selection_source'])->toBe('provided');
-    }
-})->with([['FUT', true], ['PRE', true], ['LIVE', false], ['', false]]);
-
-it('locks only unique official starters on the correct live game and team', function (string $state, int $gameId, string $team, array $goalies, bool $locks): void {
-    $this->travelTo(\Illuminate\Support\Carbon::parse('2026-10-10 23:00:00 UTC'));
-    ($this->seedPredictionInputs)();
-    $selector = app(\App\Services\NhlStartingGoalieSelector::class);
-    $selector->lockBoxscoreStarters(2026020001, [
-        'id' => $gameId, 'gameState' => $state, 'awayTeam' => ['abbrev' => $team],
-        'playerByGameStats' => ['awayTeam' => ['goalies' => $goalies]],
-    ]);
-    expect($selector->lockedStarter(2026020001, 'AWY') !== null)->toBe($locks)
-        ->and($selector->lockedStarter(2026020001, 'HOM'))->toBeNull();
-    $this->travelBack();
-})->with([
-    ['PRE', 2026020001, 'AWY', [['playerId' => 9001, 'starter' => true]], false],
-    ['FUT', 2026020001, 'AWY', [['playerId' => 9001, 'starter' => true]], false],
-    ['LIVE', 2026020999, 'AWY', [['playerId' => 9001, 'starter' => true]], false],
-    ['LIVE', 2026020001, 'OTHER', [['playerId' => 9001, 'starter' => true]], false],
-    ['LIVE', 2026020001, 'AWY', [['playerId' => 9001, 'toi' => '60:00']], false],
-    ['LIVE', 2026020001, 'AWY', [['playerId' => 9001, 'starter' => true], ['playerId' => 9003, 'starter' => true]], false],
-    ['LIVE', 2026020001, 'AWY', [['playerId' => 9001, 'starter' => true]], true],
-]);
 
 beforeEach(function (): void {
-    Http::fake(['api-web.nhle.com/*' => Http::response([])]);
-    config(['cache.default' => 'array']);
-    \Illuminate\Support\Facades\Cache::forget('nhl:gamecenter:boxscore:2026020001');
-    $this->createNhlStatsApiToken = function (array $scopes = ['nhl-stats:read']): string {
-        $token = 'diq_gner8_market-probability-token';
-
-        ApiClient::query()->create([
-            'name' => 'Gner8 Market Probability',
-            'slug' => 'gner8-market-probability',
-            'token_prefix' => substr($token, 0, 24),
-            'token_hash' => ApiClient::hashToken($token),
-            'scopes' => $scopes,
-        ]);
-
-        return $token;
-    };
-
-    $this->bindMatchupSimulator = function (float $awayGoals = 2.4, float $homeGoals = 3.2, float $confidence = 0.8, array $weights = ['offense' => 85, 'defense' => 15], array $normalizations = []): void {
-        app()->bind(
-            NhlProjectedTeamMatchupSimulator::class,
-            fn (): NhlProjectedTeamMatchupSimulator => new class($awayGoals, $homeGoals, $confidence, $weights, $normalizations) extends NhlProjectedTeamMatchupSimulator {
-                public function __construct(
-                    private readonly float $awayGoals,
-                    private readonly float $homeGoals,
-                    private readonly float $confidence,
-                    private readonly array $weights,
-                    private readonly array $normalizations
-                ) {
-                }
-
-                /**
-                 * @return array<string,mixed>
-                 */
-                public function simulate(
-                    string $sourceSeasonId,
-                    string $targetSeasonId,
-                    string $projectionVersion,
-                    string $toiProjectionVersion,
-                    string $goalieProjectionVersion,
-                    string $teamA,
-                    string $teamB,
-                    ?int $teamAGoalieId = null,
-                    ?int $teamBGoalieId = null
-                ): array {
-                    return [
-                        'is_available' => true,
-                        'inputs' => ['goal_weights' => $this->weights],
-                        'sides' => [
-                            [
-                                'goal_totals_normalization' => $this->normalizations['away'] ?? null,
-                                'offense_team' => $teamA,
-                                'defense_team' => $teamB,
-                                'summary' => [
-                                    'total_goalie_adjusted_xgf_per_game' => $this->awayGoals,
-                                    'total_goalie_adjustment_per_game' => 0.0,
-                                ],
-                                'roster' => [
-                                    ['player_id' => 8482155, 'player_name' => 'Alex Laferriere', 'adjusted_xgf_per_game' => $this->awayGoals, 'confidence_score' => $this->confidence],
-                                ],
-                            ],
-                            [
-                                'goal_totals_normalization' => $this->normalizations['home'] ?? null,
-                                'offense_team' => $teamB,
-                                'defense_team' => $teamA,
-                                'summary' => [
-                                    'total_goalie_adjusted_xgf_per_game' => $this->homeGoals,
-                                    'total_goalie_adjustment_per_game' => 0.0,
-                                ],
-                                'roster' => [
-                                    ['player_id' => 8482156, 'player_name' => 'Home Skater', 'adjusted_xgf_per_game' => $this->homeGoals, 'confidence_score' => $this->confidence],
-                                ],
-                            ],
-                        ],
-                    ];
-                }
+    $this->travelTo(\Carbon\CarbonImmutable::parse('2026-11-05 12:00:00 UTC'));
+    config(['cache.default' => 'array', 'nhl-custom-prediction' => require base_path('config/nhl-custom-prediction.php')]);
+    Cache::flush();
+    Bus::fake();
+    Http::preventStrayRequests();
+    $this->model = NhlModelRun::query()->create(['run_key' => 'default-custom-api', 'name' => 'sat_v2',
+        'model_family' => 'sat', 'workflow_stage' => 'training', 'model_version' => 'fixture', 'status' => 'complete',
+        'train_season_ids' => ['20232024', '20242025', '20252026']]);
+    $this->game = NhlGame::query()->create(['nhl_game_id' => 2026020001, 'season_id' => '20262027',
+        'game_type' => 2, 'game_date' => '2026-11-05', 'game_dow' => 'Thursday', 'game_month' => 'November',
+        'game_state' => 'FUT', 'start_time_utc' => '2026-11-05 23:00:00',
+        'away_team_id' => 1, 'home_team_id' => 2, 'away_team_abbrev' => 'BUF', 'home_team_abbrev' => 'COL']);
+    $this->token = 'custom-default-api-fixture';
+    $this->client = ApiClient::query()->create(['name' => 'Custom API fixture', 'slug' => 'custom-api',
+        'token_hash' => ApiClient::hashToken($this->token), 'scopes' => ['nhl-stats:read']]);
+    $this->input = ['game_id' => 2026020001, 'source_cutoff_at' => '2026-11-05 12:00:00',
+        'retained_bucket_keys' => ['B'], 'league_usage_seconds' => ['EV' => 600.0, 'PP' => 60.0],
+        'league_pk_probability' => 0.8, 'teams' => []];
+    foreach (['away' => 1, 'home' => 2] as $venue => $team) {
+        $side = ['id' => $team, 'abbrev' => $venue === 'away' ? 'BUF' : 'COL',
+            'lineup_source' => 'anticipated_lineup', 'context_id' => null, 'starting_goalie_id' => null,
+            'train_opportunity_share' => 0.5, 'pk_opportunities_l10' => 3.0,
+            'pp_offense_l20' => 0.8, 'pp_allowed_l5' => 0.6, 'pk_probability' => 0.8,
+            'schedule' => ['back_to_back' => false, 'games_including_target_last_7_days' => 2], 'players' => []];
+        foreach (['F', 'D'] as $slot => $role) {
+            $id = $team * 100 + $slot;
+            $player = ['name' => 'Fixture '.$id, 'role' => $role, 'usage' => ['EV' => 600.0, 'PP' => 60.0],
+                'complete' => ['EV' => true, 'PP' => true], 'buckets' => []];
+            foreach (['EV' => ($venue === 'home' ? 14.0 : 12.0), 'PP' => 24.0] as $lane => $rate) {
+                $player['buckets'][$lane]['B'] = ['sat_per_60' => $rate, 'defense_allowance' => 1.0,
+                    'defense_reference' => 1.0, 'sog_probability' => 0.5, 'goal_probability' => 0.1];
             }
-        );
-    };
-
-    $this->seedPredictionInputs = function (float $awayGoals = 2.4, float $homeGoals = 3.2): string {
-        ($this->bindMatchupSimulator)($awayGoals, $homeGoals);
-        $token = ($this->createNhlStatsApiToken)();
-
-        DB::table('nhl_games')->insert([
-            'nhl_game_id' => 2026020001,
-            'season_id' => '20262027',
-            'game_type' => 2,
-            'game_date' => '2026-10-10',
-            'game_dow' => 'Sat',
-            'game_month' => 'Oct',
-            'away_team_abbrev' => 'AWY',
-            'home_team_abbrev' => 'HOM',
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
-
-        foreach ([['AWY', 9001], ['HOM', 9002]] as [$team, $goalieId]) {
-            DB::table('nhl_goalie_season_projections')->insert([
-                'projection_version' => 'goalie-market',
-                'source_season_id' => '20252026',
-                'target_season_id' => '20262027',
-                'goalie_player_id' => $goalieId,
-                'target_team_abbrev' => $team,
-                'position' => 'G',
-                'projected_games' => 50,
-                'projected_starts' => 50,
-                'projected_toi_hours' => 50,
-                'projected_toi_seconds' => 180000,
-                'projected_xga' => 140,
-                'projected_ga' => 135,
-                'projected_gsax' => 5,
-                'projected_ev_xga' => 100,
-                'projected_ev_ga' => 96,
-                'projected_pk_xga' => 40,
-                'projected_pk_ga' => 39,
-                'confidence_score' => 0.8,
-                'confidence_bucket' => 'high',
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]);
+            $side['players'][$id] = $player;
+        }
+        $this->input['teams'][$venue] = $side;
+    }
+    $this->calculate = fn (): array => (new NhlCustomGamePredictionEngine())->predict($this->input);
+    $service = Mockery::mock(NhlCustomGameForecast::class)->makePartial();
+    $service->shouldReceive('predict')->andReturnUsing(fn (): array => [
+        'game' => (object) $this->game->fresh()->getAttributes(), 'model' => $this->model,
+        'input' => $this->input, 'metadata' => ['context_version' => 'fixture', 'coefficients_transferred' => true],
+        'prediction' => ($this->calculate)(),
+    ]);
+    app()->instance(NhlCustomGameForecast::class, $service);
+    $goalies = Mockery::mock(NhlStartingGoalieSelector::class);
+    $goalies->shouldReceive('selectForPrediction')->andReturn(null);
+    app()->instance(NhlStartingGoalieSelector::class, $goalies);
+    $this->requestPrediction = fn (array $query = []) => $this->withToken($this->token)->getJson(
+        '/api/nhl-game-predictions?'.http_build_query(['nhl_game_id' => 2026020001, ...$query])
+    );
+    $this->predictionRequest = function (array $query = [], float $awayGoals = 2.4, float $homeGoals = 3.2) {
+        $current = ($this->calculate)();
+        foreach (['away' => $awayGoals, 'home' => $homeGoals] as $venue => $goals) {
+            $rate = ($goals - $current['teams'][$venue]['strengths']['PP']['goals']) * 3600
+                / (5 * $current['teams'][$venue]['time']['EV'] * 0.5 * 0.1);
+            foreach ($this->input['teams'][$venue]['players'] as &$player) {
+                $player['buckets']['EV']['B']['sat_per_60'] = $rate;
+            }
+            unset($player);
         }
 
-        return $token;
-    };
-
-    $this->predictionRequest = function (array $params = [], float $awayGoals = 2.4, float $homeGoals = 3.2) {
-        $token = ($this->seedPredictionInputs)($awayGoals, $homeGoals);
-
-        return $this->withHeader('Authorization', 'Bearer ' . $token)
-            ->getJson('/api/nhl-game-predictions?' . http_build_query(array_merge([
-                'nhl_game_id' => 2026020001,
-                'source_season_id' => '20252026',
-                'target_season_id' => '20262027',
-                'projection_version' => 'skater-market',
-                'toi_projection_version' => 'toi-market',
-                'goalie_projection_version' => 'goalie-market',
-                'away_goalie_id' => 9001,
-                'home_goalie_id' => 9002,
-            ], $params)));
-    };
-
-    $this->insertReportedLineup = function (
-        string $teamAbbrev,
-        int $teamId,
-        int $firstNhlPlayerId,
-        string $suffix
-    ): void {
-        $sourceId = DB::table('sources')->insertGetId([
-            'platform' => 'x',
-            'name' => "{$teamAbbrev} Reporter",
-            'handle' => mb_strtolower($teamAbbrev) . "_reporter_{$suffix}",
-            'canonical_url' => "https://x.com/{$teamAbbrev}_reporter_{$suffix}",
-            'first_seen_at' => now(),
-            'last_seen_at' => now(),
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
-        $structureHash = hash('sha256', "{$teamAbbrev}-{$suffix}");
-        $observationId = DB::table('nhl_lineup_observations')->insertGetId([
-            'nhl_game_id' => 2026020001,
-            'team_id' => $teamId,
-            'team_abbrev' => $teamAbbrev,
-            'source_id' => $sourceId,
-            'post_url' => "https://x.com/{$teamAbbrev}_reporter_{$suffix}/status/1",
-            'post_text' => "Full {$teamAbbrev} lineup",
-            'provider_published_at' => now(),
-            'observed_at' => now(),
-            'completeness' => 'full',
-            'structure_hash' => $structureHash,
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
-        $players = [];
-
-        foreach (range(1, 18) as $index) {
-            $isForward = $index <= 12;
-            $positionIndex = $isForward ? $index : $index - 12;
-            $lineSize = $isForward ? 3 : 2;
-            $players[] = [
-                'nhl_lineup_observation_id' => $observationId,
-                'team_id' => $teamId,
-                'team_abbrev' => $teamAbbrev,
-                'nhl_player_id' => $firstNhlPlayerId + $index - 1,
-                'player_name' => "{$teamAbbrev} Skater {$index}",
-                'lineup_role' => $isForward ? 'forward' : 'defense',
-                'line_key' => ($isForward ? 'F' : 'D') . (int) ceil($positionIndex / $lineSize),
-                'slot_index' => (($positionIndex - 1) % $lineSize) + 1,
-                'resolution_status' => 'resolved',
-                'created_at' => now(),
-                'updated_at' => now(),
-            ];
-        }
-
-        DB::table('nhl_lineup_observation_players')->insert($players);
-        DB::table('nhl_current_lineups')->insert([
-            'nhl_game_id' => 2026020001,
-            'team_id' => $teamId,
-            'team_abbrev' => $teamAbbrev,
-            'nhl_lineup_observation_id' => $observationId,
-            'structure_hash' => $structureHash,
-            'evidence_status' => 'reported',
-            'source_count' => 1,
-            'first_observed_at' => now(),
-            'last_observed_at' => now(),
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
+        return ($this->requestPrediction)($query);
     };
 });
 
-it('requires a scoped API client for game prediction market probabilities', function (): void {
-    ($this->bindMatchupSimulator)();
-
-    $this->getJson('/api/nhl-game-predictions?nhl_game_id=2026020001')
-        ->assertStatus(Response::HTTP_UNAUTHORIZED);
-});
-
-it('uses manual G1 and includes unprojected G2 in the dressed prediction roster', function (bool $missingPreseasonOpponent): void {
-    $this->travelTo(\Illuminate\Support\Carbon::parse('2026-10-10 12:00:00 America/Toronto'));
-    Http::fake();
-    $token = ($this->seedPredictionInputs)();
-    DB::table('nhl_games')->where('nhl_game_id', 2026020001)->update([
-        'game_type' => $missingPreseasonOpponent ? 1 : 2,
-        'start_time_utc' => '2026-10-10 23:00:00',
-    ]);
-    DB::table('nhl_teams')->insert([
-        ['nhl_id' => 1, 'abbrev' => 'AWY'], ['nhl_id' => 2, 'abbrev' => 'HOM'],
-    ]);
-    $names = [];
-    foreach (range(1, 18) as $index) {
-        $name = 'Skater ' . $index;
-        $names[] = $name;
-        \App\Models\Player::query()->create([
-            'nhl_id' => 8483000 + $index, 'full_name' => $name, 'first_name' => 'Skater',
-            'last_name' => (string) $index, 'team_abbrev' => 'AWY', 'position' => $index <= 12 ? 'C' : 'D',
-        ]);
-    }
-    foreach ([9001 => 'Starter Test', 9003 => 'Backup Test'] as $id => $name) {
-        \App\Models\Player::query()->create([
-            'nhl_id' => $id, 'full_name' => $name, 'first_name' => explode(' ', $name)[0],
-            'last_name' => 'Test', 'team_abbrev' => 'AWY', 'position' => 'G',
-        ]);
-    }
-    $text = collect(array_chunk(array_slice($names, 0, 12), 3))->map(fn ($line): string => implode(' - ', $line))->implode("\n")
-        . "\nDefense\n" . collect(array_chunk(array_slice($names, 12), 2))->map(fn ($line): string => implode(' - ', $line))->implode("\n")
-        . "\nGoalies\nStarter Test\nBackup Test";
-    $user = \App\Models\User::factory()->create();
-    $role = \App\Models\Role::query()->create(['name' => 'Super Admin', 'slug' => 'super-admin', 'level' => 99]);
-    $user->roles()->attach($role->id, ['organization_id' => null]);
-    $this->actingAs($user)->postJson('/games/2026020001/lineup', ['team_abbrev' => 'AWY', 'text' => $text])->assertOk();
-    $this->assertDatabaseHas('nhl_starting_goalie_observations', [
-        'nhl_game_id' => 2026020001, 'team_abbrev' => 'AWY', 'nhl_player_id' => 9001,
-        'provider' => 'manual', 'status' => 'expected',
-    ]);
-    $this->assertDatabaseHas('nhl_lineup_observation_players', [
-        'nhl_player_id' => 9003, 'line_key' => 'G', 'slot_index' => 2,
-    ]);
-    $this->assertDatabaseMissing('nhl_goalie_season_projections', ['goalie_player_id' => 9003]);
-    if (! $missingPreseasonOpponent) {
-        $this->postJson('/games/2026020001/starting-goalie', [
-            'team_abbrev' => 'AWY', 'player_id' => \App\Models\Player::query()->where('nhl_id', 9001)->value('id'),
-        ])->assertOk()->assertJsonPath('starting_goalie.selection_source', 'manual_starter_override');
-    }
-    // Even newer generic expectations cannot replace the accepted manual G1.
-    foreach ([2026020001, 2026020002] as $gameId) {
-        \App\Models\NhlStartingGoalieObservation::query()->create([
-            'nhl_game_id' => $gameId, 'game_date' => '2026-10-10', 'team_abbrev' => 'AWY',
-            'opponent_abbrev' => 'HOM', 'is_home' => false, 'nhl_player_id' => $gameId === 2026020001 ? 9004 : 9005,
-            'player_name' => 'Other Goalie ' . $gameId, 'provider' => 'rotowire', 'status' => 'expected',
-            'fetched_at' => now()->addMinute(), 'raw_evidence' => [],
-        ]);
-    }
-    expect(app(\App\Services\NhlStartingGoalieSelector::class)->select(2026020002, 'AWY')['nhl_player_id'])->toBe(9005);
-    $simulator = \Mockery::mock(NhlProjectedTeamMatchupSimulator::class);
-    if ($missingPreseasonOpponent) {
-        $simulator->shouldNotReceive('simulateWithRosters');
-        $simulator->shouldNotReceive('simulate');
-    } else {
-        $simulator->shouldReceive('simulateWithRosters')->once()
-            ->withArgs(fn (...$args): bool => $args[7] === 9001 && count($args[9]) === 18 && ! in_array(9003, $args[9], true))
-            ->andReturn(['is_available' => true, 'sides' => [
-                ['offense_team' => 'AWY', 'defense_team' => 'HOM', 'summary' => [
-                    'total_goalie_adjusted_xgf_per_game' => 2.4, 'total_goalie_adjustment_per_game' => 0.0,
-                ], 'roster' => []],
-                ['offense_team' => 'HOM', 'defense_team' => 'AWY', 'summary' => [
-                    'total_goalie_adjusted_xgf_per_game' => 3.2, 'total_goalie_adjustment_per_game' => 0.0,
-                ], 'roster' => []],
-            ]]);
-    }
-    app()->instance(NhlProjectedTeamMatchupSimulator::class, $simulator);
-    $response = $this->withHeader('Authorization', 'Bearer ' . $token)->getJson('/api/nhl-game-predictions?' . http_build_query([
-        'nhl_game_id' => 2026020001, 'source_season_id' => '20252026', 'target_season_id' => '20262027',
-        'projection_version' => 'skater-market', 'toi_projection_version' => 'toi-market',
-        'goalie_projection_version' => 'goalie-market', 'home_goalie_id' => 9002,
-    ]))->assertOk()->assertJsonPath('prediction_available', ! $missingPreseasonOpponent)
-        ->assertJsonPath('goalies.away.nhl_player_id', 9001)
-        ->assertJsonCount(18, 'teams.away.roster')->assertJsonCount(20, 'teams.away.dressed_roster');
-    $goalies = collect($response->json('teams.away.dressed_roster'))->where('lineup_role', 'goalie');
-    if (! $missingPreseasonOpponent) {
-        $response->assertJsonPath('goalies.away.selection_source', 'manual_starter_override');
-    }
-    expect($goalies)->toHaveCount(2)
-        ->and($goalies->firstWhere('nhl_player_id', 9001)['is_starter'])->toBeTrue()
-        ->and($goalies->firstWhere('nhl_player_id', 9003)['is_starter'])->toBeFalse()
-        ->and($goalies->firstWhere('nhl_player_id', 9003)['slot_index'])->toBe(2);
+afterEach(function (): void {
     $this->travelBack();
-})->with([false, true]);
+});
 
-it('reconciles the dressed goalie slots after an explicit starter selection', function (int $chosen, int $backup): void {
-    $method = new ReflectionMethod(\App\Services\NhlGamePredictionPayload::class, 'withDressedRoster');
-    $result = $method->invoke(app(\App\Services\NhlGamePredictionPayload::class), ['roster' => []], ['players' => [
-        ['nhl_player_id' => 11, 'player_name' => 'First Goalie', 'lineup_role' => 'goalie', 'line_key' => 'G', 'slot_index' => 1],
-        ['nhl_player_id' => 12, 'player_name' => 'Second Goalie', 'lineup_role' => 'goalie', 'line_key' => 'G', 'slot_index' => 2],
-    ]], ['nhl_player_id' => $chosen, 'name' => 'Chosen Goalie', 'selection_source' => 'manual_starter_override']);
-    expect($result['dressed_roster'])->toHaveCount(2)
-        ->and($result['dressed_roster'][0]['nhl_player_id'])->toBe($chosen)
-        ->and($result['dressed_roster'][0]['is_starter'])->toBeTrue()
-        ->and($result['dressed_roster'][1]['nhl_player_id'])->toBe($backup)
-        ->and($result['dressed_roster'][1]['slot_index'])->toBe(2)
-        ->and($result['dressed_roster'][1]['is_starter'])->toBeFalse();
-})->with(['promote backup' => [12, 11], 'select different goalie' => [13, 12]]);
+it('requires API authentication for new engine predictions', function (): void {
+    $this->getJson('/api/nhl-game-predictions?nhl_game_id=2026020001')->assertUnauthorized();
+});
 
-it('rejects API clients without the NHL stats scope', function (): void {
-    ($this->bindMatchupSimulator)();
-    $token = ($this->createNhlStatsApiToken)(['nhl-reference:read']);
+it('requires the NHL statistics scope for new engine predictions', function (): void {
+    $this->client->update(['scopes' => ['nhl-reference:read']]);
+    ($this->requestPrediction)()->assertForbidden();
+});
 
-    $this->withHeader('Authorization', 'Bearer ' . $token)
-        ->getJson('/api/nhl-game-predictions?nhl_game_id=2026020001')
-        ->assertStatus(Response::HTTP_FORBIDDEN);
+it('requires a game identifier', function (): void {
+    $this->withToken($this->token)->getJson('/api/nhl-game-predictions')->assertUnprocessable();
+});
+
+it('rejects nonnumeric game identifiers', function (): void {
+    ($this->requestPrediction)(['nhl_game_id' => 'bad'])->assertUnprocessable();
 });
 
 it('rejects unsupported market keys', function (): void {
-    ($this->predictionRequest)(['markets' => ['spread']])
-        ->assertUnprocessable()
-        ->assertJsonValidationErrors(['markets.0']);
+    ($this->requestPrediction)(['markets' => ['bad']])->assertUnprocessable();
 });
 
 it('rejects scalar market lists', function (): void {
-    ($this->predictionRequest)(['markets' => 'moneyline'])
-        ->assertUnprocessable()
-        ->assertJsonValidationErrors(['markets']);
+    ($this->requestPrediction)(['markets' => 'moneyline'])->assertUnprocessable();
 });
 
 it('rejects zero puckline spreads', function (): void {
-    ($this->predictionRequest)(['puckline' => 0])
-        ->assertUnprocessable()
-        ->assertJsonValidationErrors(['puckline']);
+    ($this->requestPrediction)(['puckline' => 0])->assertUnprocessable();
 });
 
-it('rejects scalar puckline spread lists', function (): void {
-    ($this->predictionRequest)(['puckline_spreads' => '1.5'])
-        ->assertUnprocessable()
-        ->assertJsonValidationErrors(['puckline_spreads']);
+it('rejects nonpositive totals', function (): void {
+    ($this->requestPrediction)(['total' => 0])->assertUnprocessable();
 });
 
-it('rejects non-positive total lines', function (): void {
-    ($this->predictionRequest)(['total' => 0])
-        ->assertUnprocessable()
-        ->assertJsonValidationErrors(['total']);
+it('uses the new shared engine and SAT_V2 for an ordinary API request', function (): void {
+    ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction_available', true)
+        ->assertJsonPath('inputs.sat_model_run_id', $this->model->id)
+        ->assertJsonPath('inputs.algorithm_version', 'custom_ev_pp_v2')
+        ->assertJsonPath('inputs.engine_id', null)->assertJsonPath('inputs.stack_id', null);
 });
 
-it('rejects scalar total line lists', function (): void {
-    ($this->predictionRequest)(['total_lines' => '6.0'])
-        ->assertUnprocessable()
-        ->assertJsonValidationErrors(['total_lines']);
+it('predicts every requested game state without using target scores', function (string $state): void {
+    $this->game->update(['game_state' => $state, 'away_team_score' => 99, 'home_team_score' => 0]);
+    ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction_available', true)
+        ->assertJsonPath('prediction.winner.team_abbrev', 'COL');
+})->with(['FUT', 'LIVE', 'FINAL', 'OFF', 'PPD', 'CNCL']);
+
+it('completes missing observed player evidence instead of rejecting the game', function (): void {
+    foreach ($this->input['teams'] as &$side) {
+        foreach ($side['players'] as &$player) {
+            $player['complete'] = ['EV' => false, 'PP' => false];
+            $player['usage'] = ['EV' => null, 'PP' => null];
+        }
+        unset($player);
+    }
+    unset($side);
+    ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction_available', true)
+        ->assertJsonPath('prediction.confidence_inputs.input_completeness.EV', 0.0)
+        ->assertJsonPath('prediction.confidence_inputs.effective_input_completeness.EV', 1.0);
 });
 
-it('keeps the default game prediction response limited to moneyline probabilities', function (): void {
-    ($this->predictionRequest)()
-        ->assertOk()
-        ->assertJsonPath('prediction_available', true)
-        ->assertJsonCount(2, 'market_probabilities')
-        ->assertJsonPath('market_probabilities.0.market_key', 'moneyline')
-        ->assertJsonPath('market_probabilities.1.market_key', 'moneyline');
+it('preserves measured zero player usage while predicting the full game', function (): void {
+    $this->input['teams']['away']['players'][100]['usage']['EV'] = 0.0;
+    ($this->requestPrediction)()->assertOk()->assertJsonPath('teams.away.roster.0.strengths.EV.seconds', 0.0);
 });
 
-it('adds puckline rows when the simple puckline parameter is provided', function (): void {
-    $rows = collect(($this->predictionRequest)(['puckline' => 1.5])->assertOk()->json('market_probabilities'));
-
-    expect($rows->where('market_key', 'moneyline')->count())->toBe(2)
-        ->and($rows->where('market_key', 'puckline')->count())->toBe(2);
+it('returns predictions without any saved legacy stack', function (): void {
+    expect(NhlSatEngineStack::query()->count())->toBe(0);
+    ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction_available', true);
 });
 
-it('adds total rows when the simple total parameter is provided', function (): void {
-    $rows = collect(($this->predictionRequest)(['total' => 6.0])->assertOk()->json('market_probabilities'));
-
-    expect($rows->where('market_key', 'moneyline')->count())->toBe(2)
-        ->and($rows->where('market_key', 'total')->count())->toBe(2);
+it('does not dilute new goals using saved legacy engine percentages', function (): void {
+    $engine = NhlSatEngine::query()->create(['name' => 'Old percentages', 'model_run_id' => $this->model->id,
+        'settings' => ['offense' => 200, 'defense' => 200, 'confidence_min' => 99]]);
+    $stack = NhlSatEngineStack::query()->create(['name' => 'Old default', 'is_default' => true]);
+    $stack->members()->create(['engine_id' => $engine->id, 'priority' => 1]);
+    $expected = ($this->calculate)();
+    ($this->requestPrediction)()->assertOk()
+        ->assertJsonPath('prediction.predicted_score.home', round($expected['teams']['home']['goals'], 2))
+        ->assertJsonPath('pick_qualified', true);
 });
 
-it('returns only requested explicit markets', function (): void {
-    $rows = collect(($this->predictionRequest)(['markets' => ['puckline']])->assertOk()->json('market_probabilities'));
+it('keeps unavailable confidence distinct from winning probability', function (): void {
+    ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction.confidence_score', null)
+        ->assertJsonPath('market_probabilities.0.confidence_score', null);
+});
 
-    expect($rows)->toHaveCount(2)
-        ->and($rows->pluck('market_key')->unique()->values()->all())->toBe(['puckline']);
+it('uses the engines exact winning probability including its schedule adjustment', function (): void {
+    $this->input['teams']['away']['schedule'] = ['back_to_back' => true, 'games_including_target_last_7_days' => 4];
+    $expected = ($this->calculate)();
+    $rows = collect(($this->requestPrediction)()->assertOk()->json('market_probabilities'))->keyBy('selection_key');
+    expect($rows['home']['probability'])->toEqualWithDelta($expected['home_win_probability'], 0.000001)
+        ->and($rows['away']['probability'] + $rows['home']['probability'])->toEqualWithDelta(1.0, 0.000001);
+});
+
+it('preserves the computed game total without applying legacy normalization again', function (): void {
+    $expected = ($this->calculate)();
+    ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction.predicted_total_goals', round($expected['total_goals'], 2));
+});
+
+it('returns only moneyline markets by default', function (): void {
+    $rows = ($this->requestPrediction)()->assertOk()->json('market_probabilities');
+    expect($rows)->toHaveCount(2)->and(array_unique(array_column($rows, 'market_key')))->toBe(['moneyline']);
+});
+
+it('returns requested puckline markets from the new goal distribution', function (): void {
+    $rows = ($this->requestPrediction)(['markets' => ['puckline'], 'puckline' => 1.5])->assertOk()->json('market_probabilities');
+    expect($rows)->toHaveCount(2)->and(array_unique(array_column($rows, 'market_key')))->toBe(['puckline']);
+});
+
+it('returns requested total markets from the new goal distribution', function (): void {
+    $rows = ($this->requestPrediction)(['markets' => ['total'], 'total' => 6])->assertOk()->json('market_probabilities');
+    expect($rows)->toHaveCount(2)->and(array_column($rows, 'selection_key'))->toBe(['over', 'under']);
+});
+
+it('returns complementary total probabilities including pushes', function (): void {
+    foreach (($this->requestPrediction)(['markets' => ['total'], 'total' => 6])->assertOk()->json('market_probabilities') as $row) {
+        expect($row['probability'] + $row['push_probability'] + $row['loss_probability'])->toEqualWithDelta(1.0, 0.000002);
+    }
+});
+
+it('retains canonical NHL identities on both roster views', function (): void {
+    ($this->requestPrediction)()->assertOk()->assertJsonPath('teams.away.roster.0.nhl_player_id', 100)
+        ->assertJsonPath('teams.home.roster.0.nhl_player_id', 200)
+        ->assertJsonPath('teams.away.dressed_roster.0.nhl_player_id', 100);
+});
+
+it('feeds the goalie section the opposing new SOG and goal projections', function (): void {
+    $expected = ($this->calculate)();
+    ($this->requestPrediction)()->assertOk()
+        ->assertJsonPath('goalies.away.matchup_sog_against_per_game', $expected['teams']['home']['sog'])
+        ->assertJsonPath('goalies.away.goal_adjustment_applied', false)
+        ->assertJsonPath('prediction.goalie_edge.available', false);
+});
+
+it('archives exact private inputs without exposing them in the API response', function (): void {
+    $response = ($this->requestPrediction)()->assertOk()->assertJsonMissingPath('_custom_prediction_evidence');
+    $revision = DB::table('nhl_game_prediction_revisions')->find($response->json('meta.prediction_revision_id'));
+    $evidence = json_decode($revision->evidence, true);
+    expect($evidence['custom_prediction']['input'])->toEqual($this->input)
+        ->and(json_decode($revision->payload, true))->not->toHaveKey('_custom_prediction_evidence');
+});
+
+it('reuses a fresh response without appending another revision', function (): void {
+    $first = ($this->requestPrediction)()->assertOk()->json('meta.prediction_revision_id');
+    ($this->requestPrediction)()->assertOk()->assertJsonPath('meta.prediction_revision_id', $first);
+    expect(DB::table('nhl_game_prediction_revisions')->count())->toBe(1);
+});
+
+it('appends a fresh immutable revision when explicitly refreshed', function (): void {
+    $first = ($this->requestPrediction)()->assertOk()->json('meta.prediction_revision_id');
+    $next = ($this->requestPrediction)(['force_refresh' => true])->assertOk()->json('meta.prediction_revision_id');
+    expect($next)->toBeGreaterThan($first)->and(DB::table('nhl_game_prediction_revisions')->count())->toBe(2);
+});
+
+it('invalidates cached responses when the new algorithm configuration changes', function (): void {
+    $first = ($this->requestPrediction)()->assertOk()->json('meta.prediction_revision_id');
+    config(['nhl-custom-prediction.opponent_opportunity_weight' => 0.5]);
+    $next = ($this->requestPrediction)()->assertOk()->json('meta.prediction_revision_id');
+    expect($next)->toBeGreaterThan($first);
+});
+
+it('retains explicit goalie request variants separately from canonical results', function (): void {
+    ($this->requestPrediction)()->assertOk();
+    ($this->requestPrediction)(['home_goalie_id' => 999])->assertOk();
+    expect(DB::table('nhl_game_prediction_revisions')->where('is_canonical', true)->count())->toBe(1)
+        ->and(DB::table('nhl_game_prediction_revisions')->where('is_canonical', false)->count())->toBe(1);
+});
+
+it('uses the same new calculation in individual engine previews', function (): void {
+    $engine = NhlSatEngine::query()->create(['name' => 'Old container', 'model_run_id' => $this->model->id,
+        'settings' => ['offense' => 200, 'defense' => 200]]);
+    $preview = app(NhlGamePredictionPayload::class)->previewEngine(2026020001, $engine, null);
+    expect($preview['prediction']['predicted_total_goals'])->toBe(round(($this->calculate)()['total_goals'], 2))
+        ->and($preview['prediction']['confidence_score'])->toBeNull();
+});
+
+it('uses the same new calculation in empty saved stack previews', function (): void {
+    $stack = NhlSatEngineStack::query()->create(['name' => 'Empty old container']);
+    $preview = app(NhlGamePredictionPayload::class)->previewStack(2026020001, $stack);
+    expect($preview['prediction']['predicted_total_goals'])->toBe(round(($this->calculate)()['total_goals'], 2));
+});
+
+it('routes the standalone matchup simulator through the same new engine', function (): void {
+    $result = app(NhlProjectedTeamMatchupSimulator::class)->simulate('20252026', '20262027', '', '', '', 'BUF', 'COL');
+    expect($result['inputs']['algorithm_version'])->toBe('custom_ev_pp_v2')
+        ->and($result['sides'][0]['summary']['total_goalie_adjusted_xgf_per_game'])->toBe(($this->calculate)()['teams']['away']['goals']);
+});
+
+it('returns current algorithm provenance in saved revision summaries', function (): void {
+    $response = ($this->requestPrediction)()->assertOk();
+    $row = DB::table('nhl_game_prediction_revisions')->find($response->json('meta.prediction_revision_id'));
+    expect(json_decode($row->summary, true)['algorithm_version'])->toBe('custom_ev_pp_v2');
 });
 
 it('defaults explicit puckline requests to the NHL standard 1.5 spread', function (): void {
@@ -661,8 +354,8 @@ it('returns null fair odds for certain or impossible market outcomes', function 
     $moneyline = new ReflectionMethod($service, 'moneylineMarketProbability');
     $line = new ReflectionMethod($service, 'lineMarketProbability');
 
-    $impossibleMoneyline = $moneyline->invoke($service, 'away', 'AWY', 0.0, 60);
-    $certainMoneyline = $moneyline->invoke($service, 'home', 'HOM', 1.0, 60);
+    $impossibleMoneyline = $moneyline->invoke($service, 'away', 'BUF', 0.0, 60);
+    $certainMoneyline = $moneyline->invoke($service, 'home', 'COL', 1.0, 60);
     $impossibleTotal = $line->invoke($service, 'total', 'over', null, 6.5,
         ['win' => 0.0, 'push' => 0.0, 'loss' => 1.0], 60, 'projected_total_distribution');
 
@@ -672,24 +365,6 @@ it('returns null fair odds for certain or impossible market outcomes', function 
         ->and($certainMoneyline['fair_odds_decimal'])->toBeNull()
         ->and($impossibleTotal['fair_odds_american'])->toBeNull()
         ->and($impossibleTotal['fair_odds_decimal'])->toBeNull();
-});
-
-it('floors and caps qualified engine presentation confidence after the approved adjustments', function (): void {
-    $service = app(\App\Services\NhlGamePredictionPayload::class);
-    $method = new ReflectionMethod($service, 'presentationConfidence');
-
-    $floorEngine = new NhlSatEngine([
-        'discovery_win_pct' => 57.4,
-        'discovery_coverage_pct' => 81.2,
-    ]);
-    $capEngine = new NhlSatEngine([
-        'discovery_win_pct' => 100.0,
-        'discovery_coverage_pct' => 100.0,
-    ]);
-
-    expect($method->invoke($service, 60.0, $floorEngine, true))->toBe(73.0)
-        ->and($method->invoke($service, 90.0, $capEngine, true))->toBe(95.0)
-        ->and($method->invoke($service, 60.0, $floorEngine, false))->toBeLessThan(60.0);
 });
 
 it('includes push probability for whole-number puckline spreads', function (): void {
@@ -710,17 +385,6 @@ it('does not create push probability for half-goal puckline spreads', function (
 
     expect($rows->firstWhere('selection_key', 'away')['push_probability'])->toBe(0.0)
         ->and($rows->firstWhere('selection_key', 'home')['push_probability'])->toBe(0.0);
-});
-
-it('returns line result probabilities that sum to one for totals', function (): void {
-    $row = collect(($this->predictionRequest)([
-        'markets' => ['total'],
-        'total' => 6.0,
-    ])->assertOk()->json('market_probabilities'))->firstWhere('selection_key', 'over');
-
-    $sum = $row['win_probability'] + $row['push_probability'] + $row['loss_probability'];
-
-    expect(round($sum, 5))->toBe(1.0);
 });
 
 it('returns line result probabilities that sum to one for pucklines', function (): void {
@@ -747,8 +411,8 @@ it('omits team abbreviations for total probability rows', function (): void {
 it('includes team abbreviations for puckline probability rows', function (): void {
     $rows = collect(($this->predictionRequest)(['markets' => ['puckline']])->assertOk()->json('market_probabilities'));
 
-    expect($rows->firstWhere('selection_key', 'away')['team_abbrev'])->toBe('AWY')
-        ->and($rows->firstWhere('selection_key', 'home')['team_abbrev'])->toBe('HOM');
+    expect($rows->firstWhere('selection_key', 'away')['team_abbrev'])->toBe('BUF')
+        ->and($rows->firstWhere('selection_key', 'home')['team_abbrev'])->toBe('COL');
 });
 
 it('includes fair odds and model metadata for line-dependent rows', function (): void {
@@ -762,637 +426,3 @@ it('includes fair odds and model metadata for line-dependent rows', function ():
             ->etc()
         );
 });
-
-it('qualifies picks by inclusive confidence and score gap before display rounding', function (
-    int $confidence,
-    bool $confidenceQualified,
-    float $awayGoals,
-    float $homeGoals
-): void {
-    $this->travelTo(\Illuminate\Support\Carbon::parse('2026-10-01 12:00:00 UTC'));
-    Http::preventStrayRequests();
-    $token = ($this->seedPredictionInputs)($awayGoals, $homeGoals);
-    ($this->bindMatchupSimulator)($awayGoals, $homeGoals, $confidence / 100);
-    DB::table('nhl_goalie_season_projections')->where('projection_version', 'goalie-market')
-        ->update(['confidence_score' => $confidence / 100]);
-
-    $qualified = $confidenceQualified && $awayGoals !== $homeGoals;
-    $presentationConfidence = $qualified ? $confidence : max(0, $confidence - 20);
-    $response = $this->withToken($token)->getJson('/api/nhl-game-predictions?' . http_build_query([
-        'nhl_game_id' => 2026020001,
-        'source_season_id' => '20252026', 'target_season_id' => '20262027',
-        'projection_version' => 'skater-market', 'toi_projection_version' => 'toi-market',
-        'goalie_projection_version' => 'goalie-market', 'away_goalie_id' => 9001, 'home_goalie_id' => 9002,
-    ]))->assertOk()
-        ->assertJsonPath('prediction_available', true)
-        ->assertJsonPath('pick_qualified', $qualified)
-        ->assertJsonPath('prediction.confidence_score', $presentationConfidence)
-        ->assertJsonPath('prediction.predicted_score.away', (float) round($awayGoals, 2))
-        ->assertJsonPath('prediction.predicted_score.home', (float) round($homeGoals, 2))
-        ->assertJsonCount(2, 'market_probabilities')
-        ->assertJsonPath('market_probabilities.0.confidence_score', $presentationConfidence);
-
-    expect($response->json('pick_qualified'))->toBeBool();
-    $this->assertDatabaseHas('nhl_goalie_season_projections', [
-        'goalie_player_id' => 9001, 'projection_version' => 'goalie-market',
-        'confidence_score' => $confidence / 100,
-    ]);
-    Http::assertNothingSent();
-    $this->travelBack();
-})->with([
-    'below temporary range' => [66, false],
-    'temporary lower boundary' => [67, true],
-    'temporary interior 68' => [68, true],
-    'temporary interior 69' => [69, true],
-    'temporary upper boundary' => [70, true],
-    'above temporary range' => [71, false],
-    'previous lower boundary' => [72, false],
-    'previous interior' => [73, false],
-    'previous upper boundary' => [74, false],
-])->with([
-    'home leads' => [2.4, 3.2],
-    'away leads' => [3.2, 2.4],
-    'exact tie' => [3.0, 3.0],
-    'home lead hidden by display rounding' => [3.0, 3.0001],
-    'away lead hidden by display rounding' => [3.0001, 3.0],
-]);
-
-it('applies the October 6 third-engine stack override to a small foundation spread', function (): void {
-    $this->travelTo(\Illuminate\Support\Carbon::parse('2026-10-06 12:00:00 America/Toronto'));
-    $method = new ReflectionMethod(NhlGamePredictionPayload::class, 'tonightThirdEngineQualification');
-    $service = app(NhlGamePredictionPayload::class);
-    $game = (object) ['game_date' => '2026-10-06'];
-
-    expect($method->invoke($service, $game, 2, ['prediction' => ['goal_differential' => 0.2999]]))->toBeTrue()
-        ->and($method->invoke($service, $game, 2, ['prediction' => ['goal_differential' => 0.3]]))->toBeFalse()
-        ->and($method->invoke($service, $game, 2, ['prediction' => []]))->toBeFalse()
-        ->and($method->invoke($service, $game, 1, ['prediction' => ['goal_differential' => 0.5]]))->toBeNull();
-
-    $this->travelTo(\Illuminate\Support\Carbon::parse('2026-10-07 00:01:00 America/Toronto'));
-
-    expect($method->invoke($service, $game, 2, ['prediction' => ['goal_differential' => 0.5]]))->toBeNull();
-
-    $this->travelBack();
-});
-
-it('uses the legacy fallback when saved engines have no default', function (): void {
-    $token = ($this->seedPredictionInputs)();
-    $model = NhlModelRun::query()->create([
-        'run_key' => 'no-default-engine', 'name' => 'No default engine model', 'model_family' => 'sat',
-        'workflow_stage' => 'training', 'model_version' => 'no-default-engine', 'usage' => 'production', 'status' => 'complete',
-        'train_season_ids' => ['20232024'], 'target_season_id' => '20252026', 'metrics' => [],
-    ]);
-    NhlSatEngine::query()->create([
-        'name' => 'Unselected engine', 'test_model_run_id' => $model->id, 'model_run_id' => $model->id,
-        'settings' => ['offense' => 100, 'defense' => 100, 'confidence_min' => 0, 'confidence_max' => 100, 'gap' => 0],
-    ]);
-
-    $this->withHeader('Authorization', 'Bearer ' . $token)->getJson('/api/nhl-game-predictions?' . http_build_query([
-        'nhl_game_id' => 2026020001,
-        'source_season_id' => '20252026', 'target_season_id' => '20262027',
-        'projection_version' => 'skater-market', 'toi_projection_version' => 'toi-market',
-        'goalie_projection_version' => 'goalie-market', 'away_goalie_id' => 9001, 'home_goalie_id' => 9002,
-    ]))->assertOk()->assertJsonPath('inputs.engine_id', null);
-});
-
-it('returns evidence without a prediction when one preseason lineup is unresolved', function (): void {
-    $token = ($this->seedPredictionInputs)();
-    DB::table('nhl_games')->where('nhl_game_id', 2026020001)->update(['game_type' => 1]);
-    DB::table('nhl_teams')->insert([
-        ['nhl_id' => 1, 'abbrev' => 'AWY', 'created_at' => now(), 'updated_at' => now()],
-        ['nhl_id' => 2, 'abbrev' => 'HOM', 'created_at' => now(), 'updated_at' => now()],
-    ]);
-    ($this->insertReportedLineup)('AWY', 1, 8481001, 'away-only');
-    Http::fake(['api-web.nhle.com/*' => Http::response([])]);
-
-    $simulator = \Mockery::mock(NhlProjectedTeamMatchupSimulator::class);
-    $simulator->shouldNotReceive('simulate');
-    $simulator->shouldNotReceive('simulateWithRosters');
-    app()->instance(NhlProjectedTeamMatchupSimulator::class, $simulator);
-
-    $this->withHeader('Authorization', 'Bearer ' . $token)
-        ->getJson('/api/nhl-game-predictions?' . http_build_query([
-            'nhl_game_id' => 2026020001,
-            'source_season_id' => '20252026', 'target_season_id' => '20262027',
-            'projection_version' => 'skater-market', 'toi_projection_version' => 'toi-market',
-            'goalie_projection_version' => 'goalie-market', 'away_goalie_id' => 9001, 'home_goalie_id' => 9002,
-        ]))
-        ->assertOk()
-        ->assertJsonPath('prediction_available', false)
-        ->assertJsonPath('pick_qualified', false)
-        ->assertJsonPath('reason', 'preseason_lineup_unresolved')
-        ->assertJsonPath('missing_lineups.0', 'HOM')
-        ->assertJsonPath('inputs.away_lineup_source', 'anticipated_lineup')
-        ->assertJsonPath('inputs.home_lineup_source', 'projected_roster')
-        ->assertJsonPath('prediction', null)
-        ->assertJsonCount(0, 'market_probabilities')
-        ->assertJsonCount(18, 'teams.away.roster');
-});
-
-it('returns both missing teams when neither preseason lineup is resolved', function (): void {
-    $token = ($this->seedPredictionInputs)();
-    DB::table('nhl_games')->where('nhl_game_id', 2026020001)->update(['game_type' => 1]);
-    DB::table('nhl_teams')->insert([
-        ['nhl_id' => 1, 'abbrev' => 'AWY', 'created_at' => now(), 'updated_at' => now()],
-        ['nhl_id' => 2, 'abbrev' => 'HOM', 'created_at' => now(), 'updated_at' => now()],
-    ]);
-    Http::fake(['api-web.nhle.com/*' => Http::response([])]);
-
-    $simulator = \Mockery::mock(NhlProjectedTeamMatchupSimulator::class);
-    $simulator->shouldNotReceive('simulate');
-    $simulator->shouldNotReceive('simulateWithRosters');
-    app()->instance(NhlProjectedTeamMatchupSimulator::class, $simulator);
-
-    $this->withHeader('Authorization', 'Bearer ' . $token)
-        ->getJson('/api/nhl-game-predictions?' . http_build_query([
-            'nhl_game_id' => 2026020001,
-            'source_season_id' => '20252026', 'target_season_id' => '20262027',
-            'projection_version' => 'skater-market', 'toi_projection_version' => 'toi-market',
-            'goalie_projection_version' => 'goalie-market', 'away_goalie_id' => 9001, 'home_goalie_id' => 9002,
-        ]))
-        ->assertOk()
-        ->assertJsonPath('prediction_available', false)
-        ->assertJsonPath('pick_qualified', false)
-        ->assertJsonPath('missing_lineups.0', 'AWY')
-        ->assertJsonPath('missing_lineups.1', 'HOM')
-        ->assertJsonPath('teams.away.lineup_source', 'projected_roster')
-        ->assertJsonPath('teams.home.lineup_source', 'projected_roster')
-        ->assertJsonCount(0, 'market_probabilities');
-});
-
-it('fetches and persists complete NHL boxscore lineups before withholding a preseason prediction', function (): void {
-    $token = ($this->seedPredictionInputs)();
-    DB::table('nhl_games')->where('nhl_game_id', 2026020001)->update(['game_type' => 1]);
-    DB::table('nhl_teams')->insert([
-        ['nhl_id' => 1, 'abbrev' => 'AWY', 'created_at' => now(), 'updated_at' => now()],
-        ['nhl_id' => 2, 'abbrev' => 'HOM', 'created_at' => now(), 'updated_at' => now()],
-    ]);
-    $teamPlayers = function (int $firstPlayerId): array {
-        return [
-            'forwards' => collect(range(0, 11))->map(fn (int $index): array => [
-                'playerId' => $firstPlayerId + $index,
-                'name' => ['default' => 'Forward ' . ($firstPlayerId + $index)],
-            ])->all(),
-            'defense' => collect(range(12, 17))->map(fn (int $index): array => [
-                'playerId' => $firstPlayerId + $index,
-                'name' => ['default' => 'Defense ' . ($firstPlayerId + $index)],
-            ])->all(),
-            'goalies' => [],
-        ];
-    };
-    Http::fake(['api-web.nhle.com/*' => Http::response([
-        'awayTeam' => ['abbrev' => 'AWY'],
-        'homeTeam' => ['abbrev' => 'HOM'],
-        'playerByGameStats' => [
-            'awayTeam' => $teamPlayers(8481001),
-            'homeTeam' => $teamPlayers(8482001),
-        ],
-    ])]);
-    $simulator = \Mockery::mock(NhlProjectedTeamMatchupSimulator::class);
-    $simulator->shouldReceive('simulateWithRosters')->once()
-        ->withArgs(fn (...$arguments): bool => count($arguments[9]) === 18 && count($arguments[10]) === 18)
-        ->andReturn([
-            'is_available' => true,
-            'sides' => [
-                [
-                    'offense_team' => 'AWY', 'defense_team' => 'HOM',
-                    'summary' => ['total_goalie_adjusted_xgf_per_game' => 2.4, 'total_goalie_adjustment_per_game' => 0.0],
-                    'roster' => [['adjusted_xgf_per_game' => 2.4, 'confidence_score' => 0.8]],
-                ],
-                [
-                    'offense_team' => 'HOM', 'defense_team' => 'AWY',
-                    'summary' => ['total_goalie_adjusted_xgf_per_game' => 3.2, 'total_goalie_adjustment_per_game' => 0.0],
-                    'roster' => [['adjusted_xgf_per_game' => 3.2, 'confidence_score' => 0.8]],
-                ],
-            ],
-        ]);
-    app()->instance(NhlProjectedTeamMatchupSimulator::class, $simulator);
-
-    $this->withHeader('Authorization', 'Bearer ' . $token)
-        ->getJson('/api/nhl-game-predictions?' . http_build_query([
-            'nhl_game_id' => 2026020001,
-            'source_season_id' => '20252026', 'target_season_id' => '20262027',
-            'projection_version' => 'skater-market', 'toi_projection_version' => 'toi-market',
-            'goalie_projection_version' => 'goalie-market', 'away_goalie_id' => 9001, 'home_goalie_id' => 9002,
-        ]))
-        ->assertOk()
-        ->assertJsonPath('prediction_available', true)
-        ->assertJsonPath('inputs.away_lineup_source', 'nhl_boxscore')
-        ->assertJsonPath('inputs.home_lineup_source', 'nhl_boxscore')
-        ->assertJsonPath('anticipated_lineups.away.evidence_status', 'official')
-        ->assertJsonPath('anticipated_lineups.home.evidence_status', 'official')
-        ->assertJsonCount(18, 'teams.away.roster')
-        ->assertJsonCount(18, 'teams.home.roster')
-        ->assertJsonPath('teams.away.roster.0.projection_source', 'replacement_level');
-
-    $this->assertDatabaseCount('nhl_current_lineups', 2)
-        ->assertDatabaseHas('nhl_current_lineups', ['team_abbrev' => 'AWY', 'evidence_status' => 'official'])
-        ->assertDatabaseHas('nhl_current_lineups', ['team_abbrev' => 'HOM', 'evidence_status' => 'official']);
-});
-
-it('applies nhle and replacement values to rookies in a resolved game lineup', function (): void {
-    $rookie = DB::table('players')->insertGetId([
-        'nhl_id' => 8487001, 'first_name' => 'Nhle', 'last_name' => 'Rookie',
-        'full_name' => 'Nhle Rookie', 'position' => 'C', 'team_abbrev' => 'AWY',
-        'created_at' => now(), 'updated_at' => now(),
-    ]);
-    DB::table('stats')->insert([
-        'player_id' => $rookie, 'player_name' => 'Nhle Rookie', 'season_id' => '20252026',
-        'league_abbrev' => 'AHL', 'team_name' => 'Affiliate', 'game_type_id' => 2,
-        'gp' => 50, 'g' => 20, 'a' => 30, 'pts' => 50, 'sog' => 150,
-        'created_at' => now(), 'updated_at' => now(),
-    ]);
-    DB::table('nhle_league_factors')->insert([
-        'source' => 'nl_ice_data', 'source_version' => 'test', 'model_name' => 'Test',
-        'model_window' => 'Test', 'source_league_name' => 'AHL', 'mapped_league_codes' => json_encode(['AHL']),
-        'points_factor' => 0.45, 'win_shares_factor' => 0.45,
-        'source_url' => 'https://example.test/nhle', 'created_at' => now(), 'updated_at' => now(),
-    ]);
-    $players = collect(range(1, 18))->map(function (int $index) use ($rookie): array {
-        $forward = $index <= 12;
-        $positionIndex = $forward ? $index - 1 : $index - 13;
-
-        return [
-            'player_id' => $index === 1 ? $rookie : null,
-            'nhl_player_id' => 8487000 + $index,
-            'player_name' => $index === 1 ? 'Nhle Rookie' : "Replacement Rookie {$index}",
-            'lineup_role' => $forward ? 'forward' : 'defense',
-            'line_key' => ($forward ? 'F' : 'D') . ((int) floor($positionIndex / ($forward ? 3 : 2)) + 1),
-            'slot_index' => ($positionIndex % ($forward ? 3 : 2)) + 1,
-        ];
-    })->all();
-
-    $result = app(\App\Services\NhlGameLineupProjectionBuilder::class)->build(
-        ['players' => $players],
-        '20252026',
-        '20262027',
-        'skater-market',
-        'toi-market'
-    );
-
-    expect($result)->toHaveCount(18)
-        ->and(collect($result)->firstWhere('nhl_player_id', 8487001)['projection_source'])
-        ->toBe('nhle_non_nhl_history')
-        ->and(collect($result)->firstWhere('nhl_player_id', 8487002)['projection_source'])
-        ->toBe('replacement_level');
-});
-
-it('predicts with an unresolved fourth-line player using resolved line-peer averages', function (): void {
-    $token = ($this->seedPredictionInputs)(2.4, 3.2);
-    DB::table('nhl_games')->where('nhl_game_id', 2026020001)->update(['game_type' => 1]);
-    ($this->insertReportedLineup)('AWY', 1, 8481001, 'away-depth-average');
-    ($this->insertReportedLineup)('HOM', 2, 8482001, 'home-depth-average');
-    DB::table('nhl_lineup_observation_players')->where('team_abbrev', 'AWY')
-        ->where('line_key', 'F4')->where('slot_index', 2)->update([
-            'nhl_player_id' => null,
-            'player_name' => 'Unresolved Fourth Liner',
-            'resolution_status' => 'unresolved',
-        ]);
-    DB::table('nhl_lineup_observation_players')->where('team_abbrev', 'AWY')
-        ->where('line_key', 'F4')->where('slot_index', 3)->update([
-            'nhl_player_id' => null,
-            'player_name' => 'Second Unresolved Fourth Liner',
-            'resolution_status' => 'unresolved',
-        ]);
-    $simulator = \Mockery::mock(NhlProjectedTeamMatchupSimulator::class);
-    $simulator->shouldReceive('simulateWithRosters')->once()->andReturn([
-        'is_available' => true,
-        'sides' => [
-            ['offense_team' => 'AWY', 'defense_team' => 'HOM', 'summary' => [
-                'total_goalie_adjusted_xgf_per_game' => 2.4, 'total_goalie_adjustment_per_game' => 0.0,
-            ], 'roster' => []],
-            ['offense_team' => 'HOM', 'defense_team' => 'AWY', 'summary' => [
-                'total_goalie_adjusted_xgf_per_game' => 3.2, 'total_goalie_adjustment_per_game' => 0.0,
-            ], 'roster' => []],
-        ],
-    ]);
-    app()->instance(NhlProjectedTeamMatchupSimulator::class, $simulator);
-
-    $response = $this->withHeader('Authorization', 'Bearer ' . $token)
-        ->getJson('/api/nhl-game-predictions?' . http_build_query([
-            'nhl_game_id' => 2026020001,
-            'source_season_id' => '20252026', 'target_season_id' => '20262027',
-            'projection_version' => 'skater-market', 'toi_projection_version' => 'toi-market',
-            'goalie_projection_version' => 'goalie-market', 'away_goalie_id' => 9001, 'home_goalie_id' => 9002,
-        ]))->assertOk()->assertJsonPath('prediction_available', true)->assertJsonCount(18, 'teams.away.roster');
-    $roster = collect($response->json('teams.away.roster'));
-    $unresolved = $roster->firstWhere('player_name', 'Unresolved Fourth Liner');
-    $peers = $roster->where('line_key', 'F4')->where('projection_source', '!=', 'line_peer_average');
-
-    expect($unresolved['nhl_player_id'])->toBeNull()
-        ->and($unresolved['projection_source'])->toBe('line_peer_average')
-        ->and($unresolved['projected_sog'])->toBe(round((float) $peers->avg('projected_sog'), 3))
-        ->and($roster->where('projection_source', 'line_peer_average'))->toHaveCount(2);
-});
-
-it('still withholds a preseason prediction for an unresolved top-nine forward', function (): void {
-    $token = ($this->seedPredictionInputs)();
-    DB::table('nhl_games')->where('nhl_game_id', 2026020001)->update(['game_type' => 1]);
-    ($this->insertReportedLineup)('AWY', 1, 8481001, 'away-core-unresolved');
-    ($this->insertReportedLineup)('HOM', 2, 8482001, 'home-core-unresolved');
-    DB::table('nhl_lineup_observation_players')->where('team_abbrev', 'AWY')
-        ->where('line_key', 'F3')->where('slot_index', 1)->update([
-            'nhl_player_id' => null, 'resolution_status' => 'unresolved',
-        ]);
-
-    $this->withHeader('Authorization', 'Bearer ' . $token)
-        ->getJson('/api/nhl-game-predictions?' . http_build_query([
-            'nhl_game_id' => 2026020001,
-            'source_season_id' => '20252026', 'target_season_id' => '20262027',
-            'projection_version' => 'skater-market', 'toi_projection_version' => 'toi-market',
-            'goalie_projection_version' => 'goalie-market', 'away_goalie_id' => 9001, 'home_goalie_id' => 9002,
-        ]))->assertOk()
-        ->assertJsonPath('prediction_available', false)
-        ->assertJsonPath('reason', 'preseason_lineup_unresolved');
-});
-
-it('requires at least one resolved peer in each unresolved depth group', function (): void {
-    $players = collect(range(1, 18))->map(function (int $index): array {
-        $forward = $index <= 12;
-        $positionIndex = $forward ? $index - 1 : $index - 13;
-        $lineKey = ($forward ? 'F' : 'D') . ((int) floor($positionIndex / ($forward ? 3 : 2)) + 1);
-
-        return [
-            'player_id' => null,
-            'nhl_player_id' => $lineKey === 'D3' ? null : 8488000 + $index,
-            'player_name' => "Depth Player {$index}",
-            'lineup_role' => $forward ? 'forward' : 'defense',
-            'line_key' => $lineKey,
-            'slot_index' => ($positionIndex % ($forward ? 3 : 2)) + 1,
-        ];
-    })->all();
-
-    expect(app(\App\Services\NhlGameLineupProjectionBuilder::class)->build(
-        ['players' => $players], '20252026', '20262027', 'skater-market', 'toi-market'
-    ))->toBeNull();
-});
-
-it('uses the resolved third-pair defenseman for an unresolved d3 projection', function (): void {
-    $players = collect(range(1, 18))->map(function (int $index): array {
-        $forward = $index <= 12;
-        $positionIndex = $forward ? $index - 1 : $index - 13;
-        $lineKey = ($forward ? 'F' : 'D') . ((int) floor($positionIndex / ($forward ? 3 : 2)) + 1);
-
-        return [
-            'player_id' => null,
-            'nhl_player_id' => $index === 18 ? null : 8489000 + $index,
-            'player_name' => $index === 18 ? 'Unresolved D3' : "Resolved Player {$index}",
-            'lineup_role' => $forward ? 'forward' : 'defense',
-            'line_key' => $lineKey,
-            'slot_index' => ($positionIndex % ($forward ? 3 : 2)) + 1,
-        ];
-    })->all();
-
-    $result = app(\App\Services\NhlGameLineupProjectionBuilder::class)->build(
-        ['players' => $players], '20252026', '20262027', 'skater-market', 'toi-market'
-    );
-    $unresolved = collect($result)->firstWhere('player_name', 'Unresolved D3');
-
-    expect($result)->toHaveCount(18)
-        ->and($unresolved['projection_source'])->toBe('line_peer_average')
-        ->and($unresolved['nhl_player_id'])->toBeNull();
-});
-
-it('uses complete reported or manual override lineups for both teams in a preseason prediction', function (bool $manualOverride): void {
-    $token = ($this->seedPredictionInputs)(2.4, 3.2);
-    DB::table('nhl_games')->where('nhl_game_id', 2026020001)->update(['game_type' => 1]);
-    $sourceId = DB::table('sources')->insertGetId([
-        'platform' => 'x', 'name' => 'Practice Reporter', 'handle' => 'practice_reporter',
-        'canonical_url' => 'https://x.com/practice_reporter',
-        'first_seen_at' => now(), 'last_seen_at' => now(), 'created_at' => now(), 'updated_at' => now(),
-    ]);
-    $observationId = DB::table('nhl_lineup_observations')->insertGetId([
-        'nhl_game_id' => 2026020001, 'team_id' => 1, 'team_abbrev' => 'AWY',
-        'source_id' => $sourceId, 'post_url' => 'https://x.com/practice_reporter/status/1',
-        'post_text' => 'Full practice lineup', 'provider_published_at' => now(), 'observed_at' => now(),
-        'completeness' => 'full', 'structure_hash' => str_repeat('b', 64),
-        'created_at' => now(), 'updated_at' => now(),
-    ]);
-    $players = [];
-    foreach (range(1, 18) as $index) {
-        $isForward = $index <= 12;
-        $positionIndex = $isForward ? $index : $index - 12;
-        $lineSize = $isForward ? 3 : 2;
-        $players[] = [
-            'nhl_lineup_observation_id' => $observationId,
-            'team_id' => 1,
-            'team_abbrev' => 'AWY',
-            'nhl_player_id' => 8480000 + $index,
-            'player_name' => "Resolved Skater {$index}",
-            'lineup_role' => $isForward ? 'forward' : 'defense',
-            'line_key' => ($isForward ? 'F' : 'D') . (int) ceil($positionIndex / $lineSize),
-            'slot_index' => (($positionIndex - 1) % $lineSize) + 1,
-            'resolution_status' => 'resolved', 'created_at' => now(), 'updated_at' => now(),
-        ];
-    }
-    DB::table('nhl_lineup_observation_players')->insert($players);
-    DB::table('nhl_current_lineups')->insert([
-        'nhl_game_id' => 2026020001, 'team_id' => 1, 'team_abbrev' => 'AWY',
-        'nhl_lineup_observation_id' => $observationId, 'structure_hash' => str_repeat('b', 64),
-        'evidence_status' => 'reported', 'source_count' => 1,
-        'first_observed_at' => now(), 'last_observed_at' => now(), 'created_at' => now(), 'updated_at' => now(),
-    ]);
-    ($this->insertReportedLineup)('HOM', 2, 8482001, 'home');
-
-    if ($manualOverride) {
-        DB::table('nhl_lineup_observations')->where('id', $observationId)
-            ->update(['raw_evidence' => json_encode(['manual_override' => true])]);
-    }
-
-    $simulator = \Mockery::mock(NhlProjectedTeamMatchupSimulator::class);
-    $simulator->shouldReceive('simulateWithRosters')->once()
-        ->withArgs(fn (...$arguments): bool => count($arguments[9]) === 18 && count($arguments[10]) === 18)
-        ->andReturn([
-            'is_available' => true,
-            'sides' => [
-                [
-                    'offense_team' => 'AWY', 'defense_team' => 'HOM',
-                    'summary' => ['total_goalie_adjusted_xgf_per_game' => 2.4, 'total_goalie_adjustment_per_game' => 0.0],
-                    'roster' => [['adjusted_xgf_per_game' => 2.4, 'confidence_score' => 0.8]],
-                ],
-                [
-                    'offense_team' => 'HOM', 'defense_team' => 'AWY',
-                    'summary' => ['total_goalie_adjusted_xgf_per_game' => 3.2, 'total_goalie_adjustment_per_game' => 0.0],
-                    'roster' => [['adjusted_xgf_per_game' => 3.2, 'confidence_score' => 0.8]],
-                ],
-            ],
-        ]);
-    app()->instance(NhlProjectedTeamMatchupSimulator::class, $simulator);
-
-    $this->withHeader('Authorization', 'Bearer ' . $token)
-        ->getJson('/api/nhl-game-predictions?' . http_build_query([
-            'nhl_game_id' => 2026020001,
-            'source_season_id' => '20252026', 'target_season_id' => '20262027',
-            'projection_version' => 'skater-market', 'toi_projection_version' => 'toi-market',
-            'goalie_projection_version' => 'goalie-market', 'away_goalie_id' => 9001, 'home_goalie_id' => 9002,
-        ]))
-        ->assertOk()
-        ->assertJsonPath('prediction_available', true)
-        ->assertJsonPath('inputs.away_lineup_source', 'anticipated_lineup')
-        ->assertJsonPath('inputs.home_lineup_source', 'anticipated_lineup')
-        ->assertJsonPath('anticipated_lineups.away.manual_override', $manualOverride)
-        ->assertJsonCount(18, 'anticipated_lineups.away.players')
-        ->assertJsonCount(18, 'anticipated_lineups.home.players')
-        ->assertJsonCount(18, 'teams.away.roster')
-        ->assertJsonPath('teams.away.roster.0.projection_source', 'replacement_level');
-})->with([false, true]);
-
-
-it('normalizes final API goals using actual simulation weights and retains raw selection evidence', function (float $offense, float $defense): void {
-    $this->travelTo(\Illuminate\Support\Carbon::parse('2026-10-01 12:00:00 UTC'));
-    Http::preventStrayRequests();
-    $token = ($this->seedPredictionInputs)(4.8, 6.4);
-    ($this->bindMatchupSimulator)(4.8, 6.4, .68, ['offense' => $offense, 'defense' => $defense]);
-    DB::table('nhl_goalie_season_projections')->update(['confidence_score' => .68]);
-    $params = ['nhl_game_id' => 2026020001, 'source_season_id' => '20252026',
-        'target_season_id' => '20262027', 'projection_version' => 'skater-market',
-        'toi_projection_version' => 'toi-market', 'goalie_projection_version' => 'goalie-market',
-        'away_goalie_id' => 9001, 'home_goalie_id' => 9002, 'markets' => ['moneyline', 'puckline', 'total']];
-    $response = $this->withToken($token)->getJson('/api/nhl-game-predictions?'.http_build_query($params))->assertOk();
-    $divisor = ($offense + $defense) / 100;
-    $response->assertJsonPath('prediction.selection_score.away', 4.8)
-        ->assertJsonPath('prediction.selection_score.home', 6.4)
-        ->assertJsonPath('prediction.winner.side', 'home')
-        ->assertJsonPath('prediction.totals_normalization.divisor', fn ($value): bool => (float) $value === $divisor)
-        ->assertJsonPath('prediction.predicted_score.away', $divisor > 0 ? round(4.8 / $divisor, 2) : null)
-        ->assertJsonPath('prediction.predicted_score.home', $divisor > 0 ? round(6.4 / $divisor, 2) : null)
-        ->assertJsonPath('prediction.predicted_total_goals', $divisor > 0 ? round(11.2 / $divisor, 2) : null);
-
-    $service = app(NhlGamePredictionPayload::class);
-    $markets = new ReflectionMethod($service, 'marketProbabilities');
-    $raw = $markets->invoke($service, 'AWY', 'HOM', 4.8, 6.4, $response->json('prediction'), $params);
-    expect($response->json('market_probabilities'))->toEqual($raw);
-    $baseline = $response->json('prediction');
-    unset($baseline['totals_normalization']);
-    $unscaled = collect($markets->invoke($service, 'AWY', 'HOM', 4.8, 6.4, $baseline, $params));
-    foreach (collect($raw)->whereIn('market_key', ['moneyline', 'puckline']) as $index => $market) {
-        expect($market['probability'])->toEqual($unscaled[$index]['probability']);
-    }
-    if ($divisor === 0.0) {
-        expect(collect($raw)->where('market_key', 'total'))->toBeEmpty();
-    } else {
-        $normalizedBaseline = collect($markets->invoke($service, 'AWY', 'HOM', 4.8 / $divisor, 6.4 / $divisor, $baseline, $params));
-        expect(collect($raw)->where('market_key', 'total')->values()->all())
-            ->toEqual($normalizedBaseline->where('market_key', 'total')->values()->all());
-    }
-    $revision = DB::table('nhl_game_prediction_revisions')->latest('id')->first();
-    expect($revision)->not->toBeNull();
-    expect(json_decode($revision->payload, true)['prediction'])->toEqual($response->json('prediction'));
-    Http::assertNothingSent();
-    $this->travelBack();
-})->with([
-    '150 offense 50 defense' => [150.0, 50.0],
-    'double offense' => [200.0, 0.0],
-    'offense only' => [100.0, 0.0],
-    'defense only' => [0.0, 100.0],
-    'equal blend' => [50.0, 50.0],
-    'below combined 100' => [50.0, 25.0],
-    'SAT defaults' => [88.0, 2.0],
-    'no contributing weights' => [0.0, 0.0],
-]);
-
-
-it('adds three presentation points to qualified confidence after its floor while preserving unqualified confidence', function (
-    float $internal,
-    ?float $winPct,
-    ?float $coveragePct,
-    bool $qualified,
-    float $expected
-): void {
-    $service = app(NhlGamePredictionPayload::class);
-    $engine = new NhlSatEngine(['discovery_win_pct' => $winPct, 'discovery_coverage_pct' => $coveragePct]);
-    $method = new ReflectionMethod($service, 'presentationConfidence');
-    expect($method->invoke($service, $internal, $engine, $qualified))->toBe($expected);
-})->with([
-    'qualified no historical metrics' => [75.0, null, null, true, 81.0],
-    'qualified blend receives full three-point boost' => [80.0, 75.0, 3.125, true, 82.0],
-    'qualified lower limit' => [60.0, null, null, true, 73.0],
-    'qualified upper limit' => [99.0, null, null, true, 95.0],
-    'zero coverage retains the three-point uplift' => [80.0, 75.0, 0.0, true, 86.0],
-    'full coverage uses historical win rate' => [80.0, 75.0, 100.0, true, 78.0],
-    'unqualified no historical metrics is unchanged before penalty' => [75.0, null, null, false, 75.0],
-    'unqualified historical blend has no uplift' => [80.0, 75.0, 3.125, false, 77.5],
-]);
-
-
-it('normalizes goalie-adjusted bucket goals using only participating weights', function (array $rows, float $games, ?float $expected): void {
-    $simulator = new NhlProjectedTeamMatchupSimulator();
-    $normalization = (new ReflectionMethod($simulator, 'normalizedBucketGoals'))->invoke($simulator, collect($rows), $games);
-    expect($normalization['goals_per_game'] === null ? null : round($normalization['goals_per_game'], 6))->toBe($expected);
-})->with([
-    'missing defensive evidence does not count its configured 200 percent' => [
-        [['goalie_adjusted_xgf' => 12.76, 'environment_offense_weight' => 2.0, 'environment_defense_weight' => 0.0]], 1.0, 6.38],
-    'matching defense participates' => [
-        [['goalie_adjusted_xgf' => 12.76, 'environment_offense_weight' => 2.0, 'environment_defense_weight' => 2.0]], 1.0, 3.19],
-    'matched and unmatched buckets use different divisors before summing' => [[
-        ['goalie_adjusted_xgf' => 4.8, 'environment_offense_weight' => 2.0, 'environment_defense_weight' => 2.0],
-        ['goalie_adjusted_xgf' => 4.8, 'environment_offense_weight' => 2.0, 'environment_defense_weight' => 0.0],
-    ], 1.0, 3.6],
-    'EV PP and PK retain each lanes goalie-adjusted goals' => [[
-        ['projection_strength' => 'ev', 'goalie_adjusted_xgf' => 4.8, 'environment_offense_weight' => 2.0, 'environment_defense_weight' => 0.0],
-        ['projection_strength' => 'pp', 'goalie_adjusted_xgf' => 1.2, 'environment_offense_weight' => 2.0, 'environment_defense_weight' => 2.0],
-        ['projection_strength' => 'pk', 'goalie_adjusted_xgf' => 0.2, 'environment_offense_weight' => 2.0, 'environment_defense_weight' => 0.0],
-    ], 1.0, 2.8],
-    'below 100 percent offense without defense' => [
-        [['goalie_adjusted_xgf' => 0.8, 'environment_offense_weight' => .25, 'environment_defense_weight' => 0.0]], 1.0, 3.2],
-    'per game exposure is applied once' => [
-        [['goalie_adjusted_xgf' => 1071.84, 'environment_offense_weight' => 2.0, 'environment_defense_weight' => 0.0]], 84.0, 6.38],
-    'zero goals with valid weights are a valid projection' => [
-        [['goalie_adjusted_xgf' => 0.0, 'environment_offense_weight' => 2.0, 'environment_defense_weight' => 0.0]], 1.0, 0.0],
-    'zero participating weights are unavailable' => [
-        [['goalie_adjusted_xgf' => 0.0, 'environment_offense_weight' => 0.0, 'environment_defense_weight' => 0.0]], 1.0, null],
-    'no projected buckets are unavailable' => [[], 1.0, null],
-]);
-
-it('publishes participating-weight totals once while preserving selection and moneyline probabilities', function (float $homeDivisor): void {
-    $this->travelTo(\Illuminate\Support\Carbon::parse('2026-10-01 12:00:00 UTC'));
-    Http::preventStrayRequests();
-    $token = ($this->seedPredictionInputs)(4.8, 6.4);
-    ($this->bindMatchupSimulator)(4.8, 6.4, .68, ['offense' => 200, 'defense' => 200], [
-        'away' => ['goals_per_game' => 2.4, 'divisor' => 2.0, 'bucket_divisors' => [2.0]],
-        'home' => ['goals_per_game' => 6.4 / $homeDivisor, 'divisor' => $homeDivisor, 'bucket_divisors' => [$homeDivisor]],
-    ]);
-    DB::table('nhl_goalie_season_projections')->update(['confidence_score' => .68]);
-    $params = ['nhl_game_id' => 2026020001, 'source_season_id' => '20252026',
-        'target_season_id' => '20262027', 'projection_version' => 'skater-market',
-        'toi_projection_version' => 'toi-market', 'goalie_projection_version' => 'goalie-market',
-        'away_goalie_id' => 9001, 'home_goalie_id' => 9002, 'markets' => ['moneyline', 'total']];
-    $response = $this->withToken($token)->getJson('/api/nhl-game-predictions?'.http_build_query($params))->assertOk()
-        ->assertJsonPath('prediction.selection_score.away', 4.8)
-        ->assertJsonPath('prediction.selection_score.home', 6.4)
-        ->assertJsonPath('prediction.winner.side', 'home')
-        ->assertJsonPath('prediction.predicted_score.away', 2.4)
-        ->assertJsonPath('prediction.predicted_score.home', round(6.4 / $homeDivisor, 2))
-        ->assertJsonPath('prediction.totals_normalization.configured_divisor', 4)
-        ->assertJsonPath('prediction.totals_normalization.away.divisor', 2)
-        ->assertJsonPath('prediction.totals_normalization.divisor', $homeDivisor === 2.0 ? 2 : null)
-        ->assertJsonPath('prediction.predicted_total_goals', fn ($value): bool => (float) $value === round(2.4 + 6.4 / $homeDivisor, 2));
-    $method = new ReflectionMethod(NhlGamePredictionPayload::class, 'marketProbabilities');
-    $baseline = $response->json('prediction');
-    unset($baseline['totals_normalization']);
-    $service = app(NhlGamePredictionPayload::class);
-    $original = collect($method->invoke($service, 'AWY', 'HOM', 4.8, 6.4, $baseline, $params));
-    $normalized = collect($method->invoke($service, 'AWY', 'HOM', 2.4, 6.4 / $homeDivisor, $baseline, $params));
-    $actual = collect($response->json('market_probabilities'));
-    expect($actual->where('market_key', 'moneyline')->values()->all())->toEqual($original->where('market_key', 'moneyline')->values()->all())
-        ->and($actual->where('market_key', 'total')->values()->all())->toEqual($normalized->where('market_key', 'total')->values()->all());
-    $revision = DB::table('nhl_game_prediction_revisions')->latest('id')->first();
-    expect(json_decode($revision->payload, true)['prediction'])->toEqual($response->json('prediction'));
-    Http::assertNothingSent();
-    $this->travelBack();
-})->with(['neither side has defensive evidence' => [2.0], 'only home has matching defensive buckets' => [4.0]]);
-
-
-it('carries actual defensive bucket participation from environment math into final goal normalization', function (bool $hasDefense): void {
-    $attack = (object) ['matched_bucket_key' => 'shot|near', 'bucket_dimensions' => [],
-        'shot_type_group' => 'shot', 'distance_group' => 'near', 'angle_group' => 'all', 'sequence_group' => 'all',
-        'baseline_xsat' => 60.0, 'baseline_xsog' => 30.0, 'baseline_xgf' => 3.0];
-    $defense = $hasDefense ? collect([clone $attack]) : collect();
-    $rows = app(\App\Services\NhlSatModelPredictionService::class)->environment(0, collect([$attack]), $defense, 2.0, 2.0);
-    expect($rows->first()['environment_defense_weight'])->toBe($hasDefense ? 2.0 : 0.0);
-    $rows = $rows->map(fn (array $row): array => [...$row, 'goalie_adjusted_xgf' => $row['adjusted_xgf'] * .9]);
-    $simulator = new NhlProjectedTeamMatchupSimulator();
-    $normalized = (new ReflectionMethod($simulator, 'normalizedBucketGoals'))->invoke($simulator, $rows, 1.0);
-    expect(round($normalized['goals_per_game'], 4))->toBe(2.7)
-        ->and($normalized['divisor'])->toBe($hasDefense ? 4.0 : 2.0);
-})->with(['matching defense' => [true], 'no defensive evidence' => [false]]);

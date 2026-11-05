@@ -674,6 +674,14 @@ class NhlPregameContextBuilder
         return $contextId;
     }
 
+    /** Reuse canonical prior-result evidence for an explicitly requested prediction without persisting snapshots. */
+    public function predictionTeamEvidence(object $game, CarbonInterface $cutoff, array $side, array $training): array
+    {
+        [$metrics, $opponent, $schedule] = $this->teamResultEvidence($game, $cutoff, $side, $training, null);
+
+        return ['metrics' => $metrics, 'opponent_metrics' => $opponent, 'schedule' => $schedule];
+    }
+
     /** Calculate team evidence from results and schedule references without saving context. */
     private function teamResultEvidence(object $game, CarbonInterface $cutoff, array $side, array $training, ?Closure $isStopped): array
     {

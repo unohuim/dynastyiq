@@ -1,5 +1,11 @@
 # ENUMS - Canonical Enum Authority
 
+## Custom prediction defensive history
+
+- Defensive allowance source: `team_recent`, `team_train`, `league_train`, in fallback order. The adopted PP defense period starts at `team_train`.
+- Player bucket `defense_allowance_source` identifies the chosen opponent allowance. `defense_reference_sources` maps these same sources to their fractional contributions to the player's historical reference, weighted by exposure and offensive source rates. Missing provenance on externally prepared calculator inputs remains null/empty.
+- Custom prediction input `context_source`: `saved_model_snapshot` for Test replay; `transient_prior_results` for requested-date contexts calculated without persistence. `coefficients_transferred` records that the selected model's Train seasons differ from the frozen coefficient-reference seasons.
+
 ## Public NHL game detail
 
 - Public game details `section`: `matchup`, `lineups`, `meetings`, `summary`, `goals`, `boxscore`. Browser section `status`: `loading`, `ready`, `error`; a pending preparation response uses HTTP 202 with `status=preparing`.
@@ -2918,6 +2924,13 @@ These values select the test-page data source only; they do not add canonical li
 
 ## Custom NHL game-prediction records
 
+`nhl_custom_game_prediction_runs.algorithm_version` uses `custom_ev_pp_v1` for
+the first executable isolated EV/PP replay. `custom_ev_pp_v2` identifies the
+shared default calculator with fallback-filled inputs for all requested games.
+The frozen run definition records
+its schedule mode and coefficient horizon; changing those inputs creates a new
+run rather than rewriting earlier predictions.
+
 `nhl_custom_game_prediction_runs.status` accepts `queued`, `running`, `complete`,
 and `failed`. A run is distinct from SAT engine, stack, and next-game evaluation
 statuses.
@@ -2933,8 +2946,19 @@ final game.
 `nhl_custom_game_prediction_teams.venue` stores `home` or `away`.
 `player_role` stores `skater` or `goalie`.
 
-These values apply only to the custom game-prediction pathway and do not change
-existing engine or partner API contracts.
+The v1 command's `lineup_source` is `historical_participants`. Its internal
+skater `role` is `F` or `D` for the schedule adjustment; these do not replace
+the relational `player_role`. Report variants are `with_schedule` and
+`without_schedule`. Confidence calibration is `unavailable` until agreed.
+
+Current API/admin forecasts use `custom_pregame` for roster projection source.
+Requested-date lineup sources include `anticipated_lineup`, `projected_roster`,
+`last_known_lineup` and `provided_roster`; historical replay retains
+`historical_participants`. Observed input completeness remains diagnostic;
+effective completion is one hundred percent after matching-source fallbacks.
+Confidence remains nullable and separate from completion and win probability.
+The shared calculator supplies new partner/admin predictions through existing
+response envelopes; prior algorithm records retain their historical meaning.
 
 ### Partner X post lookup usage
 

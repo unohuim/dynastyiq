@@ -4175,7 +4175,20 @@ NHL gamecenter boxscore rosters are checked only for game/teams without complete
 ## NHL Custom Game Prediction Evidence
 
 **Name:** NHL Custom Game Prediction Evidence
-**Type:** Isolated Game-Level Prediction Run And Immutable Outcome Record
+**Type:** Default Pregame Game Calculator And Immutable Prediction Evidence
+
+`NhlCustomGameForecast` supplies the shared `custom_ev_pp_v2` calculator to API,
+manual admin runs, engine/stack previews, evaluation, simulator and command
+callers. Every requested scheduled state is admitted. The 100% completion target
+uses matching retained Train fallbacks, preserving measured zeros and observed
+coverage diagnostics; the old 90% observed gate is removed. No legacy stack
+weights, dilution or qualification filter changes new outcomes. Default model
+selection prefers eligible SAT_V2. Frozen coefficient provenance remains
+explicit. PK contributes time only; confidence is unavailable pending calibration.
+Prepared-date inputs are cached with source/configuration fingerprints and a
+preparation lock. Existing response-cache/history paths archive private inputs
+and immutable revisions. Standalone replay can still save separate custom runs.
+No target results are used as requested-date forecast inputs.
 
 The custom game predictor persists its own versioned runs, per-game winner
 probabilities, confidence, recommendations, and final outcomes. Each prediction
@@ -4186,6 +4199,13 @@ history against the opponent, and the opposing lineup players' own histories.
 Opponent-team aggregates remain distinct from player sums.
 
 **Public interface:**
+- `NhlCustomGameForecast::predict()`
+- `NhlCustomGamePredictionEngine::predict()`
+- `NhlCustomGamePredictionReplay::run()`
+- `NhlCustomGamePredictionInputs::forecasts()`
+- `NhlPregameContextBuilder::predictionTeamEvidence()`
+- `php artisan nhl:custom-predict --model=1 --compare-schedule`
+- `php artisan nhl:custom-predict --model=2 --date=2026-11-05 --json`
 - `nhl_custom_game_prediction_runs`
 - `nhl_custom_game_predictions`
 - `nhl_custom_game_prediction_teams`

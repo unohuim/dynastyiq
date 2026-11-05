@@ -2,56 +2,38 @@
 
 ## Admin engine evaluations
 
-Saved SAT engines and discovery at `/admin/nhl-sat-engines` are administrative
-tools. A named Default stack supplies ordinary prediction API calls. Its Engines
-may be evaluated in saved priority order, but only one Engine may be selected to
-make a stack prediction: the first whose internal confidence window and score-gap
-rule qualifies the game using its effective Production Model. If none qualifies, no Engine prediction is selected.
-Runtime Engine qualification adds one percentage point to the configured upper
-confidence bound, capped at 100; the lower confidence bound is unchanged.
-For saved minimum percentage-gap rules, it also accepts gaps at or above
-`max(0, saved gap - 1.5)` percentage points, using six-decimal precision.
-For example, a saved 6.9% minimum accepts 5.4% or higher. Exact ties remain
-excluded. Goal-unit and less-than gap rules retain their strict comparisons.
-Qualification gaps use original unrounded weighted goals before score normalization.
-For example, a saved 74–76 confidence range accepts 74–77 inclusive. This does
-not alter stored Engine settings or discovery records, or the no-Engine legacy range.
-Engine selection is not a partner request parameter. Historical Engine discovery
-and testing use an Engine's Test Model; they do not change API predictions.
-When the Default stack has a completed Production SAT Model selected, that model
-supplies every Engine's qualification and outcome forecast in that stack. Without
-that override, the Engine's own Production Model supplies both. This is a stack-scoped runtime
-override and does not change the saved Production Model on any Engine.
-The returned `prediction.confidence_score` and each market row's `confidence_score`
-are presentation confidence, not the Engine's internal qualification confidence:
-for a qualified Engine, `min(95, max(70, blend(min(100, internal + 3), observed_win_pct,
-coverage^(1/5))) + 3)`, using the Engine's frozen discovery percentages as
-decimals. An Engine without frozen discovery metrics uses its internal score plus
-three before the presentation bounds. Qualified results receive another three points after the 70-point floor, capped at 95; for example, 70 becomes 73. This presentation boost does not change qualification or win probability. A normal response with
-`pick_qualified: false` subtracts 20 percentage points from this outward-facing
-confidence (floored at zero); this does not alter internal qualification. If no default stack is available,
-ordinary predictions retain the legacy fallback: no engine model or weights are
-selected, `inputs.engine_id` is null, and pick qualification uses confidence 67–70
-with a score gap strictly greater than zero.
+All new game forecasts use the shared pregame EV/PP engine, including the API,
+manual admin runs, refreshes, saved-engine/stack previews and evaluations.
+SAT_V2 is the preferred default model. For a past season the default must use
+a complete eligible model trained strictly before that season; explicit model
+overrides must satisfy the same boundary.
 
-There is no date-based or spread-only forced-pick exception. Production supplies
-the returned score, winner, probabilities and internal input to presentation
-confidence. `inputs.qualification_model_run_id` and `inputs.sat_model_run_id`
-identify the same effective Production Model for ordinary stack predictions.
-The admin Test/Train comparison evaluates its own model against the same Engine
-thresholds, but does not gate the Production result or require winner agreement.
+Saved legacy engines and stacks retain their definitions and historical records.
+Their percentages, confidence boosts, gap gates and priority delegation do not
+change new forecasts. A stack is not required to request predictions.
 
-The admin stack-level **Predict today** action uses the same priority delegation
-as ordinary predictions, but explicitly evaluates the stack being viewed—even if
-it is not the default. It stops at the first qualifying Engine for each game and
-preserves the ordinary no-pick fallback when none qualifies. Individual Engine
-buttons remain independent diagnostics. Both confidences are shown only in the
-admin results; partner payloads continue to expose presentation confidence only.
-Each admin Engine accordion lists all games: actual attempts show that Engine's
-results, and engines after a pick show “Picked by [Engine name]” instead of
-predicting again. The admin response includes compact attempt diagnostics captured
-during that same traversal. These diagnostics are not included in partner responses.
+The completion target is **100% after fallback**. Missing player or team history
+is filled from the agreed personal/team Train and league references. Observed
+zeros remain zeros. Observed coverage is diagnostic and does not reject a game.
+Game state does not prevent an explicitly requested prediction.
 
+Current prediction/market confidence is nullable until separately calibrated.
+It is not win probability or completed-input coverage. Moneyline probabilities
+come directly from the shared calculator, including its equal regulation-tie
+resolution and approved schedule adjustment. Scores are already final EV+PP
+team estimates; do not divide them by legacy offensive/defensive weights.
+
+Read `inputs.algorithm_version`, `inputs.sat_model_run_id`,
+`inputs.training_season_ids`, `inputs.algorithm_definition`, and
+`prediction.confidence_inputs`. Legacy engine/stack IDs may be null even for a
+successful qualified prediction. A non-tied available prediction is qualified
+without a confidence/probability cutoff; an exactly equal-probability result
+has no clear winner.
+
+New calculations append immutable revisions. Full source inputs are archived
+privately and are not exposed in the API response. Earlier revisions retain
+their original algorithms and confidence semantics. Older numeric examples
+below illustrate payload shape, not a current calculation or measured accuracy.
 
 ## Prediction roster player identifiers
 
@@ -1019,12 +1001,11 @@ nhl-stats:read
 Every successful prediction payload includes `prediction_available`. Consumers
 must check this field before reading prediction or market output.
 
-New calculations are durably archived before publication. `meta.prediction_revision_id` identifies the saved calculation and `meta.predicted_at` is its calculation timestamp. Fresh and stale cache reads retain that identity; a successful recalculation receives a new revision. These additive fields do not change prediction or qualification math. Manual admin default-stack runs also publish through this pathway.
+New calculations are durably archived before publication. `meta.prediction_revision_id` identifies the saved calculation and `meta.predicted_at` is its calculation timestamp. Fresh and stale cache reads retain that identity; a successful recalculation receives a new revision. These additive fields do not change prediction or qualification math. Manual admin default-engine runs also publish through this pathway.
 
 `meta.cache` is `fresh` for a current cached or synchronous response and `stale`
 only when DynastyIQ has queued a rebuild of a response no more than five minutes old
-whose input fingerprint still matches. Engine settings, stack membership/order,
-default-stack selection and production-model changes invalidate previous responses;
+whose input fingerprint still matches. Algorithm configuration, selected-model, source-result and lineup/starter changes invalidate previous responses;
 an outdated fingerprint is never served as stale.
 
 To request a new prediction immediately, send `force_refresh=1`:
@@ -1313,123 +1294,36 @@ than inferring how the goalie was selected. Current values are `provided`,
 
 ### Game-Specific Lineup TOI and Production Inputs
 
-The public `/games/{nhlGameId}` detail page also offers per-team Lineup and
-Prediction tabs. An unreported team receives a clearly labeled, injury-filtered
-projected-roster preview. Its player projections can be viewed even when a full
-game prediction is withheld. These browser previews are not reported evidence
-and do not change this API's `prediction_available` rules. SAT, SOG and G are
-shown per 60 and per game; unavailable inputs render as dashes.
+The shared engine selects the game's anticipated skaters, then uses projected
+or last-known prior roster identities when necessary. Missing statistical inputs
+are filled to the completion target, with selected sources retained in private
+revision evidence. A current-input forecast for an old date is not a historical
+point-in-time lineup backtest.
 
-For official, reported, and projected rosters, DynastyIQ selects the newest created
-completed SAT model with successfully completed Build /60 outputs, a run-scoped
-goal model, and skater rate rows. A player uses model predictions only when both
-valid bucket rates and positive same-run TOI are available. A newer unfinished model does not displace a usable one. Selection is
-automatic; no additional API parameter is required. The SAT model's stored
-`target_season_id` is its evaluation/test season and does not have to match the
-game's season. Request-season filtering still applies to legacy season projections.
+The selected SAT model owns the Train seasons and retained buckets. Player
+recent windows cross seasons and trades. Statistics stop before the earlier of
+request time and scheduled game start. If the scheduled time is unknown, the
+forecast uses request time without inventing a scheduled timestamp.
 
-`inputs.sat_model_run_id` identifies the selected model, or is null when none
-qualifies. Selection does not mean every skater used that model: inspect each
-roster row's `projection_source` and `model_run_id` for actual application.
-Players without a complete model pair use the historical service. Bucket provenance
-is available as `bucket_projection_source` and `bucket_model_run_id`; the latter
-identifies bucket definitions even when the rate source is historical.
-Legacy simulator and goalie projection prerequisites still apply.
+Team PP/PK/EV clocks, player usage, bucket attempts, defensive context,
+player-specific conversion, neutral goalie scoring and final PP allocation
+follow [the engine rules](../architecture/stats/NhlCustomGamePrediction.yaml).
+Annual projected TOI and the old offensive/defensive weight blends no longer
+supply these game scores.
 
-When SAT-model buckets are used, roster confidence now follows the selected run's
-stored rate-bucket evidence (source-attempt weighted), or personal training-profile
-evidence for historical fallback. Goalie confidence follows the projected-attempt
-weighted, sample-shrunk exact-bucket evidence; a missing exact bucket contributes
-zero confidence. The existing team/game confidence aggregation is unchanged.
-These scores describe input evidence, not calibrated accuracy or win probability.
-Goalie `projection_source` is `sat_model` for this path.
+Roster `projection_source` identifies current pregame output. `strengths`
+contains EV/PP player components. `projected_sat`, `projected_sog`,
+`projected_goals` and adjusted summary totals come from the new calculation.
+`baseline_*` values are the offensive bucket estimates before defensive,
+schedule and final PP reconciliation. Current confidence fields may be null.
+Unsupported legacy annual/assist fields are optional and must not be treated
+as zero or used as evidence of a second prediction algorithm.
 
-Additive output fields include `inputs.training_season_ids`,
-`teams.*.input_confidence_score` (0–100), `teams.*.defense_roster` (individual
-on-ice projections with 0–1 personal-evidence confidence), `teams.*.defense_summary`
-(five-skater-normalized composition), and `teams.*.goalie_bucket_coverage`
-(the opposing goalie's bucket coverage against that team's offense).
-Internal historical evaluation may pin a run and use stored boxscore identities
-through the same service; those controls are not accepted partner API parameters.
-
-For a model-backed skater, each bucket contributes:
-
-- xSAT: `projected_xsat_per_60 × same-run TOI seconds / 3600`.
-- xSOG: xSAT multiplied by that player's historical training-bucket `SOG / SAT`.
-- xGF: xSOG multiplied by that player's historical training-bucket `goals / SOG`.
-
-Baseline predicted TOI and SAT are not discounted. The same conversion rule applies to
-Other. If the relevant personal historical denominator is unavailable, use the
-matching pooled bucket average; trained bucket probabilities remain the final
-fallback when empirical averages are absent. A valid observed zero remains zero.
-Stored `projected_xsog_per_60` and `projected_xg_per_60` do not supply game outcomes.
-Outcome provenance is documented in `docs/ENUMS.md`.
-
-These are static annual inputs; current-season and preseason results do not
-update them. Matchups derive attacking conversion from the selected bucket
-volumes, then use 88% of every offensive bucket's attempts plus 2% of defensive
-attempts with the exact same bucket key. Defense-only buckets are excluded;
-offensive buckets without matching defense retain 88% of their attempts.
-Neither weights nor resulting totals are normalized. Apply attacking conversion
-and then goalie ability to these adjusted attempts. Defensive rates and goalie
-skill still use compatible historical profiles. This formula does not filter
-predictions by confidence range or score gap and does not override winners using
-head-to-head history. Production model selection remains unchanged.
-
-Contributions are summed across buckets. A complete valid SAT rate set and
-positive TOI must exist for the same model and player. Missing that pair switches
-the player to historical inputs; model rates are not multiplied by fallback
-minutes.
-For all game types, TOI uses the selected model's projected TOI/GP first, then
-the player's previous NHL regular-season average (total TOI divided by GP), then
-the average of available same-line teammates (the other two forwards or defensive
-partner). Only model or historical teammate TOI can supply that average, avoiding
-circular estimates. If no anchor exists, estimates are F1 20, F2 16.5, F3 13.5,
-F4 8.5, D1 24, D2 20, D3 16 minutes. Positive TOI is required at each step.
-This also applies without a usable SAT model and replaces the preseason override.
-Fallback production is rescaled to the chosen TOI; rookie NHLe and depth-peer
-production rules remain intact. For SAT-model matchups, these bucket volumes enter
-the defensive blend and goalie comparison before score assembly. Model full-game
-volumes already include special teams and receive no extra historical PK volume.
-Compatible defensive and goalie history uses the selected SAT run's definitions.
-The existing goalie-edge season/matchup weights remain unchanged.
-
-When `inputs.*_lineup_source` is `nhl_boxscore` or `anticipated_lineup`,
-DynastyIQ builds a game-specific input for every resolved skater. For players
-using the existing fallback rather than the SAT model:
-
-- The reported forward or defense pair determines the player's base game role.
-- Explicit PP1, PP2, PK1, and PK2 evidence adjusts that role. Null special-team
-  values mean the source did not report the unit and are not inferred.
-- Final game TOI follows the model, previous-season, linemate, then line-estimate
-  ladder above, rather than blending line estimates into an available model value.
-- G, A, and SOG rates are scaled to the resulting game TOI.
-- A player with fewer than 25 career NHL regular-season games uses their prior
-  season non-NHL production and the versioned NHLe league factor when those
-  records are available.
-- The NHLe points factor is applied to G and A. It is provisionally applied to
-  SOG as well, with low confidence because the source model does not publish a
-  separate SOG translation factor.
-- If neither a usable NHL projection nor translatable non-NHL history exists,
-  DynastyIQ retains the player with an explicit low-confidence
-  `replacement_level` rate. Resolved lineup players are never silently dropped.
-- In preseason, an unresolved player is permitted on any forward line or defense
-  pair when at least one teammate in that exact group resolves canonically.
-  Regular-season and playoff exceptions remain limited to `F4`/`D3`. The unresolved row
-  retains its reported name and null NHL id, uses `line_peer_average`, and
-  receives the average projected TOI, goals, assists, SOG, and available SAT and
-  per-sixty rates of its resolved peers. A line or pairing with no resolved peer
-  remains prediction-ineligible. Unknown players never serve as peers for each other.
-
-Official NHL authority changes the roster evidence source, not the player-rate
-fallback ladder. Official-boxscore rookies therefore receive the same NHLe or
-replacement-level handling as rookies from reported anticipated lineups. When
-only official boxscore roster IDs are available and no ordered official lineup
-observation exists, DynastyIQ assigns provisional line keys by position and
-projected TOI solely to calculate game-specific usage.
-
-These calculations are request-time prediction inputs. They do not replace raw
-statistics, historical records, or stored season projections.
+The goalie section retains selected identities, available season evidence,
+and `matchup_sog_against_per_game` / `matchup_predicted_ga_per_game` from the
+opposing new forecast. `goal_adjustment_applied` identifies the current neutral
+stage. Goalie Edge remains separate diagnostic information; missing components
+are explicitly unavailable and do not block the game forecast.
 
 ### Expanded Team Roster Fields
 
@@ -1458,13 +1352,13 @@ used by the prediction. When the lineup source is `nhl_boxscore` or
 | `projected_sat` | number | Expected game shot attempts at the applied game TOI, including historical bucket fallbacks when available. |
 | `nhle_factor` | number/null | Applied versioned league factor; null when NHLe was not used. |
 | `confidence` | string/null | Human-readable projection confidence bucket. NHLe and replacement rows are `low`. |
-| `confidence_score` | number | Numeric `0`-`1` confidence input used by prediction confidence weighting. |
+| `confidence_score` | number/null | Input confidence when available; current uncalibrated game output is null. |
 | `baseline_toi_seconds` | number | Existing season TOI projection before applying tonight's role. |
 | `game_projected_toi_seconds` | integer | Game-specific projected TOI used to scale the player's rates. |
 | `game_projected_toi` | string | Display form of game TOI in `M:SS` format. |
 | `projected_goals` | number | Game-specific projected goals after role and TOI scaling. |
 | `adjusted_xgf_per_game` | number | Goal input consumed by the matchup confidence calculation; currently matches `projected_goals` for expanded lineup rows. |
-| `projected_assists` | number | Game-specific projected assists after role and TOI scaling. |
+| `projected_assists` | number/null | Optional historical field; the current EV/PP goal engine does not independently forecast assists. |
 | `projected_sog` | number | Game-specific projected shots on goal after role and TOI scaling. |
 
 Projected-roster rows continue to use the established simulator roster shape
@@ -1649,7 +1543,7 @@ Common row shape:
 | `loss_probability` | Probability the selection loses. |
 | `fair_odds_american` | American fair odds derived from probability, or `null` when probability is exactly `0` or `1` because fair odds are infinite. |
 | `fair_odds_decimal` | Decimal fair odds derived from probability, or `null` when probability is exactly `0` or `1` because fair odds are infinite. |
-| `confidence_score` | Presentation confidence from `0` to `100`. |
+| `confidence_score` | Confidence from `0` to `100`, or null when unavailable. It is distinct from win probability. |
 | `model.method` | Probability method. See method values below. |
 | `model.source` | `prediction.selection_score` for moneyline/puckline; `prediction.predicted_score` for totals. |
 | `model.includes_overtime` | Whether the probability includes overtime resolution in the score distribution. |

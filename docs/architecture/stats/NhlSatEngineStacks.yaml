@@ -1,5 +1,5 @@
 name: NHL SAT Engine Stacks
-type: Persistent Ordered Saved Engine Collection
+type: Persistent Saved Engine Collection And Historical Discovery Container
 location:
   - app/Models/NhlSatEngineStack.php
   - app/Models/NhlSatEngineStackMember.php
@@ -7,44 +7,28 @@ location:
   - app/Http/Controllers/Admin/NhlSatEngineController.php
   - resources/js/pages/Admin/SatEngines/Index.vue
   - resources/js/pages/Admin/SatEngines/Run.vue
-purpose: Persist reviewed discovery recommendations as independently usable engines in an explicit precedence order and select the one stack used for ordinary predictions.
+purpose: Preserve saved engine/stack organization and historical records while new predictions use the single default pregame engine.
 when_to_use:
-  - Saving a reviewed manual or automatic discovery recommendation.
-  - Managing the name, membership, or priority of a saved engine stack.
+  - Managing reviewed engine collections and their historical discovery provenance.
+  - Opening existing member or stack prediction previews.
 when_not_to_use:
-  - Calculating discovery recommendations; NhlSatEngineStackAnalysis owns that read-only work.
-  - Deleting or mutating an engine merely because its stack membership changes.
+  - Choosing a different game calculation from saved legacy percentages or confidence bounds.
+  - Copying an old engine's measured record or presentation confidence onto the new algorithm.
 rules:
-  - Saved Engine runtime qualification allows one percentage point above the configured maximum confidence, capped at 100. The minimum confidence remains unchanged. For saved minimum percentage-gap rules (greater-than direction), runtime qualification accepts gaps at or above max(0, saved gap minus 1.5 percentage points), rounded to the existing six-decimal gap precision. Exact ties remain excluded. Goal-unit and less-than gap rules retain their original strict comparisons. Compute every qualification gap from the original unrounded weighted scores before final goal normalization. Do not rewrite Engine definitions or frozen discovery records. The no-Engine legacy range is unchanged. Predict today displays the defined range without adding the tolerance to the displayed maximum, explains the confidence and applicable percentage-gap tolerances separately, and captures both in private snapshots; older snapshots retain their original bounds.
-  - Ordinary qualification and forecasting both use the stack Production Model override or the Engine Production Model, applying the unchanged Engine confidence bounds and unrounded gap rule. The Test Model is not evaluated or required on the live stack path. inputs.qualification_model_run_id records the effective forecast model. Predict today applies this rule to its Production row; Test/Train independently evaluates its model and qualification for comparison only. Model winner disagreement does not reject Production. No date-based or spread-only forced-pick exception exists.
-  - Predict today displays Production rows only, in one accordion per Engine. The member action creates or replaces that Engine's independent diagnostic accordion. The stack action evaluates each game through the same delegation method as ordinary predictions, using the viewed stack rather than selecting the default. Stop evaluating members at the first qualified pick. Every accordion still lists every game; evaluated engines show their actual attempts, while later engines show only the picking Engine's name with no fabricated prediction values. Both actions resolve the saved stack Production Model before the Engine model. Diagnostic skater and goalie confidence are two-team averages from raw simulation inputs before internal weighting and presentation conversion; these fields are admin-only.
-  - Stack-level admin requests validate today's America/Toronto game date and reject an empty stack. They bypass the partner response cache without changing the default stack. Games run sequentially, one stack request per game, without queue dispatch. Capture compact admin-only attempt diagnostics during the ordinary traversal; never rerun an engine to populate the display. Earlier declined attempts receive no whole-stack presentation penalty when a later Engine picks. If all engines decline, retain the ordinary foundation fallback and apply the presentation penalty once, including once to each available diagnostic attempt. The UI shows each Engine's own result, not copies of the fallback. Failures and unavailable predictions must not be represented as false picks. Raw internal confidence is separate from presentation confidence; partner responses never include attempt diagnostics.
-  - Stack detail offers Predict today per member. Admin-only requests validate membership and today's America/Toronto game date, evaluate that Engine alone through NhlGamePredictionPayload with the saved stack production-model override, and never change defaults. The UI requests one game at a time without queue dispatch and shows away/home scores, absolute spread, internal and presentation confidence, and pick qualification. Unavailable or failed predictions are not represented as false picks. These diagnostic responses bypass the partner response cache; internal confidence remains admin-only. Normal source-resolution behavior, including official starter locks or preseason lineup imports, is unchanged.
-  - A newly saved stack contains one or more distinct saved engines with contiguous one-based priority; lower priority numbers take precedence. Later membership removal may leave a stack empty. Stack length has no fixed cap.
-  - Saving a recommendation validates every ordered candidate against its source run, creates one saved engine for each candidate, and records discovery provenance without starting evaluation or changing the default stack.
-  - Created engine names derive from the approved stack name and their Foundation or Supplement priority; saved stack names remain independently editable. Stack members display each Engine's frozen candidate test record, win and coverage metrics, never an Engine-default state. When all members retain completed candidate provenance from one run, detail also displays each member's unique contribution and cumulative stack impact in priority order; mixed or manually created memberships display unavailable impact rather than inferred values.
-  - Adding an existing engine appends it at the final priority. Reordering must include every current member exactly once.
-  - Removing a member and deleting a stack remove memberships only. Engines survive and may be reused elsewhere.
-  - An engine with stack memberships cannot be deleted until those memberships are removed.
-  - At most one non-empty stack is default. A default stack may not lose its final member. For an ordinary prediction, members may be evaluated in priority order, but only the first Engine whose internal confidence bounds and score-gap rule qualify the game is selected to make a stack prediction. No second Engine prediction may be returned for that game. If none qualifies, inputs.engine_id is null and pick_qualified is false even when the broader matchup payload is available. A missing default stack uses the documented legacy fallback.
-  - A stack may select one completed SAT Production Model. When present, that model supplies every member's qualification and forecast at ordinary prediction time, ahead of the member Engine's own saved Production Model. It is a runtime override scoped to that stack: it never rewrites an Engine definition and an Engine may therefore retain a different model in another stack or outside a stack.
-  - Partner-facing prediction and market confidence is presentation confidence, calculated only after internal qualification as `min(95, max(70, blend(min(100, internal + 3), observed_win_pct, coverage^(1/5))) + 3)`, with frozen discovery percentages normalized to 0–1. Missing frozen metrics use internal confidence plus three before applying the same presentation bounds. Qualified results then receive a full three-point presentation boost after the 70-point floor, capped at 95. This boost never changes qualification, winner selection or moneyline probability. A normal unqualified response subtracts 20 percentage points from presentation confidence, floored at zero. Internal confidence is never changed or exposed as the partner confidence score.
+  - Current calculation is governed by NhlCustomGamePrediction.yaml. Ordinary API/manual predictions use that default directly and require no saved stack. Stack/member previews use the same calculator with an explicitly selected production-model override when supplied. Empty stack containers do not block prediction.
+  - Legacy member weights, confidence ranges, percentage-gap tolerances, priority delegation and presentation boosts/penalties no longer modify newly calculated scores, probabilities, confidence or prediction availability. Saved definitions and completed records remain unchanged historical evidence.
+  - Stack-level and member admin endpoints retain existing authorization, membership validation and date scope. Changing a preview's model never changes the application's default model or rewrites a saved engine. Current previews expose nullable confidence rather than inventing a calibrated score.
+  - Stack membership remains ordered, distinct and contiguous when created; reordering includes every current member exactly once. Removing membership or deleting a stack does not delete its engines. Engines with memberships cannot be deleted.
+  - Stack creation from reviewed candidates retains frozen candidate provenance and does not start evaluation. At most one saved nonempty stack retains the legacy default designation for configuration compatibility; that designation does not select the live calculator.
+  - Earlier frozen engine records retain their original methods and outcome labels. New algorithm provenance must remain explicit and must not inherit those historical win percentages or confidence qualifications. Redesigning automatic context-based discovery is separate work.
 public_interface:
-  - GET /admin/nhl-sat-engines/stacks/{stack}/predictions/today
-  - POST /admin/nhl-sat-engines/stacks/{stack}/predictions/{game}
-  - NhlGamePredictionPayload::previewStack
-  - GET /admin/nhl-sat-engines/stacks/{stack}/members/{member}/predictions/today
-  - POST /admin/nhl-sat-engines/stacks/{stack}/members/{member}/predictions/{game}
   - GET /admin/nhl-sat-engines/stacks/{stack}
-  - POST /admin/nhl-sat-engines/runs/{run}/stacks
-  - PATCH /admin/nhl-sat-engines/stacks/{stack}
-  - POST /admin/nhl-sat-engines/stacks/{stack}/members
-  - PUT /admin/nhl-sat-engines/stacks/{stack}/members/order
-  - DELETE /admin/nhl-sat-engines/stacks/{stack}/members/{member}
-  - DELETE /admin/nhl-sat-engines/stacks/{stack}
-  - POST /admin/nhl-sat-engines/stacks/{stack}/default
+  - POST /admin/nhl-sat-engines/stacks/{stack}/predictions/{game}
+  - POST /admin/nhl-sat-engines/stacks/{stack}/members/{member}/predictions/{game}
+  - NhlGamePredictionPayload::previewStack
+  - NhlGamePredictionPayload::previewEngine
   - NhlSatEngineStackCreator
 example_usage: |
-  Save a three-engine recommendation named "High-confidence coverage". The service creates
-  "High-confidence coverage — Foundation" followed by two Supplement engines, then records
-  their one, two, and three priorities in the saved stack.
+  Open a saved stack and request a game preview.
+  Its selected production model may override the model for that preview;
+  every score is calculated by the shared pregame engine.

@@ -6,7 +6,6 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Jobs\RunNhlGamePredictionJob;
-use App\Models\NhlSatEngineStack;
 use App\Services\NhlGamePredictionHistory;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -16,25 +15,23 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Throwable;
 
-/** Shared super-admin operational runs and durable revision inspection, separate from custom engines. */
+/** Super-admin operational runs and durable revision inspection for the shared default engine. */
 final class NhlGamePredictionController extends Controller
 {
     /** Admit one inclusive date-range run and enqueue one bounded job per stored game. */
     public function store(Request $request, NhlGamePredictionHistory $history): JsonResponse
     {
         [$start, $end] = $this->dates($request);
-        $stack = NhlSatEngineStack::query()->where('is_default', true)->with('members.engine')->first();
-        if ($stack === null || $stack->members->isEmpty()) {
-            throw ValidationException::withMessages(['stack' => 'Select a non-empty default stack before running predictions.']);
-        }
+        $model = app(\App\Services\NhlCustomGameForecast::class)->model();
+        $definition = ['algorithm' => config('nhl-custom-prediction'), 'model_run_id' => $model->id];
         $games = $this->games($start, $end)->pluck('nhl_game_id');
         if ($games->isEmpty()) {
             throw ValidationException::withMessages(['start_date' => 'No stored NHL games were found for these dates.']);
         }
-        [$runId, $itemIds] = DB::transaction(function () use ($start, $end, $stack, $games, $request): array {
+        [$runId, $itemIds] = DB::transaction(function () use ($start, $end, $definition, $games, $request): array {
             $id = DB::table('nhl_game_prediction_runs')->insertGetId([
                 'start_date' => $start, 'end_date' => $end, 'status' => 'queued', 'total_games' => $games->count(),
-                'requested_stack' => $stack->toJson(), 'created_by' => $request->user()->id,
+                'requested_stack' => json_encode($definition, JSON_THROW_ON_ERROR), 'created_by' => $request->user()->id,
                 'created_at' => now(), 'updated_at' => now(),
             ]);
             DB::table('nhl_game_prediction_run_games')->insert($games->map(fn ($gameId): array => [
@@ -127,7 +124,6 @@ final class NhlGamePredictionController extends Controller
     /** Read schedule rows only; predictions never start schedule imports. */
     private function games(string $start, string $end): \Illuminate\Database\Query\Builder
     {
-        return DB::table('nhl_games')->whereBetween('game_date', [$start, $end])->whereIn('game_type', [1, 2, 3])
-            ->where(fn ($query) => $query->whereNull('game_state')->orWhereNotIn('game_state', ['PPD', 'CNCL']));
+        return DB::table('nhl_games')->whereBetween('game_date', [$start, $end])->whereIn('game_type', [1, 2, 3]);
     }
 }

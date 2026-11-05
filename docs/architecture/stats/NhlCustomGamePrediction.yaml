@@ -1,37 +1,53 @@
 name: NHL Custom Game Prediction Evidence
-type: Isolated Game-Level Prediction Run And Immutable Outcome Record
+type: Default Pregame Game Calculator And Immutable Prediction Evidence
 location:
-  - database/migrations/2026_10_19_000001_create_nhl_custom_game_prediction_tables.php
-  - database/migrations/2026_10_06_000001_create_nhl_pregame_context_tables.php
-  - app/Services/NhlPregameContextBuilder.php
-purpose: Persist a separately versioned NHL game prediction and its two-team, player, goalie, and pregame evidence without changing existing SAT engines or partner prediction paths.
+  - app/Services/NhlCustomGamePredictionEngine.php
+  - app/Services/NhlCustomGamePredictionInputs.php
+  - app/Services/NhlCustomGameForecast.php
+  - app/Services/NhlCustomGameDefense.php
+  - app/Services/NhlCustomGamePredictionReplay.php
+  - app/Services/NhlGamePredictionPayload.php
+  - app/Console/Commands/ReplayNhlCustomGamePredictionsCommand.php
+  - config/nhl-custom-prediction.php
+purpose: Supply the single default EV/PP game calculation for API, admin, refresh, evaluation, simulator and command callers while retaining immutable source and outcome evidence.
 when_to_use:
-  - Saving a custom game-prediction run, its frozen configuration, per-game probabilities, and later actual outcomes.
-  - Retaining each team's projected EV, PP, and PK components and the player inputs used to build them.
-  - Comparing a player's own history with both opponent-team context and the opposing lineup's player histories.
+  - Predicting every scheduled game explicitly requested for a date in any state.
+  - Publishing scores and probabilities through existing API and admin prediction interfaces.
+  - Replaying or optionally saving a separately versioned chronological experiment.
 when_not_to_use:
-  - Replacing existing SAT engine, stack, player evaluation, or partner API prediction records.
-  - Treating postgame lineups, outcomes, or held-out data as pregame input evidence.
+  - Rewriting earlier saved predictions or assigning their measured accuracy to a new algorithm.
+  - Using target results, future training seasons or outcome-based error groups to choose inputs.
 rules:
-  - Every custom prediction run has its own algorithm version, season, frozen definition, source model reference, lifecycle status, and counts. Its rows never share run identity with SAT engine runs or player next-game evaluations.
-  - Each game record identifies both team pregame-context snapshots, a source cutoff, predicted team goals, total goals, both win probabilities, confidence and its inputs, recommendation, and later final goals and winner result.
-  - Each team record keeps home and away evidence separate and freezes that team's and its opponent's team-level Train, L5, L10, L20, and LSeason inputs separately. It stores that team's predicted EV/PP/PK goals, SAT, SOG, shooting, PP opportunities, PP success, and EV/PP/PK TOI alongside actual team results including actual strength TOI.
-  - Each selected lineup player has one input row under that player's own team prediction and a link to the opposing team's prediction. Its inputs JSON preserves the player's own Train, L5, L10, L20, and LSeason metrics and opponent-facing windows as distinct values, plus metric source, sample counts, exposure, cutoff, bucket evidence, and missingness. Separate prediction and actual JSON preserve player-bucket outputs and measured results.
-  - Store both teams' player-input rows for a game. Opponent-player history is read from the linked opposing team's player rows; never substitute one player's history against an opponent for the opposing players' own histories.
-  - Team context keeps each side's own team metrics and head-to-head metrics separately. Pregame context windows include model Train, last game, L5, L10, L20, LSeason and season-to-date when supported. Context snapshots are owned by their SAT model; prediction runs freeze the selected model's snapshot references and their exact input values.
-  - Schedule context distinguishes venue, B2B, third-in-seven, fourth-in-seven, and B2B-fourth-in-seven. Days on the road and travel distance remain separate inputs. Unknown context remains unavailable, not zero.
-  - Confidence is saved with its calculation inputs and remains distinct from win probability. A recommendation of OT means the game did not meet the model's clear-winner threshold; it is not a tie outcome.
-  - Actual outcome fields are populated only after the game is final. Predictions and their frozen pregame inputs are not rewritten when comparisons are added.
-  - Foreign-key cascades are limited to custom run-owned prediction records. Deleting or changing a custom run cannot alter raw NHL facts, shared pregame snapshots, existing model runs, engines, or player evaluations.
+  - Every new game prediction uses this calculator. Legacy engine and stack containers cannot select a different calculation or apply their retired percentages, goal dilution, confidence boosts, gap gates or fallback math. Other annual player/goalie statistical builders retain their own purpose.
+  - Default model selection prefers the configured SAT_V2 model. For earlier game seasons choose a complete eligible model whose Train ends strictly before that game season. Explicit model overrides retain that same temporal boundary. Freeze the selected model's own Train and retained level-one confidence-at-least-one-half bucket mapping; never widen to all attempts to fill missing data.
+  - The completion target is one hundred percent after fallback, never an observed-history admission threshold. Missing personal rate/usage inputs use frozen Train league evidence at the same retained bucket and strength. Keep genuine observed zeros. Preserve observed coverage separately from effective completed inputs and confidence. No game is withheld because observed coverage is below ninety or one hundred percent.
+  - Team opportunity shares fall back from team Train to pooled league Train. Missing L10 allowed opportunities leave the allocated baseline intact. Missing team L5 PP goals-against falls back to team Train and then league Train. Missing player L20 PP goals/game falls back to personal Train and then pooled league Train; record each chosen source. Team PK success without personal/team exposure uses the league reference.
+  - Request date and game state never require a target final score, shot facts or completed target clock. Resolve verified anticipated identities, then projected rosters and last-known prior lineups when needed; historical evaluation may explicitly use stored participant identities only. Do not invent player identities or turn a corrupt model/invalid numeric input into a successful forecast.
+  - Build history from completed prior regular-season results. Personal recent appearances cross seasons and trades. Use the earlier of request time and scheduled start as the forecast cutoff, or request time when no scheduled time exists; keep the unknown scheduled time unknown in public game metadata. No requested target is read or advanced as a result. Current-input forecasts on past dates are not historical lineup backtests.
+  - Missing saved context is calculated transiently through the canonical pregame result builder without inserting snapshots or dispatching a context build. Retain nullable context IDs and explicit source provenance. Historical replay continues to validate existing saved same-model/cutoff snapshots.
+  - Only EV and PP contribute forecast goals. PK time is opposing PP time and is subtracted with own PP from regulation time to obtain EV. No short-handed goal lane is created.
+  - Calculation order, frozen opportunity and duration references, normalized L10 player usage, equal Train/L10 SAT rates, player EV L20 and PP L5 SOG conversion, EV LSeason and PP season-to-date goal conversion, neutral goalie stage and final PP allocation follow the adopted rules in NhlNextGameEvaluation.yaml.
+  - Count only retained model buckets and exclude empty nets and shootouts. SOG requires an actual shot-on-goal or goal event. Matching-strength exposure remains complete. Measured zero conversions remain zero; missing goal conversion uses matching Train league bucket and then matching-strength league evidence as documented.
+  - Fit multiplicative bucket attacking/defending factors using only the chosen model's Train attempts and unioned strength-clock exposure, preserving the adopted neutral prior, bounded updates and coefficients. Upcoming defense is compared with the exposure- and rate-weighted defensive reference represented by each player's history. Never refit on requested target outcomes.
+  - Defensive history resolves the intended recent team window, then team Train, then league Train. The PP defensive period starts at its adopted Train window. Incomplete/empty windows or absent exposure trigger fallback without replacing games in the requested window. Zero attempts with complete positive exposure retain the prior calculation. An unseen defensive bucket within a supported league strength has no evidenced departure from the neutral league factor; another strength is never substituted. Preserve selected allowance sources and reference source shares.
+  - Frozen coefficients retain their documented reference Train seasons. Explicit requested-date predictions may transfer those agreed coefficients to another selected model, recording that transfer without claiming recalibration or inheriting an older measured win rate. The separately scoped original Test replay retains its documented coefficient-horizon validation.
+  - The approved schedule layer remains exact fourth-in-seven plus B2B only, with separate forward/defenseman SAT multipliers and an additional probability delta only for the qualifying away team. Other travel/venue effects remain neutral. Numeric references remain owned by the adopted evaluation rules.
+  - The final conditional team PP split is scaled to the separate seventy-five/twenty-five game total and replaces intermediate bucket PP goals. Preserve relative bucket-goal weights, or SOG weights when necessary. Invalid allocations or impossible numeric/model evidence remain explicit errors; never silently switch to a legacy engine.
+  - Winner probability uses independent Poisson regulation scores with an equal resolution of tied regulation scores, then the approved schedule delta and complementary opponent probability. Display scores round these team goals once with no legacy weight normalization. Moneyline API markets use these returned probabilities rather than recomputing a different tie rule.
+  - Confidence is unavailable until separately calibrated; completion and win probability must not be presented as confidence. Successful non-tied predictions are available without legacy qualification filters. Exact equal winning probabilities retain the engine's no-clear-winner recommendation.
+  - NhlCustomGameForecast is the shared preparation/calculation boundary, not a second algorithm. It may reuse bounded, separately locked prepared-date inputs in the existing cache, keyed by model/algorithm, source-game state, schedule, lineup/starter evidence and explicit roster mode. A refresh recalculates from those inputs; cached results never bypass current algorithm/source fingerprints. Concurrent cold preparation is retryable, not a fabricated result.
+  - Operational API/manual output uses the existing response-cache and immutable revision tables. Archive full custom inputs and fitted/source metadata privately in revision evidence and remove that private envelope before returning/caching public responses. Earlier revisions are never overwritten. The standalone explicit-save replay retains its separate custom run tables.
+  - Goalie Edge remains a diagnostic API section with the selected identities, available season evidence and the new opposing SOG/goal estimates. Missing components are labelled. It does not change the adopted neutral goalie scoring stage.
+  - Goal accuracy uses pooled absolute summed prediction/actual difference divided by summed prediction, and strict individual prediction-denominator p10/p20. Preserve team/game units and zero-case handling. Winner comparisons use the actual returned predicted winner, including any approved probability adjustment, against official final winners including OT/SO.
 public_interface:
-  - nhl_custom_game_prediction_runs
-  - nhl_custom_game_predictions
-  - nhl_custom_game_prediction_teams
-  - nhl_custom_game_prediction_player_inputs
-  - nhl_team_game_pregame_contexts
-  - nhl_player_game_pregame_contexts
+  - NhlCustomGameForecast::predict
+  - NhlCustomGameForecast::model
+  - NhlCustomGamePredictionEngine::predict
+  - NhlCustomGamePredictionInputs::forecasts
+  - NhlPregameContextBuilder::predictionTeamEvidence
+  - NhlCustomGamePredictionReplay::run
+  - nhl:custom-predict
 example_usage: |
-  Save one custom run with its selected model and algorithm definition.
-  For each game, persist separate home and away context references and projections.
-  Save player inputs for both lineups, including each player's Train/L5/L10/L20/LSeason
-  and opponent-facing history. After final, append the actual scores and winner result.
+  Existing API and admin routes calculate through NhlCustomGameForecast.
+  Use nhl:custom-predict --model=2 --date=2026-11-05 for an explicit date.
+  Use the separate Test replay command with --save only when explicitly requested.

@@ -28,7 +28,7 @@ beforeEach(function (): void {
     $this->admin = User::factory()->create();
     $role = Role::create(['name' => 'Super Admin', 'slug' => 'super-admin', 'level' => 99, 'scope' => 'global', 'is_active' => true]);
     $this->admin->roles()->attach($role->id, ['organization_id' => null]);
-    $this->model = NhlModelRun::create(['run_key' => 'operational-history', 'name' => 'History model', 'model_family' => 'sat',
+    $this->model = NhlModelRun::create(['run_key' => 'operational-history', 'name' => 'sat_v2', 'model_family' => 'sat',
         'workflow_stage' => 'training', 'model_version' => 'history-v1', 'usage' => 'production', 'status' => 'complete',
         'train_season_ids' => ['20252026'], 'target_season_id' => '20262027', 'metrics' => []]);
     $this->engine = NhlSatEngine::create(['name' => 'Current engine', 'model_run_id' => $this->model->id, 'settings' => ['offense' => 100]]);
@@ -101,20 +101,20 @@ it('rejects dates with no stored games without importing', function (): void {
     $this->assertDatabaseCount('nhl_game_prediction_runs', 0);
 });
 
-it('rejects admission when the default stack is missing', function (): void {
+it('admits predictions through the new default engine without a saved stack', function (): void {
     $this->stack->update(['is_default' => false]);
-    ($this->start)()->assertUnprocessable()->assertJsonValidationErrors('stack');
+    ($this->start)()->assertAccepted();
 });
 
-it('rejects admission when the default stack is empty', function (): void {
+it('admits predictions through the new default engine when the old stack is empty', function (): void {
     $this->stack->members()->delete();
-    ($this->start)()->assertUnprocessable()->assertJsonValidationErrors('stack');
+    ($this->start)()->assertAccepted();
 });
 
-it('excludes postponed and cancelled games', function (): void {
+it('includes every scheduled state for an explicitly requested date', function (): void {
     ($this->game)(2026020002, state: 'PPD');
     ($this->game)(2026020003, state: 'CNCL');
-    ($this->start)()->assertAccepted()->assertJsonPath('total_games', 1);
+    ($this->start)()->assertAccepted()->assertJsonPath('total_games', 3);
 });
 
 it('archives each forced API recalculation and displays the newest one', function (): void {
@@ -176,13 +176,13 @@ it('stores exact evidence without rewriting earlier revisions', function (): voi
     $this->engine->update(['settings' => ['offense' => 200]]);
     ($this->publish)();
     expect(DB::table('nhl_game_prediction_revisions')->find($row->id)->evidence)->toBe($row->evidence);
-    expect(json_decode($row->evidence, true)['stack']['members'][0]['engine']['settings']['offense'])->toBe(100);
+    expect(json_decode($row->evidence, true)['algorithm']['algorithm_version'])->toBe(config('nhl-custom-prediction.algorithm_version'));
 });
 
 it('does not publish a revision if configuration changes during a build', function (): void {
     try {
         app(NhlGamePredictionResponseCache::class)->respond(2026020001, ['nhl_game_id' => 2026020001], function (): array {
-            $this->engine->update(['settings' => ['offense' => 200]]);
+            config(['nhl-custom-prediction.opponent_opportunity_weight' => 0.5]);
             return $this->forecast;
         });
         $this->fail('Expected changed-input rejection.');
@@ -243,7 +243,8 @@ it('lets super admins inspect immutable revision history and full evidence', fun
     $this->actingAs($this->admin)->getJson('/admin/game-predictions/games/2026020001/revisions')->assertOk()
         ->assertJsonPath('revisions.0.confidence', 67)->assertJsonPath('revisions.0.win_probability', .61);
     $this->getJson('/admin/game-predictions/revisions/'.$result['meta']['prediction_revision_id'])->assertOk()
-        ->assertJsonPath('evidence.stack.name', 'Default')->assertJsonPath('payload.prediction.predicted_score.home', 3.1);
+        ->assertJsonPath('evidence.algorithm.algorithm_version', config('nhl-custom-prediction.algorithm_version'))
+        ->assertJsonPath('payload.prediction.predicted_score.home', 3.1);
 });
 
 it('returns 404 for nonexistent revision details', function (): void {

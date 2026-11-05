@@ -244,29 +244,23 @@ it('does not apply the goalie confidence shrink twice', function (): void {
     expect($bucket->source_confidence_score)->toBe(0.99)->and($bucket->confidence_score)->toBe(1.0);
 });
 
-it('feeds model buckets into matchup goals and counts full-game volume once', function (): void {
-    ($this->rate)(['projected_xsog_per_60' => 8, 'projected_xg_per_60' => 1.2]);
-    ($this->toi)();
-    ($this->profile)(['profile_type' => 'goalie_faced', 'entity_key' => 'goalie_faced:900', 'entity_id' => 900]);
-    DB::table('nhl_goalie_season_projections')->insert([
-        'projection_version' => 'goalies', 'source_season_id' => '20242025', 'target_season_id' => '20262027',
-        'goalie_player_id' => 900, 'target_team_abbrev' => 'BBB', 'projected_games' => 50,
-        'projected_ev_xga' => 100, 'projected_ev_ga' => 100, 'projected_pk_xga' => 100,
-        'projected_pk_ga' => 100, 'projected_pk_sata' => 500, 'projected_pk_soga' => 250,
-    ]);
+it('routes matchup requests to the single new default calculator', function (): void {
+    \App\Models\NhlGame::query()->create(['nhl_game_id' => 2026020990, 'season_id' => '20262027',
+        'game_type' => 2, 'game_date' => '2026-10-10', 'game_dow' => 'Saturday', 'game_month' => 'October',
+        'game_state' => 'FUT', 'start_time_utc' => '2026-10-10 23:00:00',
+        'away_team_abbrev' => 'AAA', 'home_team_abbrev' => 'BBB']);
+    $service = Mockery::mock(\App\Services\NhlCustomGameForecast::class);
+    $service->shouldReceive('predict')->once()->with(2026020990, $this->run->id, false, ['away' => [101], 'home' => [102]])
+        ->andReturn(['fixture' => true]);
+    $expected = ['is_available' => true, 'inputs' => ['algorithm_version' => 'custom_ev_pp_v2'],
+        'sides' => [['offense_team' => 'AAA'], ['offense_team' => 'BBB']]];
+    $service->shouldReceive('matchup')->once()->with(['fixture' => true])->andReturn($expected);
+    app()->instance(\App\Services\NhlCustomGameForecast::class, $service);
     $result = app(\App\Services\NhlProjectedTeamMatchupSimulator::class)->simulateWithRosters(
-        '20242025', '20262027', 'old-skater', 'old-toi', 'goalies', 'AAA', 'BBB', null, 900,
-        [101], [102], $this->run->id, [$this->player], [[...$this->player, 'nhl_player_id' => 102]]
+        '20242025', '20262027', '', '', '', 'AAA', 'BBB', null, null, [101], [102], $this->run->id
     );
-    $side = $result['sides'][0];
-    expect($side['summary']['baseline_xsat_per_game'])->toBe(3.0)
-        ->and($side['summary']['baseline_xsog_per_game'])->toBe(1.5)
-        ->and($side['summary']['baseline_xgf_per_game'])->toBe(0.15)
-        ->and($side['summary']['adjusted_xsat_per_game'])->toBe(2.64)
-        ->and($side['summary']['total_goalie_adjusted_xgf_per_game'])->toBe(0.1056)
-        ->and($side['summary']['pk_xgf_per_game'])->toBe(0.0)
-        ->and($side['roster'][0]['projected_sat'])->toBe(3.0)
-        ->and($side['goalie_reasons']->first()['projection_strength'])->toBe('all');
+    expect($result['inputs']['algorithm_version'])->toBe('custom_ev_pp_v2')
+        ->and($result['inputs']['nhl_game_id'])->toBe(2026020990);
 });
 
 it('retains the legacy historical 85 to 15 shape blend while preserving totals', function (): void {
@@ -309,55 +303,44 @@ it('changes matchup goalie contribution when model attempt volume changes', func
     expect($second)->toEqualWithDelta($first * 2, 0.000001);
 });
 
-it('exposes paired model buckets through the real prediction endpoint', function (): void {
+it('exposes new engine values through the real API without replacing saved model rates', function (): void {
     config(['cache.default' => 'array']);
-    ($this->rate)(['projected_xsog_per_60' => 8, 'projected_xg_per_60' => 1.2]);
-    ($this->toi)();
-    DB::table('nhl_teams')->insert([['nhl_id' => 1, 'abbrev' => 'AAA'], ['nhl_id' => 2, 'abbrev' => 'BBB']]);
-    \App\Models\NhlGame::query()->create([
-        'nhl_game_id' => 2026020990, 'season_id' => '20262027', 'game_type' => 2,
-        'game_date' => '2026-10-10', 'game_state' => 'FUT', 'game_dow' => 'Saturday', 'game_month' => 'October',
-        'away_team_abbrev' => 'AAA', 'home_team_abbrev' => 'BBB', 'start_time_utc' => '2026-10-10 23:00:00',
+    \Illuminate\Support\Facades\Bus::fake();
+    ($this->rate)();
+    \App\Models\NhlGame::query()->create(['nhl_game_id' => 2026020990, 'season_id' => '20262027',
+        'game_type' => 2, 'game_date' => '2026-10-10', 'game_dow' => 'Saturday', 'game_month' => 'October',
+        'game_state' => 'FUT', 'start_time_utc' => '2026-10-10 23:00:00',
+        'away_team_id' => 1, 'home_team_id' => 2, 'away_team_abbrev' => 'AAA', 'home_team_abbrev' => 'BBB']);
+    $sides = [];
+    $teams = [];
+    foreach (['away' => ['AAA', 'BBB', 101, 1.1], 'home' => ['BBB', 'AAA', 102, 2.2]] as $venue => [$team, $opponent, $id, $goals]) {
+        $teams[$venue] = ['goals' => $goals, 'sog' => 10.0, 'lineup_source' => 'projected_roster', 'starting_goalie_id' => null];
+        $sides[] = ['offense_team' => $team, 'defense_team' => $opponent,
+            'summary' => ['baseline_xsat_per_game' => 4.0, 'adjusted_xsat_per_game' => 4.0,
+                'adjusted_xsog_per_game' => 2.0, 'total_goalie_adjusted_xgf_per_game' => $goals],
+            'roster' => [['nhl_player_id' => $id, 'player_name' => 'Fixture '.$id, 'projection_source' => 'custom_pregame']]];
+    }
+    $service = Mockery::mock(\App\Services\NhlCustomGameForecast::class)->makePartial();
+    $service->shouldReceive('predict')->once()->andReturn([
+        'game' => DB::table('nhl_games')->where('nhl_game_id', 2026020990)->first(),
+        'model' => $this->run, 'input' => [], 'metadata' => [],
+        'prediction' => ['teams' => $teams, 'total_goals' => 3.3, 'recommendation' => 'BBB',
+            'confidence_score' => null, 'confidence_inputs' => [], 'home_win_probability' => 0.6, 'away_win_probability' => 0.4],
     ]);
-    foreach ([101 => 'AAA', 102 => 'BBB'] as $id => $team) {
-        \App\Models\Player::query()->create(['nhl_id' => $id, 'full_name' => 'Skater ' . $id, 'team_abbrev' => $team, 'position' => 'C', 'pos_type' => 'F']);
-        DB::table('nhl_player_toi_projections')->insert([
-            'player_id' => $id, 'source_season_id' => '20242025', 'target_season_id' => '20262027',
-            'projection_version' => 'toi', 'target_team_abbrev' => $team, 'position' => 'C',
-            'projected_toi_per_game_seconds' => 600,
-        ]);
-    }
-    foreach ([901 => 'AAA', 900 => 'BBB'] as $id => $team) {
-        \App\Models\Player::query()->create(['nhl_id' => $id, 'full_name' => 'Goalie ' . $id, 'team_abbrev' => $team, 'position' => 'G', 'pos_type' => 'G', 'is_goalie' => true]);
-        DB::table('nhl_goalie_season_projections')->insert([
-            'goalie_player_id' => $id, 'projection_version' => 'goalies', 'source_season_id' => '20242025',
-            'target_season_id' => '20262027', 'target_team_abbrev' => $team,
-            'projected_games' => 50, 'projected_toi_seconds' => 180000, 'confidence_score' => 0.5,
-        ]);
-    }
-    $token = 'paired-model-prediction-test';
+    $service->shouldReceive('matchup')->once()->andReturn(['sides' => $sides]);
+    app()->instance(\App\Services\NhlCustomGameForecast::class, $service);
+    $this->mock(\App\Services\NhlStartingGoalieSelector::class)->shouldReceive('selectForPrediction')->andReturn(null);
+    $token = 'new-default-prediction-test';
     \App\Models\ApiClient::query()->create(['name' => 'Prediction test', 'slug' => 'paired-prediction',
         'token_hash' => \App\Models\ApiClient::hashToken($token), 'scopes' => ['nhl-stats:read']]);
-    $response = $this->withToken($token)->getJson('/api/nhl-game-predictions?' . http_build_query([
-        'nhl_game_id' => 2026020990, 'source_season_id' => '20242025', 'target_season_id' => '20262027',
-        'projection_version' => 'skater', 'toi_projection_version' => 'toi', 'goalie_projection_version' => 'goalies',
-        'away_goalie_id' => 901, 'home_goalie_id' => 900,
-    ]))->assertOk()->assertJsonPath('inputs.sat_model_run_id', $this->run->id)
+    $this->withToken($token)->getJson('/api/nhl-game-predictions?nhl_game_id=2026020990')->assertOk()
+        ->assertJsonPath('inputs.sat_model_run_id', $this->run->id)
+        ->assertJsonPath('inputs.algorithm_version', 'custom_ev_pp_v2')
         ->assertJsonPath('teams.away.roster.0.nhl_player_id', 101)
-        ->assertJsonPath('teams.away.roster.0.bucket_projection_source', 'sat_model');
-    expect((float) $response->json('teams.away.summary.baseline_xsat_per_game'))->toBe(3.0)
-        ->and((float) $response->json('teams.away.summary.baseline_xsog_per_game'))->toBe(1.5)
-        ->and($response->json('teams.away.roster.0.on_target_sources'))->toBe(['bucket_average'])
-        ->and($response->json('teams.away.roster.0.finishing_sources'))->toBe(['bucket_average'])
-        ->and((float) $response->json('teams.away.summary.adjusted_xsat_per_game'))->toBe(2.64)
-        ->and((float) $response->json('teams.away.summary.adjusted_xsog_per_game'))->toBe(1.32)
-        ->and((float) $response->json('teams.away.summary.total_goalie_adjusted_xgf_per_game'))->toBe(0.132);
+        ->assertJsonPath('teams.away.roster.0.projection_source', 'custom_pregame')
+        ->assertJsonPath('prediction.predicted_score.away', 1.1)
+        ->assertJsonPath('prediction.predicted_score.home', 2.2);
     $this->assertDatabaseCount('nhl_sat_model_entity_rate_projection_buckets', 1);
-    $this->assertDatabaseCount('nhl_lineup_observations', 0);
-    $this->assertDatabaseHas('nhl_sat_model_entity_rate_projection_buckets', [
-        'model_run_id' => $this->run->id, 'entity_id' => 101,
-        'projected_xsog_per_60' => 8, 'projected_xg_per_60' => 1.2,
-    ]);
     Http::assertNothingSent();
 });
 

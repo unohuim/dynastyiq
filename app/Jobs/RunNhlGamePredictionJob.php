@@ -14,15 +14,15 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Throwable;
 
-/** Calculate exactly one scheduled game through the ordinary default-stack pathway. */
+/** Calculate one scheduled game through the shared default pregame pathway. */
 final class RunNhlGamePredictionJob implements ShouldQueue
 {
     use Batchable;
     use Queueable;
 
-    public int $tries = 3;
+    public int $tries = 10;
     public int $timeout = 120;
-    public array $backoff = [10, 30];
+    public array $backoff = [10, 30, 60];
 
     /** Capture a persisted work item, never a browser-supplied engine definition. */
     public function __construct(public readonly int $itemId)

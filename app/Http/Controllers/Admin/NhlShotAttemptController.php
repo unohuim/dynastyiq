@@ -1308,7 +1308,7 @@ class NhlShotAttemptController extends Controller
      */
     private function matchupReady(array $filters): bool
     {
-        foreach (['source_season_id', 'target_season_id', 'projection_version', 'toi_projection_version', 'team_a', 'team_b'] as $key) {
+        foreach (['target_season_id', 'team_a', 'team_b'] as $key) {
             if (($filters[$key] ?? null) === null || $filters[$key] === '') {
                 return false;
             }

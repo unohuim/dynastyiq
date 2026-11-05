@@ -122,6 +122,8 @@ class NhlSatEngineEvaluator
                 'candidate_count' => count($candidates),
                 'definition' => [
                     'model_updated_at' => $model->updated_at->toISOString(),
+                    'algorithm_version' => config('nhl-custom-prediction.algorithm_version'),
+                    'algorithm_definition' => app(NhlCustomGamePredictionEngine::class)->definition(),
                     'name' => $input['name'] ?? null, 'model_name' => $model->name, 'test_season' => $model->target_season_id,
                     'scope' => $input['scope'], 'game_ids' => $games, 'splits' => array_values($splits),
                     'desired_win_pct' => $input['desired_win_pct'], 'min_coverage_pct' => $input['min_coverage_pct'],
@@ -496,20 +498,22 @@ class NhlSatEngineEvaluator
         $away = $payload['teams']['away']['summary'];
         $home = $payload['teams']['home']['summary'];
         $difference = (float) $home['total_goalie_adjusted_xgf_per_game'] - (float) $away['total_goalie_adjusted_xgf_per_game'];
+        $winner = data_get($payload, 'prediction.winner.team_abbrev');
+        $actualWinner = $game->home_team_score > $game->away_team_score ? $game->home_team_abbrev : $game->away_team_abbrev;
 
         return [...$row, 'status' => 'complete',
             'confidence' => $payload['prediction']['confidence_score'],
             'gap' => $this->settings->scoreGap((float) $away['total_goalie_adjusted_xgf_per_game'],
                 (float) $home['total_goalie_adjusted_xgf_per_game'], $run->definition['gap_unit'] ?? 'goals'),
-            'correct' => $difference == 0.0 ? null : ($difference > 0) === ($game->home_team_score > $game->away_team_score),
+            'correct' => $winner === null ? null : $winner === $actualWinner,
             'pred_sat' => $away['adjusted_xsat_per_game'] + $home['adjusted_xsat_per_game'],
             'pred_sog' => $away['adjusted_xsog_per_game'] + $home['adjusted_xsog_per_game'],
             'pred_goals' => $away['total_goalie_adjusted_xgf_per_game'] + $home['total_goalie_adjusted_xgf_per_game'],
             'actual_sat' => (int) $facts[$game->away_team_id] + (int) $facts[$game->home_team_id],
             'actual_sog' => $game->away_team_sog + $game->home_team_sog,
             'actual_goals' => $game->away_team_score + $game->home_team_score,
-            'prediction' => json_encode(['away' => $away, 'home' => $home, 'winner' => $difference == 0.0 ? null
-                : ($difference > 0 ? $game->home_team_abbrev : $game->away_team_abbrev)], JSON_THROW_ON_ERROR),
+            'prediction' => json_encode(['away' => $away, 'home' => $home, 'winner' => $winner,
+                'algorithm_version' => data_get($payload, 'inputs.algorithm_version')], JSON_THROW_ON_ERROR),
         ];
     }
 

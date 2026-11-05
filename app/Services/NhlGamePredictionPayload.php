@@ -12,7 +12,7 @@ use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 
 /**
- * Builds gner8-facing NHL game prediction payloads from projected matchup simulation.
+ * Builds partner game payloads through the shared default pregame EV/PP calculator.
  */
 class NhlGamePredictionPayload
 {
@@ -46,7 +46,7 @@ class NhlGamePredictionPayload
     public function build(int $nhlGameId, array $overrides = []): array
     {
         return app(NhlPredictionInputContext::class)->run(
-            fn (): array => $this->buildPrediction($nhlGameId, $overrides)
+            fn (): array => $this->buildCustomPrediction($nhlGameId, $overrides)
         );
     }
 
@@ -55,15 +55,8 @@ class NhlGamePredictionPayload
      */
     public function previewEngine(int $gameId, NhlSatEngine $engine, ?int $productionModelId): array
     {
-        $result = $this->evaluateEngine($gameId, $engine, $productionModelId, ['_include_confidence_components' => true]);
+        $result = $this->build($gameId, ['sat_model_run_id' => $productionModelId ?? $engine->model_run_id]);
         $internal = data_get($result, 'prediction.confidence_score');
-        if (($result['prediction_available'] ?? false) === true) {
-            $qualified = (bool) $result['pick_qualified'];
-            $result = $this->withPresentationConfidence($result, $engine, $qualified);
-            if (! $qualified) {
-                $result = $this->withUnqualifiedPresentationPenalty($result);
-            }
-        }
 
         return [
             'prediction_available' => $result['prediction_available'] ?? false,
@@ -79,20 +72,14 @@ class NhlGamePredictionPayload
         ];
     }
 
-    /** Run the ordinary delegation rules for an explicitly selected admin stack.
+    /** Preview the shared calculator using an explicitly selected stack's model override.
      * @return array<string,mixed>
      */
     public function previewStack(int $gameId, NhlSatEngineStack $stack): array
     {
         $stack->load('members.engine');
-        if ($stack->members->isEmpty()) {
-            throw ValidationException::withMessages(['stack' => 'Add an Engine before predicting this stack.']);
-        }
-        $result = app(NhlPredictionInputContext::class)->run(
-            fn (): array => $this->evaluateStack($gameId, $stack, [
-                '_include_confidence_components' => true, '_include_stack_attempts' => true,
-            ])
-        );
+        $model = $stack->production_model_run_id;
+        $result = $this->build($gameId, $model === null ? [] : ['sat_model_run_id' => $model]);
 
         return [
             'prediction_available' => $result['prediction_available'] ?? false,
@@ -108,6 +95,90 @@ class NhlGamePredictionPayload
             'prediction' => $result['prediction'] ?? null,
             'reason' => $result['reason'] ?? null,
         ];
+    }
+
+    /** Assemble the existing API envelope exclusively from the shared EV/PP calculation. */
+    private function buildCustomPrediction(int $gameId, array $overrides): array
+    {
+        $service = app(NhlCustomGameForecast::class);
+        $forecast = $service->predict($gameId, isset($overrides['sat_model_run_id']) ? (int) $overrides['sat_model_run_id'] : null,
+            (bool) ($overrides['use_stored_boxscore'] ?? false));
+        $game = $forecast['game'];
+        $custom = $forecast['prediction'];
+        $model = $forecast['model'];
+        $matchup = $service->matchup($forecast);
+        $goalieVersion = (string) ($overrides['goalie_projection_version'] ?? $this->latestGoalieProjectionVersion((string) $game->season_id));
+        $goalies = $teams = $lineups = $reasons = [];
+        foreach (['away' => 'home', 'home' => 'away'] as $venue => $opponent) {
+            $abbrev = $game->{$venue.'_team_abbrev'};
+            try {
+                $goalie = $this->resolveGoalie((string) $game->season_id, $goalieVersion, $abbrev,
+                    $overrides[$venue.'_goalie_id'] ?? null, $gameId, (bool) ($overrides['use_stored_boxscore'] ?? false));
+            } catch (ValidationException) {
+                $id = $custom['teams'][$venue]['starting_goalie_id'];
+                $goalie = ['nhl_player_id' => $id, 'name' => $id ? DB::table('players')->where('nhl_id', $id)->value('full_name') : null,
+                    'projection_source' => 'unavailable', 'confidence_score' => null];
+            }
+            $goalie['matchup_sog_against_per_game'] = $custom['teams'][$opponent]['sog'];
+            $goalie['matchup_predicted_ga_per_game'] = $custom['teams'][$opponent]['goals'];
+            $goalie['matchup_value_per_game'] = null;
+            $goalie['goal_adjustment_applied'] = false;
+            $goalies[$venue] = $goalie;
+            $lineups[$venue] = ($overrides['use_stored_boxscore'] ?? false) ? null
+                : $this->anticipatedLineups->forGameTeam($gameId, $abbrev, false);
+            $side = $matchup['sides'][$venue === 'away' ? 0 : 1];
+            $teams[$venue] = $this->withDressedRoster($this->teamPayload($side), $lineups[$venue], $goalie);
+            $reasons[$venue] = $this->reasonPayload($side);
+        }
+        $away = $custom['teams']['away']['goals'];
+        $home = $custom['teams']['home']['goals'];
+        $winnerSide = $custom['recommendation'] === 'OT' ? 'pickem'
+            : ($custom['recommendation'] === $game->home_team_abbrev ? 'home' : 'away');
+        $edge = $this->goalieEdge($game->away_team_abbrev, $game->home_team_abbrev, $goalies['away'], $goalies['home']);
+        $edge['available'] = isset($goalies['away']['projected_gsax_per_game'], $goalies['home']['projected_gsax_per_game'])
+            && ($goalies['away']['projection_source'] ?? null) === 'goalie_model'
+            && ($goalies['home']['projection_source'] ?? null) === 'goalie_model';
+        $edge['matchup_fit_available'] = false;
+        $prediction = ['winner' => ['side' => $winnerSide, 'team_abbrev' => $winnerSide === 'pickem' ? null : $custom['recommendation']],
+            'predicted_score' => ['away' => round($away, 2), 'home' => round($home, 2)],
+            'selection_score' => ['away' => $away, 'home' => $home],
+            'predicted_total_goals' => round($custom['total_goals'], 2), 'goal_differential' => round($home - $away, 4),
+            'confidence_score' => $custom['confidence_score'], 'confidence_inputs' => $custom['confidence_inputs'],
+            'home_win_probability' => $custom['home_win_probability'], 'away_win_probability' => $custom['away_win_probability'],
+            'goalie_edge' => $edge, 'algorithm_version' => config('nhl-custom-prediction.algorithm_version')];
+        $markets = $this->marketProbabilities($game->away_team_abbrev, $game->home_team_abbrev, $away, $home, $prediction, $overrides);
+        foreach ($markets as &$market) {
+            $market['confidence_score'] = $custom['confidence_score'];
+            $market['model']['algorithm_version'] = config('nhl-custom-prediction.algorithm_version');
+            if ($market['market_key'] === 'moneyline') {
+                $probability = $custom[$market['selection_key'].'_win_probability'];
+                $market['probability'] = $market['win_probability'] = round($probability, 6);
+                $market['loss_probability'] = round(1 - $probability, 6);
+                $market['fair_odds_american'] = $this->americanOdds($probability);
+                $market['fair_odds_decimal'] = $this->decimalOdds($probability);
+                $market['model']['tie_resolution'] = 'equal_overtime_split';
+            }
+        }
+        unset($market);
+
+        return ['prediction_available' => true, 'pick_qualified' => $winnerSide !== 'pickem',
+            'game' => $this->gamePayload($game), 'inputs' => [
+                'engine_id' => null, 'stack_id' => null, 'sat_model_run_id' => $model->id,
+                'engine_name' => 'Pregame EV/PP', 'legacy_engine_settings_applied' => false,
+                'qualification_model_run_id' => $model->id, 'algorithm_version' => config('nhl-custom-prediction.algorithm_version'),
+                'training_season_ids' => $model->train_season_ids, 'source_season_id' => max($model->train_season_ids),
+                'target_season_id' => (string) $game->season_id, 'goalie_projection_version' => $goalieVersion,
+                'projection_version' => null, 'toi_projection_version' => null,
+                'away_goalie_id' => $goalies['away']['nhl_player_id'] ?? null, 'home_goalie_id' => $goalies['home']['nhl_player_id'] ?? null,
+                'away_lineup_source' => $custom['teams']['away']['lineup_source'], 'home_lineup_source' => $custom['teams']['home']['lineup_source'],
+                'context' => array_intersect_key($forecast['metadata'], array_flip([
+                    'context_version', 'context_run_id', 'as_of', 'coefficient_reference_train_seasons', 'coefficients_transferred'])),
+                'algorithm_definition' => app(NhlCustomGamePredictionEngine::class)->definition()],
+            'prediction' => $prediction, 'market_probabilities' => $markets, 'goalies' => $goalies,
+            'anticipated_lineups' => $lineups, 'teams' => $teams, 'reasons' => $reasons,
+            'meta' => ['source_system' => 'dynastyiq', 'source_fetched_at' => now()->toIso8601String(),
+                'algorithm_version' => config('nhl-custom-prediction.algorithm_version')],
+            '_custom_prediction_evidence' => ['metadata' => $forecast['metadata'], 'input' => $forecast['input']]];
     }
 
     /** Shared priority delegation for both ordinary predictions and admin stack previews.
@@ -202,7 +273,9 @@ class NhlGamePredictionPayload
         return $forecast;
     }
 
-    /** @param array<string,mixed> $overrides @return array<string,mixed> */
+    /** Retired formatter retained for historical helper compatibility; public predictions use buildCustomPrediction().
+     * @param array<string,mixed> $overrides @return array<string,mixed>
+     */
     private function buildPrediction(int $nhlGameId, array $overrides): array
     {
         $game = $this->game($nhlGameId);
@@ -1512,8 +1585,8 @@ class NhlGamePredictionPayload
      */
     private function scoreDistribution(float $awayGoals, float $homeGoals): array
     {
-        $awayLambda = max(0.01, $awayGoals);
-        $homeLambda = max(0.01, $homeGoals);
+        $awayLambda = max(0.0, $awayGoals);
+        $homeLambda = max(0.0, $homeGoals);
         $distribution = [];
 
         for ($awayScore = 0; $awayScore <= self::MONEYLINE_SCORE_DISTRIBUTION_MAX_GOALS; $awayScore++) {

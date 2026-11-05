@@ -17,6 +17,10 @@ final class NhlGamePredictionHistory
      */
     public function record(int $gameId, array $input, string $fingerprint, array $evidence, array $payload, ?int $runId = null): array
     {
+        if (isset($payload['_custom_prediction_evidence'])) {
+            $evidence['custom_prediction'] = $payload['_custom_prediction_evidence'];
+            unset($payload['_custom_prediction_evidence']);
+        }
         $existing = $runId === null ? null : DB::table('nhl_game_prediction_revisions')
             ->where('run_id', $runId)->where('nhl_game_id', $gameId)->first();
         if ($existing !== null) {
@@ -86,6 +90,7 @@ final class NhlGamePredictionHistory
             'winner' => $winner, 'win_probability' => $moneyline['probability'] ?? null,
             'confidence' => data_get($payload, 'prediction.confidence_score'),
             'qualified' => $payload['pick_qualified'] ?? null,
+            'algorithm_version' => data_get($payload, 'inputs.algorithm_version'),
             'engine_id' => data_get($payload, 'inputs.engine_id'), 'stack_id' => data_get($payload, 'inputs.stack_id'),
             'reason' => $payload['reason'] ?? null,
         ];

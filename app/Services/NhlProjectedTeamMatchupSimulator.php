@@ -16,7 +16,7 @@ class NhlProjectedTeamMatchupSimulator
     /** @var array{offense: float, defense: float}|null */
     private ?array $engineWeights = null;
 
-    /** Return an isolated simulator for an internal engine evaluation. */
+    /** Preserve the legacy settings interface; current shared forecasts ignore these retired weights. */
     public function forEngine(float $offensePercent, float $defensePercent): self
     {
         if (! is_finite($offensePercent) || ! is_finite($defensePercent)
@@ -94,65 +94,31 @@ class NhlProjectedTeamMatchupSimulator
     ): array {
         $teamA = mb_strtoupper($teamA);
         $teamB = mb_strtoupper($teamB);
-        $satModelId ??= app(NhlSatModelPredictionService::class)->latestModelId();
-
-        if (! $this->tablesExist()) {
-            return [
-                'is_available' => false,
-                'error' => 'Build TOI projections, skater projections, skater O profiles, and skater D profiles before simulating matchups.',
-            ];
+        $game = DB::table('nhl_games')->where('season_id', $targetSeasonId)
+            ->where(function ($query) use ($teamA, $teamB): void {
+                $query->where(fn ($q) => $q->where('away_team_abbrev', $teamA)->where('home_team_abbrev', $teamB))
+                    ->orWhere(fn ($q) => $q->where('away_team_abbrev', $teamB)->where('home_team_abbrev', $teamA));
+            })->orderByRaw('CASE WHEN start_time_utc >= ? THEN 0 ELSE 1 END', [now('UTC')])
+            ->orderByRaw('CASE WHEN start_time_utc >= ? THEN start_time_utc END ASC', [now('UTC')])
+            ->orderByDesc('start_time_utc')->first();
+        if ($game === null) {
+            return ['is_available' => false, 'error' => 'Select teams with a scheduled matchup in the requested season.'];
         }
+        $overrides = [];
+        foreach ([$teamA => $teamARosterIds, $teamB => $teamBRosterIds] as $team => $ids) {
+            if ($ids !== null) {
+                $overrides[$team === $game->away_team_abbrev ? 'away' : 'home'] = $ids;
+            }
+        }
+        $service = app(NhlCustomGameForecast::class);
+        $result = $service->matchup($service->predict((int) $game->nhl_game_id, $satModelId, false, $overrides));
+        if ($result['sides'][0]['offense_team'] !== $teamA) {
+            $result['sides'] = array_reverse($result['sides']);
+        }
+        $result['inputs']['nhl_game_id'] = (int) $game->nhl_game_id;
+        $result['inputs']['game_date'] = $game->game_date;
 
-        return [
-            'is_available' => true,
-            'inputs' => [
-                'source_season_id' => $sourceSeasonId,
-                'target_season_id' => $targetSeasonId,
-                'projection_version' => $projectionVersion,
-                'toi_projection_version' => $toiProjectionVersion,
-                'goalie_projection_version' => $goalieProjectionVersion,
-                'sat_model_run_id' => $satModelId,
-                'goal_weights' => $satModelId === null
-                    ? ['offense' => self::OFFENSE_ENVIRONMENT_WEIGHT * 100, 'defense' => self::DEFENSE_ENVIRONMENT_WEIGHT * 100]
-                    : ['offense' => ($this->engineWeights['offense'] ?? 0.88) * 100,
-                        'defense' => ($this->engineWeights['defense'] ?? 0.02) * 100],
-                'team_a' => $teamA,
-                'team_b' => $teamB,
-                'team_a_goalie_id' => $teamAGoalieId,
-                'team_b_goalie_id' => $teamBGoalieId,
-                'method' => 'projected_ev_offense_with_composed_defensive_chance_context_and_projected_goalie_ev_pk_buckets',
-            ],
-            'sides' => [
-                $this->simulateSide(
-                    $sourceSeasonId,
-                    $targetSeasonId,
-                    $projectionVersion,
-                    $toiProjectionVersion,
-                    $goalieProjectionVersion,
-                    $teamA,
-                    $teamB,
-                    $teamBGoalieId,
-                    $teamARosterIds,
-                    $teamBRosterIds,
-                    $satModelId,
-                    $teamAPlayers
-                ),
-                $this->simulateSide(
-                    $sourceSeasonId,
-                    $targetSeasonId,
-                    $projectionVersion,
-                    $toiProjectionVersion,
-                    $goalieProjectionVersion,
-                    $teamB,
-                    $teamA,
-                    $teamAGoalieId,
-                    $teamBRosterIds,
-                    $teamARosterIds,
-                    $satModelId,
-                    $teamBPlayers
-                ),
-            ],
-        ];
+        return $result;
     }
 
     /**

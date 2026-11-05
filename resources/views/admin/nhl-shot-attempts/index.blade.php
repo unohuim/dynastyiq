@@ -3210,7 +3210,7 @@
                                                     <div class="text-[10px] text-gray-500">{{ $formatDecimal($side['summary']['xsog_delta_per_game']) }} adj/G</div>
                                                 </div>
                                                 <div>
-                                                    <div class="font-semibold uppercase text-gray-500">EV xGF/G</div>
+                                                    <div class="font-semibold uppercase text-gray-500">EV + PP xGF/G</div>
                                                     <div class="mt-1 text-sm font-semibold text-gray-900">{{ $formatDecimal($side['summary']['adjusted_xgf_per_game'], 2) }}</div>
                                                     <div class="text-[10px] text-gray-500">offense base/G</div>
                                                 </div>

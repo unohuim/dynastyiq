@@ -1,78 +1,31 @@
 name: NHL Projected Team Matchups
-type: Projected Team Matchup Simulator And Partner Prediction Assembly
+type: Shared Game Prediction Compatibility Boundary
 location:
   - app/Services/NhlProjectedTeamMatchupSimulator.php
-  - app/Http/Controllers/Admin/NhlShotAttemptController.php
-  - app/Http/Controllers/Api/NhlGamePredictionsController.php
   - app/Services/NhlGamePredictionPayload.php
-  - app/Services/NhlGamePredictionResponseCache.php
-  - app/Services/NhlGameLineupProjectionBuilder.php
-  - docs/architecture/stats/NhlProjectedTeamMatchups.yaml
-  - resources/views/admin/nhl-shot-attempts/index.blade.php
-purpose: Simulate team-vs-team projected offense and assemble partner predictions, including a bounded official-lineup refresh when preseason roster evidence is missing.
+  - app/Services/NhlCustomGameForecast.php
+  - app/Http/Controllers/Admin/NhlShotAttemptController.php
+purpose: Keep existing API and admin matchup interfaces while routing every new game forecast through the default pregame EV/PP calculator.
 when_to_use:
-  - Comparing two projected NHL teams from versioned TOI and skater offensive projection outputs.
-  - Building partner-facing prediction payloads from an NHL game id.
-  - Explaining high-level xSAT, xSOG, EV xGF, PK xG, and total expected-goals matchup changes through composed roster chance profiles and goalie adjustment buckets.
-  - Testing matchup methodology before persisting team profile buckets.
+  - Producing partner API game predictions or admin engine and stack previews.
+  - Comparing selected teams through the existing matchup inspector.
 when_not_to_use:
-  - Persisting official team projection snapshots.
-  - Applying defensive suppression or broad bonuses for opponent defensive weakness.
-  - Guessing target-season goalie workloads or starter assignments from historical source-team profile rows.
-  - Replacing player-level offensive projections, TOI projections, or historical skater defensive profiles.
+  - Recalculating or rewriting historical saved predictions.
+  - Applying legacy offensive/defensive percentages, goal dilution or confidence boosts to new forecasts.
 rules:
-  - Ordinary prediction calls delegate through the sole default stack's priority order. Multiple Engines may be evaluated, but the first whose internal confidence bounds and independent offensive/matching-defensive weights qualify the game is the only Engine selected to make a stack prediction. If none qualifies, no Engine prediction is selected. Historical evaluations retain their explicit pinned-model stored-boxscore weights. Partner requests cannot select an engine.
-  - Every successful partner prediction response exposes top-level pick_qualified as a boolean. It is true only when an Engine is selected after internally qualifying under the default stack before two-decimal display rounding. Exact ties, out-of-range confidence, no qualifying stack Engine and evidence-only responses yield false. A member that does not qualify merely delegates to the next member and must not alter presentation confidence. Only after every default-stack member has failed does the stack become unqualified: inputs.engine_id is null, the fallback response is used, and its presentation confidence receives the single 20-point unqualified-stack penalty. After qualification, partner-facing prediction and market confidence use the selected Engine's 70–95 presentation-confidence formula under NhlSatEngineStacks.yaml. Qualification annotates rather than filters the response; preserve the raw winner-selection scores, winner, moneyline/puckline probabilities and error behavior; apply the final goal-total normalization governed by NhlSatEngines.yaml only to published scores and total markets. Do not add a recommendation object or reason enum.
-  - Historical evaluation calls NhlGamePredictionPayload.build with an explicit sat_model_run_id and use_stored_boxscore, using the same simulator and confidence aggregation as current predictions. These are internal service options, not partner request parameters. The boxscore supplies only skater identities, positions, and the recorded starter; observed TOI and outcomes must never become prediction inputs. Input isolation and confidence provenance are governed by NhlPredictionInputServices.yaml.
-  - Every partner prediction roster and dressed_roster row must expose nhl_player_id as an integer or explicit unresolved null. Legacy simulator bucket player_id is an NHL identifier and must be explicitly mapped; lineup-derived player_id is internal and must never overwrite an explicit nhl_player_id or null. Preserve existing player_id fields for compatibility. Apply this contract to successful and evidence-only predictions, including NHLe and peer fallbacks.
-  - Resolve live starters from NHL flags, sole recorded goalie participation, or earliest goalie-identifying game events under NhlPlayerAvailability.yaml. Persist and use the first per-game/team starter lock for every subsequent prediction. Later flags, relief appearances and manual/request overrides cannot replace it. Missing live starter identification must not lock a pregame guess.
-  - Selected starters without personal goalie projections use a transient league-average baseline from the selected season/version weighted by projected games, with neutral GA/xGA of one for EV and PK and low confidence. Preserve name and nullable identity, expose projection_source league_average and reason missing_goalie_projection, and do not persist synthetic player projections or fabricate season workload. Other model and lineup prerequisites remain unchanged.
-  - Preseason unresolved skaters on any forward line or defense pairing use the resolved same-group peers' mean projections and retain their names with null NHL ids. A group must have at least one resolved peer. Regular-season and playoff fallback eligibility remains F4/D3 only. The same game type must reach lineup verification and projection construction so an eligible roster is not rejected at a downstream gate.
-  - The public game-detail preview reuses the TOI-ranked projected roster selector when no verified report exists, taking twelve forwards and six defensemen after the existing injury exclusions. Display-only projected line slots must not be persisted as reported evidence.
-  - Per-team game-detail projections reuse NhlGameLineupProjectionBuilder and the same usable SAT model selection without requiring the other team's report or a goalie model. This preview does not relax partner full-game prediction eligibility. Missing inputs remain unavailable, not fabricated zeros.
-  - Official, reported, and projected rosters use the paired model and historical services governed by NhlPredictionInputServices.yaml. Model inputs require both same-run rates and TOI; an incomplete player pair uses the historical fallback. The model run's target_season_id is an evaluation season rather than a game-season eligibility requirement.
-  - SAT-model offensive attempts use projected SAT/60 times same-run game TOI seconds divided by 3600, without a TOI discount. Historical personal bucket SOG/SAT and goals/SOG supply offensive outcome conversion; pooled fallbacks and zero preservation are governed by NhlPredictionInputServices.yaml. Stored predicted SOG/60 and xG/60 are not consumed. Matchup conversion comes from these selected volumes before goalie response. Current-season data is excluded.
-  - Every game type uses positive model TOI/GP only with a complete same-run rate pair. Otherwise use previous-season regular-season TOI divided by GP, then the average of same-line teammates with paired model or historical TOI, then general line estimates. Resolve teammate anchors before estimates to avoid circular or order-dependent results. General minutes are F1 20, F2 16.5, F3 13.5, F4 8.5, D1 24, D2 20, D3 16. Expose toi_source and rescale fallback production to chosen minutes. Preserve NHLe and depth-peer estimates when model pairs are absent.
-  - SAT-model integration must preserve selected roster identities, expose selected and applied model ids and input rates, and retain legacy projections when no usable model or player pair exists. Legacy simulator and goalie prerequisites still apply; model-run builds alone do not populate those dependencies.
-  - Projected rosters must come from nhl_player_toi_projections target-team assignments after excluding current out players backed by reported or stronger injury evidence.
-  - Offensive output must start from the selected input service's bucket volumes before defensive composition and goalie response. Do not replace player totals after computing goalie effects from different buckets. Without a usable SAT run, retain the versioned historical projection path.
-  - SAT-model matchups have three separate strength lanes. EV uses projected offensive SAT/60 times same-run TOI, while PP and PK use matching historical strength profiles scaled to league-average training-season team opportunity. Within each lane, use 88% of offensive bucket attempts plus 2% of exact-matching defensive bucket attempts, with no bucket-weight or bucket-volume normalization during simulation. Final published goal totals are normalized separately under NhlSatEngines.yaml. Defense-only buckets are excluded; unmatched offensive buckets retain 88% of their attempts. Tag every bucket with its lane before goalie response. This changes volume only; it does not add confidence-range or pick-gap filtering, matchup-history winner overrides, or a pinned production model. This is a provisional matchup estimate, not a validated causal defensive model.
-  - The legacy path without a usable SAT run retains its normalized bucket-shape blend and existing season projection behavior.
-  - Goalie selectors must prefer manual overrides, then official NHL starters, then confirmed before expected starting-goalie observations, then the highest projected-start goalie from valid nhl_goalie_season_projections rows, then workload projections.
-  - Partner predictions must prefer complete official NHL skater rosters, then complete canonically resolved reported lineups regardless of corroboration count, then projected rosters.
-  - Before withholding a preseason partner prediction for missing lineups, prediction assembly must query the current NHL gamecenter boxscore through the official-lineup importer, persist any complete official team rosters, and reevaluate both teams.
-  - Preseason partner predictions must not publish scores, probabilities, or betting output unless both teams have complete official or complete canonically resolved reported lineups; an unresolved preseason game must instead return successful evidence-only output identifying each missing team and clearly label any fallback roster preview as projected_roster.
-  - A complete official or reported game roster is newer game-specific availability evidence than the current injury table and must not have listed skaters removed by the generic injury exclusion.
-  - Reported-lineup prediction inputs must retain all eighteen skaters and expose line, special-teams units, game-specific projected TOI, projection source, NHLe factor, and confidence.
-  - Partner teams.*.roster remains skater-only. The additive teams.*.dressed_roster includes those skaters and the accepted lineup's ordered G1/G2 with canonical identities, slot indices, and is_starter. Goalies remain separate from skater projection math; a listed backup requires no performance model. Without listed goalies, only the selected starter is appended and a backup is not guessed. Evidence-only responses expose the same structure without asserting that projected roster previews are confirmed participants.
-  - Final game-specific skater TOI must follow the model, previous-season, linemate, then line-estimate ladder. Reported slots identify eligible peers and the final estimate; they must not override a usable model or historical TOI.
-  - Reported skaters below twenty-five career NHL regular-season games may use previous-season non-NHL production translated through versioned NHLe factors when available; the same factor may provisionally translate SOG only with low confidence.
-  - Lineup-aware NHLe values are read-time game prediction inputs and must not replace raw imported statistics or stored season projections.
-  - A reported player without either a usable NHL projection or translatable non-NHL history must remain in the game roster with an explicitly low-confidence replacement-level rate.
-  - Matchup goalie projection versions require matching EV or model full-game bucket rows in nhl_goalie_projection_chance_buckets; workload-only versions must not be selectable as matchup goalie versions.
-  - Goalie option filtering must use the current goalie roster from players.team_abbrev, infer goalie eligibility from players.is_goalie or G position fields, and must not include historical source-team-only matches.
-  - Goalie option labels must expose current team and historical source team context so traded goalies are not mistaken for projected team assignments.
-  - Selected goalies must always influence the matchup when valid goalie season projections exist; sparse exact bucket matches must fall back to season EV/PK goalie GA/xGA ratios rather than silently removing goalie impact.
-  - EV goalie response uses the selected run's training-only EV GSAx skill when available, and otherwise uses the existing per-bucket goalie calculation as the exclusive fallback. It changes goals against only, never EV shot volume or xGA.
-  - PP and PK goalie response is league average in the first strength-split implementation: each lane's projected GA equals its projected xGA. Do not borrow a goalie's EV, all-situation, or unrelated bucket skill for PP or PK.
-  - Composed roster offensive, defensive, and adjusted-goalie-environment profile sections must roll granular skater buckets into readable groups that target 90% xSAT/xSOG representation, without changing the underlying projection math.
-  - Goalie matchup reasons must preserve granular bucket calculations internally but roll up the explanation display until PP opportunities fit into the top 3 groups and EV opportunities fit into the top 3-5 groups while targeting 90% coverage for both xSAT and xSOG.
-  - Rolled goalie matchup reasons must sit directly below the adjusted goalie environment, collapse lower-signal dimensions progressively, starting with shot type, expose represented totals and percentages, and then show weighted goalie GA/xGA response, GSAx/G, GA/G, and confidence for each displayed group.
-  - Team matchup profiles are computed on demand and must not be persisted until a separate team-profile storage abstraction is approved.
-  - Results must expose high-level per-game rates and rolled bucket-level data explaining offensive generation, defensive chances allowed, and goalie response.
-  - Partner-facing game prediction payloads resolve nhl_game_id through nhl_games and derive missing starters from performance or workload projections. No selected starter remains an error; a selected starter without personal projection history uses the labelled league-average fallback.
-  - The partner API may serve a bounded stale prediction only when its refresh is queued; cache freshness and refresh invariants are governed by NhlGamePredictionResponseCache.yaml. Historical engine evaluations never use this response cache.
-  - Partner-facing game prediction payloads must expose model-owned full-game moneyline probabilities under market_probabilities[] using moneyline, full_game, and away/home selection keys.
-  - Partner-facing game prediction payloads may accept requested market keys, puckline spreads, and total lines, and must expose line-dependent puckline and total probabilities from the DynastyIQ projected score distribution instead of requiring consumers to invent distribution assumptions. Fair American and decimal odds are null for exact zero or one probability because their mathematical fair price is infinite.
-  - Partner-facing goalie edge must be expressed in goals saved per game edge, include selected starter objects for both teams, and include the edge scale metadata.
-  - Per-game rates must use projected games from projection rows and fall back to the current 84-game NHL regular-season length only when projected games are unavailable.
-  - Roster comparison rows must sort by projected xGF and show compact per-game player impact context without projected TOI.
+  - NhlCustomGamePrediction.yaml owns current game calculation, completeness fallbacks, model selection, time cutoffs and probability semantics. NhlGamePredictionPayload.build and both preview methods call this single calculation. No stack delegation or annual-projection fallback can switch a new forecast to the retired game math.
+  - Existing simulator entry points resolve the selected teams' next scheduled meeting in the requested season, or their most recent meeting if no future meeting exists. Return the selected game identity and date explicitly. Preserve caller team order and explicit resolved roster identities. No scheduled meeting is an explicit input error.
+  - Annual player/goalie projection helpers remain available for statistical evidence and Goalie Edge. They do not replace the new engine's player minutes, SAT buckets, conversion or final PP allocation. Goalie Edge receives the new opposing SOG and goal estimates; unavailable diagnostic components remain labelled. The adopted neutral goalie scoring stage is unchanged.
+  - Preserve public route names, API scopes, NHL identities and the existing game/teams/goalies/markets response envelope. Current forecast provenance identifies the algorithm and selected SAT model instead of attributing new outcomes to a legacy stack member. Nullable confidence is distinct from win probability.
+  - API scores are the new engine's team goals rounded only for display. Team summaries and player rosters derive from its unrounded EV/PP components. Do not run legacy goal normalization or apply retired confidence boosts or penalties. Moneyline prices use the calculator's returned probabilities, including its approved schedule delta.
+  - Existing private annual/projection formatting helpers may remain for historical evidence and independent statistical consumers. Their old formulas are not an alternate path for new game predictions.
 public_interface:
-  - admin.nhl-shot-attempts.index
-  - api.nhl-game-predictions.show
-  - NhlProjectedTeamMatchupSimulator
-  - NhlGamePredictionPayload
-  - NhlGameLineupProjectionBuilder
-  - resources/views/admin/nhl-shot-attempts/index.blade.php
+  - NhlGamePredictionPayload::build
+  - NhlGamePredictionPayload::previewEngine
+  - NhlGamePredictionPayload::previewStack
+  - NhlProjectedTeamMatchupSimulator::simulate
+  - NhlProjectedTeamMatchupSimulator::simulateWithRosters
 example_usage: |
-  GET /admin/nhl-shot-attempts?tab=matchup&matchup_team_a=TOR&matchup_team_b=BOS
+  Request a stored NHL game ID through the existing partner API.
+  The default calculator supplies its EV/PP scores and probabilities;
+  saved annual goalie projections supply separate diagnostic evidence.
