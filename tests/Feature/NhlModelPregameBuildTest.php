@@ -17,6 +17,7 @@ use Illuminate\Support\Facades\Cache;
 beforeEach(function (): void {
     $this->travelTo(\Illuminate\Support\Carbon::parse('2026-10-09 12:00:00', 'UTC'));
     Bus::fake();
+    \Illuminate\Support\Facades\Http::preventStrayRequests();
     config(['cache.default' => 'array']);
     config(['cache.stores.redis.driver' => 'array']);
     Cache::store('redis')->flush();
@@ -30,6 +31,47 @@ beforeEach(function (): void {
         'target_season_id' => '20252026',
         'status' => 'complete',
     ]);
+    $this->updateGame = function (int $id, string $date, string $season = '20252026', string $state = 'FINAL'): void {
+        \Illuminate\Support\Facades\DB::table('nhl_games')->insert([
+            'nhl_game_id' => $id, 'season_id' => $season, 'game_type' => 2, 'game_state' => $state,
+            'game_date' => $date, 'start_time_utc' => $date.' 23:00:00',
+            'game_dow' => 'Wed', 'game_month' => 'Oct', 'home_team_id' => 1, 'away_team_id' => 2,
+        ]);
+    };
+    $this->savedUpdateContext = function (int $gameId, string $date): array {
+        $db = \Illuminate\Support\Facades\DB::class;
+        $owner = NhlPregameContextRun::create(['model_run_id' => $this->model->id, 'action' => 'backfill',
+            'status' => 'completed', 'season_ids' => ['20252026']]);
+        $contexts = [];
+        foreach ([1 => 'home', 2 => 'away'] as $team => $venue) {
+            $contexts[$team] = $db::table('nhl_team_game_pregame_contexts')->insertGetId([
+                'model_run_id' => $this->model->id, 'run_id' => $owner->id,
+                'nhl_game_id' => $gameId, 'nhl_team_id' => $team, 'opponent_team_id' => $team === 1 ? 2 : 1,
+                'game_date' => $date, 'source_cutoff_at' => $date.' 23:00:00', 'venue' => $venue,
+                'context_version' => \App\Services\NhlPregameContextBuilder::VERSION,
+                'schedule_metrics' => '{}', 'opponent_metrics' => '{}', 'metrics' => '{}',
+            ]);
+            $db::table('nhl_team_game_pregame_context_metrics')->insert([
+                'team_context_id' => $contexts[$team], 'metric_key' => 'games', 'window_key' => 'last_5',
+                'strength' => 'All', 'measure_key' => 'value', 'value' => 5, 'league_average' => null,
+            ]);
+        }
+        $db::table('nhl_game_summaries')->insert(['nhl_game_id' => $gameId,
+            'nhl_player_id' => 101, 'nhl_team_id' => 1, 'toi' => 900]);
+        $player = $db::table('nhl_player_game_pregame_contexts')->insertGetId([
+            'model_run_id' => $this->model->id, 'run_id' => $owner->id, 'team_context_id' => $contexts[1],
+            'nhl_game_id' => $gameId, 'nhl_player_id' => 101, 'nhl_team_id' => 1, 'opponent_team_id' => 2,
+            'game_date' => $date, 'source_cutoff_at' => $date.' 23:00:00', 'venue' => 'home',
+            'participant_source' => 'boxscore', 'context_version' => \App\Services\NhlPregameContextBuilder::VERSION,
+            'metrics' => '{}',
+        ]);
+        $db::table('nhl_player_game_pregame_context_metrics')->insert([
+            'player_context_id' => $player, 'metric_key' => 'games', 'window_key' => 'last_5',
+            'strength' => 'All', 'measure_key' => 'value', 'value' => 5, 'league_average' => null,
+        ]);
+
+        return ['run' => $owner, 'teams' => $contexts, 'player' => $player];
+    };
     $this->admin = User::factory()->create();
     $role = Role::firstOrCreate(['slug' => 'super-admin'], [
         'name' => 'Super Admin', 'level' => 99, 'scope' => 'global', 'is_active' => true,
@@ -137,6 +179,7 @@ it('rejects non SAT models', function (string $method, string $route): void {
     Bus::assertNothingDispatched();
 })->with([
     ['postJson', 'admin.nhl-sat-models.context.build'],
+    ['postJson', 'admin.nhl-sat-models.context.update'],
     ['getJson', 'admin.nhl-sat-models.context.progress'],
     ['postJson', 'admin.nhl-sat-models.context.pause'],
     ['postJson', 'admin.nhl-sat-models.context.resume'],
@@ -148,6 +191,7 @@ it('denies dashboard actions to guests', function (string $method, string $route
     Bus::assertNothingDispatched();
 })->with([
     ['postJson', 'admin.nhl-sat-models.context.build'],
+    ['postJson', 'admin.nhl-sat-models.context.update'],
     ['getJson', 'admin.nhl-sat-models.context.progress'],
     ['postJson', 'admin.nhl-sat-models.context.pause'],
     ['postJson', 'admin.nhl-sat-models.context.resume'],
@@ -160,6 +204,7 @@ it('denies dashboard actions to non super admins', function (string $method, str
     Bus::assertNothingDispatched();
 })->with([
     ['postJson', 'admin.nhl-sat-models.context.build'],
+    ['postJson', 'admin.nhl-sat-models.context.update'],
     ['getJson', 'admin.nhl-sat-models.context.progress'],
     ['postJson', 'admin.nhl-sat-models.context.pause'],
     ['postJson', 'admin.nhl-sat-models.context.resume'],
@@ -1138,4 +1183,177 @@ it('honors a pause between league pages without losing the committed page', func
     );
     expect($run->fresh()->status)->toBe('pausing')->and($day->fresh()->league_state)->toBe('pending')
         ->and($day->fresh()->league_entity_cursor)->toBe(108);
+});
+
+
+it('queues a manual update only for Test and exposes its status through HTTP', function (): void {
+    $before = $this->model->getRawOriginal();
+    $this->actingAs($this->admin)->postJson(route('admin.nhl-sat-models.context.update', $this->model), [
+        'season_ids' => ['19901991'], 'only_missing' => false,
+    ])->assertAccepted()->assertJsonPath('message', 'Queued Update Pregame.');
+    $run = NhlPregameContextRun::query()->sole();
+    expect($run->season_ids)->toBe(['20252026'])->and($run->options['only_missing'])->toBeTrue()
+        ->and($run->options['train_season_ids'])->toBe($this->model->train_season_ids)
+        ->and($run->options['trigger'])->toBe('manual_update')->and($run->created_by)->toBe($this->admin->id)
+        ->and($this->model->fresh()->getRawOriginal())->toBe($before);
+    Bus::assertDispatched(PrepareNhlPregameContextRunJob::class, fn ($job): bool => $job->runId === $run->id && $job->queue === 'projections');
+    $this->getJson(route('admin.nhl-sat-models.context.progress', $this->model))->assertOk()->assertSee('Building');
+});
+
+it('updates the prediction season when production has no Test season', function (?string $explicit, string $expected): void {
+    $this->model->update(['target_season_id' => null,
+        'run_config' => $explicit === null ? [] : ['projection_season_id' => $explicit]]);
+    $this->actingAs($this->admin)->postJson(route('admin.nhl-sat-models.context.update', $this->model))->assertAccepted();
+    expect(NhlPregameContextRun::query()->sole()->season_ids)->toBe([$expected]);
+})->with([[null, '20252026'], ['20262027', '20262027']]);
+
+it('prefers Test over a separately configured prediction season for updates', function (): void {
+    $this->model->update(['run_config' => ['projection_season_id' => '20262027']]);
+    $run = app(NhlPregameContextOrchestrator::class)->queueModelUpdate($this->model);
+    expect($run->season_ids)->toBe(['20252026']);
+});
+
+it('rejects updates without a resolvable Test or prediction season', function (): void {
+    $this->model->update(['train_season_ids' => [], 'target_season_id' => null]);
+    $this->actingAs($this->admin)->postJson(route('admin.nhl-sat-models.context.update', $this->model))
+        ->assertUnprocessable()->assertJsonValidationErrors('season_ids');
+    Bus::assertNothingDispatched();
+});
+
+it('rejects updates for a model outside the training registry', function (): void {
+    $this->model->update(['workflow_stage' => 'projection']);
+    $this->actingAs($this->admin)->postJson(route('admin.nhl-sat-models.context.update', $this->model))->assertNotFound();
+    Bus::assertNothingDispatched();
+});
+
+it('supports the existing non JSON redirect for manual updates', function (): void {
+    $this->actingAs($this->admin)->post(route('admin.nhl-sat-models.context.update', $this->model))
+        ->assertRedirect(route('admin.nhl-sat-models.index'))->assertSessionHas('status', 'Queued Update Pregame.');
+});
+
+it('displays Update Pregame immediately below Build Pregame', function (): void {
+    $html = $this->actingAs($this->admin)->get(route('admin.nhl-sat-models.index'))->assertOk()->getContent();
+    expect($html)->toContain('data-sat-model-pregame-update-form', route('admin.nhl-sat-models.context.update', $this->model))
+        ->and(strpos($html, '>Build Pregame</button>'))->toBeLessThan(strpos($html, '>Update Pregame</button>'));
+});
+
+it('prevents duplicate incremental runs while their target season is active', function (string $state): void {
+    $first = app(NhlPregameContextOrchestrator::class)->queueModelUpdate($this->model);
+    $first->update(['status' => $state]);
+    $this->actingAs($this->admin)->postJson(route('admin.nhl-sat-models.context.update', $this->model))->assertUnprocessable();
+    expect(NhlPregameContextRun::query()->count())->toBe(1);
+    Bus::assertDispatchedTimes(PrepareNhlPregameContextRunJob::class, 1);
+})->with(['queued', 'running', 'paused', 'pausing']);
+
+it('fills gaps before the latest existing date and new trailing dates without rewriting Train', function (): void {
+    ($this->updateGame)(2024020001, '2024-10-08', '20242025');
+    ($this->updateGame)(2025020001, '2025-10-08');
+    ($this->updateGame)(2025020002, '2025-10-09');
+    ($this->updateGame)(2025020003, '2025-10-10');
+    ($this->updateGame)(2025020004, '2025-10-11');
+    ($this->savedUpdateContext)(2025020001, '2025-10-08');
+    ($this->savedUpdateContext)(2025020003, '2025-10-10');
+    $db = \Illuminate\Support\Facades\DB::class;
+    $before = $db::table('nhl_team_game_pregame_contexts')->orderBy('id')->get()->toJson();
+    $run = app(NhlPregameContextOrchestrator::class)->queueModelUpdate($this->model);
+    app(NhlPregameContextOrchestrator::class)->prepare($run);
+    expect($run->games()->orderBy('sequence')->pluck('nhl_game_id')->all())->toBe([2025020002, 2025020004])
+        ->and($run->days()->count())->toBe(2)
+        ->and($db::table('nhl_team_game_pregame_contexts')->orderBy('id')->get()->toJson())->toBe($before);
+});
+
+it('ignores unavailable league comparisons when stored context is structurally complete', function (): void {
+    ($this->updateGame)(2025020001, '2025-10-08');
+    ($this->savedUpdateContext)(2025020001, '2025-10-08');
+    $this->actingAs($this->admin)->postJson(route('admin.nhl-sat-models.context.update', $this->model))->assertAccepted();
+    $run = NhlPregameContextRun::latestForModel($this->model->id);
+    app(NhlPregameContextOrchestrator::class)->prepare($run);
+    expect($run->fresh()->status)->toBe('completed')->and($run->fresh()->options['up_to_date'])->toBeTrue()
+        ->and($run->games()->count())->toBe(0)->and($run->days()->count())->toBe(0);
+    Bus::assertNotDispatched(LoadNhlPregameContextRunJob::class);
+    $this->getJson(route('admin.nhl-sat-models.context.progress', $this->model))->assertOk()->assertSee('Pregame is up to date.');
+});
+
+it('repairs missing player snapshots or normalized metric rows', function (string $missing): void {
+    ($this->updateGame)(2025020001, '2025-10-08');
+    $saved = ($this->savedUpdateContext)(2025020001, '2025-10-08');
+    $db = \Illuminate\Support\Facades\DB::class;
+    match ($missing) {
+        'player' => $db::table('nhl_player_game_pregame_contexts')->where('id', $saved['player'])->delete(),
+        'player_metrics' => $db::table('nhl_player_game_pregame_context_metrics')->where('player_context_id', $saved['player'])->delete(),
+        'team_metrics' => $db::table('nhl_team_game_pregame_context_metrics')->where('team_context_id', $saved['teams'][2])->delete(),
+    };
+    $run = app(NhlPregameContextOrchestrator::class)->queueModelUpdate($this->model);
+    app(NhlPregameContextOrchestrator::class)->prepare($run);
+    expect($run->games()->pluck('nhl_game_id')->all())->toBe([2025020001]);
+})->with(['player', 'player_metrics', 'team_metrics']);
+
+it('repairs snapshot work whose comparisons never committed', function (): void {
+    ($this->updateGame)(2025020001, '2025-10-08');
+    $saved = ($this->savedUpdateContext)(2025020001, '2025-10-08');
+    $saved['run']->update(['status' => 'failed']);
+    NhlPregameContextRunGame::create(['run_id' => $saved['run']->id, 'nhl_game_id' => 2025020001,
+        'game_date' => '2025-10-08', 'sequence' => 1, 'state' => 'failed', 'snapshot_completed_at' => now()]);
+    $run = app(NhlPregameContextOrchestrator::class)->queueModelUpdate($this->model);
+    app(NhlPregameContextOrchestrator::class)->prepare($run);
+    expect($run->games()->pluck('nhl_game_id')->all())->toBe([2025020001]);
+});
+
+it('does not queue live future or playoff games during a historical context update', function (): void {
+    foreach (['FUT', 'LIVE', 'FINAL'] as $i => $state) {
+        ($this->updateGame)(2025020001 + $i, '2025-10-08', '20252026', $state);
+    }
+    \Illuminate\Support\Facades\DB::table('nhl_games')->where('nhl_game_id', 2025020003)->update(['game_type' => 3]);
+    $run = app(NhlPregameContextOrchestrator::class)->queueModelUpdate($this->model);
+    app(NhlPregameContextOrchestrator::class)->prepare($run);
+    expect($run->fresh()->status)->toBe('completed')->and($run->games()->count())->toBe(0);
+});
+
+it('uses the same target season update for scheduled production models', function (): void {
+    $this->model->update(['target_season_id' => null, 'train_season_ids' => ['20232024', '20242025', '20252026']]);
+    \App\Models\ScheduledProcess::query()->update(['enabled' => false]);
+    $process = \App\Models\ScheduledProcess::create([
+        'key' => \App\Services\ScheduledProcessManager::pregameContextKey($this->model->id),
+        'enabled' => true, 'timezone' => 'America/Toronto', 'start_time' => '03:50',
+        'frequency_hours' => 24, 'settings' => ['include_update_pregame' => true],
+    ]);
+    app(\App\Services\ScheduledProcessManager::class)->tick();
+    $run = NhlPregameContextRun::query()->sole();
+    expect($run->season_ids)->toBe(['20262027'])->and($run->options['only_missing'])->toBeTrue()
+        ->and($run->options['trigger'])->toBe('auto_sync')->and($process->fresh()->last_dispatched_at)->not->toBeNull();
+    Bus::assertDispatchedTimes(PrepareNhlPregameContextRunJob::class, 1);
+});
+
+it('leaves overlapping scheduled updates due without creating another run', function (): void {
+    app(NhlPregameContextOrchestrator::class)->queueModelUpdate($this->model);
+    \App\Models\ScheduledProcess::query()->update(['enabled' => false]);
+    $process = \App\Models\ScheduledProcess::create([
+        'key' => \App\Services\ScheduledProcessManager::pregameContextKey($this->model->id),
+        'enabled' => true, 'timezone' => 'America/Toronto', 'start_time' => '03:50',
+        'frequency_hours' => 24, 'settings' => ['include_update_pregame' => true],
+    ]);
+    app(\App\Services\ScheduledProcessManager::class)->tick();
+    expect(NhlPregameContextRun::query()->count())->toBe(1)->and($process->fresh()->last_dispatched_at)->toBeNull();
+    Bus::assertDispatchedTimes(PrepareNhlPregameContextRunJob::class, 1);
+});
+
+
+it('does not accept another models snapshots as complete context', function (): void {
+    ($this->updateGame)(2025020001, '2025-10-08');
+    ($this->savedUpdateContext)(2025020001, '2025-10-08');
+    $other = $this->model->replicate();
+    $other->run_key = 'other-update-model';
+    $other->save();
+    $run = app(NhlPregameContextOrchestrator::class)->queueModelUpdate($other);
+    app(NhlPregameContextOrchestrator::class)->prepare($run);
+    expect($run->model_run_id)->toBe($other->id)
+        ->and($run->games()->pluck('nhl_game_id')->all())->toBe([2025020001]);
+});
+
+it('retains the owning models stopped update and admits a fresh incremental run', function (): void {
+    $first = app(NhlPregameContextOrchestrator::class)->queueModelUpdate($this->model);
+    $first->update(['status' => 'stopped']);
+    $next = app(NhlPregameContextOrchestrator::class)->queueModelUpdate($this->model);
+    expect($next->id)->not->toBe($first->id)->and($first->fresh()->status)->toBe('stopped')
+        ->and($next->season_ids)->toBe(['20252026']);
 });

@@ -245,6 +245,10 @@
                             @csrf
                             <button type="submit" @disabled($pregameLocked) class="block w-full px-3 py-2 text-left text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950 disabled:cursor-not-allowed disabled:opacity-60" role="menuitem">Build Pregame</button>
                         </form>
+                        <form method="POST" action="{{ route('admin.nhl-sat-models.context.update', $run) }}" data-sat-model-pregame-update-form>
+                            @csrf
+                            <button type="submit" @disabled($pregameLocked) class="block w-full px-3 py-2 text-left text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950 disabled:cursor-not-allowed disabled:opacity-60" role="menuitem">Update Pregame</button>
+                        </form>
                         <a data-pregame-view-link href="{{ route('admin.nhl-sat-models.context.effects') }}" @class(['hidden' => ! $canViewPregame, 'block px-3 py-2 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950']) role="menuitem">View Pregame Impacts</a>
                         <span data-pregame-view-disabled @class(['hidden' => $canViewPregame, 'block cursor-not-allowed px-3 py-2 text-xs font-medium text-gray-300']) role="menuitem" aria-disabled="true">View Pregame Impacts</span>
                         <a href="{{ route('admin.nhl-sat-models.next-game') }}" class="block px-3 py-2 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950" role="menuitem">Game Evaluations</a>

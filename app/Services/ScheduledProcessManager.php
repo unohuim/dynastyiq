@@ -128,7 +128,7 @@ class ScheduledProcessManager
                 return;
             }
 
-            $build = app(NhlPregameContextOrchestrator::class)->queueModelBackfill(
+            $build = app(NhlPregameContextOrchestrator::class)->queueModelUpdate(
                 $model,
                 null,
                 ['trigger' => 'auto_sync', 'scheduled_process_key' => $process->key, 'only_missing' => true],

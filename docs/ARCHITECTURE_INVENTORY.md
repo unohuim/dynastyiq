@@ -4284,5 +4284,16 @@ with legacy backfill compatibility. Authority:
 **Authority:** `docs/architecture/imports/NhlLiveGameFeed.yaml`.
 **Example:** One producer fetches each live game; all browser surfaces receive its updates through the layout's Echo connection.
 
-
 - Live PBP reconciliation: `docs/architecture/imports/NhlLivePbpReconciliation.yaml` defines event revisions, withdrawals, durable game checkpoints and isolated live shot scoring.
+
+
+### Incremental model pregame updates
+
+Analysis > Update Pregame and model auto-sync share
+`NhlPregameContextOrchestrator::queueModelUpdate()`. They select the model's Test
+season, or its own prediction season when Test is unset, and queue missing or
+unfinished completed-game context only. Existing Train snapshots are not update
+work. Build Pregame retains its separate full-build scope. Updates retain the
+existing projections queue, two stages, model-scoped upserts and run controls.
+A completed empty selection reports Pregame is up to date.
+Authority: `docs/architecture/stats/NhlPregameContextEvidence.yaml`.

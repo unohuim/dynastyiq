@@ -50,6 +50,15 @@ class NhlPregameContextController extends Controller
         ], 202);
     }
 
+    /** Queue only missing Test or prediction-season context using the scheduled update pathway. */
+    public function updateForModel(Request $request, NhlModelRun $run, NhlPregameContextOrchestrator $orchestrator): RedirectResponse|JsonResponse
+    {
+        $this->assertSatModel($run);
+        $build = $orchestrator->queueModelUpdate($run, $request->user()?->id, ['trigger' => 'manual_update']);
+
+        return $this->controlResponse($request, $run, $build, 'Queued Update Pregame.', 202);
+    }
+
     /** Pause future dispatch and allow the already-claimed page to finish. */
     public function pauseForModel(
         Request $request,
@@ -95,7 +104,8 @@ class NhlPregameContextController extends Controller
         Request $request,
         NhlModelRun $run,
         NhlPregameContextRun $build,
-        string $message
+        string $message,
+        int $status = 200,
     ): JsonResponse|RedirectResponse {
         if (! $request->expectsJson()) {
             return redirect()->route('admin.nhl-sat-models.index')->with('status', $message);
@@ -107,7 +117,7 @@ class NhlPregameContextController extends Controller
                 'pregameBuild' => $build,
                 'modelRunId' => $run->id,
             ])->render(),
-        ]);
+        ], $status);
     }
 
     /** Read progress without loading model projections or changing the model's training state. */

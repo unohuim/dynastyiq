@@ -229,10 +229,11 @@ export const updatePregameProgress = (row, html) => {
 
     progress.innerHTML = html;
     const active = Boolean(progress.querySelector('[data-pregame-active="1"]'));
-    const locked = Boolean(progress.querySelector('[data-pregame-locked="1"]'));
+    const locked = active || Boolean(progress.querySelector('[data-pregame-locked="1"]'));
     row.querySelector('[data-model-training-status]')?.classList.toggle('hidden', active);
-    const button = row.querySelector('[data-sat-model-pregame-build-form] button[type="submit"]');
-    if (button) button.disabled = locked;
+    row.querySelectorAll('[data-sat-model-pregame-build-form] button[type="submit"], [data-sat-model-pregame-update-form] button[type="submit"]').forEach((button) => {
+        button.disabled = locked;
+    });
     const viewable = Boolean(progress.querySelector('[data-pregame-viewable="1"]'));
     row.querySelector('[data-pregame-view-link]')?.classList.toggle('hidden', !viewable);
     row.querySelector('[data-pregame-view-disabled]')?.classList.toggle('hidden', viewable);
@@ -297,7 +298,7 @@ const mountSatModels = (root) => {
     });
 
     root.addEventListener('submit', async (event) => {
-        const form = event.target.closest('[data-sat-model-pregame-build-form]');
+        const form = event.target.closest('[data-sat-model-pregame-build-form], [data-sat-model-pregame-update-form]');
         if (!form) return;
 
         event.preventDefault();

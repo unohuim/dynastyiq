@@ -3035,3 +3035,12 @@ game type. They do not add public `/stats?view=` values.
 ### Public game goal-strength badges
 
 `goal_strength` on public goal events is nullable: `PPG` (power play), `SHG` (shorthanded), `EVG` (even strength), or `ENG` (empty net). Missing or invalid manpower evidence leaves the badge unavailable.
+
+
+### Incremental NHL pregame updates
+
+Existing `nhl_pregame_context_runs.options.trigger` additionally accepts
+`manual_update` for the model-row Update Pregame action; `auto_sync` retains its
+scheduled meaning. Both use `only_missing=true`. `options.up_to_date=true`
+identifies a completed empty missing-work selection. Updates keep the existing
+`backfill` action and run statuses; no new schema or action enum is introduced.

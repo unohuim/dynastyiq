@@ -27,7 +27,7 @@
             'paused' => 'Pregame paused',
             'stopped' => 'Pregame stopped',
             'failed' => 'Pregame failed',
-            default => 'Pregame completed',
+            default => data_get($pregameBuild->options, 'up_to_date') ? 'Pregame is up to date.' : 'Pregame completed',
         } }}</span>
         <div class="mt-1 text-xs text-gray-500">
             Pregame · {{ number_format($pregameBuild->completed_games ?? 0) }} / {{ number_format($pregameBuild->total_games ?? 0) }} games

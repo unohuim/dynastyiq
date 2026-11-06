@@ -76,6 +76,14 @@ class NhlModelRun extends Model
             ->all();
     }
 
+    /** Resolve the single season maintained by incremental pregame updates. */
+    public function pregameUpdateSeasonId(): ?string
+    {
+        return $this->target_season_id !== null && $this->target_season_id !== ''
+            ? (string) $this->target_season_id
+            : $this->projectionSeasonId();
+    }
+
     /** Check that a queued stage still belongs to the active combined build. */
     public function acceptsPredictionStage(?string $buildId, string $stage): bool
     {

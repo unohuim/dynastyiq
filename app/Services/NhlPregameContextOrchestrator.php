@@ -152,6 +152,29 @@ class NhlPregameContextOrchestrator
         ]), $rejectActive);
     }
 
+    /** Fill missing context in this model's Test or prediction season, retaining Train only as input. */
+    public function queueModelUpdate(
+        NhlModelRun $model,
+        ?int $createdBy = null,
+        array $runOptions = [],
+        bool $rejectActive = true,
+    ): ?NhlPregameContextRun {
+        $season = $model->pregameUpdateSeasonId();
+        if ($season === null) {
+            if ($rejectActive) {
+                throw ValidationException::withMessages(['season_ids' => 'This model has no Test or prediction season to update.']);
+            }
+
+            return null;
+        }
+
+        return $this->queueBackfill([$season], $model->id, $createdBy, array_merge($runOptions, [
+            'only_missing' => true,
+            'train_season_ids' => array_map('strval', $model->train_season_ids ?? []),
+            'pipeline_version' => self::CHECKPOINT_PIPELINE,
+        ]), $rejectActive);
+    }
+
     /** Stop claiming pages, then pause once the already-claimed work is terminal. */
     public function pauseModelBackfill(NhlModelRun $model): NhlPregameContextRun
     {
@@ -372,20 +395,13 @@ class NhlPregameContextOrchestrator
                                 ->whereColumn('team_context.nhl_game_id', 'nhl_games.nhl_game_id')
                                 ->whereColumn('team_context.nhl_team_id', 'nhl_games.' . $side . '_team_id')
                                 ->where('team_context.context_version', $contextVersion)
-                                ->where('team_context.model_run_id', $modelRunId);
+                                ->where('team_context.model_run_id', $modelRunId)
+                                ->whereExists(function ($metric): void {
+                                    $metric->selectRaw('1')->from('nhl_team_game_pregame_context_metrics as stored_metric')
+                                        ->whereColumn('stored_metric.team_context_id', 'team_context.id');
+                                });
                         });
                     }
-                });
-                $missing->orWhereExists(function ($metrics) use ($contextVersion, $modelRunId): void {
-                    $metrics->selectRaw('1')
-                        ->from('nhl_team_game_pregame_context_metrics as team_metric')
-                        ->join('nhl_team_game_pregame_contexts as team_context', 'team_context.id', '=', 'team_metric.team_context_id')
-                        ->whereColumn('team_context.nhl_game_id', 'nhl_games.nhl_game_id')
-                        ->where('team_context.context_version', $contextVersion)
-                        ->where('team_context.model_run_id', $modelRunId)
-                        ->where('team_metric.measure_key', 'value')
-                        ->whereNotNull('team_metric.value')
-                        ->whereNull('team_metric.league_average');
                 });
                 $missing->orWhereNotExists(function ($summary): void {
                     $summary->selectRaw('1')
@@ -411,19 +427,23 @@ class NhlPregameContextOrchestrator
                                 ->whereColumn('player_context.nhl_player_id', 'game_summary.nhl_player_id')
                                 ->whereColumn('player_context.nhl_team_id', 'game_summary.nhl_team_id')
                                 ->where('player_context.context_version', $contextVersion)
-                                ->where('player_context.model_run_id', $modelRunId);
+                                ->where('player_context.model_run_id', $modelRunId)
+                                ->whereExists(function ($metric): void {
+                                    $metric->selectRaw('1')->from('nhl_player_game_pregame_context_metrics as stored_metric')
+                                        ->whereColumn('stored_metric.player_context_id', 'player_context.id');
+                                });
                         });
                 });
-                $missing->orWhereExists(function ($metrics) use ($contextVersion, $modelRunId): void {
-                    $metrics->selectRaw('1')
-                        ->from('nhl_player_game_pregame_context_metrics as player_metric')
-                        ->join('nhl_player_game_pregame_contexts as player_context', 'player_context.id', '=', 'player_metric.player_context_id')
-                        ->whereColumn('player_context.nhl_game_id', 'nhl_games.nhl_game_id')
-                        ->where('player_context.context_version', $contextVersion)
-                        ->where('player_context.model_run_id', $modelRunId)
-                        ->where('player_metric.measure_key', 'value')
-                        ->whereNotNull('player_metric.value')
-                        ->whereNull('player_metric.league_average');
+                $missing->orWhereExists(function ($work) use ($contextVersion, $modelRunId): void {
+                    $work->selectRaw('1')->from('nhl_pregame_context_run_games as unfinished')
+                        ->join('nhl_team_game_pregame_contexts as partial_context', function ($join): void {
+                            $join->on('partial_context.run_id', '=', 'unfinished.run_id')
+                                ->on('partial_context.nhl_game_id', '=', 'unfinished.nhl_game_id');
+                        })
+                        ->whereColumn('unfinished.nhl_game_id', 'nhl_games.nhl_game_id')
+                        ->where('partial_context.model_run_id', $modelRunId)
+                        ->where('partial_context.context_version', $contextVersion)
+                        ->where('unfinished.state', '!=', NhlPregameContextRunGame::STATE_COMPLETE);
                 });
             });
         }
@@ -478,13 +498,18 @@ class NhlPregameContextOrchestrator
             }
 
             $fresh->update([
-                'status' => NhlPregameContextRun::STATUS_RUNNING,
+                'status' => $rows === [] ? NhlPregameContextRun::STATUS_COMPLETED : NhlPregameContextRun::STATUS_RUNNING,
+                'options' => array_merge($fresh->options ?? [], [
+                    'up_to_date' => $rows === [] && (bool) data_get($fresh->options, 'only_missing', false),
+                ]),
                 'total_games' => count($rows),
                 'last_error' => null,
             ]);
         });
 
-        LoadNhlPregameContextRunJob::dispatch($run->id);
+        if ($run->fresh()->status === NhlPregameContextRun::STATUS_RUNNING) {
+            LoadNhlPregameContextRunJob::dispatch($run->id);
+        }
     }
 
     /** Claim and dispatch one bounded page from the earliest unfinished date. */

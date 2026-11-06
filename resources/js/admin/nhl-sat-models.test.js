@@ -11,6 +11,7 @@ describe('model pregame progress', () => {
             <div data-pregame-progress></div>
             <span data-model-training-status>Complete</span>
             <form data-sat-model-pregame-build-form><button type="submit">Build Pregame</button></form>
+            <form data-sat-model-pregame-update-form><button type="submit">Update Pregame</button></form>
             <a data-pregame-view-link class="hidden" href="/effects">View Pregame Impacts</a>
             <span data-pregame-view-disabled aria-disabled="true">View Pregame Impacts</span>
         </td></tr></tbody></table>`;
@@ -39,6 +40,23 @@ describe('model pregame progress', () => {
         expect(row.textContent).toContain(label);
         expect(row.querySelector('button').disabled).toBe(false);
         expect(row.querySelector('[data-model-training-status]').classList.contains('hidden')).toBe(false);
+    });
+
+    it.each(['queued', 'running', 'pausing', 'paused'])('locks both pregame actions while %s', (status) => {
+        const row = document.querySelector('tr');
+        updatePregameProgress(row, `<div data-pregame-active="${status === 'paused' ? '0' : '1'}" data-pregame-locked="1">${status}</div>`);
+        expect(row.querySelector('[data-sat-model-pregame-build-form] button').disabled).toBe(true);
+        expect(row.querySelector('[data-sat-model-pregame-update-form] button').disabled).toBe(true);
+    });
+
+    it('reenables Update Pregame when the incremental run is up to date', () => {
+        const row = document.querySelector('tr');
+        const form = row.querySelector('[data-sat-model-pregame-update-form]');
+        updatePregameProgress(row, '<div data-pregame-active="1" data-pregame-locked="1">Building</div>');
+        updatePregameProgress(row, '<div data-pregame-active="0" data-pregame-locked="0">Pregame is up to date.</div>');
+        expect(form.querySelector('button').disabled).toBe(false);
+        expect(row.querySelector('[data-sat-model-pregame-update-form]')).toBe(form);
+        expect(row.textContent).toContain('Pregame is up to date.');
     });
 
     it('preserves the model row and does not require one after navigation', () => {
