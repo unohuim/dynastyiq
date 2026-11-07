@@ -1357,3 +1357,132 @@ it('retains the owning models stopped update and admits a fresh incremental run'
     expect($next->id)->not->toBe($first->id)->and($first->fresh()->status)->toBe('stopped')
         ->and($next->season_ids)->toBe(['20252026']);
 });
+
+
+it('includes todays unfinished games in Update Pregame using anticipated evidence', function (): void {
+    $this->model->update(['target_season_id' => '20262027']);
+    ($this->updateGame)(2026020001, '2026-10-09', '20262027', 'FUT');
+    ($this->updateGame)(2026020002, '2026-10-10', '20262027', 'FUT');
+    ($this->updateGame)(2026020003, '2026-10-08', '20262027', 'LIVE');
+    $record = ['players' => [101 => ['team' => 1, 'name' => 'Skater', 'role' => 'F']], 'starters' => [],
+        'lineup_sources' => [1 => 'anticipated_lineup', 2 => 'projected_roster']];
+    $service = Mockery::mock(\App\Services\NhlCustomGameForecast::class)->makePartial();
+    $service->shouldReceive('contextEvidence')->once()->andReturn(['fingerprint' => 'lineup-v1',
+        'cutoff_at' => '2026-10-09 12:00:00', 'players' => $record['players'], 'team_ids' => [1, 2], 'participants' => $record]);
+    $service->shouldReceive('contextReady')->once()->andReturnFalse();
+    app()->instance(\App\Services\NhlCustomGameForecast::class, $service);
+    $this->actingAs($this->admin)->postJson(route('admin.nhl-sat-models.context.update', $this->model))->assertAccepted();
+    $run = NhlPregameContextRun::latestForModel($this->model->id);
+    app(NhlPregameContextOrchestrator::class)->prepare($run);
+    expect($run->games()->pluck('nhl_game_id')->all())->toBe([2026020001])
+        ->and(data_get($run->fresh()->options, 'prediction_evidence.2026020001.fingerprint'))->toBe('lineup-v1')
+        ->and(data_get($run->fresh()->options, 'prediction_participants.2026020001.players.101.team'))->toBe(1);
+    $this->getJson(route('admin.nhl-sat-models.context.progress', $this->model))->assertOk()->assertSee('0 / 1 games');
+});
+
+it('skips fresh unfinished context instead of rebuilding every automatic update', function (): void {
+    $this->model->update(['target_season_id' => '20262027']);
+    ($this->updateGame)(2026020001, '2026-10-09', '20262027', 'LIVE');
+    $service = Mockery::mock(\App\Services\NhlCustomGameForecast::class)->makePartial();
+    $service->shouldReceive('contextEvidence')->once()->andReturn(['fingerprint' => 'current']);
+    $service->shouldReceive('contextReady')->once()->andReturnTrue();
+    app()->instance(\App\Services\NhlCustomGameForecast::class, $service);
+    $run = app(NhlPregameContextOrchestrator::class)->queueModelUpdate($this->model);
+    app(NhlPregameContextOrchestrator::class)->prepare($run);
+    expect($run->games()->count())->toBe(0)->and($run->fresh()->options['up_to_date'])->toBeTrue();
+});
+
+it('queues explicit prediction dependencies for scheduled games outside todays date', function (): void {
+    ($this->updateGame)(2026020001, '2026-10-10', '20262027', 'FUT');
+    ($this->updateGame)(2026020002, '2026-10-11', '20262027', 'FUT');
+    $evidence = [2026020001 => ['fingerprint' => 'requested', 'cutoff_at' => '2026-10-09 12:00:00']];
+    $run = app(NhlPregameContextOrchestrator::class)->queuePredictionContexts($this->model, $evidence, []);
+    app(NhlPregameContextOrchestrator::class)->prepare($run);
+    expect($run->games()->pluck('nhl_game_id')->all())->toBe([2026020001])
+        ->and($run->options['trigger'])->toBe('prediction')->and($run->season_ids)->toBe(['20262027']);
+    Bus::assertDispatched(PrepareNhlPregameContextRunJob::class, fn ($job): bool => $job->queue === 'projections');
+});
+
+it('saves upcoming player and starter context without target boxscores or target outcomes', function (string $state): void {
+    ($this->updateGame)(2026020001, '2026-10-09', '20262027', $state);
+    $record = ['players' => [101 => ['team' => 1, 'name' => 'Away forward', 'role' => 'F'],
+        201 => ['team' => 2, 'name' => 'Home forward', 'role' => 'F']],
+        'starters' => [1 => 102, 2 => null], 'lineup_sources' => [1 => 'anticipated_lineup', 2 => 'projected_roster']];
+    $evidence = [2026020001 => ['fingerprint' => 'frozen-lineup', 'cutoff_at' => '2026-10-09 12:00:00']];
+    $run = app(NhlPregameContextOrchestrator::class)->queuePredictionContexts($this->model, $evidence, [2026020001 => $record]);
+    $result = app(\App\Services\NhlPregameContextBuilder::class)->buildDay($run, [2026020001]);
+    expect($result['games'][2026020001]['team_context_count'])->toBe(2)
+        ->and($result['games'][2026020001]['player_context_count'])->toBe(3);
+    $db = \Illuminate\Support\Facades\DB::class;
+    expect($db::table('nhl_game_summaries')->where('nhl_game_id', 2026020001)->count())->toBe(0);
+    $players = $db::table('nhl_player_game_pregame_contexts')->where('model_run_id', $this->model->id)->get();
+    expect($players->pluck('participant_source')->all())->toContain('anticipated_lineup', 'projected_roster', 'anticipated_goalie');
+    foreach ($players as $player) {
+        expect($player->source_cutoff_at)->toBe('2026-10-09 12:00:00')->and($player->team_context_id)->not->toBeNull();
+    }
+    $team = $db::table('nhl_team_game_pregame_contexts')->where('model_run_id', $this->model->id)->first();
+    expect(data_get(json_decode($team->schedule_metrics, true), 'prediction_evidence.fingerprint'))->toBe('frozen-lineup');
+})->with(['FUT', 'PRE', 'LIVE', 'CRIT']);
+
+it('does not treat missing projected identities as permission to use live target summaries', function (): void {
+    ($this->updateGame)(2026020001, '2026-10-09', '20262027', 'LIVE');
+    $record = ['players' => [], 'starters' => [], 'lineup_sources' => []];
+    $run = app(NhlPregameContextOrchestrator::class)->queuePredictionContexts($this->model,
+        [2026020001 => ['fingerprint' => 'missing-lineup', 'cutoff_at' => '2026-10-09 12:00:00']], [2026020001 => $record]);
+    $result = app(\App\Services\NhlPregameContextBuilder::class)->buildDay($run, [2026020001]);
+    expect($result['games'][2026020001]['blocked'])->toBeTrue();
+});
+
+
+it('requires committed comparisons and the same lineup before accepting saved prediction context', function (): void {
+    ($this->updateGame)(2025020001, '2025-10-08');
+    $saved = ($this->savedUpdateContext)(2025020001, '2025-10-08');
+    $db = \Illuminate\Support\Facades\DB::class;
+    $db::table('nhl_team_game_pregame_contexts')->whereIn('id', $saved['teams'])->update([
+        'schedule_metrics' => json_encode(['prediction_evidence' => ['fingerprint' => 'selected-lineup']], JSON_THROW_ON_ERROR),
+    ]);
+    $work = NhlPregameContextRunGame::create(['run_id' => $saved['run']->id, 'nhl_game_id' => 2025020001,
+        'game_date' => '2025-10-08', 'sequence' => 1, 'state' => 'complete', 'snapshot_completed_at' => now()]);
+    $evidence = ['fingerprint' => 'selected-lineup', 'team_ids' => [1, 2],
+        'players' => [101 => ['team' => 1]], 'starters' => []];
+    $service = app(\App\Services\NhlCustomGameForecast::class);
+    expect($service->contextReady($this->model->id, 2025020001, $evidence))->toBeFalse();
+    $work->update(['comparisons_completed_at' => now()]);
+    expect($service->contextReady($this->model->id, 2025020001, $evidence))->toBeTrue();
+    $changed = array_replace($evidence, ['fingerprint' => 'changed-lineup']);
+    expect($service->contextReady($this->model->id, 2025020001, $changed))->toBeFalse();
+    $evidence['players'][102] = ['team' => 1];
+    expect($service->contextReady($this->model->id, 2025020001, $evidence))->toBeFalse();
+});
+
+it('rejects a selected starter without the correct same-game team context link', function (): void {
+    ($this->updateGame)(2025020001, '2025-10-08');
+    $saved = ($this->savedUpdateContext)(2025020001, '2025-10-08');
+    $db = \Illuminate\Support\Facades\DB::class;
+    $db::table('nhl_team_game_pregame_contexts')->whereIn('id', $saved['teams'])->update([
+        'schedule_metrics' => json_encode(['prediction_evidence' => ['fingerprint' => 'starter']], JSON_THROW_ON_ERROR),
+    ]);
+    NhlPregameContextRunGame::create(['run_id' => $saved['run']->id, 'nhl_game_id' => 2025020001,
+        'game_date' => '2025-10-08', 'sequence' => 1, 'state' => 'complete', 'comparisons_completed_at' => now()]);
+    $evidence = ['fingerprint' => 'starter', 'team_ids' => [1, 2], 'players' => [101 => ['team' => 1]],
+        'starters' => [2 => 101]];
+    expect(app(\App\Services\NhlCustomGameForecast::class)->contextReady($this->model->id, 2025020001, $evidence))->toBeFalse();
+});
+
+it('freezes forecast context before scheduled start and excludes the targets own result updates', function (): void {
+    ($this->updateGame)(2025020001, '2025-10-08');
+    ($this->updateGame)(2025020002, '2025-10-09');
+    $db = \Illuminate\Support\Facades\DB::class;
+    $record = ['players' => [101 => ['team' => 1, 'role' => 'F']], 'starters' => [], 'lineup_sources' => []];
+    $game = $db::table('nhl_games')->where('nhl_game_id', 2025020002)->first();
+    $service = app(\App\Services\NhlCustomGameForecast::class);
+    $asOf = \Carbon\CarbonImmutable::parse('2025-10-09 12:00:00', 'UTC');
+    $first = $service->contextEvidence($this->model, $game, $record, $asOf);
+    $db::table('nhl_game_summaries')->insert(['nhl_game_id' => 2025020002, 'nhl_player_id' => 101,
+        'nhl_team_id' => 1, 'g' => 9, 'updated_at' => now()]);
+    $second = $service->contextEvidence($this->model, $game, $record, $asOf);
+    expect($first['fingerprint'])->toBe($second['fingerprint'])->and($first['cutoff_at'])->toBe('2025-10-09 12:00:00');
+    $db::table('nhl_game_summaries')->insert(['nhl_game_id' => 2025020001, 'nhl_player_id' => 101,
+        'nhl_team_id' => 1, 'g' => 1, 'updated_at' => now()]);
+    expect($service->contextEvidence($this->model, $game, $record, $asOf)['fingerprint'])->not->toBe($first['fingerprint']);
+});

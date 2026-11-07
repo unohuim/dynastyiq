@@ -1021,12 +1021,28 @@ does not alter engine qualification. Use it after prediction-code changes as wel
 as for manual refreshes. Successful refreshes update the normal cache entry.
 
 Only one build per game runs under the shared 600-second build-lock lease.
-If a build is already running, or inputs change during a build, the endpoint
-returns HTTP `503` with `Retry-After: 2` rather than an outdated prediction.
-Consumers should retain their existing saved result and retry after that delay
-with bounded retries. They must not interpret this error as an unqualified pick.
-Force refresh can still take the full prediction-build time. This option does
-not create a G8 UI control automatically.
+When pregame context or prepared inputs are missing, another build owns the lock,
+or source inputs change during calculation, DynastyIQ queues the required work
+and returns HTTP `202` with `Retry-After: 15`:
+
+```json
+{
+  "status": "preparing",
+  "prediction_available": false,
+  "nhl_game_id": 2026020001,
+  "message": "Pregame context and prediction inputs are being prepared.",
+  "retry_after": 15
+}
+```
+
+Prediction continues automatically after the dependencies finish. Poll the same
+endpoint after the indicated delay, using bounded retries. HTTP `202` is pending
+work, not an unqualified pick; it contains no new prediction revision. HTTP `200`
+with `prediction_available: true` contains the published prediction and revision.
+`force_refresh=1` uses this same preparation flow when dependencies are missing.
+An existing saved prediction does not substitute for missing current inputs.
+Queue admission failures remain service errors. This does not create a G8 UI
+control automatically.
 
 During preseason (`game_type: 1`), DynastyIQ publishes a prediction only when
 both teams have a complete official NHL roster or a complete reported lineup

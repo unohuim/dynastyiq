@@ -96,7 +96,7 @@ php -d memory_limit=1024M artisan nhl:custom-predict --model=1 --compare-schedul
 php -d memory_limit=1024M artisan nhl:custom-predict --model=2 --date=2026-11-05 --json
 ```
 
-Default execution only reads sources. `--save` creates new runs and freezes team
+Historical Test replay without `--date` or `--save` only reads sources. `--save` creates new runs and freezes team
 and player inputs/results in the existing custom tables; it never overwrites a
 preceding experiment. `--compare-schedule` calculates both variants from the
 same inputs and uses identical eligible games. Invalid or missing required inputs
@@ -108,11 +108,26 @@ their state and requires no target boxscore, shots or final score. It uses the
 chosen model's own retained Train buckets and historical seasons, verified
 anticipated lineups or the existing projected-roster fallback, and results
 strictly before the earlier of request time and scheduled start. Target results
-never enter history. Missing saved context is calculated transiently using the
-pregame builder's canonical team evidence; it does not write a context build.
-Personal windows also include completed intervening and current-season games.
-This mode is read-only and cannot be combined with replay range, schedule
-comparison or save options. Actual accuracy comparison remains separate.
+never enter history. Operational requests require saved, matching model/game context for both teams,
+selected skaters and starters, including committed comparisons. Missing context
+queues the existing pregame pathway for those games. Personal windows also
+include completed intervening and current-season games. Requested-date mode uses
+the shared operational payload/cache pathway, queues preparation on a cold date,
+and automatically saves successful prediction revisions. It prints preparing
+rows while dependencies are pending. It cannot be combined with replay range,
+schedule comparison or save options. Actual accuracy comparison remains separate.
+
+Shared preparation checkpoints Train collection, bucket fitting, prior-result
+pages and individual targets on projections. Requests do not replay whole seasons
+synchronously. Lineup, starter, configuration and completed-source publication
+changes invalidate pending work before it is published. Ready inputs have
+per-game cache entries and a small date manifest. This changes input readiness,
+not EV/PP formulas, travel coefficients, coverage rules or measured win rates.
+
+Update Pregame now also selects today's unfinished regular-season games in the
+model's Test season, or its own prediction season when Test is unset. It uses
+the Toronto date and frozen anticipated participants, leaving Train snapshots
+outside update scope. Explicit prediction requests can prepare other dates.
 
 The approved SAT_V2 requested-date run uses that model's 2023-24 through
 2025-26 Train seasons for its 2026-27 games. The agreed coefficients retain

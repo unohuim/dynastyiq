@@ -175,6 +175,23 @@ class NhlPregameContextOrchestrator
         ]), $rejectActive);
     }
 
+    /** Queue a shared, explicitly scoped date dependency for the current prediction lineups. */
+    public function queuePredictionContexts(NhlModelRun $model, array $evidence, array $lineups): ?NhlPregameContextRun
+    {
+        $ids = array_map('intval', array_keys($evidence));
+        if ($ids === []) {
+            return null;
+        }
+        $seasons = DB::table('nhl_games')->whereIn('nhl_game_id', $ids)->distinct()->pluck('season_id')->map(fn ($id): string => (string) $id)->all();
+
+        return $this->queueBackfill($seasons, (int) $model->id, null, [
+            'trigger' => 'prediction', 'game_ids' => $ids, 'prediction_evidence' => $evidence,
+            'prediction_participants' => array_intersect_key($lineups, $evidence),
+            'train_season_ids' => array_map('strval', $model->train_season_ids ?? []),
+            'pipeline_version' => self::CHECKPOINT_PIPELINE,
+        ], false);
+    }
+
     /** Stop claiming pages, then pause once the already-claimed work is terminal. */
     public function pauseModelBackfill(NhlModelRun $model): NhlPregameContextRun
     {
@@ -375,17 +392,43 @@ class NhlPregameContextOrchestrator
             return;
         }
 
-        $query = DB::table('nhl_games')
-            ->where('game_type', 2)
-            ->whereIn('game_state', ['OFF', 'FINAL'])
+        $options = $run->options ?? [];
+        $explicitGames = data_get($options, 'game_ids');
+        $today = now('America/Toronto')->toDateString();
+        $futureNeeded = $futureReady = [];
+        if ($explicitGames === null && (bool) data_get($options, 'only_missing', false) && $run->model_run_id !== null) {
+            $model = NhlModelRun::query()->findOrFail($run->model_run_id);
+            $asOf = \Carbon\CarbonImmutable::now('UTC');
+            foreach (DB::table('nhl_games')->whereIn('season_id', $run->season_ids)->where('game_type', 2)
+                ->whereDate('game_date', $today)->whereNotIn('game_state', ['OFF', 'FINAL'])->get() as $game) {
+                try {
+                    $service = app(NhlCustomGameForecast::class);
+                    $evidence = $service->contextEvidence($model, $game, null, $asOf);
+                    if ($service->contextReady((int) $model->id, (int) $game->nhl_game_id, $evidence)) {
+                        $futureReady[] = $game->nhl_game_id;
+                        continue;
+                    }
+                    $options['prediction_evidence'][$game->nhl_game_id] = $evidence;
+                    $options['prediction_participants'][$game->nhl_game_id] = $evidence['participants'];
+                } catch (\DomainException) {
+                    // Keep the game selected: missing lineup evidence must be visibly blocked by its job.
+                }
+                $futureNeeded[] = $game->nhl_game_id;
+            }
+        }
+        $query = DB::table('nhl_games')->whereIn('game_type', $explicitGames === null ? [2] : [1, 2, 3])
             ->whereIn('season_id', $run->season_ids)
+            ->when($explicitGames !== null, fn ($query) => $query->whereIn('nhl_game_id', $explicitGames),
+                fn ($query) => $query->where(fn ($state) => $state->whereIn('game_state', ['OFF', 'FINAL'])
+                    ->when((bool) data_get($options, 'only_missing', false), fn ($current) => $current->orWhereDate('game_date', $today))))
+            ->when($futureReady !== [], fn ($query) => $query->whereNotIn('nhl_game_id', $futureReady))
             ->when($run->start_date !== null, fn ($query) => $query->whereDate('game_date', '>=', $run->start_date))
             ->when($run->end_date !== null, fn ($query) => $query->whereDate('game_date', '<=', $run->end_date));
 
         if ((bool) data_get($run->options, 'only_missing', false)) {
             $contextVersion = (string) data_get($run->options, 'context_version', NhlPregameContextBuilder::VERSION);
             $modelRunId = $run->model_run_id;
-            $query->where(function ($missing) use ($contextVersion, $modelRunId): void {
+            $query->where(function ($missing) use ($contextVersion, $modelRunId, $futureNeeded): void {
                 $missing->where(function ($teamMissing) use ($contextVersion, $modelRunId): void {
                     foreach (['home', 'away'] as $index => $side) {
                         $method = $index === 0 ? 'whereNotExists' : 'orWhereNotExists';
@@ -434,6 +477,9 @@ class NhlPregameContextOrchestrator
                                 });
                         });
                 });
+                if ($futureNeeded !== []) {
+                    $missing->orWhereIn('nhl_games.nhl_game_id', $futureNeeded);
+                }
                 $missing->orWhereExists(function ($work) use ($contextVersion, $modelRunId): void {
                     $work->selectRaw('1')->from('nhl_pregame_context_run_games as unfinished')
                         ->join('nhl_team_game_pregame_contexts as partial_context', function ($join): void {
@@ -453,7 +499,7 @@ class NhlPregameContextOrchestrator
             ->orderBy('nhl_game_id')
             ->get(['nhl_game_id', 'game_date']);
 
-        DB::transaction(function () use ($run, $games): void {
+        DB::transaction(function () use ($run, $games, $options): void {
             $fresh = NhlPregameContextRun::query()->lock(DB::getDriverName() === 'pgsql' ? 'for no key update' : true)->findOrFail($run->id);
             if ($fresh->status !== NhlPregameContextRun::STATUS_QUEUED) {
                 return;
@@ -499,7 +545,7 @@ class NhlPregameContextOrchestrator
 
             $fresh->update([
                 'status' => $rows === [] ? NhlPregameContextRun::STATUS_COMPLETED : NhlPregameContextRun::STATUS_RUNNING,
-                'options' => array_merge($fresh->options ?? [], [
+                'options' => array_merge($fresh->options ?? [], $options, [
                     'up_to_date' => $rows === [] && (bool) data_get($fresh->options, 'only_missing', false),
                 ]),
                 'total_games' => count($rows),

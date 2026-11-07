@@ -399,15 +399,31 @@ class NhlPregameContextBuilder
     }
 
     /** @return array<int,array{game:object|null,participants:Collection,players:array<int,array{history:Collection,exposure:Collection,attempts:Collection}>}> */
-    private function loadDayPlayerInputs(array $gameIds, ?array $selectedPlayerIds = null): array
+    private function loadDayPlayerInputs(array $gameIds, ?array $selectedPlayerIds = null, ?CarbonInterface $cutoff = null, ?Collection $anticipated = null): array
     {
         $games = DB::table('nhl_games')->whereIn('nhl_game_id', $gameIds)->get()->keyBy('nhl_game_id');
-        $participantsByGame = DB::table('nhl_game_summaries')
-            ->whereIn('nhl_game_id', $gameIds)
-            ->when($selectedPlayerIds !== null, fn ($query) => $query->whereIn('nhl_player_id', $selectedPlayerIds))
-            ->whereIn('nhl_team_id', $games->flatMap(fn (object $game): array => [(int) $game->home_team_id, (int) $game->away_team_id])->unique()->values())
-            ->orderBy('nhl_game_id')->orderBy('nhl_team_id')->get(['nhl_game_id', 'nhl_player_id', 'nhl_team_id'])
-            ->groupBy('nhl_game_id');
+        if ($cutoff !== null) {
+            foreach ($games as $game) {
+                $game->start_time_utc = $cutoff->format('Y-m-d H:i:s');
+            }
+        }
+        if ($anticipated !== null) {
+            $participantsByGame = $anticipated
+                ->filter(fn (object $row): bool => $selectedPlayerIds === null || in_array((int) $row->nhl_player_id, $selectedPlayerIds, true))
+                ->map(function (object $row) use ($gameIds): object {
+                    $copy = clone $row;
+                    $copy->nhl_game_id = $gameIds[0];
+
+                    return $copy;
+                })->groupBy('nhl_game_id');
+        } else {
+            $participantsByGame = DB::table('nhl_game_summaries')
+                ->whereIn('nhl_game_id', $gameIds)
+                ->when($selectedPlayerIds !== null, fn ($query) => $query->whereIn('nhl_player_id', $selectedPlayerIds))
+                ->whereIn('nhl_team_id', $games->flatMap(fn (object $game): array => [(int) $game->home_team_id, (int) $game->away_team_id])->unique()->values())
+                ->orderBy('nhl_game_id')->orderBy('nhl_team_id')->get(['nhl_game_id', 'nhl_player_id', 'nhl_team_id'])
+                ->groupBy('nhl_game_id');
+        }
         $playerIds = $participantsByGame->flatten(1)->pluck('nhl_player_id')->map(fn (mixed $id): int => (int) $id)->unique()->values();
         if ($playerIds->isEmpty()) {
             return $games->mapWithKeys(fn (object $game, int|string $id): array => [$id => [
@@ -483,11 +499,26 @@ class NhlPregameContextBuilder
         return [$histories, $exposures, $attempts];
     }
 
+    /** Apply a prediction run's frozen as-of cutoff without changing the stored schedule. */
+    public function contextGame(NhlPregameContextRun $run, object $game): object
+    {
+        $copy = clone $game;
+        $cutoff = data_get($run->options, 'prediction_evidence.'.$game->nhl_game_id.'.cutoff_at');
+        if (is_string($cutoff)) {
+            $copy->start_time_utc = $cutoff;
+        }
+
+        return $copy;
+    }
+
     /** Rebuild one game atomically so corrected facts replace the prior model snapshot. */
     private function buildSnapshot(NhlPregameContextRun $run, int $gameId, ?Closure $isStopped, ?array $dayInputs = null, ?array &$metricWriteBuffer = null): array
     {
         $this->assertRunNotStopped($isStopped);
         $game = $dayInputs['game'] ?? DB::table('nhl_games')->where('nhl_game_id', $gameId)->first();
+        if ($game !== null) {
+            $game = $this->contextGame($run, $game);
+        }
         if ($game === null || $game->start_time_utc === null || $game->home_team_id === null || $game->away_team_id === null) {
             throw new NhlPregameContextDataUnavailable('The game is missing schedule context.');
         }
@@ -495,11 +526,31 @@ class NhlPregameContextBuilder
         $cutoff = now()->parse($game->start_time_utc);
         $training = array_map('strval', data_get($run->options, 'train_season_ids', []));
         $modelRunId = $run->model_run_id;
-        $participants = $dayInputs['participants'] ?? DB::table('nhl_game_summaries')
-            ->where('nhl_game_id', $gameId)
-            ->whereIn('nhl_team_id', [$game->away_team_id, $game->home_team_id])
-            ->orderBy('nhl_team_id')
-            ->get(['nhl_player_id', 'nhl_team_id']);
+        $anticipated = data_get($run->options, 'prediction_participants.'.$gameId);
+        if ($anticipated === null && ! in_array($game->game_state, ['OFF', 'FINAL'], true)) {
+            try {
+                $anticipated = app(NhlCustomGamePredictionInputs::class)->anticipatedParticipants($game);
+            } catch (\DomainException $error) {
+                throw new NhlPregameContextDataUnavailable($error->getMessage());
+            }
+        }
+        if (is_array($anticipated)) {
+            $participants = collect();
+            foreach ($anticipated['players'] as $id => $player) {
+                $participants->push((object) ['nhl_player_id' => (int) $id, 'nhl_team_id' => (int) $player['team'],
+                    'participant_source' => $anticipated['lineup_sources'][$player['team']] ?? 'projected_roster']);
+            }
+            foreach ($anticipated['starters'] ?? [] as $team => $id) {
+                if ($id !== null && ! $participants->contains(fn ($row): bool => $row->nhl_player_id === (int) $id)) {
+                    $participants->push((object) ['nhl_player_id' => (int) $id, 'nhl_team_id' => (int) $team,
+                        'participant_source' => 'anticipated_goalie']);
+                }
+            }
+        } else {
+            $participants = $dayInputs['participants'] ?? DB::table('nhl_game_summaries')
+                ->where('nhl_game_id', $gameId)->whereIn('nhl_team_id', [$game->away_team_id, $game->home_team_id])
+                ->orderBy('nhl_team_id')->get(['nhl_player_id', 'nhl_team_id']);
+        }
 
         if ($participants->isEmpty()) {
             throw new NhlPregameContextDataUnavailable('The game has no completed player summaries.');
@@ -541,6 +592,8 @@ class NhlPregameContextBuilder
                 $playerInputs = $this->loadDayPlayerInputs(
                     [$gameId],
                     $participants->values()->slice($participantIndex, 8)->pluck('nhl_player_id')->all(),
+                    $cutoff,
+                    $participants,
                 )[$gameId]['players'] ?? [];
             }
             $teamId = (int) $participant->nhl_team_id;
@@ -574,7 +627,7 @@ class NhlPregameContextBuilder
                 'game_date' => $game->game_date,
                 'source_cutoff_at' => $cutoff,
                 'venue' => $venue,
-                'participant_source' => 'completed_game_summary',
+                'participant_source' => $participant->participant_source ?? 'completed_game_summary',
                 'context_version' => self::VERSION,
                 'metrics' => json_encode($metrics, JSON_THROW_ON_ERROR),
                 'ranks' => json_encode([], JSON_THROW_ON_ERROR),
@@ -641,6 +694,10 @@ class NhlPregameContextBuilder
         ?array &$metricWriteBuffer,
     ): int {
         [$teamMetrics, $opponent, $schedule] = $this->teamResultEvidence($game, $cutoff, $side, $training, $isStopped);
+        $predictionEvidence = data_get($run->options, 'prediction_evidence.'.$game->nhl_game_id);
+        if (is_array($predictionEvidence)) {
+            $schedule['prediction_evidence'] = array_intersect_key($predictionEvidence, array_flip(['fingerprint', 'cutoff_at']));
+        }
 
         DB::table('nhl_team_game_pregame_contexts')->upsert([[
             'run_id' => $run->id,

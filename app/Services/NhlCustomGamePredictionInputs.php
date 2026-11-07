@@ -40,6 +40,10 @@ class NhlCustomGamePredictionInputs
 
     private string $bucketExpression = '';
 
+    private array $forecastWork = [];
+
+    private ?array $forecastPlayerIds = null;
+
     /** Resolve one model universe and freeze its Train bucket mapping before reading Test. */
     public function prepare(int $modelId, ?string $predictionSeason = null): array
     {
@@ -157,6 +161,165 @@ class NhlCustomGamePredictionInputs
                 }
             }
         }
+    }
+
+    /** Freeze an operational date once; each continuation performs only a bounded page. */
+    public function beginQueuedForecast(int $modelId, string $date, array $lineups): void
+    {
+        $targets = DB::table('nhl_games')->where('game_date', $date)->orderBy('start_time_utc')->orderBy('nhl_game_id')->get();
+        if ($targets->isEmpty() || $targets->pluck('season_id')->unique()->count() !== 1) {
+            throw new DomainException('A prediction date must identify games in one season.');
+        }
+        $this->prepare($modelId, (string) $targets->first()->season_id);
+        $this->train = $this->seasons = $this->recent = $this->league = [];
+        $this->teamTrain = $this->teamSeason = $this->teamRecent = [];
+        $this->trainOpponents = $this->pastAllowances = $this->allowanceSources = [];
+        $this->forecastPlayerIds = [];
+        $contexts = [];
+        $errors = [];
+        foreach ($targets as $target) {
+            $record = $lineups[$target->nhl_game_id] ?? ['players' => []];
+            if (($record['players'] ?? []) === []) {
+                $errors[$target->nhl_game_id] = 'No skater lineup is available.';
+                continue;
+            }
+            $contexts[$target->nhl_game_id] = $this->storedPredictionContexts($target, $record);
+            $parent = $contexts[$target->nhl_game_id]['teams'][$target->nhl_game_id][$target->away_team_id];
+            $target->prediction_cutoff_at = (string) $parent->source_cutoff_at;
+            foreach (array_keys($record['players']) as $id) {
+                $this->forecastPlayerIds[$id] = true;
+            }
+        }
+        $history = DB::table('nhl_games')->where('game_type', 2)->whereIn('game_state', ['OFF', 'FINAL'])
+            ->where('season_id', '>=', min($this->metadata['train_seasons']))
+            ->where('season_id', '<=', (string) $targets->first()->season_id)
+            ->where('game_date', '<', $date)->whereNotNull('start_time_utc')
+            ->orderBy('start_time_utc')->orderBy('nhl_game_id')->get()->all();
+        $defense = new NhlCustomGameDefense();
+        $defense->beginFit();
+        $this->forecastWork = ['phase' => 'collect', 'cursor' => 0, 'defense' => $defense,
+            'history' => $history, 'training' => array_values(array_filter($history,
+                fn (object $game): bool => in_array((string) $game->season_id, $this->metadata['train_seasons'], true))),
+            'targets' => $targets->all(), 'lineups' => $lineups, 'contexts' => $contexts,
+            'inputs' => [], 'errors' => $errors];
+        $runIds = [];
+        foreach ($contexts as $context) {
+            foreach ($context['teams'] as $teams) {
+                foreach ($teams as $team) {
+                    $runIds[(int) $team->run_id] = true;
+                }
+            }
+        }
+        $this->metadata['context_run_ids'] = array_keys($runIds);
+        $this->metadata['context_run_id'] = count($runIds) === 1 ? array_key_first($runIds) : null;
+        $this->metadata['selected_games'] = $targets->count();
+        $this->metadata['as_of'] = now('UTC')->toIso8601String();
+    }
+
+    /** Advance Train collection, fitting, history or one target without a season-sized job. */
+    public function advanceQueuedForecast(): array
+    {
+        if ($this->forecastWork === []) {
+            throw new DomainException('Initialize queued prediction inputs before advancing them.');
+        }
+        $work = &$this->forecastWork;
+        $defense = $work['defense'];
+        $size = max(1, (int) config('nhl-custom-prediction.batch_games', 25));
+        if ($work['phase'] === 'collect') {
+            $page = array_slice($work['training'], $work['cursor'], $size);
+            $defense->collectFit($this->trainingDefenseRecords($page));
+            $work['cursor'] += count($page);
+            if ($work['cursor'] >= count($work['training'])) {
+                $work['phase'] = 'fit';
+                $work['cursor'] = 0;
+                unset($work['training']);
+            }
+        } elseif ($work['phase'] === 'fit') {
+            if ($defense->finishFitPage(max(1, (int) config('nhl-custom-prediction.fit_bucket_batch', 8)))) {
+                $this->metadata['defense_fit'] = $defense->snapshot();
+                $work['phase'] = 'history';
+            }
+        } elseif ($work['phase'] === 'history') {
+            $page = array_slice($work['history'], $work['cursor'], $size);
+            if ($page !== []) {
+                $records = $this->records($page);
+                foreach ($page as $game) {
+                    $this->pastAllowances[$game->nhl_game_id] = $this->allowances($game, $defense);
+                    $this->advance($game, $records[$game->nhl_game_id], in_array((string) $game->season_id, $this->metadata['train_seasons'], true));
+                }
+                $this->pruneForecastReferences();
+            }
+            $work['cursor'] += count($page);
+            if ($work['cursor'] >= count($work['history'])) {
+                $work['phase'] = 'targets';
+                $work['cursor'] = 0;
+                unset($work['history']);
+            }
+        } elseif ($work['phase'] === 'targets') {
+            $target = $work['targets'][$work['cursor']] ?? null;
+            if ($target !== null && ! isset($work['errors'][$target->nhl_game_id])) {
+                try {
+                    // Later games may use earlier completed games on this date; a target never uses itself.
+                    $reader = clone $this;
+                    $earlier = DB::table('nhl_games')->whereDate('game_date', $target->game_date)
+                        ->where('game_type', 2)->whereIn('game_state', ['OFF', 'FINAL'])
+                        ->where('nhl_game_id', '<>', $target->nhl_game_id)
+                        ->where('start_time_utc', '<', $target->prediction_cutoff_at)
+                        ->orderBy('start_time_utc')->orderBy('nhl_game_id')->get()->all();
+                    if ($earlier !== []) {
+                        $records = $reader->records($earlier);
+                        foreach ($earlier as $game) {
+                            $reader->pastAllowances[$game->nhl_game_id] = $reader->allowances($game, $defense);
+                            $reader->advance($game, $records[$game->nhl_game_id], false);
+                        }
+                    }
+                    $allowances = $reader->allowances($target, $defense);
+                    $work['inputs'][$target->nhl_game_id] = $reader->input($target, $work['lineups'][$target->nhl_game_id],
+                        $work['contexts'][$target->nhl_game_id], $allowances, $defense, true);
+                } catch (DomainException $error) {
+                    $work['errors'][$target->nhl_game_id] = $error->getMessage();
+                }
+            }
+            $work['cursor']++;
+            if ($work['cursor'] >= count($work['targets'])) {
+                $work['phase'] = 'complete';
+            }
+        }
+
+        return ['complete' => $work['phase'] === 'complete', 'phase' => $work['phase'], 'cursor' => $work['cursor'],
+            'inputs' => $work['inputs'], 'errors' => $work['errors'], 'metadata' => $this->metadata];
+    }
+
+    /** Read saved model-owned context and same-game player links; never calculate it in the request. */
+    private function storedPredictionContexts(object $game, array $record): array
+    {
+        $teams = DB::table('nhl_team_game_pregame_contexts')->where('model_run_id', $this->metadata['model_id'])
+            ->where('nhl_game_id', $game->nhl_game_id)->where('context_version', NhlPregameContextBuilder::VERSION)
+            ->get()->keyBy('nhl_team_id')->all();
+        $players = DB::table('nhl_player_game_pregame_contexts')->where('model_run_id', $this->metadata['model_id'])
+            ->where('nhl_game_id', $game->nhl_game_id)->where('context_version', NhlPregameContextBuilder::VERSION)
+            ->whereIn('nhl_player_id', array_keys($record['players']))->get()->keyBy('nhl_player_id')->all();
+        if (count($teams) !== 2 || count($players) !== count($record['players'])) {
+            throw new DomainException('Saved pregame context is incomplete for the selected lineup.');
+        }
+        foreach ($teams as $team) {
+            $team->evidence_source = 'saved_model_snapshot';
+        }
+
+        return ['teams' => [$game->nhl_game_id => $teams], 'players' => [$game->nhl_game_id => $players]];
+    }
+
+    /** Keep only allowance references still used by the selected players' rolling windows. */
+    private function pruneForecastReferences(): void
+    {
+        $ids = [];
+        foreach ($this->recent as $appearances) {
+            foreach ($appearances as $appearance) {
+                $ids[$appearance['game_id']] = true;
+            }
+        }
+        $this->pastAllowances = array_intersect_key($this->pastAllowances, $ids);
+        $this->allowanceSources = array_intersect_key($this->allowanceSources, $ids);
     }
 
     /** Resolve existing verified anticipated rosters, then the established projected-roster fallback. */
@@ -543,7 +706,7 @@ class NhlCustomGamePredictionInputs
             $side = ['id' => (int) $team, 'abbrev' => $venue === 'away' ? $game->away_team_abbrev : $game->home_team_abbrev,
                 'context_id' => $context->id === null ? null : (int) $context->id, 'starting_goalie_id' => $record['starters'][$team] ?? null,
                 'lineup_source' => $record['lineup_sources'][$team] ?? 'historical_participants', 'schedule' => $schedule,
-                'context_source' => $prospective ? 'transient_prior_results' : 'saved_model_snapshot',
+                'context_source' => $context->evidence_source ?? ($prospective ? 'transient_prior_results' : 'saved_model_snapshot'),
                 'team_metrics' => json_decode($context->metrics, true, 512, JSON_THROW_ON_ERROR),
                 'train_opportunity_share' => $teamTrain['own_opps'] / $shareDenominator,
                 'train_opportunity_share_source' => $shareSource,
@@ -796,11 +959,19 @@ class NhlCustomGamePredictionInputs
     private function advance(object $game, array $record, bool $isTrain): void
     {
         foreach ($record['players'] as $id => $player) {
+            $keepPersonal = $this->forecastPlayerIds === null || isset($this->forecastPlayerIds[$id]);
             $opponent = $player['team'] === (int) $game->home_team_id ? (int) $game->away_team_id : (int) $game->home_team_id;
             $current = [...$player, 'game_id' => $game->nhl_game_id, 'opponent' => $opponent, 'valid' => []];
             foreach (['EV', 'PP'] as $lane) {
                 $current['valid'][$lane] = $record['source'] && $player['seconds'] !== [] && ! $player['unclassified']
                     && (($player['seconds'][$lane] ?? 0) > 0 || array_sum(array_column($player['counts'][$lane] ?? [], 'sat')) === 0);
+                if ($isTrain && $current['valid'][$lane]) {
+                    $this->league[$lane] ??= ['games' => 0, 'seconds' => 0.0, 'buckets' => []];
+                    $this->merge($this->league[$lane], $current, $lane);
+                }
+                if (! $keepPersonal) {
+                    continue;
+                }
                 $target = &$this->seasons[$game->season_id][$id][$lane];
                 $target ??= ['games' => 0, 'seconds' => 0.0, 'buckets' => [], 'missing' => false];
                 $target['missing'] = $target['missing'] || ! $current['valid'][$lane];
@@ -808,18 +979,18 @@ class NhlCustomGamePredictionInputs
                     $this->merge($target, $current, $lane);
                     if ($isTrain) {
                         $this->train[$id][$lane] ??= ['games' => 0, 'seconds' => 0.0, 'buckets' => []];
-                        $this->league[$lane] ??= ['games' => 0, 'seconds' => 0.0, 'buckets' => []];
                         $this->merge($this->train[$id][$lane], $current, $lane);
-                        $this->merge($this->league[$lane], $current, $lane);
                         $this->trainOpponents[$id][$lane][$opponent]
                             = ($this->trainOpponents[$id][$lane][$opponent] ?? 0) + ($player['seconds'][$lane] ?? 0);
                     }
                 }
                 unset($target);
             }
-            $this->recent[$id][] = $current;
-            if (count($this->recent[$id]) > 20) {
-                array_shift($this->recent[$id]);
+            if ($keepPersonal) {
+                $this->recent[$id][] = $current;
+                if (count($this->recent[$id]) > 20) {
+                    array_shift($this->recent[$id]);
+                }
             }
         }
         foreach (['home' => $game->home_team_id, 'away' => $game->away_team_id] as $venue => $team) {

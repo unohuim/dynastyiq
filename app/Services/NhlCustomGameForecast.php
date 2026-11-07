@@ -4,16 +4,20 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Exceptions\NhlGamePredictionPreparing;
+use App\Jobs\PrepareNhlGamePredictionJob;
 use App\Models\NhlModelRun;
+use Carbon\CarbonImmutable;
 use DomainException;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
-use Symfony\Component\HttpKernel\Exception\ServiceUnavailableHttpException;
 
 /** Shared default game calculation and compatibility view of the EV/PP engine. */
 class NhlCustomGameForecast
 {
+    private int $nextPreparationDelay = 15;
+
     /** Resolve the selected complete model, defaulting explicitly to SAT_V2. */
     public function model(?int $id = null, ?string $season = null): NhlModelRun
     {
@@ -34,75 +38,275 @@ class NhlCustomGameForecast
         return $model;
     }
 
-    /** Calculate one game; shared date inputs avoid repeating Train replay for every request. */
+    /** Read ready inputs or queue their shared dependency work without replaying history in HTTP. */
     public function predict(int $gameId, ?int $modelId = null, bool $storedBoxscore = false, array $rosterOverrides = []): array
     {
         $game = DB::table('nhl_games')->where('nhl_game_id', $gameId)->first();
         abort_if($game === null, 404);
         $model = $this->model($modelId, (string) $game->season_id);
-        $date = (string) $game->game_date;
-        $source = DB::table('nhl_games')->where('game_type', 2)->whereIn('game_state', ['OFF', 'FINAL'])
-            ->where('game_date', '<', $date)->selectRaw('COUNT(*) AS games, MAX(updated_at) AS changed')->first();
-        $schedule = DB::table('nhl_games')->where('game_date', $date)->orderBy('nhl_game_id')
-            ->get(['nhl_game_id', 'start_time_utc', 'home_team_id', 'away_team_id']);
-        $lineups = DB::table('nhl_current_lineups')->whereIn('nhl_game_id', $schedule->pluck('nhl_game_id'))
-            ->orderBy('nhl_game_id')->orderBy('team_id')->get(['nhl_game_id', 'team_id', 'structure_hash', 'updated_at']);
-        $goalies = DB::table('nhl_starting_goalie_observations')->whereIn('nhl_game_id', $schedule->pluck('nhl_game_id'))
-            ->orderBy('id')->get(['id', 'updated_at']);
-        $identity = ['model' => [$model->id, $model->updated_at, $model->train_season_ids],
-            'definition' => config('nhl-custom-prediction'), 'date' => $date, 'schedule' => $schedule,
-            'source' => $source, 'lineups' => $lineups, 'goalies' => $goalies, 'stored_boxscore' => $storedBoxscore,
-            'roster_overrides' => $rosterOverrides, 'override_game' => $rosterOverrides === [] ? null : $gameId];
-        $fingerprint = hash('sha256', json_encode($identity, JSON_THROW_ON_ERROR));
-        $key = 'nhl:custom-inputs:filled-v2:'.$model->id.':'.$date.':'.(int) $storedBoxscore.':'
-            .hash('sha256', json_encode([$rosterOverrides, $rosterOverrides === [] ? null : $gameId], JSON_THROW_ON_ERROR));
+        [$key, $fingerprint] = $this->preparationIdentity($game, $model, $storedBoxscore, $rosterOverrides);
         $cached = Cache::get($key);
-        $prepared = is_array($cached) && ($cached['fingerprint'] ?? null) === $fingerprint ? $cached['prepared'] : null;
-        if ($prepared === null) {
-            $lock = Cache::lock($key.':lock', 150);
-            if (! $lock->get()) {
-                throw new ServiceUnavailableHttpException(2, 'Prediction inputs are being prepared. Retry this request.');
+        $storedInput = Cache::get($key.':input:'.$gameId);
+        $hasError = is_array($cached) && isset($cached['errors'][$gameId]);
+        if (! is_array($cached) || ($cached['fingerprint'] ?? null) !== $fingerprint
+            || (! $hasError && (! is_array($storedInput) || ($storedInput['fingerprint'] ?? null) !== $fingerprint))) {
+            $error = Cache::get($key.':error');
+            if (is_array($error) && ($error['fingerprint'] ?? null) === $fingerprint) {
+                throw new DomainException($error['message']);
             }
-            try {
-                $cached = Cache::get($key);
-                $prepared = is_array($cached) && ($cached['fingerprint'] ?? null) === $fingerprint ? $cached['prepared'] : null;
-                if ($prepared === null) {
-                    $reader = app(NhlCustomGamePredictionInputs::class);
-                    $participants = [];
-                    $participantErrors = [];
-                    foreach (DB::table('nhl_games')->where('game_date', $date)->get() as $target) {
-                        try {
-                            $participants[$target->nhl_game_id] = $reader->anticipatedParticipants($target, $storedBoxscore,
-                                (int) $target->nhl_game_id === $gameId ? $rosterOverrides : []);
-                        } catch (DomainException $error) {
-                            $participantErrors[$target->nhl_game_id] = $error->getMessage();
-                            $participants[$target->nhl_game_id] = ['players' => [], 'starters' => [], 'lineup_sources' => []];
-                        }
-                    }
-                    $prepared = ['inputs' => [], 'errors' => []];
-                    foreach ($reader->forecasts((int) $model->id, $date, $participants) as $event) {
-                        if ($event['error'] === null) {
-                            $prepared['inputs'][$event['game']->nhl_game_id] = $event['input'];
-                        } else {
-                            $prepared['errors'][$event['game']->nhl_game_id] = $event['error'];
-                        }
-                    }
-                    $prepared['errors'] = array_replace($prepared['errors'], $participantErrors);
-                    $prepared['metadata'] = $reader->metadata();
-                    Cache::put($key, ['fingerprint' => $fingerprint, 'prepared' => $prepared], 300);
+            if (is_array($cached) && ($cached['fingerprint'] ?? null) === $fingerprint && ! $hasError) {
+                Cache::forget($key);
+            }
+            if (Cache::add($key.':queued', true, $this->preparationLifetime())) {
+                try {
+                    PrepareNhlGamePredictionJob::dispatch($gameId, (int) $model->id, $storedBoxscore, $rosterOverrides);
+                } catch (\Throwable $error) {
+                    Cache::forget($key.':queued');
+                    throw $error;
                 }
-            } finally {
-                $lock->release();
             }
+            throw new NhlGamePredictionPreparing($gameId);
         }
-        $input = $prepared['inputs'][$gameId] ?? null;
+        if ($hasError) {
+            throw new DomainException($cached['errors'][$gameId]);
+        }
+        $input = $storedInput['input'] ?? null;
         if ($input === null) {
-            throw new DomainException($prepared['errors'][$gameId] ?? 'The scheduled game has no prepared inputs.');
+            throw new DomainException($cached['errors'][$gameId] ?? 'The scheduled game has no prepared inputs.');
         }
-        $prediction = app(NhlCustomGamePredictionEngine::class)->predict($input);
 
         return ['game' => $game, 'model' => $model, 'input' => $input,
-            'metadata' => $prepared['metadata'], 'prediction' => $prediction];
+            'metadata' => $cached['metadata'],
+            'prediction' => app(NhlCustomGamePredictionEngine::class)->predict($input)];
+    }
+
+    /** Run one checkpoint; source changes discard pending derived state, never saved history. */
+    public function advancePreparation(int $gameId, int $modelId, bool $storedBoxscore = false, array $rosterOverrides = []): bool
+    {
+        $this->nextPreparationDelay = 15;
+        $game = DB::table('nhl_games')->where('nhl_game_id', $gameId)->first();
+        if ($game === null) {
+            throw new DomainException('The prediction game no longer exists.');
+        }
+        $model = $this->model($modelId, (string) $game->season_id);
+        [$key, $fingerprint] = $this->preparationIdentity($game, $model, $storedBoxscore, $rosterOverrides);
+        $lock = Cache::lock($key.':lock', 180);
+        if (! $lock->get()) {
+            return false;
+        }
+        try {
+            $ready = Cache::get($key);
+            if (is_array($ready) && ($ready['fingerprint'] ?? null) === $fingerprint) {
+                Cache::forget($key.':queued');
+
+                return true;
+            }
+            $work = Cache::get($key.':work');
+            if (! is_array($work) || ($work['fingerprint'] ?? null) !== $fingerprint) {
+                $work = ['fingerprint' => $fingerprint, 'phase' => 'context', 'lineups' => [], 'evidence' => [], 'errors' => []];
+                $asOf = CarbonImmutable::now('UTC');
+                $reader = app(NhlCustomGamePredictionInputs::class);
+                foreach (DB::table('nhl_games')->where('game_date', $game->game_date)->get() as $target) {
+                    try {
+                        $record = $reader->anticipatedParticipants($target, $storedBoxscore,
+                            (int) $target->nhl_game_id === $gameId ? $rosterOverrides : []);
+                        $work['lineups'][$target->nhl_game_id] = $record;
+                        $work['evidence'][$target->nhl_game_id] = $this->contextEvidence($model, $target, $record, $asOf);
+                    } catch (DomainException $error) {
+                        $work['errors'][$target->nhl_game_id] = $error->getMessage();
+                    }
+                }
+            }
+            if (isset($work['context_run_id'])) {
+                $dependency = DB::table('nhl_pregame_context_runs')->find($work['context_run_id']);
+                if ($dependency !== null && in_array($dependency->status, ['failed', 'stopped'], true)) {
+                    throw new DomainException('Pregame dependency '.$dependency->id.' '.$dependency->status.'. Resume or retry that context run before predicting.');
+                }
+                if ($dependency?->status === 'completed') {
+                    foreach (DB::table('nhl_pregame_context_run_games')->where('run_id', $dependency->id)
+                        ->whereIn('state', ['blocked', 'failed'])->get(['nhl_game_id', 'last_error']) as $blocked) {
+                        $work['errors'][$blocked->nhl_game_id] = $blocked->last_error ?? 'Pregame source evidence is unavailable.';
+                        unset($work['evidence'][$blocked->nhl_game_id], $work['lineups'][$blocked->nhl_game_id]);
+                    }
+                }
+            }
+            if ($work['phase'] === 'context') {
+                $missing = [];
+                foreach ($work['evidence'] as $id => $evidence) {
+                    if (! $this->contextReady((int) $model->id, (int) $id, $evidence)) {
+                        $missing[$id] = $evidence;
+                    }
+                }
+                if ($missing !== []) {
+                    $dependency = app(NhlPregameContextOrchestrator::class)->queuePredictionContexts($model, $missing, $work['lineups']);
+                    if ($dependency !== null) {
+                        $work['context_run_id'] = $dependency->id;
+                    }
+                } else {
+                    $reader = app(NhlCustomGamePredictionInputs::class);
+                    $reader->beginQueuedForecast((int) $model->id, (string) $game->game_date, $work['lineups']);
+                    $work['reader'] = $reader;
+                    $work['phase'] = 'inputs';
+                    $this->nextPreparationDelay = 0;
+                }
+            } else {
+                $step = $work['reader']->advanceQueuedForecast();
+                $this->nextPreparationDelay = 0;
+                $work['checkpoint'] = ['phase' => $step['phase'], 'cursor' => $step['cursor']];
+                if ($step['complete']) {
+                    [, $currentFingerprint] = $this->preparationIdentity($game, $model, $storedBoxscore, $rosterOverrides);
+                    if ($currentFingerprint !== $fingerprint) {
+                        Cache::forget($key.':work');
+
+                        return false;
+                    }
+                    $step['errors'] = array_replace($step['errors'], $work['errors']);
+                    foreach ($step['inputs'] as $id => $input) {
+                        if (! Cache::put($key.':input:'.$id, ['fingerprint' => $fingerprint, 'input' => $input], $this->preparationLifetime())) {
+                            throw new \RuntimeException('Unable to publish prepared game inputs.');
+                        }
+                    }
+                    $manifest = ['fingerprint' => $fingerprint, 'metadata' => $step['metadata'], 'errors' => $step['errors']];
+                    if (! Cache::put($key, $manifest, $this->preparationLifetime())) {
+                        throw new \RuntimeException('Unable to publish prepared prediction inputs.');
+                    }
+                    Cache::forget($key.':work');
+                    Cache::forget($key.':queued');
+                    Cache::forget($key.':error');
+
+                    return true;
+                }
+            }
+            if (! Cache::put($key.':work', $work, $this->preparationLifetime())) {
+                throw new \RuntimeException('Unable to save the prediction preparation checkpoint.');
+            }
+            Cache::put($key.':queued', true, $this->preparationLifetime());
+
+            return false;
+        } finally {
+            $lock->release();
+        }
+    }
+
+    /** Yield immediately after progress; poll pending context or another owner less frequently. */
+    public function preparationDelay(): int
+    {
+        return $this->nextPreparationDelay;
+    }
+
+    /** Record a terminal preparation failure with a bounded lifetime and visible cause. */
+    public function preparationFailed(int $gameId, int $modelId, bool $storedBoxscore, array $rosterOverrides, string $message): void
+    {
+        $game = DB::table('nhl_games')->where('nhl_game_id', $gameId)->first();
+        if ($game === null) {
+            return;
+        }
+        [$key, $fingerprint] = $this->preparationIdentity($game, $this->model($modelId, (string) $game->season_id), $storedBoxscore, $rosterOverrides);
+        Cache::put($key.':error', ['fingerprint' => $fingerprint, 'message' => mb_substr($message, 0, 1500)], 300);
+        Cache::forget($key.':queued');
+    }
+
+    /** Freeze only prior result evidence, model identity, schedule and the selected lineup. */
+    public function contextEvidence(NhlModelRun $model, object $game, ?array $record = null, ?CarbonImmutable $asOf = null): array
+    {
+        $record ??= app(NhlCustomGamePredictionInputs::class)->anticipatedParticipants($game);
+        $asOf ??= CarbonImmutable::now('UTC');
+        $cutoff = $game->start_time_utc ? CarbonImmutable::parse($game->start_time_utc, 'UTC')->min($asOf) : $asOf;
+        $source = DB::table('nhl_games')->where('game_type', 2)->whereIn('game_state', ['OFF', 'FINAL'])
+            ->where('season_id', '>=', min($model->train_season_ids))->where('season_id', '<=', $game->season_id)
+            ->where('nhl_game_id', '<>', $game->nhl_game_id)->where('start_time_utc', '<', $cutoff)
+            ->selectRaw('COUNT(*) AS games, MAX(updated_at) AS changed')->first();
+        $summaries = DB::table('nhl_game_summaries as s')->join('nhl_games as g', 'g.nhl_game_id', '=', 's.nhl_game_id')
+            ->where('g.game_type', 2)->whereIn('g.game_state', ['OFF', 'FINAL'])
+            ->where('g.season_id', '>=', min($model->train_season_ids))->where('g.season_id', '<=', $game->season_id)
+            ->where('g.nhl_game_id', '<>', $game->nhl_game_id)->where('g.start_time_utc', '<', $cutoff)
+            ->selectRaw('COUNT(*) AS summaries, MAX(s.updated_at) AS changed')->first();
+        $imports = DB::table('nhl_import_progress as p')->join('nhl_games as g', DB::raw('CAST(g.nhl_game_id AS VARCHAR)'), '=', 'p.game_id')
+            ->where('g.game_type', 2)->whereIn('g.game_state', ['OFF', 'FINAL'])->where('p.status', 'completed')
+            ->where('g.season_id', '>=', min($model->train_season_ids))->where('g.season_id', '<=', $game->season_id)
+            ->where('g.nhl_game_id', '<>', $game->nhl_game_id)->where('g.start_time_utc', '<', $cutoff)
+            ->selectRaw('COUNT(*) AS stages, MAX(p.updated_at) AS changed')->first();
+        $identity = ['model' => [$model->id, $model->updated_at, $model->train_season_ids],
+            'version' => NhlPregameContextBuilder::VERSION, 'source' => $source, 'summaries' => $summaries, 'imports' => $imports,
+            'game' => [$game->nhl_game_id, $game->game_date, $game->start_time_utc, $game->away_team_id, $game->home_team_id],
+            'participants' => $record];
+
+        return ['fingerprint' => hash('sha256', json_encode($identity, JSON_THROW_ON_ERROR)),
+            'cutoff_at' => $cutoff->format('Y-m-d H:i:s'),
+            'team_ids' => [(int) $game->away_team_id, (int) $game->home_team_id],
+            'players' => $record['players'], 'starters' => $record['starters'] ?? [], 'participants' => $record];
+    }
+
+    /** A ready context includes both teams, each selected player and committed comparisons. */
+    public function contextReady(int $modelId, int $gameId, array $evidence): bool
+    {
+        $teams = DB::table('nhl_team_game_pregame_contexts')->where('model_run_id', $modelId)
+            ->where('nhl_game_id', $gameId)->where('context_version', NhlPregameContextBuilder::VERSION)
+            ->whereIn('nhl_team_id', $evidence['team_ids'])->get(['id', 'run_id', 'nhl_team_id', 'schedule_metrics']);
+        if ($teams->count() !== 2) {
+            return false;
+        }
+        foreach ($teams as $team) {
+            if (data_get(json_decode($team->schedule_metrics, true), 'prediction_evidence.fingerprint') !== $evidence['fingerprint']
+                || ! DB::table('nhl_pregame_context_run_games')->where('run_id', $team->run_id)
+                    ->where('nhl_game_id', $gameId)->where('state', 'complete')->whereNotNull('comparisons_completed_at')->exists()) {
+                return false;
+            }
+        }
+        $players = DB::table('nhl_player_game_pregame_contexts')->where('model_run_id', $modelId)
+            ->where('nhl_game_id', $gameId)->where('context_version', NhlPregameContextBuilder::VERSION)
+            ->whereIn('team_context_id', $teams->pluck('id'))->get(['nhl_player_id', 'nhl_team_id']);
+        $keys = $players->mapWithKeys(fn (object $player): array => [$player->nhl_player_id.':'.$player->nhl_team_id => true]);
+        foreach ($evidence['players'] as $id => $player) {
+            if (! $keys->has($id.':'.$player['team'])) {
+                return false;
+            }
+        }
+
+        foreach ($evidence['starters'] ?? [] as $team => $id) {
+            if ($id !== null && ! $keys->has($id.':'.$team)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Stable date keys prevent abandoned input variants from accumulating without expiry. */
+    private function preparationIdentity(object $game, NhlModelRun $model, bool $storedBoxscore, array $rosterOverrides): array
+    {
+        $date = (string) $game->game_date;
+        $source = DB::table('nhl_games')->where('game_type', 2)->whereIn('game_state', ['OFF', 'FINAL'])
+            ->where('game_date', '<=', $date)->selectRaw('COUNT(*) AS games, MAX(updated_at) AS changed')->first();
+        $summaries = DB::table('nhl_game_summaries as s')->join('nhl_games as g', 'g.nhl_game_id', '=', 's.nhl_game_id')
+            ->where('g.game_type', 2)->whereIn('g.game_state', ['OFF', 'FINAL'])->where('g.game_date', '<=', $date)
+            ->selectRaw('COUNT(*) AS rows, MAX(s.updated_at) AS changed')->first();
+        $imports = DB::table('nhl_import_progress as p')->join('nhl_games as g', DB::raw('CAST(g.nhl_game_id AS VARCHAR)'), '=', 'p.game_id')
+            ->where('g.game_type', 2)->whereIn('g.game_state', ['OFF', 'FINAL'])->where('g.game_date', '<=', $date)
+            ->where('p.status', 'completed')->selectRaw('COUNT(*) AS stages, MAX(p.updated_at) AS changed')->first();
+        $schedule = DB::table('nhl_games')->where('game_date', $date)->orderBy('nhl_game_id')
+            ->get(['nhl_game_id', 'start_time_utc', 'home_team_id', 'away_team_id', 'away_starter_lock', 'home_starter_lock']);
+        $lineups = DB::table('nhl_current_lineups')->whereIn('nhl_game_id', $schedule->pluck('nhl_game_id'))
+            ->orderBy('nhl_game_id')->orderBy('team_id')->get(['nhl_game_id', 'team_id', 'structure_hash']);
+        $goalies = DB::table('nhl_starting_goalie_observations')->whereIn('nhl_game_id', $schedule->pluck('nhl_game_id'))
+            ->orderByRaw("CASE status WHEN 'confirmed' THEN 0 WHEN 'expected' THEN 1 ELSE 2 END")
+            ->orderByDesc('fetched_at')->orderByDesc('id')
+            ->get(['nhl_game_id', 'team_abbrev', 'nhl_player_id', 'provider', 'status'])
+            ->unique(fn (object $row): string => implode('|', [(string) $row->nhl_game_id, $row->team_abbrev,
+                (string) $row->nhl_player_id, $row->provider, $row->status]))->values();
+        $identity = ['model' => [$model->id, $model->updated_at, $model->train_season_ids], 'definition' => config('nhl-custom-prediction'),
+            'date' => $date, 'schedule' => $schedule, 'source' => $source, 'summaries' => $summaries, 'imports' => $imports,
+            'lineups' => $lineups, 'goalies' => $goalies, 'stored_boxscore' => $storedBoxscore,
+            'roster_overrides' => $rosterOverrides, 'override_game' => $rosterOverrides === [] ? null : $game->nhl_game_id];
+        $key = 'nhl:custom-inputs:queued-v3:'.$model->id.':'.$date.':'.(int) $storedBoxscore.':'
+            .hash('sha256', json_encode([$rosterOverrides, $rosterOverrides === [] ? null : $game->nhl_game_id], JSON_THROW_ON_ERROR));
+
+        return [$key, hash('sha256', json_encode($identity, JSON_THROW_ON_ERROR))];
+    }
+
+    /** Keep pending checkpoint state alive while each successful bounded page advances it. */
+    private function preparationLifetime(): int
+    {
+        return max(300, (int) config('nhl-custom-prediction.preparation_seconds', 21600));
     }
 
     /** Preserve existing team-summary and roster field names using only the new calculation. */

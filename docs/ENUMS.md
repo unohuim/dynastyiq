@@ -3044,3 +3044,21 @@ Existing `nhl_pregame_context_runs.options.trigger` additionally accepts
 scheduled meaning. Both use `only_missing=true`. `options.up_to_date=true`
 identifies a completed empty missing-work selection. Updates keep the existing
 `backfill` action and run statuses; no new schema or action enum is introduced.
+
+
+## Operational prediction preparation
+
+- `nhl-custom-prediction.input_pipeline_version`: `saved_pregame_checkpointed_v1`
+  identifies saved-context preparation with bounded cache checkpoints; the scoring
+  algorithm remains `custom_ev_pp_v2`.
+- `nhl_pregame_context_runs.options.trigger`: `prediction` identifies an explicit
+  prediction dependency. Existing `manual_update` and `auto_sync` keep their meaning.
+- Prediction run options `game_ids`, `prediction_evidence` and
+  `prediction_participants` scope selected games and freeze source fingerprints,
+  cutoffs and anticipated identities. They use existing options storage.
+- Additional anticipated `participant_source` values are `anticipated_lineup`,
+  `projected_roster`, `last_known_lineup`, `provided_roster`, `historical_participants` and
+  `anticipated_goalie`; completed imports retain `completed_game_summary`.
+- HTTP prediction `status: preparing` is a transient HTTP 202 response with
+  `prediction_available: false` and `Retry-After: 15`, not a database run status.
+  Pending manual game work retains the existing `queued` state.

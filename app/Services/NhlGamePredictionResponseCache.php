@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Exceptions\NhlGamePredictionPreparing;
 use App\Jobs\RefreshNhlGamePredictionJob;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -34,7 +35,10 @@ final class NhlGamePredictionResponseCache
 
         $lock = Cache::lock($this->buildLockKey($gameId), self::BUILD_LOCK_SECONDS);
         if (! $lock->get()) {
-            throw new ServiceUnavailableHttpException(2, 'Prediction is being rebuilt. Retry this request.');
+            if (! $this->queue($gameId, $input, $fingerprint)) {
+                throw new ServiceUnavailableHttpException(15, 'Unable to queue the pending prediction.');
+            }
+            throw new NhlGamePredictionPreparing($gameId);
         }
         try {
             if ($runId !== null) {
@@ -50,9 +54,19 @@ final class NhlGamePredictionResponseCache
                 && (! $forceRefresh || ($current['build_id'] ?? null) !== ($cached['build_id'] ?? null))) {
                 return $this->annotate($current['payload'], 'fresh');
             }
-            $payload = $build();
+            try {
+                $payload = $build();
+            } catch (NhlGamePredictionPreparing $pending) {
+                if (! $this->queue($gameId, $input, $fingerprint)) {
+                    throw new ServiceUnavailableHttpException(15, 'Unable to queue the pending prediction.');
+                }
+                throw $pending;
+            }
             if ($fingerprint !== $this->fingerprint($gameId, $input)) {
-                throw new ServiceUnavailableHttpException(2, 'Prediction inputs changed during the build. Retry this request.');
+                if (! $this->queue($gameId, $input, $fingerprint)) {
+                    throw new ServiceUnavailableHttpException(15, 'Unable to queue the changed-input prediction.');
+                }
+                throw new NhlGamePredictionPreparing($gameId);
             }
             $payload = $this->store($gameId, $input, $key, $fingerprint, $evidence, $payload, $runId);
 
@@ -65,40 +79,52 @@ final class NhlGamePredictionResponseCache
     /** @param array<string,mixed> $input */
     public function rebuild(int $gameId, array $input, string $fingerprint, NhlGamePredictionPayload $payload): void
     {
+        $pending = false;
         try {
-            if ($fingerprint !== $this->fingerprint($gameId, $input)) {
-                return;
-            }
+            // A waiting prediction follows current source evidence instead of silently abandoning it.
+            $fingerprint = $this->fingerprint($gameId, $input);
             $lock = Cache::lock($this->buildLockKey($gameId), self::BUILD_LOCK_SECONDS);
             if (! $lock->get()) {
-                return;
+                $pending = true;
+                throw new NhlGamePredictionPreparing($gameId);
             }
             try {
-                if ($fingerprint !== $this->fingerprint($gameId, $input)
-                    || $this->matches(Cache::get($this->key($gameId, $input)), $fingerprint, self::FRESH_SECONDS)) {
+                if ($this->matches(Cache::get($this->key($gameId, $input)), $fingerprint, self::FRESH_SECONDS)) {
                     return;
                 }
                 $evidence = $this->evidence($gameId, $input);
-                if ($fingerprint !== hash('sha256', json_encode($evidence, JSON_THROW_ON_ERROR))) {
-                    return;
-                }
                 $built = $payload->build($gameId, $input);
-                if ($fingerprint === $this->fingerprint($gameId, $input)) {
-                    $this->store($gameId, $input, $this->key($gameId, $input), $fingerprint, $evidence, $built);
+                if ($fingerprint !== $this->fingerprint($gameId, $input)) {
+                    throw new NhlGamePredictionPreparing($gameId);
                 }
+                $this->store($gameId, $input, $this->key($gameId, $input), $fingerprint, $evidence, $built);
             } finally {
                 $lock->release();
             }
+        } catch (NhlGamePredictionPreparing $waiting) {
+            $pending = true;
+            Cache::put($this->queuedKey($gameId, $input, $fingerprint), true, 21600);
+            throw $waiting;
         } finally {
-            Cache::forget($this->queuedKey($gameId, $input, $fingerprint));
+            if (! $pending) {
+                Cache::forget($this->queuedKey($gameId, $input, $fingerprint));
+            }
         }
+    }
+
+    /** Release admission after a terminal worker failure so a later request can retry.
+     * @param array<string,mixed> $input
+     */
+    public function refreshFailed(int $gameId, array $input): void
+    {
+        Cache::forget($this->key($gameId, $input).':queued');
     }
 
     /** @param array<string,mixed> $input */
     private function queue(int $gameId, array $input, string $fingerprint): bool
     {
         $queued = $this->queuedKey($gameId, $input, $fingerprint);
-        if (! Cache::add($queued, true, self::STALE_SECONDS)) {
+        if (! Cache::add($queued, true, 21600)) {
             return true;
         }
         try {
@@ -145,13 +171,13 @@ final class NhlGamePredictionResponseCache
     {
         ksort($input);
 
-        return 'nhl:game-prediction:custom-filled-inputs-v11:' . $gameId . ':' . hash('sha256', json_encode($input, JSON_THROW_ON_ERROR));
+        return 'nhl:game-prediction:pregame-dependencies-v12:' . $gameId . ':' . hash('sha256', json_encode($input, JSON_THROW_ON_ERROR));
     }
 
     /** @param array<string,mixed> $input */
     private function queuedKey(int $gameId, array $input, string $fingerprint): string
     {
-        return $this->key($gameId, $input) . ':queued:' . $fingerprint;
+        return $this->key($gameId, $input) . ':queued';
     }
 
     /** Publish only after the durable revision is saved. Cache hits never append history.

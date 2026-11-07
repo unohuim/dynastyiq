@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace App\Console\Commands;
 
+use App\Exceptions\NhlGamePredictionPreparing;
 use App\Services\NhlCustomGamePredictionReplay;
-use App\Services\NhlCustomGamePredictionInputs;
-use App\Services\NhlCustomGamePredictionEngine;
+use App\Services\NhlGamePredictionPayload;
+use App\Services\NhlGamePredictionResponseCache;
 use Carbon\CarbonImmutable;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\DB;
 use Throwable;
 
 /** Manually replay a model's Test season through the isolated custom EV/PP engine. */
@@ -25,7 +27,7 @@ class ReplayNhlCustomGamePredictionsCommand extends Command
 
     protected $description = 'Replay custom EV/PP predictions without using legacy engines or changing their records';
 
-    /** Default execution only reads sources; writes require the explicit --save option. */
+    /** Test replay remains read-only unless saved; date forecasts use the shared operational preparation path. */
     public function handle(NhlCustomGamePredictionReplay $replay): int
     {
         try {
@@ -35,7 +37,7 @@ class ReplayNhlCustomGamePredictionsCommand extends Command
             }
             if ($this->option('date') !== null) {
                 if ($this->option('from') || $this->option('to') || $this->option('save') || $this->option('compare-schedule')) {
-                    throw new \InvalidArgumentException('--date is a read-only prediction mode; do not combine it with replay range, save or schedule comparison options.');
+                    throw new \InvalidArgumentException('--date is a requested-date prediction mode; do not combine it with replay range, save or schedule comparison options.');
                 }
 
                 return $this->forecastDate($model, $this->dateOption('date'));
@@ -89,24 +91,31 @@ class ReplayNhlCustomGamePredictionsCommand extends Command
     /** Calculate requested-date forecasts without requiring observed target results. */
     private function forecastDate(int $model, string $date): int
     {
-        $inputs = app(NhlCustomGamePredictionInputs::class);
-        $engine = app(NhlCustomGamePredictionEngine::class);
         $rows = [];
-        foreach ($inputs->forecasts($model, $date, progress: $this->option('json') ? null : fn (string $message) => $this->line($message)) as $event) {
-            $game = $event['game'];
+        $cache = app(NhlGamePredictionResponseCache::class);
+        $builder = app(NhlGamePredictionPayload::class);
+        foreach (DB::table('nhl_games')->where('game_date', $date)->orderBy('nhl_game_id')->get() as $game) {
             $row = ['game_id' => (int) $game->nhl_game_id, 'away' => $game->away_team_abbrev, 'home' => $game->home_team_abbrev,
-                'error' => $event['error'], 'prediction' => null];
-            if ($row['error'] === null) {
-                try {
-                    $row['prediction'] = $engine->predict($event['input']);
-                } catch (\DomainException $exception) {
-                    $row['error'] = $exception->getMessage();
-                }
+                'error' => null, 'prediction' => null, 'status' => 'ready'];
+            try {
+                $request = ['nhl_game_id' => (int) $game->nhl_game_id, 'sat_model_run_id' => $model];
+                $payload = $cache->respond((int) $game->nhl_game_id, $request,
+                    fn (): array => $builder->build((int) $game->nhl_game_id, $request));
+                $prediction = $payload['prediction'];
+                $row['prediction'] = [...$prediction, 'recommendation' => data_get($prediction, 'winner.team_abbrev') ?? 'OT',
+                    'teams' => ['away' => ['goals' => $prediction['predicted_score']['away']],
+                        'home' => ['goals' => $prediction['predicted_score']['home']]]];
+            } catch (NhlGamePredictionPreparing $pending) {
+                $row['status'] = 'preparing';
+                $row['error'] = $pending->getMessage();
+            } catch (\DomainException $error) {
+                $row['status'] = 'unavailable';
+                $row['error'] = $error->getMessage();
             }
             $rows[] = $row;
         }
         if ($this->option('json')) {
-            $this->line(json_encode(['model' => $inputs->metadata(), 'date' => $date, 'games' => $rows], JSON_PRETTY_PRINT | JSON_THROW_ON_ERROR));
+            $this->line(json_encode(['model' => ['model_id' => $model], 'date' => $date, 'games' => $rows], JSON_PRETTY_PRINT | JSON_THROW_ON_ERROR));
         } else {
             $this->table(['Game', 'Away goals', 'Home goals', 'Pick', 'Win probability', 'Unavailable reason'], array_map(function (array $row): array {
                 $p = $row['prediction'];
@@ -117,7 +126,7 @@ class ReplayNhlCustomGamePredictionsCommand extends Command
             }, $rows));
         }
 
-        return count(array_filter($rows, fn (array $row): bool => $row['prediction'] !== null)) > 0 ? self::SUCCESS : self::FAILURE;
+        return count(array_filter($rows, fn (array $row): bool => $row['prediction'] !== null || $row['status'] === 'preparing')) > 0 ? self::SUCCESS : self::FAILURE;
     }
 
     /** Require an exact calendar date rather than accepting Carbon's relative-date syntax. */

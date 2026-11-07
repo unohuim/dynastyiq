@@ -17,11 +17,38 @@ class NhlCustomGameDefense
 
     private array $defensiveMinutes = [];
 
-    /** Fit frozen multiplicative team strengths from Train team clocks and retained attempts. */
+    private array $fitSeconds = [];
+
+    private array $fitScored = [];
+
+    private array $fitAllowed = [];
+
+    private ?array $fitKeys = null;
+
+    private int $fitCursor = 0;
+
+    /** Fit the same Train equation synchronously for explicit standalone replay callers. */
     public function fit(iterable $records): void
     {
+        $this->beginFit();
+        $this->collectFit($records);
+        while (! $this->finishFitPage(8)) {
+            // Each bucket converges independently using exactly the same equation.
+        }
+    }
+
+    /** Reset the serializable Train-fit accumulator before its first bounded page. */
+    public function beginFit(): void
+    {
         $this->rates = $this->offense = $this->defense = $this->defensiveMinutes = [];
-        $seconds = $scored = $allowed = [];
+        $this->fitSeconds = $this->fitScored = $this->fitAllowed = [];
+        $this->fitKeys = null;
+        $this->fitCursor = 0;
+    }
+
+    /** Collect a bounded raw-result page without fitting or retaining its source rows. */
+    public function collectFit(iterable $records): void
+    {
         foreach ($records as $record) {
             if (! $record['valid']) {
                 continue;
@@ -33,62 +60,78 @@ class NhlCustomGameDefense
                 }
                 $team = $record['team'];
                 $opponent = $record['opponent'];
-                $seconds[$lane][$team][$opponent] = ($seconds[$lane][$team][$opponent] ?? 0) + $minutes;
+                $this->fitSeconds[$lane][$team][$opponent] = ($this->fitSeconds[$lane][$team][$opponent] ?? 0) + $minutes;
                 $this->defensiveMinutes[$lane][$opponent] = ($this->defensiveMinutes[$lane][$opponent] ?? 0) + $minutes;
                 foreach ($record['counts'][$lane] ?? [] as $key => $values) {
-                    $scored[$lane][$team][$key] = ($scored[$lane][$team][$key] ?? 0) + $values['sat'];
-                    $allowed[$lane][$opponent][$key] = ($allowed[$lane][$opponent][$key] ?? 0) + $values['sat'];
+                    $this->fitScored[$lane][$team][$key] = ($this->fitScored[$lane][$team][$key] ?? 0) + $values['sat'];
+                    $this->fitAllowed[$lane][$opponent][$key] = ($this->fitAllowed[$lane][$opponent][$key] ?? 0) + $values['sat'];
+                }
+            }
+        }
+    }
+
+    /** Fit at most the requested number of complete buckets and retain a retryable cursor. */
+    public function finishFitPage(int $limit): bool
+    {
+        if ($this->fitKeys === null) {
+            $this->fitKeys = [];
+            foreach (['EV', 'PP'] as $lane) {
+                $minutes = array_sum(array_map('array_sum', $this->fitSeconds[$lane] ?? []));
+                if ($minutes <= 0) {
+                    throw new DomainException('Train defensive clocks are unavailable for '.$lane.'.');
+                }
+                $totals = [];
+                foreach ($this->fitScored[$lane] ?? [] as $buckets) {
+                    foreach ($buckets as $key => $count) {
+                        $totals[$key] = ($totals[$key] ?? 0) + $count;
+                    }
+                }
+                foreach ($totals as $key => $count) {
+                    $this->fitKeys[] = compact('lane', 'key', 'count', 'minutes');
                 }
             }
         }
         $prior = (float) config('nhl-custom-prediction.defense.prior_minutes');
-        foreach (['EV', 'PP'] as $lane) {
-            $pairs = $seconds[$lane] ?? [];
-            $minutes = array_sum(array_map('array_sum', $pairs));
-            if ($minutes <= 0) {
-                throw new DomainException('Train defensive clocks are unavailable for '.$lane.'.');
-            }
-            $totals = [];
-            foreach ($scored[$lane] ?? [] as $buckets) {
-                foreach ($buckets as $key => $count) {
-                    $totals[$key] = ($totals[$key] ?? 0) + $count;
-                }
-            }
-            $ids = array_unique([...array_keys($pairs), ...array_keys($allowed[$lane] ?? [])]);
-            foreach ($totals as $key => $count) {
-                $rate = $count / $minutes;
-                $this->rates[$lane][$key] = $rate;
-                $attack = $defend = array_fill_keys($ids, 1.0);
-                for ($iteration = 0; $iteration < config('nhl-custom-prediction.defense.fit_iterations'); $iteration++) {
-                    $change = 0.0;
-                    foreach ($ids as $team) {
-                        $exposure = $prior;
-                        foreach ($pairs[$team] ?? [] as $opponent => $time) {
-                            $exposure += $time * $defend[$opponent];
-                        }
-                        $value = (($scored[$lane][$team][$key] ?? 0) + $prior * $rate) / ($rate * $exposure);
-                        $change = max($change, abs($value - $attack[$team]));
-                        $attack[$team] = $value;
+        $page = array_slice($this->fitKeys, $this->fitCursor, max(1, $limit));
+        foreach ($page as $bucket) {
+            ['lane' => $lane, 'key' => $key, 'count' => $count, 'minutes' => $minutes] = $bucket;
+            $pairs = $this->fitSeconds[$lane] ?? [];
+            $ids = array_unique([...array_keys($pairs), ...array_keys($this->fitAllowed[$lane] ?? [])]);
+            $rate = $count / $minutes;
+            $this->rates[$lane][$key] = $rate;
+            $attack = $defend = array_fill_keys($ids, 1.0);
+            for ($iteration = 0; $iteration < config('nhl-custom-prediction.defense.fit_iterations'); $iteration++) {
+                $change = 0.0;
+                foreach ($ids as $team) {
+                    $exposure = $prior;
+                    foreach ($pairs[$team] ?? [] as $opponent => $time) {
+                        $exposure += $time * $defend[$opponent];
                     }
-                    foreach ($ids as $team) {
-                        $exposure = $prior;
-                        foreach ($pairs as $opponent => $opponents) {
-                            $exposure += ($opponents[$team] ?? 0) * $attack[$opponent];
-                        }
-                        $value = (($allowed[$lane][$team][$key] ?? 0) + $prior * $rate) / ($rate * $exposure);
-                        $change = max($change, abs($value - $defend[$team]));
-                        $defend[$team] = $value;
-                    }
-                    if ($change < config('nhl-custom-prediction.defense.fit_tolerance')) {
-                        break;
-                    }
+                    $value = (($this->fitScored[$lane][$team][$key] ?? 0) + $prior * $rate) / ($rate * $exposure);
+                    $change = max($change, abs($value - $attack[$team]));
+                    $attack[$team] = $value;
                 }
                 foreach ($ids as $team) {
-                    $this->offense[$lane][$team][$key] = $attack[$team];
-                    $this->defense[$lane][$team][$key] = $defend[$team];
+                    $exposure = $prior;
+                    foreach ($pairs as $opponent => $opponents) {
+                        $exposure += ($opponents[$team] ?? 0) * $attack[$opponent];
+                    }
+                    $value = (($this->fitAllowed[$lane][$team][$key] ?? 0) + $prior * $rate) / ($rate * $exposure);
+                    $change = max($change, abs($value - $defend[$team]));
+                    $defend[$team] = $value;
+                }
+                if ($change < config('nhl-custom-prediction.defense.fit_tolerance')) {
+                    break;
                 }
             }
+            foreach ($ids as $team) {
+                $this->offense[$lane][$team][$key] = $attack[$team];
+                $this->defense[$lane][$team][$key] = $defend[$team];
+            }
         }
+        $this->fitCursor += count($page);
+
+        return $this->fitCursor >= count($this->fitKeys);
     }
 
     /** Return the allowance selected by the defensive history fallback chain. */

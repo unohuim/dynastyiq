@@ -186,7 +186,7 @@ it('does not publish a revision if configuration changes during a build', functi
             return $this->forecast;
         });
         $this->fail('Expected changed-input rejection.');
-    } catch (\Symfony\Component\HttpKernel\Exception\ServiceUnavailableHttpException) {
+    } catch (\App\Exceptions\NhlGamePredictionPreparing) {
         $this->assertDatabaseCount('nhl_game_prediction_revisions', 0);
     }
 });
@@ -283,4 +283,22 @@ it('retains normalized totals and original selection evidence through publicatio
         ->assertJsonPath('payload.prediction.predicted_total_goals', 5.3);
     ($this->publish)(['prediction' => ['predicted_total_goals' => 6.1]]);
     expect(DB::table('nhl_game_prediction_revisions')->find($id)->payload)->toBe($row->payload);
+});
+
+
+it('keeps manual game work queued while pregame context is preparing', function (): void {
+    $runId = ($this->start)()->assertAccepted()->json('run_id');
+    $item = DB::table('nhl_game_prediction_run_games')->where('run_id', $runId)->first();
+    $builder = Mockery::mock(NhlGamePredictionPayload::class);
+    $builder->shouldReceive('build')->once()->andThrow(new \App\Exceptions\NhlGamePredictionPreparing((int) $item->nhl_game_id));
+    $queue = Mockery::mock(\Illuminate\Contracts\Queue\Job::class);
+    $queue->shouldReceive('release')->once()->with(15);
+    $job = new RunNhlGamePredictionJob((int) $item->id);
+    $job->setJob($queue);
+    $job->handle($builder, app(NhlGamePredictionResponseCache::class), app(NhlGamePredictionHistory::class));
+    $saved = DB::table('nhl_game_prediction_run_games')->find($item->id);
+    expect($saved->status)->toBe('queued')->and($saved->last_error)->toContain('being prepared')
+        ->and($job->tries)->toBe(0);
+    $this->assertDatabaseCount('nhl_game_prediction_revisions', 0);
+    ($this->index)()->assertOk()->assertJsonPath('run.status', 'running');
 });

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 return [
     'algorithm_version' => 'custom_ev_pp_v2',
+    'input_pipeline_version' => 'saved_pregame_checkpointed_v1',
     'reference_train_seasons' => ['20222023', '20232024', '20242025'],
     // Required completion after fallbacks, not a gate on observed player history.
     'minimum_input_completeness' => 1.0,
@@ -24,4 +25,6 @@ return [
         'away_fourth_b2b_home_probability_delta' => 0.0433712599,
     ],
     'batch_games' => 25,
+    'fit_bucket_batch' => 8,
+    'preparation_seconds' => 21600,
 ];

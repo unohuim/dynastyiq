@@ -4292,8 +4292,19 @@ with legacy backfill compatibility. Authority:
 Analysis > Update Pregame and model auto-sync share
 `NhlPregameContextOrchestrator::queueModelUpdate()`. They select the model's Test
 season, or its own prediction season when Test is unset, and queue missing or
-unfinished completed-game context only. Existing Train snapshots are not update
+unfinished completed-game context plus today's unfinished games (Toronto date). Existing Train snapshots are not update
 work. Build Pregame retains its separate full-build scope. Updates retain the
 existing projections queue, two stages, model-scoped upserts and run controls.
 A completed empty selection reports Pregame is up to date.
 Authority: `docs/architecture/stats/NhlPregameContextEvidence.yaml`.
+
+
+### Prediction-triggered pregame readiness
+
+`NhlCustomGameForecast` checks saved same-model context for both teams, selected
+players and starters. Missing evidence queues the existing pregame orchestrator;
+`PrepareNhlGamePredictionJob` checkpoints date inputs on projections. API clients
+receive HTTP 202 preparing, and prediction continuation automatically publishes
+an immutable revision when ready. No new table or scoring equation is introduced.
+Authority: `docs/architecture/stats/NhlCustomGamePrediction.yaml` and
+`docs/architecture/stats/NhlGamePredictionResponseCache.yaml`.

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Jobs;
 
+use App\Exceptions\NhlGamePredictionPreparing;
 use App\Services\NhlGamePredictionHistory;
 use App\Services\NhlGamePredictionPayload;
 use App\Services\NhlGamePredictionResponseCache;
@@ -20,7 +21,9 @@ final class RunNhlGamePredictionJob implements ShouldQueue
     use Batchable;
     use Queueable;
 
-    public int $tries = 10;
+    public int $tries = 0;
+    public int $maxExceptions = 3;
+    public ?string $deadline = null;
     public int $timeout = 120;
     public array $backoff = [10, 30, 60];
 
@@ -28,6 +31,7 @@ final class RunNhlGamePredictionJob implements ShouldQueue
     public function __construct(public readonly int $itemId)
     {
         $this->onQueue('projections');
+        $this->deadline = now()->addDay()->toIso8601String();
     }
 
     /** Record success, unavailable inputs or an explicit failure without losing prior revisions. */
@@ -59,6 +63,10 @@ final class RunNhlGamePredictionJob implements ShouldQueue
                 fn (): array => $builder->build((int) $item->nhl_game_id, $input), true, (int) $item->run_id);
             $history->finish($this->itemId, ($payload['prediction_available'] ?? false) ? 'completed' : 'unavailable',
                 (int) $payload['meta']['prediction_revision_id']);
+        } catch (NhlGamePredictionPreparing $pending) {
+            DB::table('nhl_game_prediction_run_games')->where('id', $this->itemId)
+                ->update(['status' => 'queued', 'last_error' => $pending->getMessage(), 'updated_at' => now()]);
+            $this->release(15);
         } catch (ValidationException $error) {
             $history->finish($this->itemId, 'failed', error: $error->getMessage());
         } catch (Throwable $error) {
@@ -67,6 +75,12 @@ final class RunNhlGamePredictionJob implements ShouldQueue
                 ->update(['status' => 'queued', 'last_error' => mb_substr($error->getMessage(), 0, 2000), 'updated_at' => now()]);
             throw $error;
         }
+    }
+
+    /** Allow long dependency waits without counting each poll as a failed prediction attempt. */
+    public function retryUntil(): \DateTimeInterface
+    {
+        return new \DateTimeImmutable($this->deadline ?? now()->addDay()->toIso8601String());
     }
 
     /** Persist exhausted retries, including queue timeouts, for the admin status view. */
