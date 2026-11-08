@@ -108,8 +108,9 @@ class NhlCustomGameForecast
                 $reader = app(NhlCustomGamePredictionInputs::class);
                 foreach (DB::table('nhl_games')->where('game_date', $game->game_date)->get() as $target) {
                     try {
-                        $record = $reader->anticipatedParticipants($target, $storedBoxscore,
-                            (int) $target->nhl_game_id === $gameId ? $rosterOverrides : []);
+                        $finished = in_array($target->game_state, ['OFF', 'FINAL'], true);
+                        $record = $reader->anticipatedParticipants($target, $storedBoxscore || $finished,
+                            ! $finished && (int) $target->nhl_game_id === $gameId ? $rosterOverrides : []);
                         $work['lineups'][$target->nhl_game_id] = $record;
                         $work['evidence'][$target->nhl_game_id] = $this->contextEvidence($model, $target, $record, $asOf);
                     } catch (DomainException $error) {
@@ -209,7 +210,9 @@ class NhlCustomGameForecast
     /** Freeze only prior result evidence, model identity, schedule and the selected lineup. */
     public function contextEvidence(NhlModelRun $model, object $game, ?array $record = null, ?CarbonImmutable $asOf = null): array
     {
-        $record ??= app(NhlCustomGamePredictionInputs::class)->anticipatedParticipants($game);
+        $record ??= app(NhlCustomGamePredictionInputs::class)->anticipatedParticipants(
+            $game, in_array($game->game_state, ['OFF', 'FINAL'], true)
+        );
         $asOf ??= CarbonImmutable::now('UTC');
         $cutoff = $game->start_time_utc ? CarbonImmutable::parse($game->start_time_utc, 'UTC')->min($asOf) : $asOf;
         $source = DB::table('nhl_games')->where('game_type', 2)->whereIn('game_state', ['OFF', 'FINAL'])

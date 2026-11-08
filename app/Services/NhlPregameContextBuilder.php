@@ -526,8 +526,9 @@ class NhlPregameContextBuilder
         $cutoff = now()->parse($game->start_time_utc);
         $training = array_map('strval', data_get($run->options, 'train_season_ids', []));
         $modelRunId = $run->model_run_id;
-        $anticipated = data_get($run->options, 'prediction_participants.'.$gameId);
-        if ($anticipated === null && ! in_array($game->game_state, ['OFF', 'FINAL'], true)) {
+        $finished = in_array($game->game_state, ['OFF', 'FINAL'], true);
+        $anticipated = $finished ? null : data_get($run->options, 'prediction_participants.'.$gameId);
+        if ($anticipated === null && ! $finished) {
             try {
                 $anticipated = app(NhlCustomGamePredictionInputs::class)->anticipatedParticipants($game);
             } catch (\DomainException $error) {

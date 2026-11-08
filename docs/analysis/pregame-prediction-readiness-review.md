@@ -110,3 +110,54 @@ uses `git diff --check`; no tests or CI were executed. After review, the human c
 run the repository's approved Pest command scoped to these four files. Runtime
 results and production performance remain unverified; no new win-rate claim is
 made by this readiness change.
+
+
+## Finished-game participant correction
+
+The approved correction is actual lineups for finished games and anticipated
+lineups for upcoming/live games. The proposed model-season-only selection was
+withdrawn and its code/tests/docs were removed before any push. No migration,
+production operation, import or test execution was performed.
+
+- Finished snapshots ignore earlier frozen anticipated rosters and resolve actual
+  participants from target summaries. Target statistics do not enter the pregame
+  history, whose cutoff remains strictly before the target game.
+- Operational preparation selects actual participant identities for FINAL/OFF
+  games and anticipated identities for unfinished games. Existing explicit
+  historical roster mode remains supported.
+- Update Pregame retains target-summary completeness checks for finished games.
+  It also selects finished games with earlier anticipated snapshots so those
+  rows can be upserted to actual participants, even when the roster is unchanged.
+- Missing actual participants leave finished context blocked; they are not
+  replaced with guessed participants. Upcoming/live context does not require a
+  target summary.
+- Input preparation version `saved_pregame_checkpointed_v2` invalidates earlier
+  cached preparation/response reuse. The scoring algorithm remains unchanged.
+
+### Authored coverage and requirements
+
+| Requirement | Named test |
+|---|---|
+| Actual lineup after final, despite a frozen anticipated roster | `uses actual finished-game participants even when anticipated identities were frozen earlier` with FINAL/OFF; checks actual player persistence and zero target games in history |
+| Missing finished actual lineup stays unavailable | `keeps finished context blocked if actual participants are unavailable instead of using a frozen anticipated roster` |
+| Upcoming/live uses anticipated identities without target summaries | `resolves anticipated players for unfinished prediction-season games without target summaries` with FUT/PRE/LIVE |
+| Lifecycle transition updates saved context | `updates previously anticipated context to actual participants once a game finishes` covers POST update, persisted work, replacement participant source and GET progress |
+| Preparation uses the matching roster source | `selects actual or anticipated evidence according to whether the requested game has finished` with FUT/LIVE/FINAL/OFF |
+
+The existing authorization/scope matrix and frontend checklist above remain
+applicable. No endpoint, authorization rule or frontend changed. Existing guest,
+non-super-admin and non-SAT update rejection tests remain; the added transition
+case uses super-admin admission and HTTP progress reads. Dataset cases expand the
+**100** `it(...)` declarations in the full modified suite
+`tests/Feature/NhlModelPregameBuildTest.php`, exceeding the twenty-test minimum.
+Other test files are unchanged by this correction. Coverage is authored, not
+executed or passing evidence.
+
+Changed production files are `NhlPregameContextBuilder`,
+`NhlPregameContextOrchestrator`, `NhlCustomGameForecast` and
+`config/nhl-custom-prediction.php`. Canonical context/prediction documentation,
+enums, derived inventory and engine walkthrough describe the correction.
+Static verification is `git diff --check` only. No tests or CI were run. The human
+may run the repository's approved Pest command scoped to the modified suite.
+Existing data changes only after deployment and subsequent Update Pregame or
+prediction-triggered work; no stored context was rewritten during this task.

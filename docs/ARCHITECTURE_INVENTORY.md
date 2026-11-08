@@ -4296,6 +4296,9 @@ unfinished completed-game context plus today's unfinished games (Toronto date). 
 work. Build Pregame retains its separate full-build scope. Updates retain the
 existing projections queue, two stages, model-scoped upserts and run controls.
 A completed empty selection reports Pregame is up to date.
+Finished games use actual participants; upcoming/live context uses anticipated
+lineups. Updates replace earlier anticipated context after completion, while all
+statistical windows remain strictly before the target game.
 Authority: `docs/architecture/stats/NhlPregameContextEvidence.yaml`.
 
 

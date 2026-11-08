@@ -104,11 +104,14 @@ produce explicit exclusions in both variants. Partial failures retain their run
 status/error rather than pretending the season was predicted successfully.
 
 Requested-date mode (`--date`) predicts the scheduled games regardless of
-their state and requires no target boxscore, shots or final score. It uses the
+their state and requires no target shot statistics or final score. It uses the
 chosen model's own retained Train buckets and historical seasons, verified
 anticipated lineups or the existing projected-roster fallback, and results
 strictly before the earlier of request time and scheduled start. Target results
-never enter history. Operational requests require saved, matching model/game context for both teams,
+never enter their own statistical history. Finished games use actual participant
+identities; upcoming/live games use the anticipated-lineup pathway. Incremental
+updates replace previously anticipated context with actual participants after
+completion. The roster change does not introduce target statistics into context. Operational requests require saved, matching model/game context for both teams,
 selected skaters and starters, including committed comparisons. Missing context
 queues the existing pregame pathway for those games. Personal windows also
 include completed intervening and current-season games. Requested-date mode uses

@@ -480,6 +480,20 @@ class NhlPregameContextOrchestrator
                 if ($futureNeeded !== []) {
                     $missing->orWhereIn('nhl_games.nhl_game_id', $futureNeeded);
                 }
+                // Finalized games replace earlier anticipated snapshots with actual participants.
+                $missing->orWhere(function ($finished) use ($contextVersion, $modelRunId): void {
+                    $finished->whereIn('nhl_games.game_state', ['OFF', 'FINAL'])
+                        ->whereExists(function ($players) use ($contextVersion, $modelRunId): void {
+                            $players->selectRaw('1')->from('nhl_player_game_pregame_contexts as anticipated_context')
+                                ->whereColumn('anticipated_context.nhl_game_id', 'nhl_games.nhl_game_id')
+                                ->where('anticipated_context.model_run_id', $modelRunId)
+                                ->where('anticipated_context.context_version', $contextVersion)
+                                ->whereIn('anticipated_context.participant_source', [
+                                    'anticipated_lineup', 'projected_roster', 'last_known_lineup',
+                                    'provided_roster', 'historical_participants', 'anticipated_goalie',
+                                ]);
+                        });
+                });
                 $missing->orWhereExists(function ($work) use ($contextVersion, $modelRunId): void {
                     $work->selectRaw('1')->from('nhl_pregame_context_run_games as unfinished')
                         ->join('nhl_team_game_pregame_contexts as partial_context', function ($join): void {

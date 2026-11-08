@@ -1486,3 +1486,77 @@ it('freezes forecast context before scheduled start and excludes the targets own
         'nhl_team_id' => 1, 'g' => 1, 'updated_at' => now()]);
     expect($service->contextEvidence($this->model, $game, $record, $asOf)['fingerprint'])->not->toBe($first['fingerprint']);
 });
+
+
+it('uses actual finished-game participants even when anticipated identities were frozen earlier', function (string $state): void {
+    $this->model->update(['target_season_id' => null, 'train_season_ids' => ['20252026']]);
+    ($this->updateGame)(2026020001, '2026-10-09', '20262027', $state);
+    $db = \Illuminate\Support\Facades\DB::class;
+    $db::table('nhl_game_summaries')->insert(['nhl_game_id' => 2026020001, 'nhl_player_id' => 101,
+        'nhl_team_id' => 1, 'toi' => 900, 'g' => 9]);
+    $reader = Mockery::mock(\App\Services\NhlCustomGamePredictionInputs::class);
+    $reader->shouldNotReceive('anticipatedParticipants');
+    app()->instance(\App\Services\NhlCustomGamePredictionInputs::class, $reader);
+    $record = ['players' => [999 => ['team' => 1]], 'starters' => [], 'lineup_sources' => [1 => 'anticipated_lineup']];
+    $run = app(NhlPregameContextOrchestrator::class)->queuePredictionContexts($this->model,
+        [2026020001 => ['fingerprint' => 'earlier-roster', 'cutoff_at' => '2026-10-09 12:00:00']], [2026020001 => $record]);
+    $result = app(\App\Services\NhlPregameContextBuilder::class)->buildDay($run, [2026020001]);
+    expect($result['games'][2026020001]['player_context_count'])->toBe(1);
+    $player = $db::table('nhl_player_game_pregame_contexts')->where('nhl_game_id', 2026020001)->sole();
+    expect((int) $player->nhl_player_id)->toBe(101)->and($player->participant_source)->toBe('completed_game_summary')
+        ->and(data_get(json_decode($player->metrics, true), 'all.last_5.games'))->toBe(0);
+    $this->assertDatabaseMissing('nhl_player_game_pregame_contexts', ['nhl_game_id' => 2026020001, 'nhl_player_id' => 999]);
+})->with(['FINAL', 'OFF']);
+
+it('keeps finished context blocked if actual participants are unavailable instead of using a frozen anticipated roster', function (): void {
+    ($this->updateGame)(2025020001, '2025-10-08');
+    $record = ['players' => [999 => ['team' => 1]], 'starters' => [], 'lineup_sources' => [1 => 'anticipated_lineup']];
+    $run = app(NhlPregameContextOrchestrator::class)->queuePredictionContexts($this->model,
+        [2025020001 => ['fingerprint' => 'old-anticipated', 'cutoff_at' => '2025-10-08 12:00:00']], [2025020001 => $record]);
+    $result = app(\App\Services\NhlPregameContextBuilder::class)->buildDay($run, [2025020001]);
+    expect($result['games'][2025020001]['blocked'])->toBeTrue();
+    $this->assertDatabaseCount('nhl_player_game_pregame_contexts', 0);
+});
+
+it('resolves anticipated players for unfinished prediction-season games without target summaries', function (string $state): void {
+    $this->model->update(['target_season_id' => null, 'train_season_ids' => ['20252026']]);
+    ($this->updateGame)(2026020001, '2026-10-09', '20262027', $state);
+    $reader = Mockery::mock(\App\Services\NhlCustomGamePredictionInputs::class);
+    $reader->shouldReceive('anticipatedParticipants')->once()->andReturn(['players' => [101 => ['team' => 1]],
+        'starters' => [], 'lineup_sources' => [1 => 'anticipated_lineup']]);
+    app()->instance(\App\Services\NhlCustomGamePredictionInputs::class, $reader);
+    $run = app(NhlPregameContextOrchestrator::class)->queueModelUpdate($this->model);
+    $result = app(\App\Services\NhlPregameContextBuilder::class)->buildDay($run, [2026020001]);
+    expect($result['games'][2026020001]['player_context_count'])->toBe(1);
+    $this->assertDatabaseHas('nhl_player_game_pregame_contexts', ['nhl_game_id' => 2026020001,
+        'nhl_player_id' => 101, 'participant_source' => 'anticipated_lineup']);
+    $this->assertDatabaseCount('nhl_game_summaries', 0);
+})->with(['FUT', 'PRE', 'LIVE']);
+
+it('updates previously anticipated context to actual participants once a game finishes', function (): void {
+    ($this->updateGame)(2025020001, '2025-10-08');
+    $saved = ($this->savedUpdateContext)(2025020001, '2025-10-08');
+    $db = \Illuminate\Support\Facades\DB::class;
+    $db::table('nhl_player_game_pregame_contexts')->where('id', $saved['player'])->update(['participant_source' => 'anticipated_lineup']);
+    $this->actingAs($this->admin)->postJson(route('admin.nhl-sat-models.context.update', $this->model))->assertAccepted();
+    $run = NhlPregameContextRun::latestForModel($this->model->id);
+    app(NhlPregameContextOrchestrator::class)->prepare($run);
+    expect($run->games()->pluck('nhl_game_id')->all())->toBe([2025020001]);
+    $result = app(\App\Services\NhlPregameContextBuilder::class)->buildDay($run, [2025020001]);
+    expect($result['games'][2025020001]['player_context_count'])->toBe(1);
+    $this->assertDatabaseHas('nhl_player_game_pregame_contexts', ['model_run_id' => $this->model->id,
+        'nhl_game_id' => 2025020001, 'nhl_player_id' => 101, 'participant_source' => 'completed_game_summary']);
+    $this->getJson(route('admin.nhl-sat-models.context.progress', $this->model))->assertOk()->assertSee('0 / 1 games');
+});
+
+it('selects actual or anticipated evidence according to whether the requested game has finished', function (string $state, bool $actual): void {
+    ($this->updateGame)(2025020001, '2025-10-08', '20252026', $state);
+    $game = \Illuminate\Support\Facades\DB::table('nhl_games')->where('nhl_game_id', 2025020001)->first();
+    $record = ['players' => [101 => ['team' => 1]], 'starters' => [],
+        'lineup_sources' => [1 => $actual ? 'historical_participants' : 'anticipated_lineup']];
+    $reader = Mockery::mock(\App\Services\NhlCustomGamePredictionInputs::class);
+    $reader->shouldReceive('anticipatedParticipants')->once()->with($game, $actual)->andReturn($record);
+    app()->instance(\App\Services\NhlCustomGamePredictionInputs::class, $reader);
+    $evidence = app(\App\Services\NhlCustomGameForecast::class)->contextEvidence($this->model, $game);
+    expect($evidence['participants'])->toBe($record);
+})->with([['FUT', false], ['LIVE', false], ['FINAL', true], ['OFF', true]]);
