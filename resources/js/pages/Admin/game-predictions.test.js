@@ -90,9 +90,26 @@ describe('Operational Game Predictions', () => {
         expect(document.querySelector('tbody').textContent).not.toContain('2.20–3.10');
         expect(document.querySelector('tbody').textContent).toContain('—');
     });
-    it('shows actual final scores when supplied', async () => {
+    it('replaces actual scores with predicted spread immediately before total goals', async () => {
         list.games[0].actual_away = 3; list.games[0].actual_home = 4; await mount();
-        expect(document.querySelector('tbody').textContent).toContain('3–4');
+        const headers = [...document.querySelectorAll('thead th')].map(node => node.textContent);
+        expect(headers.slice(2, 4)).toEqual(['Spread', 'Total goals']);
+        expect(headers.some(label => label.includes('Actual'))).toBe(false);
+        expect(document.querySelector('tbody tr').children[2].textContent).toBe('0.90');
+        expect(document.querySelector('tbody').textContent).not.toContain('3–4');
+    });
+    it.each([[3.1, 2.2, '0.90'], [2.2, 3.1, '0.90'], [0, 0, '0.00'], [null, 3, '—'], [3, null, '—']])(
+        'shows absolute predicted spread for away %s and home %s', async (away, home, expected) => {
+            list.games[0].revision.away_goals = away;
+            list.games[0].revision.home_goals = home;
+            await mount();
+            expect(document.querySelector('tbody tr').children[2].textContent).toBe(expected);
+        }
+    );
+    it('leaves spread unavailable before a prediction exists', async () => {
+        list.games[0].revision = null;
+        await mount();
+        expect(document.querySelector('tbody tr').children[2].textContent).toBe('—');
     });
     it('retains the latest score while a newer work item fails', async () => {
         list.games[0].work = { status: 'failed', last_error: 'Missing lineup' }; await mount();
@@ -254,7 +271,7 @@ describe('Operational Game Predictions', () => {
     it('leaves missing historical totals blank instead of recalculating them', async () => {
         delete list.games[0].revision.total_goals;
         await mount();
-        expect(document.querySelectorAll('tbody tr')[0].children[2].textContent).toBe('—');
+        expect(document.querySelectorAll('tbody tr')[0].children[3].textContent).toBe('—');
     });
 
 
