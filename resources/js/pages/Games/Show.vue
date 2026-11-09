@@ -22,10 +22,28 @@ const sides = ['away', 'home'];
 const title = computed(() => `${game.value.away.team_abbrev ?? 'Away'} at ${game.value.home.team_abbrev ?? 'Home'} · ${mode.value === 'recap' ? 'Recap' : mode.value === 'live' ? 'Live' : 'Preview'}`);
 const status = computed(() => mode.value === 'live' ? scoreboardStatus(game.value) : game.value.status);
 const sections = computed(() => mode.value === 'preview'
-  ? [['matchup', 'Matchup'], ['lineups', 'Lineups'], ['meetings', 'Head-to-head']]
+  ? [['matchup', 'Matchup'], ['lineups', 'Lineups'], ['meetings', 'Head-to-head'], ['factors', 'Factors']]
   : [['summary', 'Game stats'], ['goals', 'Scoring'], ['boxscore', 'Boxscore'], ['play_by_play', 'Play-by-play']]);
 const liveTabs = [['summary', 'Summary'], ['boxscore', 'Boxscore'], ['play_by_play', 'Play-by-play'], ['shot_map', 'Game map'], ['game_flow', 'Game flow']];
 const activeTab = ref('summary');
+const previewTab = ref('matchup');
+function selectPreviewTab(name, focus = false) {
+  if (!sections.value.some(([id]) => id === name)) return;
+  previewTab.value = name;
+  cancelPanels();
+  if (!panelReady(name) || (name === 'matchup' && game.value.matchup_expected_pending)) void loadPanel(name);
+  if (focus) void nextTick(() => document.getElementById(`preview-tab-${name}`)?.focus());
+}
+function navigatePreviewTabs(event) {
+  const tabs = sections.value;
+  const index = tabs.findIndex(([name]) => name === previewTab.value);
+  const next = event.key === 'ArrowRight' ? (index + 1) % tabs.length
+    : event.key === 'ArrowLeft' ? (index + tabs.length - 1) % tabs.length
+      : event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : null;
+  if (next === null) return;
+  event.preventDefault();
+  selectPreviewTab(tabs[next][0], true);
+}
 function selectLiveTab(name) {
   if (!liveTabs.some(([id]) => id === name)) return;
   activeTab.value = name;
@@ -84,7 +102,7 @@ async function loadPanel(name, attempt = 0) {
   try {
     const url = new URL(props.detailsUrl, window.location.origin);
     url.searchParams.set('section', name);
-    if (name === 'matchup' && game.value.prediction?.revision_id)
+    if (name === 'factors' && game.value.prediction?.revision_id)
       url.searchParams.set('prediction_revision_id', game.value.prediction.revision_id);
     const response = await fetch(url, { headers: { Accept: 'application/json' }, cache: 'no-store', signal: controller.signal });
     if (disposed || generation !== panelGeneration || panelRequests.get(name) !== controller) return;
@@ -101,6 +119,8 @@ async function loadPanel(name, attempt = 0) {
       throw new Error('This section changed while loading. Please retry.');
     game.value = applyGamePanel(game.value, name, payload.data);
     panels[name] = { status: 'ready' };
+    if (name === 'matchup' && payload.data.matchup_expected_pending && attempt < 30 && previewTab.value === 'matchup')
+      panelTimers.set(name, window.setTimeout(() => { panelTimers.delete(name); void loadPanel(name, attempt + 1); }, 2000));
   } catch (error) {
     if (!disposed && generation === panelGeneration && panelRequests.get(name) === controller) {
       panels[name] = { status: 'error', message: error?.name === 'AbortError' ? 'This section timed out.' : error.message };
@@ -113,6 +133,11 @@ async function loadPanel(name, attempt = 0) {
 }
 function loadPanels() {
   cancelPanels();
+  if (mode.value === 'preview') {
+    if (props.detailsUrl) for (const [name] of sections.value) panels[name] = { status: 'loading' };
+    void loadPanel(previewTab.value);
+    return;
+  }
   for (const [name] of sections.value) void loadPanel(name);
 }
 const number = (value, digits = 2) => value == null || !Number.isFinite(Number(value)) ? '—' : Number(value).toFixed(digits);
@@ -120,6 +145,11 @@ const probability = (side) => game.value.prediction?.probabilities?.[side] == nu
 const analysis = computed(() => game.value.preview_analysis ?? { teams: {}, insights: [] });
 const analysisTime = value => value ? new Date(/(?:Z|[+-]\d\d:\d\d)$/.test(value) ? value : `${value.replace(' ', 'T')}Z`).toLocaleString() : '—';
 const insightValue = (value, percentage) => `${number(value)}${percentage ? '%' : ''}`;
+const matchupRows = [['record', 'Season record'], ['l10_record', 'Last 10 Games'], ['h2h_record', 'Head-to-head'],
+  ['gf_gp', 'GF/GP'], ['ga_gp', 'GA/GP'], ['xgf_gp', 'xGF/GP'], ['xga_gp', 'xGA/GP'],
+  ['pp_pct', 'PP%'], ['pk_pct', 'PK%'], ['pp_opps_gp', 'PP opportunities/GP']];
+const matchupValue = (form, key) => key.endsWith('record') ? record(form, key === 'record' ? '' : key.replace('record', ''))
+  : form?.[key] == null ? '—' : `${number(form[key])}${key.endsWith('_pct') ? '%' : ''}`;
 const record = (form, prefix = '') => form && Number(form[`${prefix}gp`]) > 0 ? `${form[`${prefix}wins`]}–${form[`${prefix}losses`]}–${form[`${prefix}otl`]}` : '—';
 const dateTime = computed(() => game.value.start_time_utc ? new Intl.DateTimeFormat(undefined, {
   weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
@@ -164,6 +194,7 @@ const { warning: liveWarning } = useLiveGameFeed({
 watch(mode, (next, previous) => { if (next === 'preview' || previous === 'preview') activeTab.value = 'summary'; scheduleRefresh(); loadPanels(); }, { flush: 'sync' });
 watch(() => props.game.nhl_game_id, () => {
   activeTab.value = 'summary';
+  previewTab.value = 'matchup';
   for (const name of Object.keys(panels)) delete panels[name];
   loadPanels();
 });
@@ -211,15 +242,17 @@ onBeforeUnmount(() => { disposed = true; cancelPanels(); window.clearTimeout(tim
             <template v-if="mode === 'preview' && game.prediction?.score"><span class="font-mono text-sky-300">Projected score {{ number(game.prediction.score.away) }} – {{ number(game.prediction.score.home) }}</span><span v-if="game.prediction?.total_goals != null" class="font-mono">Total goals {{ number(game.prediction.total_goals) }}</span></template>
           </div>
         </header>
-        <nav v-if="mode === 'preview'" aria-label="Game sections" class="my-5 flex gap-5 overflow-x-auto border-b border-[#29404F] text-xs font-semibold sm:text-sm">
-          <a v-for="[id, label] in sections" :key="id" :href="`#${id}`" class="shrink-0 border-b-2 border-transparent pb-3 text-[#A6B9C9] transition-colors duration-150 hover:border-sky-400 hover:text-white focus-visible:ring-2 focus-visible:ring-sky-400 motion-reduce:transition-none">{{ label }}</a>
-        </nav>
+        <div v-if="mode === 'preview'" role="tablist" aria-label="Game sections" class="my-5 flex gap-5 overflow-x-auto border-b border-[#29404F] text-xs font-semibold sm:text-sm" @keydown="navigatePreviewTabs">
+          <button v-for="[id, label] in sections" :id="`preview-tab-${id}`" :key="id" type="button" role="tab" :aria-selected="previewTab === id" :aria-controls="`preview-panel-${id}`" :tabindex="previewTab === id ? 0 : -1" class="min-h-9 shrink-0 border-b-2 pb-3 transition-colors duration-200 focus-visible:ring-2 focus-visible:ring-sky-400 motion-reduce:transition-none" :class="previewTab === id ? 'border-sky-400 text-sky-300' : 'border-transparent text-[#A6B9C9] hover:border-sky-400 hover:text-white'" @click="selectPreviewTab(id)">{{ label }}</button>
+        </div>
         <div v-else role="tablist" aria-label="Game sections" class="my-1 flex shrink-0 overflow-x-auto border-b border-[#29404F]" @keydown="navigateTabs">
           <button v-for="[id, label] in liveTabs" :id="`tab-${id}`" :key="id" type="button" role="tab" :aria-selected="activeTab === id" :aria-controls="`panel-${id === 'shot_map' ? 'summary' : id}`" :tabindex="activeTab === id ? 0 : -1" class="min-h-9 shrink-0 border-b-2 px-4 text-xs font-semibold transition-colors duration-200 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-400 motion-reduce:transition-none sm:px-6 sm:text-sm" :class="activeTab === id ? 'border-sky-400 text-sky-300' : 'border-transparent text-[#91A8BA]'" @click="activeTab = id">{{ label }}</button>
         </div>
-        <template v-if="mode === 'preview'">
-          <GameSectionState name="matchup" title="The matchup" :state="panelState('matchup')" @retry="loadPanel('matchup')" />
-          <section v-if="panelReady('matchup')" id="matchup" class="scroll-mt-5 rounded-xl border border-[#29404F] bg-[#0D1D29] p-4 sm:p-6">
+        <Transition v-if="mode === 'preview'" mode="out-in" enter-active-class="transition-opacity duration-200 motion-reduce:transition-none" enter-from-class="opacity-0" enter-to-class="opacity-100" leave-active-class="transition-opacity duration-150 motion-reduce:transition-none" leave-from-class="opacity-100" leave-to-class="opacity-0">
+          <div :id="`preview-panel-${previewTab}`" :key="previewTab" role="tabpanel" :aria-labelledby="`preview-tab-${previewTab}`" tabindex="0">
+          <template v-if="previewTab === 'factors'">
+          <GameSectionState name="factors" title="Prediction factors" :state="panelState('factors')" @retry="loadPanel('factors')" />
+          <section v-if="panelReady('factors')" id="factors" class="rounded-xl border border-[#29404F] bg-[#0D1D29] p-4 sm:p-6">
             <div class="mb-5 border-b border-[#29404F] pb-5" data-prediction-explanation>
               <div class="flex flex-wrap items-baseline justify-between gap-2"><h2 class="text-sm font-semibold">Why this pick</h2><span v-if="analysis.revision_id" class="text-[10px] text-[#91A8BA]">Prediction #{{ analysis.revision_id }} · {{ analysisTime(analysis.predicted_at) }}</span></div>
               <p class="mt-1 text-xs text-[#91A8BA]">Projected team scoring and the players contributing most.</p>
@@ -231,8 +264,10 @@ onBeforeUnmount(() => { disposed = true; cancelPanels(); window.clearTimeout(tim
                     <li v-for="player in team.contributors" :key="player.id" class="py-3 first:pt-0 last:pb-0">
                       <div class="flex items-baseline justify-between gap-3 text-xs"><span class="min-w-0 font-semibold">{{ player.name }}</span><span class="shrink-0 font-mono text-sky-200">{{ number(player.goals) }} G</span></div>
                       <p class="mt-1 text-[11px] text-[#A6B9C9]">EV {{ number(player.ev_goals) }} · PP {{ number(player.pp_goals) }}<span v-if="player.share_pct != null"> · {{ number(player.share_pct, 1) }}% of team goals</span></p>
-                      <ul v-if="player.periods?.length" class="mt-1 space-y-0.5 text-[10px] leading-relaxed text-[#91A8BA]"><li v-for="period in player.periods" :key="period">{{ period }}</li></ul>
-                      <p v-else class="mt-1 text-[10px] text-[#91A8BA]">Source periods unavailable for this saved prediction.</p>
+                      <dl v-if="player.comparisons?.length" class="mt-2 space-y-2 text-[10px] leading-relaxed">
+                        <div v-for="comparison in player.comparisons" :key="comparison.metric"><dt class="font-semibold text-[#A6B9C9]">{{ comparison.metric }}</dt><dd class="mt-0.5 grid grid-cols-2 gap-3"><span><span class="block text-[#91A8BA]">{{ comparison.baseline_label }}</span><b class="font-mono text-[#E7EEF6]">{{ insightValue(comparison.baseline, comparison.is_percentage) }}</b></span><span><span class="block text-[#91A8BA]">{{ comparison.recent_label }}</span><b class="font-mono text-sky-200">{{ insightValue(comparison.recent, comparison.is_percentage) }}</b></span></dd></div>
+                      </dl>
+                      <p v-else class="mt-1 text-[10px] text-[#91A8BA]">Historical comparisons unavailable for this saved prediction.</p>
                     </li>
                   </ol>
                   <p v-else class="mt-3 text-xs text-[#91A8BA]">Individual contributions unavailable for this saved prediction.</p>
@@ -246,27 +281,38 @@ onBeforeUnmount(() => { disposed = true; cancelPanels(); window.clearTimeout(tim
               <ul v-if="analysis.insights?.length" class="mt-3 grid gap-3 sm:grid-cols-2">
                 <li v-for="(fact, index) in analysis.insights" :key="index" class="min-w-0 rounded-lg border border-[#29404F] p-3">
                   <p class="text-xs font-semibold"><span class="mr-2 text-sky-300">{{ fact.team }}</span>{{ fact.name === fact.team ? 'Team' : fact.name }} · {{ fact.metric }}</p>
-                  <p class="mt-2 text-xs"><span class="font-mono text-white">{{ insightValue(fact.value, fact.is_percentage) }}</span> <span class="text-[#91A8BA]">{{ fact.period }} vs</span> <span class="font-mono text-white">{{ insightValue(fact.baseline, fact.is_percentage) }}</span> <span class="text-[#91A8BA]">Train</span></p>
-                  <p class="mt-1 text-[11px] text-[#A6B9C9]">{{ number(fact.delta_pct, 1) }}% {{ fact.direction }} · {{ fact.games }} GP vs {{ fact.baseline_games }} Train GP</p>
+                  <p class="mt-2 text-xs"><span class="font-mono text-white">{{ insightValue(fact.value, fact.is_percentage) }}</span> <span class="text-[#91A8BA]">{{ fact.period }} vs</span> <span class="font-mono text-white">{{ insightValue(fact.baseline, fact.is_percentage) }}</span> <span class="text-[#91A8BA]">{{ fact.baseline_label }}</span></p>
+                  <p class="mt-1 text-[11px] text-[#A6B9C9]">{{ number(fact.delta_pct, 1) }}% {{ fact.direction }} · {{ fact.games }} GP vs {{ fact.baseline_games }} GP</p>
                 </li>
               </ul>
-              <p v-else class="mt-3 text-xs text-[#91A8BA]">No qualifying differences in the available context. Insights require at least 5 GP and a 25% difference from Train.</p>
+              <p v-else class="mt-3 text-xs text-[#91A8BA]">No qualifying differences in the available context. Insights require at least 5 GP and a 25% difference from historical averages.</p>
             </div>
+          </section>
+          </template>
+          <template v-else-if="previewTab === 'matchup'">
+          <GameSectionState name="matchup" title="The matchup" :state="panelState('matchup')" @retry="loadPanel('matchup')" />
+          <section v-if="panelReady('matchup')" id="matchup" class="rounded-xl border border-[#29404F] bg-[#0D1D29] p-4 sm:p-6">
             <h2 class="text-sm font-semibold">The matchup</h2>
+            <p class="mt-1 text-[11px] text-[#91A8BA]">Season to date · Head-to-head record this season</p>
+            <p v-if="game.matchup_expected_pending" role="status" class="mt-1 text-[10px] text-[#91A8BA]">Preparing expected-goal statistics…</p>
             <div class="mt-4 grid grid-cols-2 gap-4 sm:gap-8">
               <div v-for="side in sides" :key="side">
                 <p class="mb-3 text-xs font-semibold text-sky-300">{{ game[side].team_abbrev }}</p>
-                <dl class="space-y-2 text-xs"><div class="flex justify-between gap-2"><dt class="text-[#91A8BA]">Last 10</dt><dd class="font-mono">{{ record(game[side].form, 'l10_') }}</dd></div><div class="flex justify-between gap-2"><dt class="text-[#91A8BA]">GF/GP</dt><dd class="font-mono">{{ number(game[side].form?.gf_gp) }}</dd></div><div class="flex justify-between gap-2"><dt class="text-[#91A8BA]">GA/GP</dt><dd class="font-mono">{{ number(game[side].form?.ga_gp) }}</dd></div></dl>
+                <dl class="space-y-2 text-xs"><div v-for="[key, label] in matchupRows" :key="key" class="flex justify-between gap-2"><dt class="text-[#91A8BA]">{{ label }}</dt><dd class="font-mono">{{ matchupValue(game[side].form, key) }}</dd></div></dl>
                 <div class="mt-4 border-t border-[#29404F] pt-3"><p class="text-[10px] uppercase tracking-wider text-[#91A8BA]">Starting goalie</p><p class="mt-1 text-sm font-semibold">{{ game[side].starting_goalie?.name ?? 'Not reported' }}</p><p v-if="game[side].starting_goalie" class="mt-1 text-xs capitalize text-[#91A8BA]">{{ game[side].starting_goalie.status ?? 'Projected' }}</p></div>
               </div>
             </div>
           </section>
+          </template>
+          <template v-else-if="previewTab === 'lineups'">
           <GameSectionState name="lineups" title="Lineups" :state="panelState('lineups')" @retry="loadPanel('lineups')" />
           <section v-if="panelReady('lineups')" id="lineups" class="mt-5 scroll-mt-5">
             <h2 class="mb-3 text-sm font-semibold">Lineups</h2>
             <details v-if="canManageLineups" class="mb-4 rounded-lg border border-[#29404F] p-3"><summary class="cursor-pointer text-xs font-semibold text-sky-300">Manage lineups and starters</summary><GameCard :game="game" :can-manage-lineups="true" class="mt-3" @lineup-submitted="refresh" @goalie-selected="refresh" /></details>
             <div class="grid gap-4 xl:grid-cols-2"><LineupTeam :team="game.away" side="Away" /><LineupTeam :team="game.home" side="Home" /></div>
           </section>
+          </template>
+          <template v-else-if="previewTab === 'meetings'">
           <GameSectionState name="meetings" title="Last five meetings" :state="panelState('meetings')" @retry="loadPanel('meetings')" />
           <section v-if="panelReady('meetings')" id="meetings" class="mt-5 scroll-mt-5 rounded-xl border border-[#29404F] bg-[#0D1D29] p-4 sm:p-6">
             <h2 class="mb-3 text-sm font-semibold">Last five meetings</h2>
@@ -274,7 +320,9 @@ onBeforeUnmount(() => { disposed = true; cancelPanels(); window.clearTimeout(tim
               <Link v-for="meeting in game.head_to_head" :key="meeting.id" :href="`/games/${meeting.id}`" prefetch class="flex items-center justify-between gap-3 rounded py-3 text-xs transition-colors duration-150 hover:text-sky-300 focus-visible:ring-2 focus-visible:ring-sky-400 motion-reduce:transition-none"><span class="text-[#91A8BA]">{{ shortDate(meeting.date) }}</span><span>{{ meeting.away }} <b class="font-mono">{{ meeting.away_score }}–{{ meeting.home_score }}</b> {{ meeting.home }}</span><span aria-hidden="true">›</span></Link>
             </div><p v-else class="text-xs text-[#91A8BA]">No previous completed meetings available.</p>
           </section>
-        </template>
+          </template>
+          </div>
+        </Transition>
         <GameLiveDetails v-else :game="game" :tab="activeTab" :states="detailStates" @retry="loadPanel" @navigate="selectLiveTab" />
       </template>
     </div>

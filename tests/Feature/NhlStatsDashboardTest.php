@@ -127,6 +127,25 @@ beforeEach(function (): void {
 
 afterEach(function (): void { $this->travelBack(); });
 
+it('reuses team expectation scoring rules for a bounded prior game preview', function (): void {
+    ($this->teamShots)();
+    [$for, $against] = app(NhlStatsDashboardPayload::class)->teamExpectationsForGames('20262027', [2026020001], '2026-10-22');
+    expect((float) $for[10]->xg)->toEqualWithDelta(.3, 1e-9)
+        ->and((float) $against[8]->xg)->toEqualWithDelta(.3, 1e-9)
+        ->and((int) $for[10]->games)->toBe(1);
+});
+
+it('excludes games beyond the preview cutoff even if their identities are supplied', function (): void {
+    ($this->teamShots)();
+    [$for, $against] = app(NhlStatsDashboardPayload::class)->teamExpectationsForGames('20262027', [2026020001], '2026-10-21');
+    expect($for)->toBeEmpty()->and($against)->toBeEmpty();
+});
+
+it('returns unavailable team expectations for an empty prior game selection', function (): void {
+    [$for, $against] = app(NhlStatsDashboardPayload::class)->teamExpectationsForGames('20262027', [], '2026-10-22');
+    expect($for)->toBeEmpty()->and($against)->toBeEmpty();
+});
+
 it('lands public stats on the leaders dashboard', function (): void {
     app(NhlStatsDashboardPayload::class)->refreshCachedFacts('20262027', 'leaders');
     $this->get('/stats')->assertOk()->assertInertia(fn (Assert $page) => $page

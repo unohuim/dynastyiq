@@ -1,5 +1,9 @@
 # Pregame preview explanations and insights
 
+The later approved tab/value presentation supersedes this first-version layout
+and source-period prose. See `pregame-tabs-and-matchup-review.md` and the current
+canonical public game-page architecture.
+
 Approved first version: Why this pick and Matchup insights on public previews,
 using saved data only. No migration, scoring changes, provider imports or
 prediction reruns are part of this work.

@@ -8,10 +8,11 @@
 
 ## Public NHL game detail
 
-- Deferred matchup `preview_analysis` contains revision/context timestamps, curated team/contributor projections and descriptive insights. Its optional `prediction_revision_id` query selects only a successful canonical revision belonging to that game; overview `game.prediction.revision_id` identifies the displayed saved prediction. No new section name is introduced.
+- Deferred `factors` section `preview_analysis` contains revision/context timestamps, curated team/contributor projections, historical value comparisons and descriptive insights. Its optional `prediction_revision_id` query selects only a successful canonical revision belonging to that game; overview `game.prediction.revision_id` identifies the displayed saved prediction.
+- Public preview tab keys: `matchup` (default), `lineups`, `meetings`, `factors`; labels: Matchup, Lineups, Head-to-head, Factors. Matchup response `matchup_expected_pending` indicates background expected-rate preparation.
 
-- Public game details `section`: `matchup`, `lineups`, `meetings`, `summary`, `goals`, `boxscore`. Browser section `status`: `loading`, `ready`, `error`; a pending preparation response uses HTTP 202 with `status=preparing`.
-- Public game detail `section`: `matchup`, `lineups`, `meetings`, `summary`, `goals`, `boxscore`, `play_by_play`. These identify allowlisted deferred sections; `play_by_play` carries public plays and rink shot locations.
+- Public game details `section`: `matchup`, `lineups`, `meetings`, `factors`, `summary`, `goals`, `boxscore`. Browser section `status`: `loading`, `ready`, `error`; a pending preparation response uses HTTP 202 with `status=preparing`.
+- Public game detail `section`: `matchup`, `lineups`, `meetings`, `factors`, `summary`, `goals`, `boxscore`, `play_by_play`. These identify allowlisted deferred sections; `play_by_play` carries public plays and rink shot locations.
 - Public game local tab: `summary`, `boxscore`, `play_by_play`, `shot_map`, `game_flow`. Shot map and game flow reuse the play-by-play detail; they are not new HTTP sections.
 - Public game `mode`: `preview`, `live`, `recap`. These are presentation modes, not stored schedule states.
 - Public Reverb channel: `nhl.games`; event: `nhl.game.updated`. Snapshot `changed` and `stale` are booleans; `sequence` increases per game.

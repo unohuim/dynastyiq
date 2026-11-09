@@ -73,11 +73,24 @@ final class NhlPublicGamePage
             abort(503, 'Live details temporarily unavailable.');
         }
         if ($current === null && $section === 'matchup') {
-            $current = ['mode' => 'preview', 'preview_analysis' => $this->previewAnalysis($game, $predictionRevisionId)];
+            $expected = Cache::get($this->cacheKey($game).':matchup-expectations:v1');
+            $pending = ! is_array($expected);
+            if ($pending && Cache::add($this->cacheKey($game).':matchup-expectations:queued', true, 90)) {
+                try {
+                    \App\Jobs\RefreshNhlPublicGamePageJob::dispatch($gameId)->afterCommit();
+                } catch (\Throwable $error) {
+                    Cache::forget($this->cacheKey($game).':matchup-expectations:queued');
+                    throw $error;
+                }
+            }
+            $current = ['mode' => 'preview', 'matchup_expected_pending' => $pending];
             foreach (['away', 'home'] as $side) {
-                $current[$side] = ['form' => $this->form($game, (int) $game->{$side.'_team_id'}),
+                $current[$side] = ['form' => [...$this->form($game, (int) $game->{$side.'_team_id'}),
+                    'xgf_gp' => $expected[$side]['xgf_gp'] ?? null, 'xga_gp' => $expected[$side]['xga_gp'] ?? null],
                     'starting_goalie' => app(NhlStartingGoalieSelector::class)->select($gameId, (string) $game->{$side.'_team_abbrev'}, (string) $game->season_id)];
             }
+        } elseif ($current === null && $section === 'factors') {
+            $current = ['mode' => 'preview', 'preview_analysis' => $this->previewAnalysis($game, $predictionRevisionId)];
         } elseif ($current === null && $section === 'meetings') {
             $current = ['mode' => 'preview', 'head_to_head' => $this->meetings($game)];
         } elseif ($current === null) {
@@ -103,7 +116,7 @@ final class NhlPublicGamePage
             }
         }
         $data = [...$data, ...Arr::only($current, match ($section) {
-            'matchup' => ['preview_analysis'],
+            'matchup' => ['matchup_expected_pending'], 'factors' => ['preview_analysis'],
             'meetings' => ['head_to_head'], 'summary' => ['recap', 'comparison', 'period_scores'],
             'play_by_play' => ['plays', 'shots', 'map_events', 'plays_available'],
             'goals' => ['events', 'events_available'], default => [],
@@ -122,8 +135,19 @@ final class NhlPublicGamePage
             return null;
         }
         try {
-            return $this->payload($gameId, $refresh);
+            $game = NhlGame::query()->findOrFail($gameId);
+            // Publish normal player/recap detail before optional expected-stat work.
+            $result = $this->payload($gameId, $refresh);
+            if (($result['game']['mode'] ?? null) === 'preview'
+                && in_array(strtoupper((string) $game->game_state), ['', 'FUT', 'PRE', 'PPD', 'CNCL'], true)) {
+                $this->prepareMatchupExpectations($game);
+            }
+
+            return $result;
         } finally {
+            if (isset($game)) {
+                Cache::forget($this->cacheKey($game).':matchup-expectations:queued');
+            }
             $lock->release();
         }
     }
@@ -290,7 +314,7 @@ final class NhlPublicGamePage
         $revision = DB::table('nhl_game_prediction_revisions')->where('nhl_game_id', $game->nhl_game_id)
             ->where('is_canonical', true)->where('prediction_available', true)
             ->when($predictionRevisionId !== null, fn ($query) => $query->where('id', $predictionRevisionId))->orderByDesc('id')
-            ->first(['id', 'predicted_at', 'payload->inputs->sat_model_run_id as model_id']);
+            ->first(['id', 'predicted_at', 'payload->inputs->sat_model_run_id as model_id', 'payload->inputs->training_season_ids as training_seasons']);
         if ($revision === null) {
             return $empty;
         }
@@ -306,19 +330,21 @@ final class NhlPublicGamePage
             $tokens[$entity] = $revision->model_id === null ? [] : $contexts($entity)
                 ->selectRaw('MAX(context.updated_at) AS updated_at, MAX(context.run_id) AS run_id, COUNT(*) AS rows')->first();
         }
-        $key = 'nhl:public-preview-analysis:v1:'.$revision->id.':'.hash('sha256', json_encode($tokens, JSON_THROW_ON_ERROR));
+        $key = 'nhl:public-preview-analysis:v2:'.$revision->id.':'.hash('sha256', json_encode($tokens, JSON_THROW_ON_ERROR));
 
         return Cache::remember($key, 300, function () use ($revision, $contexts, $game, $empty): array {
             $saved = $this->previewProjection((int) $revision->id);
             $teams = json_decode($saved->teams ?? '{}', true, 512, JSON_THROW_ON_ERROR) ?? [];
             $inputs = json_decode($saved->inputs ?? '{}', true, 512, JSON_THROW_ON_ERROR) ?? [];
+            $training = json_decode($revision->training_seasons ?? '[]', true) ?? [];
+            $baselineLabel = count($training) > 0 ? 'Last '.count($training).' Season'.(count($training) === 1 ? '' : 's') : 'Historical seasons';
             $ids = collect($teams)->flatMap(fn (array $team): array => array_column($team['roster'] ?? [], 'nhl_player_id'))->filter()->unique()->values();
             $teamContexts = $revision->model_id === null ? collect() : $contexts('team')
                 ->get(['context.id', 'context.nhl_team_id', 'context.opponent_team_id', 'context.source_cutoff_at', 'context.metrics', 'context.opponent_metrics'])->keyBy('nhl_team_id');
             $playerContexts = $revision->model_id === null ? collect() : $contexts('player')->whereIn('context.nhl_player_id', $ids)
                 ->get(['context.nhl_player_id', 'context.nhl_team_id', 'context.team_context_id', 'context.opponent_team_id',
                     'context.source_cutoff_at', 'context.metrics->all as all_metrics', 'context.metrics->strength->PP as pp_metrics'])->keyBy('nhl_player_id');
-            $result = [...$empty, 'revision_id' => (int) $revision->id, 'predicted_at' => $revision->predicted_at];
+            $result = [...$empty, 'revision_id' => (int) $revision->id, 'predicted_at' => $revision->predicted_at, 'baseline_label' => $baselineLabel];
             $candidates = [];
             foreach (['away', 'home'] as $side) {
                 $abbrev = (string) $game->{$side.'_team_abbrev'};
@@ -333,7 +359,7 @@ final class NhlPublicGamePage
                 $summary = $predicted['summary'] ?? [];
                 $total = $this->publicNumber($summary['adjusted_xgf_per_game'] ?? null);
                 $contributors = $roster->filter(fn (array $p): bool => ($this->publicNumber($p['projected_goals'] ?? null) ?? 0) > 0)
-                    ->sortByDesc('projected_goals')->take(3)->map(function (array $p) use ($total, $inputs, $side, $saved): array {
+                    ->sortByDesc('projected_goals')->take(3)->map(function (array $p) use ($total, $inputs, $side, $baselineLabel): array {
                         $id = (int) $p['nhl_player_id'];
 
                         return ['id' => $id, 'name' => (string) ($p['player_name'] ?? 'Player'),
@@ -341,7 +367,7 @@ final class NhlPublicGamePage
                             'ev_goals' => $this->publicNumber(data_get($p, 'strengths.EV.goals')),
                             'pp_goals' => $this->publicNumber(data_get($p, 'strengths.PP.goals')),
                             'share_pct' => $total !== null && $total > 0 ? 100 * $p['projected_goals'] / $total : null,
-                            'periods' => $this->contributorPeriods($inputs[$side] ?? [], $id, $this->publicNumber($saved->train_weight))];
+                            'comparisons' => $this->contributorComparisons($inputs[$side]['players'][$id]['history'] ?? [], $baselineLabel)];
                     })->values()->all();
                 $result['teams'][$side] = ['abbrev' => $abbrev, 'goals' => $total,
                     'ev_goals' => $this->publicNumber($summary['ev_xgf_per_game'] ?? null),
@@ -380,6 +406,8 @@ final class NhlPublicGamePage
                     continue;
                 }
                 $fact['period'] = str_replace('opponent', (string) $game->{($fact['side'] === 'away' ? 'home' : 'away').'_team_abbrev'}, $fact['period']);
+                $fact['period'] = str_replace('Historical seasons', $baselineLabel, $fact['period']);
+                $fact['baseline_label'] = $baselineLabel;
                 $selected[$fact['side']][] = Arr::except($fact, ['key', 'entity']);
                 $entities[$fact['entity']] = ($entities[$fact['entity']] ?? 0) + 1;
             }
@@ -401,20 +429,19 @@ final class NhlPublicGamePage
         return is_numeric($value) && is_finite((float) $value) ? (float) $value : null;
     }
 
-    /** PostgreSQL projects just roster totals and distinct source names, never whole private bucket trees. */
+    /** Project roster totals and compact historical totals without loading private bucket trees. */
     private function previewProjection(int $revisionId): object
     {
         if (DB::getDriverName() !== 'pgsql') {
             return DB::table('nhl_game_prediction_revisions')->where('id', $revisionId)->first([
                 'payload->teams as teams', 'evidence->custom_prediction->input->teams as inputs',
-                'payload->inputs->algorithm_definition->train_rate_weight as train_weight',
             ]);
         }
         $rows = DB::select(<<<'SQL'
             WITH saved AS MATERIALIZED (
                 SELECT payload::jsonb AS p, evidence::jsonb AS e
                 FROM nhl_game_prediction_revisions WHERE id = ?
-            ) SELECT side, p #>> '{inputs,algorithm_definition,train_rate_weight}' AS train_weight,
+            ) SELECT side,
                 jsonb_build_object(
                     'team_abbrev', p #> ARRAY['teams',side,'team_abbrev'],
                     'summary', p #> ARRAY['teams',side,'summary'],
@@ -427,12 +454,8 @@ final class NhlPublicGamePage
                         THEN p #> ARRAY['teams',side,'roster'] ELSE '[]'::jsonb END) r), '[]'::jsonb)
                 ) AS team,
                 jsonb_build_object(
-                    'pp_offense_sources', e #> ARRAY['custom_prediction','input','teams',side,'pp_offense_sources'],
-                    'players', COALESCE((SELECT jsonb_object_agg(player.key, jsonb_build_object('ev_sources', jsonb_build_object(
-                        'source', (SELECT jsonb_agg(DISTINCT sources.value) FROM jsonb_path_query(player.value, '$.buckets.EV.*.source') AS sources(value)),
-                        'sog_source', (SELECT jsonb_agg(DISTINCT sources.value) FROM jsonb_path_query(player.value, '$.buckets.EV.*.sog_source') AS sources(value)),
-                        'goal_source', (SELECT jsonb_agg(DISTINCT sources.value) FROM jsonb_path_query(player.value, '$.buckets.EV.*.goal_source') AS sources(value))
-                    ))) FROM jsonb_each(CASE WHEN jsonb_typeof(e #> ARRAY['custom_prediction','input','teams',side,'players']) = 'object'
+                    'players', COALESCE((SELECT jsonb_object_agg(player.key, jsonb_build_object('history', player.value->'history'))
+                    FROM jsonb_each(CASE WHEN jsonb_typeof(e #> ARRAY['custom_prediction','input','teams',side,'players']) = 'object'
                         THEN e #> ARRAY['custom_prediction','input','teams',side,'players'] ELSE '{}'::jsonb END) player), '{}'::jsonb)
                 ) AS inputs
             FROM saved CROSS JOIN (VALUES ('away'), ('home')) AS sides(side)
@@ -444,35 +467,32 @@ final class NhlPublicGamePage
         }
 
         return (object) ['teams' => json_encode($teams, JSON_THROW_ON_ERROR),
-            'inputs' => json_encode($inputs, JSON_THROW_ON_ERROR), 'train_weight' => $rows[0]->train_weight ?? null];
+            'inputs' => json_encode($inputs, JSON_THROW_ON_ERROR)];
     }
 
-    /** Curate actual saved bucket-source periods; never infer a period from current configuration. */
-    private function contributorPeriods(array $side, int $playerId, ?float $trainWeight): array
+    /** Show actual saved historical rates rather than model formulas or fallback terminology. */
+    private function contributorComparisons(array $history, string $baselineLabel): array
     {
-        $player = $side['players'][$playerId] ?? [];
-        $labels = ['last_5' => 'L5', 'last_10' => 'L10', 'last_20' => 'L20', 'last_season' => 'LSeason',
-            'season_to_date' => 'Current season', 'player_train' => 'Train', 'league_train' => 'League Train',
-            'train_league_bucket' => 'League Train bucket', 'train_league_strength' => 'League Train strength',
-            'train_league_fallback' => 'League Train fallback'];
-        if ($trainWeight !== null && $trainWeight >= 0 && $trainWeight <= 1) {
-            $weight = fn (float $value): string => rtrim(rtrim(number_format(100 * $value, 2, '.', ''), '0'), '.');
-            $labels['train_l10'] = 'Train '.$weight($trainWeight).'% + L10 '.$weight(1 - $trainWeight).'%';
-        }
-        $periods = [];
-        foreach (['source' => 'EV SAT/60', 'sog_source' => 'EV SOG/SAT', 'goal_source' => 'EV SH%'] as $field => $title) {
-            $values = collect($player['ev_sources'][$field] ?? collect($player['buckets']['EV'] ?? [])->pluck($field)->all())->unique()
-                ->map(fn ($key) => $labels[$key] ?? null)->filter()->values();
-            if ($values->isNotEmpty()) {
-                $periods[] = $title.': '.$values->implode(' / ');
+        $comparisons = [];
+        foreach ([['EV SAT/60', 'EV', 'last_10', 'Last 10 Games', 'sat', 'seconds', 3600],
+            ['EV SOG/SAT %', 'EV', 'last_20', 'Last 20 Games', 'sog', 'sat', 100],
+            ['EV SH%', 'EV', 'last_season', 'Last Season', 'goals', 'sog', 100],
+            ['PP G/GP', 'PP', 'last_20', 'Last 20 Games', 'goals', 'games', 1]] as [$metric, $lane, $window, $label, $numerator, $denominator, $scale]) {
+            $rates = [];
+            foreach (['baseline' => 'train', 'recent' => $window] as $key => $period) {
+                $sample = $history[$lane][$period] ?? [];
+                $n = $this->publicNumber($sample[$numerator] ?? null);
+                $d = $this->publicNumber($sample[$denominator] ?? null);
+                $rates[$key] = $n !== null && $n >= 0 && $d !== null && $d > 0 ? $scale * $n / $d : null;
             }
-        }
-        $pp = $labels[$side['pp_offense_sources'][$playerId] ?? ''] ?? null;
-        if ($pp !== null) {
-            $periods[] = 'PP goals: '.$pp.' player goals/GP; final team allocation';
+            if ($rates['baseline'] === null && $rates['recent'] === null) {
+                continue;
+            }
+            $comparisons[] = [...$rates, 'metric' => $metric, 'baseline_label' => $baselineLabel,
+                'recent_label' => $label, 'is_percentage' => $scale === 100];
         }
 
-        return $periods;
+        return $comparisons;
     }
 
     /** Compare saved windows with Train, requiring five appearances and a 25% relative departure. */
@@ -489,9 +509,9 @@ final class NhlPublicGamePage
         if ($pp) {
             $metrics = Arr::only($metrics, ['goals', 'sog']);
         }
-        $periods = ['last_5' => 'L5', 'last_10' => 'L10', 'last_20' => 'L20', 'last_season' => 'LSeason',
-            'opponent_train' => 'Train vs opponent', 'opponent_last_5' => 'Vs opponent L5',
-            'opponent_last_10' => 'Vs opponent L10', 'opponent_last_20' => 'Vs opponent L20', 'opponent_last_season' => 'LSeason vs opponent'];
+        $periods = ['last_5' => 'Last 5 Games', 'last_10' => 'Last 10 Games', 'last_20' => 'Last 20 Games', 'last_season' => 'Last Season',
+            'opponent_train' => 'Historical seasons vs opponent', 'opponent_last_5' => 'Last 5 vs opponent',
+            'opponent_last_10' => 'Last 10 vs opponent', 'opponent_last_20' => 'Last 20 vs opponent', 'opponent_last_season' => 'Last Season vs opponent'];
         $facts = [];
         foreach ($periods as $window => $label) {
             $sample = $windows[$window] ?? [];
@@ -533,22 +553,62 @@ final class NhlPublicGamePage
             ->whereNotNull('home_team_score')->whereNotNull('away_team_score')
             ->where(fn ($q) => $q->where('home_team_id', $teamId)->orWhere('away_team_id', $teamId))
             ->orderByDesc('game_date')->orderByDesc('nhl_game_id')->get();
-        $records = $rows->map(function ($row) use ($teamId): array {
+        $records = $rows->map(function ($row) use ($teamId, $game): array {
             $home = (int) $row->home_team_id === $teamId;
             $gf = (int) ($home ? $row->home_team_score : $row->away_team_score);
             $ga = (int) ($home ? $row->away_team_score : $row->home_team_score);
 
-            return ['gf' => $gf, 'ga' => $ga, 'win' => $gf > $ga, 'otl' => $gf < $ga && ($row->ot_in_use || $row->shootout_in_use)];
+            $side = $home ? 'home' : 'away';
+            $other = $home ? 'away' : 'home';
+
+            return ['gf' => $gf, 'ga' => $ga, 'win' => $gf > $ga, 'otl' => $gf < $ga && ($row->ot_in_use || $row->shootout_in_use),
+                'pp_goals' => $row->{$side.'_pp_goals'}, 'pp_opps' => $row->{$side.'_pp_opportunities'},
+                'pk_ga' => $row->{$other.'_pp_goals'}, 'pk_opps' => $row->{$other.'_pp_opportunities'},
+                'against_matchup' => ((int) $row->home_team_id === (int) $game->home_team_id
+                    && (int) $row->away_team_id === (int) $game->away_team_id)
+                    || ((int) $row->home_team_id === (int) $game->away_team_id && (int) $row->away_team_id === (int) $game->home_team_id)];
         });
         $wins = $records->where('win', true)->count();
         $otl = $records->where('otl', true)->count();
         $last = $records->take(10);
+        $h2h = $records->where('against_matchup', true);
+        $ppComplete = $records->isNotEmpty() && $records->every(fn (array $row): bool => $row['pp_goals'] !== null && $row['pp_opps'] !== null);
+        $oppsComplete = $records->isNotEmpty() && $records->every(fn (array $row): bool => $row['pp_opps'] !== null);
+        $pkComplete = $records->isNotEmpty() && $records->every(fn (array $row): bool => $row['pk_ga'] !== null && $row['pk_opps'] !== null);
 
         return ['gp' => $records->count(), 'wins' => $wins, 'losses' => $records->count() - $wins - $otl, 'otl' => $otl,
             'gf_gp' => $records->isEmpty() ? null : $records->sum('gf') / $records->count(),
             'ga_gp' => $records->isEmpty() ? null : $records->sum('ga') / $records->count(),
+            'pp_pct' => $ppComplete && $records->sum('pp_opps') > 0 ? 100 * $records->sum('pp_goals') / $records->sum('pp_opps') : null,
+            'pk_pct' => $pkComplete && $records->sum('pk_opps') > 0 ? 100 * (1 - $records->sum('pk_ga') / $records->sum('pk_opps')) : null,
+            'pp_opps_gp' => $oppsComplete ? $records->sum('pp_opps') / $records->count() : null,
+            'h2h_gp' => $h2h->count(), 'h2h_wins' => $h2h->where('win', true)->count(),
+            'h2h_losses' => $h2h->where('win', false)->where('otl', false)->count(), 'h2h_otl' => $h2h->where('otl', true)->count(),
             'l10_gp' => $last->count(), 'l10_wins' => $last->where('win', true)->count(),
             'l10_losses' => $last->where('win', false)->where('otl', false)->count(), 'l10_otl' => $last->where('otl', true)->count()];
+    }
+
+    /** Prepare expected-goal rates off the request path using the existing scored-statistics reader. */
+    private function prepareMatchupExpectations(NhlGame $game): void
+    {
+        $ids = DB::table('nhl_games')->where('season_id', $game->season_id)->where('game_type', $game->game_type)
+            ->whereIn('game_state', ['OFF', 'FINAL'])->whereDate('game_date', '<', $game->game_date->toDateString())
+            ->where(fn ($query) => $query->whereIn('home_team_id', [$game->away_team_id, $game->home_team_id])
+                ->orWhereIn('away_team_id', [$game->away_team_id, $game->home_team_id]))->pluck('nhl_game_id')->all();
+        [$for, $against] = app(NhlStatsDashboardPayload::class)->teamExpectationsForGames((string) $game->season_id, $ids,
+            $game->game_date->copy()->subDay()->toDateString(), (int) $game->game_type);
+        $result = [];
+        foreach (['away', 'home'] as $side) {
+            $id = (int) $game->{$side.'_team_id'};
+            $gp = $this->form($game, $id)['gp'];
+            $rates = [];
+            foreach (['xgf_gp' => $for->get($id), 'xga_gp' => $against->get($id)] as $key => $row) {
+                $rates[$key] = $gp > 0 && $row !== null && (int) $row->games === $gp
+                    && (int) $row->scored === (int) $row->attempts && $row->xg !== null ? (float) $row->xg / $gp : null;
+            }
+            $result[$side] = $rates;
+        }
+        Cache::put($this->cacheKey($game).':matchup-expectations:v1', $result, 300);
     }
 
     /** Read the five previous completed meetings without leaking the selected result.

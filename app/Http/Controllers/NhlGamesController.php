@@ -91,7 +91,7 @@ class NhlGamesController extends Controller
     {
         $input = $request->validate([
             'section' => ['required', \Illuminate\Validation\Rule::in([
-                'matchup', 'lineups', 'meetings', 'summary', 'goals', 'boxscore', 'play_by_play',
+                'matchup', 'lineups', 'meetings', 'factors', 'summary', 'goals', 'boxscore', 'play_by_play',
             ])],
             'prediction_revision_id' => ['nullable', 'integer', 'min:1'],
         ]);
