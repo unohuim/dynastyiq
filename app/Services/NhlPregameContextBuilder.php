@@ -568,7 +568,12 @@ class NhlPregameContextBuilder
                 sprintf('%d:%d', $context->nhl_player_id, $context->nhl_team_id)
             ))
             ->pluck('id')->all();
-        if ($stalePlayerContextIds !== []) {
+        $predictionEvidence = data_get($run->options, 'prediction_evidence.'.$gameId);
+        $reusableTeams = is_array($predictionEvidence)
+            ? app(NhlCustomGameForecast::class)->reusableContextTeams((int) $modelRunId, $gameId, $predictionEvidence)->keyBy('nhl_team_id')
+            : collect();
+        $reuseHistory = $reusableTeams->count() === 2;
+        if ($stalePlayerContextIds !== [] && ! $reuseHistory) {
             $this->assertRunNotStopped($isStopped);
             DB::table('nhl_player_game_pregame_contexts')->whereIn('id', $stalePlayerContextIds)->delete();
         }
@@ -579,10 +584,24 @@ class NhlPregameContextBuilder
             ['team_id' => (int) $game->home_team_id, 'opponent_id' => (int) $game->away_team_id, 'venue' => 'home'],
         ] as $side) {
             $this->assertRunNotStopped($isStopped);
-            $teamContextIds[$side['team_id']] = $this->storeTeamContext($run, $game, $cutoff, $side, $training, $isStopped, $metricWriteBuffer);
+            $teamContextIds[$side['team_id']] = $reuseHistory
+                ? (int) $reusableTeams[$side['team_id']]->id
+                : $this->storeTeamContext($run, $game, $cutoff, $side, $training, $isStopped, $metricWriteBuffer);
         }
 
-        $playerCount = 0;
+        $playerCount = $participants->count();
+        if ($reuseHistory) {
+            $existing = DB::table('nhl_player_game_pregame_contexts as context')
+                ->where('context.model_run_id', $modelRunId)->where('context.nhl_game_id', $gameId)
+                ->where('context.context_version', self::VERSION)->where('context.source_cutoff_at', $cutoff)
+                ->whereIn('context.team_context_id', array_values($teamContextIds))
+                ->whereExists(fn ($query) => $query->selectRaw('1')->from('nhl_pregame_context_run_games as work')
+                    ->whereColumn('work.run_id', 'context.run_id')->where('work.nhl_game_id', $gameId)
+                    ->where('work.state', 'complete')->whereNotNull('work.comparisons_completed_at'))
+                ->get(['context.nhl_player_id', 'context.nhl_team_id'])
+                ->keyBy(fn (object $row): string => $row->nhl_player_id.':'.$row->nhl_team_id);
+            $participants = $participants->reject(fn (object $row): bool => $existing->has($row->nhl_player_id.':'.$row->nhl_team_id))->values();
+        }
         $playerInputs = $dayInputs['players'] ?? [];
         $pendingPlayers = [];
         foreach ($participants->values() as $participantIndex => $participant) {
@@ -639,7 +658,6 @@ class NhlPregameContextBuilder
                 $this->storePlayerContextBatch($modelRunId, $gameId, $pendingPlayers, $metricWriteBuffer);
                 $pendingPlayers = [];
             }
-            $playerCount++;
         }
 
         $this->assertRunNotStopped($isStopped);
@@ -697,7 +715,7 @@ class NhlPregameContextBuilder
         [$teamMetrics, $opponent, $schedule] = $this->teamResultEvidence($game, $cutoff, $side, $training, $isStopped);
         $predictionEvidence = data_get($run->options, 'prediction_evidence.'.$game->nhl_game_id);
         if (is_array($predictionEvidence)) {
-            $schedule['prediction_evidence'] = array_intersect_key($predictionEvidence, array_flip(['fingerprint', 'cutoff_at']));
+            $schedule['prediction_evidence'] = array_intersect_key($predictionEvidence, array_flip(['fingerprint', 'history_fingerprint', 'cutoff_at']));
         }
 
         DB::table('nhl_team_game_pregame_contexts')->upsert([[

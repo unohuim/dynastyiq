@@ -80,7 +80,7 @@ class NhlLineupSubmissionsController extends Controller
             }
 
             return DB::transaction(function () use ($gameId, $team, $text, $client, $image, $post, $importer, $payload, $goalies): JsonResponse {
-                $game = NhlGame::query()->where('nhl_game_id', $gameId)->lockForUpdate()->firstOrFail();
+                $game = NhlGame::lockForLineupChange($gameId);
                 $teamId = $this->validateTeam($game, $team);
                 $importer->importManual($game, $team, $teamId, $text, null, $image, $client, $post);
                 $current = NhlCurrentLineup::query()->where('nhl_game_id', $gameId)->where('team_abbrev', $team)->firstOrFail();

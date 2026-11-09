@@ -54,6 +54,54 @@ beforeEach(function (): void {
 
 afterEach(function (): void { $this->travelBack(); });
 
+it('protects synchronous prediction inputs and releases admission after publication', function (): void {
+    $cache = app(NhlGamePredictionResponseCache::class);
+    $cache->respond(2026020001, ['nhl_game_id' => 2026020001], function (): array {
+        expect(fn () => DB::transaction(fn () => NhlGame::lockForLineupChange(2026020001)))
+            ->toThrow(\Symfony\Component\HttpKernel\Exception\HttpException::class, 'Predictions are in progress');
+
+        return $this->forecast;
+    }, true);
+    expect(DB::transaction(fn () => NhlGame::lockForLineupChange(2026020001))->nhl_game_id)->toBe(2026020001);
+    $this->assertDatabaseCount('nhl_game_prediction_revisions', 1);
+    ($this->index)()->assertOk()->assertJsonPath('games.0.revision.prediction_available', true);
+});
+
+it('releases synchronous input admission after a terminal calculation exception', function (): void {
+    expect(fn () => app(NhlGamePredictionResponseCache::class)->respond(2026020001, [],
+        fn () => throw new \RuntimeException('Fixture failure'), true))->toThrow(\RuntimeException::class, 'Fixture failure');
+    expect(DB::transaction(fn () => NhlGame::lockForLineupChange(2026020001))->nhl_game_id)->toBe(2026020001);
+    $this->assertDatabaseCount('nhl_game_prediction_revisions', 0);
+});
+
+it('keeps pending API input admission across retries then releases after successful refresh', function (): void {
+    $cache = app(NhlGamePredictionResponseCache::class);
+    $input = ['nhl_game_id' => 2026020001];
+    expect(fn () => $cache->respond(2026020001, $input,
+        fn () => throw new \App\Exceptions\NhlGamePredictionPreparing(2026020001), true))
+        ->toThrow(\App\Exceptions\NhlGamePredictionPreparing::class);
+    expect(fn () => DB::transaction(fn () => NhlGame::lockForLineupChange(2026020001)))
+        ->toThrow(\Symfony\Component\HttpKernel\Exception\HttpException::class);
+    $payload = Mockery::mock(NhlGamePredictionPayload::class);
+    $payload->shouldReceive('build')->once()->with(2026020001, $input)->andReturn($this->forecast);
+    $cache->rebuild(2026020001, $input, 'old-fingerprint', $payload);
+    expect(DB::transaction(fn () => NhlGame::lockForLineupChange(2026020001))->nhl_game_id)->toBe(2026020001);
+    $this->assertDatabaseCount('nhl_game_prediction_revisions', 1);
+});
+
+it('keeps refresh protection after retryable errors until terminal cleanup', function (): void {
+    $cache = app(NhlGamePredictionResponseCache::class);
+    $input = ['nhl_game_id' => 2026020001];
+    $payload = Mockery::mock(NhlGamePredictionPayload::class);
+    $payload->shouldReceive('build')->once()->andThrow(new \RuntimeException('Retryable fixture'));
+    expect(fn () => $cache->rebuild(2026020001, $input, 'old-fingerprint', $payload))
+        ->toThrow(\RuntimeException::class, 'Retryable fixture');
+    expect(fn () => DB::transaction(fn () => NhlGame::lockForLineupChange(2026020001)))
+        ->toThrow(\Symfony\Component\HttpKernel\Exception\HttpException::class);
+    $cache->refreshFailed(2026020001, $input);
+    expect(DB::transaction(fn () => NhlGame::lockForLineupChange(2026020001))->nhl_game_id)->toBe(2026020001);
+});
+
 it('blocks guests on every operational endpoint', function (string $method, string $path): void {
     $this->{$method}('/admin/game-predictions'.$path)->assertUnauthorized();
 })->with([['getJson', '?start_date=2026-10-22'], ['postJson', '/runs'], ['getJson', '/games/2026020001/revisions'], ['getJson', '/revisions/1']]);

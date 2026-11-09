@@ -29,6 +29,8 @@ final class NhlGamePredictionController extends Controller
             throw ValidationException::withMessages(['start_date' => 'No stored NHL games were found for these dates.']);
         }
         [$runId, $itemIds] = DB::transaction(function () use ($start, $end, $definition, $games, $request): array {
+            // Lineup writes use these same rows; admission and changes cannot race.
+            DB::table('nhl_games')->whereIn('nhl_game_id', $games)->orderBy('nhl_game_id')->lockForUpdate()->get(['nhl_game_id']);
             $id = DB::table('nhl_game_prediction_runs')->insertGetId([
                 'start_date' => $start, 'end_date' => $end, 'status' => 'queued', 'total_games' => $games->count(),
                 'requested_stack' => json_encode($definition, JSON_THROW_ON_ERROR), 'created_by' => $request->user()->id,

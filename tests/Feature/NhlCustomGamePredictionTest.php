@@ -211,6 +211,109 @@ afterEach(function (): void {
     $this->travelBack();
 });
 
+describe('lineup independent context reuse', function (): void {
+    beforeEach(function (): void {
+        [$reader, $modelId, $lineups] = ($this->forecastFixture)('FUT', true);
+        $reader->prepare($modelId, '20262027');
+        $this->contextModel = NhlModelRun::findOrFail($modelId);
+        $this->contextGame = DB::table('nhl_games')->where('nhl_game_id', 2026020002)->first();
+        $this->contextLineup = $lineups[2026020002];
+        $this->contextForecast = app(\App\Services\NhlCustomGameForecast::class);
+        $this->contextEvidence = $this->contextForecast->contextEvidence($this->contextModel, $this->contextGame, $this->contextLineup);
+        $runId = DB::table('nhl_team_game_pregame_contexts')->where('model_run_id', $modelId)->value('run_id');
+        $this->contextRun = \App\Models\NhlPregameContextRun::findOrFail($runId);
+        $this->contextRun->update(['options' => ['train_season_ids' => $this->contextModel->train_season_ids,
+            'prediction_evidence' => [2026020002 => $this->contextEvidence],
+            'prediction_participants' => [2026020002 => $this->contextLineup]]]);
+        DB::table('nhl_team_game_pregame_contexts')->where('model_run_id', $modelId)->update([
+            'schedule_metrics' => json_encode(['prediction_evidence' => array_intersect_key($this->contextEvidence,
+                array_flip(['fingerprint', 'history_fingerprint', 'cutoff_at']))]),
+        ]);
+        DB::table('nhl_pregame_context_run_games')->insert([
+            'run_id' => $runId, 'nhl_game_id' => 2026020002, 'game_date' => '2026-11-05', 'sequence' => 1,
+            'state' => 'complete', 'comparisons_completed_at' => now(),
+        ]);
+    });
+
+    it('reuses committed history when only line assignments change', function (): void {
+        $record = $this->contextLineup;
+        $record['players'][100]['line_key'] = 'F2';
+        $evidence = $this->contextForecast->contextEvidence($this->contextModel, $this->contextGame, $record);
+        expect($evidence['fingerprint'])->not->toBe($this->contextEvidence['fingerprint'])
+            ->and($evidence['history_fingerprint'])->toBe($this->contextEvidence['history_fingerprint'])
+            ->and($this->contextForecast->contextReady($this->contextModel->id, 2026020002, $evidence))->toBeTrue();
+    });
+
+    it('retains the original cutoff when unchanged history is requested later', function (): void {
+        $this->travel(30)->minutes();
+        $evidence = $this->contextForecast->contextEvidence($this->contextModel, $this->contextGame, $this->contextLineup);
+        expect($evidence['cutoff_at'])->toBe('2026-11-05 12:00:00')
+            ->and($this->contextForecast->contextReady($this->contextModel->id, 2026020002, $evidence))->toBeTrue();
+    });
+
+    it('accepts a smaller selected roster without deleting unused player history', function (): void {
+        $record = $this->contextLineup;
+        unset($record['players'][100]);
+        $evidence = $this->contextForecast->contextEvidence($this->contextModel, $this->contextGame, $record);
+        expect($this->contextForecast->contextReady($this->contextModel->id, 2026020002, $evidence))->toBeTrue();
+        $this->assertDatabaseHas('nhl_player_game_pregame_contexts', ['nhl_game_id' => 2026020002, 'nhl_player_id' => 100]);
+    });
+
+    it('requires missing starter context while retaining the existing teams', function (): void {
+        $record = $this->contextLineup;
+        $record['starters'][1] = 999;
+        $evidence = $this->contextForecast->contextEvidence($this->contextModel, $this->contextGame, $record);
+        expect($this->contextForecast->reusableContextTeams($this->contextModel->id, 2026020002, $evidence))->toHaveCount(2)
+            ->and($this->contextForecast->contextReady($this->contextModel->id, 2026020002, $evidence))->toBeFalse();
+    });
+
+    it('rejects context reuse when historical result values change', function (): void {
+        DB::table('nhl_games')->where('nhl_game_id', 2025020001)->update(['home_team_score' => 98]);
+        $evidence = $this->contextForecast->contextEvidence($this->contextModel, $this->contextGame, $this->contextLineup);
+        expect($evidence['history_fingerprint'])->not->toBe($this->contextEvidence['history_fingerprint'])
+            ->and($this->contextForecast->contextReady($this->contextModel->id, 2026020002, $evidence))->toBeFalse();
+    });
+
+    it('verifies legacy participant hashes against unchanged source data before reuse', function (): void {
+        DB::table('nhl_team_game_pregame_contexts')->where('model_run_id', $this->contextModel->id)->update([
+            'schedule_metrics' => json_encode(['prediction_evidence' => ['fingerprint' => $this->contextEvidence['fingerprint']]]),
+        ]);
+        $record = $this->contextLineup;
+        $record['players'][100]['line_key'] = 'F4';
+        $evidence = $this->contextForecast->contextEvidence($this->contextModel, $this->contextGame, $record);
+        expect($this->contextForecast->contextReady($this->contextModel->id, 2026020002, $evidence))->toBeTrue();
+    });
+
+    it('rejects uncommitted comparisons as reusable context', function (): void {
+        DB::table('nhl_pregame_context_run_games')->where('run_id', $this->contextRun->id)->update(['comparisons_completed_at' => null]);
+        expect($this->contextForecast->contextReady($this->contextModel->id, 2026020002, $this->contextEvidence))->toBeFalse();
+    });
+
+    it('adds only missing participants and leaves existing context rows untouched', function (): void {
+        $beforeTeams = DB::table('nhl_team_game_pregame_contexts')->where('model_run_id', $this->contextModel->id)->orderBy('id')->get()->toJson();
+        $beforePlayers = DB::table('nhl_player_game_pregame_contexts')->where('model_run_id', $this->contextModel->id)->orderBy('id')->get()->toJson();
+        $record = $this->contextLineup;
+        $record['players'][999] = ['id' => 999, 'team' => 1, 'name' => 'New Player', 'role' => 'F'];
+        unset($record['players'][100]);
+        $evidence = $this->contextForecast->contextEvidence($this->contextModel, $this->contextGame, $record);
+        $run = \App\Models\NhlPregameContextRun::create(['model_run_id' => $this->contextModel->id,
+            'action' => 'backfill', 'status' => 'running', 'season_ids' => ['20262027'],
+            'options' => ['train_season_ids' => $this->contextModel->train_season_ids,
+                'prediction_evidence' => [2026020002 => $evidence], 'prediction_participants' => [2026020002 => $record]]]);
+        (new NhlPregameContextBuilder())->buildDay($run, [2026020002]);
+        expect(DB::table('nhl_team_game_pregame_contexts')->where('model_run_id', $this->contextModel->id)->orderBy('id')->get()->toJson())->toBe($beforeTeams)
+            ->and(DB::table('nhl_player_game_pregame_contexts')->where('model_run_id', $this->contextModel->id)->where('nhl_player_id', '<>', 999)->orderBy('id')->get()->toJson())->toBe($beforePlayers)
+            ->and($this->contextForecast->contextReady($this->contextModel->id, 2026020002, $evidence))->toBeFalse();
+        $parent = DB::table('nhl_team_game_pregame_contexts')->where('model_run_id', $this->contextModel->id)->where('nhl_team_id', 1)->value('id');
+        $this->assertDatabaseHas('nhl_player_game_pregame_contexts', ['run_id' => $run->id, 'nhl_player_id' => 999, 'team_context_id' => $parent]);
+        DB::table('nhl_pregame_context_run_games')->insert([
+            'run_id' => $run->id, 'nhl_game_id' => 2026020002, 'game_date' => '2026-11-05', 'sequence' => 1,
+            'state' => 'complete', 'comparisons_completed_at' => now(),
+        ]);
+        expect($this->contextForecast->contextReady($this->contextModel->id, 2026020002, $evidence))->toBeTrue();
+    });
+});
+
 it('allocates five skaters worth of each predicted strength clock', function (): void {
     $result = $this->engine->predict($this->input);
     foreach ($result['teams'] as $team) {

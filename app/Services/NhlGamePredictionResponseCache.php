@@ -21,6 +21,18 @@ final class NhlGamePredictionResponseCache
     /** @param array<string,mixed> $input @param callable():array<string,mixed> $build @return array<string,mixed> */
     public function respond(int $gameId, array $input, callable $build, bool $forceRefresh = false, ?int $runId = null): array
     {
+        $owner = 'request:'.\Illuminate\Support\Str::uuid();
+        \App\Models\NhlGame::predictionActivity($gameId, $owner, true, self::BUILD_LOCK_SECONDS);
+        try {
+            return $this->respondActive($gameId, $input, $build, $forceRefresh, $runId);
+        } finally {
+            \App\Models\NhlGame::predictionActivity($gameId, $owner, false);
+        }
+    }
+
+    /** Calculate/reuse a response while its game-specific input admission is held. */
+    private function respondActive(int $gameId, array $input, callable $build, bool $forceRefresh, ?int $runId): array
+    {
         $fingerprint = $this->fingerprint($gameId, $input);
         $key = $this->key($gameId, $input);
         $cached = Cache::get($key);
@@ -79,6 +91,7 @@ final class NhlGamePredictionResponseCache
     /** @param array<string,mixed> $input */
     public function rebuild(int $gameId, array $input, string $fingerprint, NhlGamePredictionPayload $payload): void
     {
+        \App\Models\NhlGame::predictionActivity($gameId, $this->refreshOwner($input), true);
         $pending = false;
         try {
             // A waiting prediction follows current source evidence instead of silently abandoning it.
@@ -105,9 +118,14 @@ final class NhlGamePredictionResponseCache
             $pending = true;
             Cache::put($this->queuedKey($gameId, $input, $fingerprint), true, 21600);
             throw $waiting;
+        } catch (Throwable $error) {
+            // A retryable worker exception is still active work; failed() owns terminal cleanup.
+            $pending = true;
+            throw $error;
         } finally {
             if (! $pending) {
                 Cache::forget($this->queuedKey($gameId, $input, $fingerprint));
+                \App\Models\NhlGame::predictionActivity($gameId, $this->refreshOwner($input), false);
             }
         }
     }
@@ -118,11 +136,13 @@ final class NhlGamePredictionResponseCache
     public function refreshFailed(int $gameId, array $input): void
     {
         Cache::forget($this->key($gameId, $input).':queued');
+        \App\Models\NhlGame::predictionActivity($gameId, $this->refreshOwner($input), false);
     }
 
     /** @param array<string,mixed> $input */
     private function queue(int $gameId, array $input, string $fingerprint): bool
     {
+        \App\Models\NhlGame::predictionActivity($gameId, $this->refreshOwner($input), true);
         $queued = $this->queuedKey($gameId, $input, $fingerprint);
         if (! Cache::add($queued, true, 21600)) {
             return true;
@@ -133,9 +153,18 @@ final class NhlGamePredictionResponseCache
             return true;
         } catch (Throwable) {
             Cache::forget($queued);
+            \App\Models\NhlGame::predictionActivity($gameId, $this->refreshOwner($input), false);
 
             return false;
         }
+    }
+
+    /** Keep distinct request variants protected until their own refresh finishes. */
+    private function refreshOwner(array $input): string
+    {
+        ksort($input);
+
+        return 'refresh:'.hash('sha256', json_encode($input, JSON_THROW_ON_ERROR));
     }
 
     /** @param array<string,mixed> $input */

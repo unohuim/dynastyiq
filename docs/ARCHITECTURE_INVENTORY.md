@@ -4192,6 +4192,9 @@ Prepared-date inputs are cached with source/configuration fingerprints and a
 preparation lock. Existing response-cache/history paths archive private inputs
 and immutable revisions. Standalone replay can still save separate custom runs.
 No target results are used as requested-date forecast inputs.
+Unchanged context history is reused across lineup changes; only missing selected
+participants need added context. Active manual/API predictions exclude lineup and
+starter writes through shared game-row admission, under `NhlGamePredictionHistory.yaml`.
 Matching response-cache entries remain fresh for one minute and may be served
 stale with a queued refresh for up to three hours. Changed evidence and forced
 refresh retain their existing invalidation behavior.

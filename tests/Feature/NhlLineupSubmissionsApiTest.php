@@ -53,6 +53,106 @@ beforeEach(function (): void {
 
 afterEach(function (): void { $this->travelBack(); });
 
+describe('lineup writes during predictions', function (): void {
+    beforeEach(function (): void {
+        config(['cache.default' => 'array']);
+        \Illuminate\Support\Facades\Cache::flush();
+        $this->activePrediction = function (string $status = 'queued', int $gameId = 2026010088): int {
+            $run = DB::table('nhl_game_prediction_runs')->insertGetId([
+                'start_date' => '2026-09-23', 'end_date' => '2026-09-23', 'status' => 'running',
+                'total_games' => 1, 'requested_stack' => '{}', 'created_at' => now(), 'updated_at' => now(),
+            ]);
+
+            return DB::table('nhl_game_prediction_run_games')->insertGetId([
+                'run_id' => $run, 'nhl_game_id' => $gameId, 'status' => $status, 'created_at' => now(), 'updated_at' => now(),
+            ]);
+        };
+    });
+
+    it('rejects partner lineup changes and preserves the current lineup during active work', function (string $status): void {
+        $original = $this->withToken($this->token)->postJson('/api/nhl-lineups', $this->body)->assertCreated()->json('submission_id');
+        ($this->activePrediction)($status);
+        $this->withToken($this->token)->postJson('/api/nhl-lineups', $this->body)
+            ->assertStatus(409)->assertJsonPath('message', 'Predictions are in progress for this game. Try again after they finish.');
+        $this->assertDatabaseCount('nhl_lineup_observations', 1);
+        $this->assertDatabaseHas('nhl_current_lineups', ['nhl_game_id' => 2026010088, 'nhl_lineup_observation_id' => $original]);
+        $this->client->update(['scopes' => ['nhl-stats:read']]);
+        $this->withToken($this->token)->getJson('/api/nhl/lineups/2026010088')
+            ->assertOk()->assertJsonPath('game.teams.home.starting_goalie.nhl_player_id', 8488019);
+    })->with(['queued', 'running']);
+
+    it('blocks partner changes throughout API preparation and releases after its refresh fails', function (): void {
+        NhlGame::predictionActivity(2026010088, 'refresh:'.hash('sha256', json_encode(['nhl_game_id' => 2026010088])), true);
+        $this->withToken($this->token)->postJson('/api/nhl-lineups', $this->body)->assertStatus(409);
+        $this->assertDatabaseCount('nhl_lineup_observations', 0);
+        app(\App\Services\NhlGamePredictionResponseCache::class)->refreshFailed(2026010088, ['nhl_game_id' => 2026010088]);
+        $this->withToken($this->token)->postJson('/api/nhl-lineups', $this->body)->assertCreated();
+    });
+
+    it('allows submissions when the game work is terminal', function (string $status): void {
+        ($this->activePrediction)($status);
+        $this->withToken($this->token)->postJson('/api/nhl-lineups', $this->body)->assertCreated();
+    })->with(['completed', 'unavailable', 'failed']);
+
+    it('does not block one game because another game has an active prediction', function (): void {
+        ($this->activePrediction)('running', 2026010089);
+        $this->withToken($this->token)->postJson('/api/nhl-lineups', $this->body)->assertCreated();
+    });
+
+    it('blocks first party manual submissions while preserving their authorization checks', function (): void {
+        ($this->activePrediction)();
+        $url = '/games/2026010088/lineup';
+        $this->postJson($url, $this->body)->assertUnauthorized();
+        $this->actingAs(User::factory()->create())->postJson($url, $this->body)->assertForbidden();
+        $admin = User::factory()->create();
+        $role = Role::create(['name' => 'Super Admin', 'slug' => 'super-admin', 'level' => 99]);
+        $admin->roles()->attach($role->id, ['organization_id' => null]);
+        $this->actingAs($admin)->postJson($url, $this->body)->assertStatus(409);
+        $this->assertDatabaseCount('nhl_lineup_observations', 0);
+    });
+
+    it('blocks automated lineup reconciliation before fetching provider data', function (): void {
+        ($this->activePrediction)();
+        $provider = Mockery::mock(\App\Services\NhlOfficialGameRosterDiscovery::class);
+        $provider->shouldNotReceive('discover');
+        app()->instance(\App\Services\NhlOfficialGameRosterDiscovery::class, $provider);
+        expect(fn () => app(\App\Services\NhlAnticipatedLineupImporter::class)
+            ->importOfficial(NhlGame::findOrFail(2026010088), 'TOR', 10))
+            ->toThrow(\Symfony\Component\HttpKernel\Exception\HttpException::class, 'Predictions are in progress');
+        $this->assertDatabaseCount('nhl_lineup_observations', 0);
+    });
+
+    it('rejects automated goalie reports until active prediction work finishes', function (): void {
+        $item = ($this->activePrediction)();
+        $provider = Mockery::mock(\App\Services\RotoWireNhlClient::class);
+        $provider->shouldReceive('projectedGoalies')->twice()->andReturn([
+            ['hometeam' => 'TOR', 'visitteam' => 'MTL', 'homePlayer' => 'Starter Goalie', 'homeStatus' => 'confirmed'],
+        ]);
+        app()->instance(\App\Services\RotoWireNhlClient::class, $provider);
+        expect(fn () => app(\App\Services\NhlStartingGoalieImporter::class)->import(today()))
+            ->toThrow(\Symfony\Component\HttpKernel\Exception\HttpException::class, 'Predictions are in progress');
+        $this->assertDatabaseCount('nhl_starting_goalie_observations', 0);
+        DB::table('nhl_game_prediction_run_games')->where('id', $item)->update(['status' => 'completed']);
+        app(\App\Services\NhlStartingGoalieImporter::class)->import(today());
+        $this->assertDatabaseHas('nhl_starting_goalie_observations', ['nhl_game_id' => 2026010088, 'provider' => 'rotowire']);
+    });
+
+    it('keeps overlapping API owners protected until the final owner releases', function (): void {
+        NhlGame::predictionActivity(2026010088, 'first', true);
+        NhlGame::predictionActivity(2026010088, 'second', true);
+        NhlGame::predictionActivity(2026010088, 'first', false);
+        $this->withToken($this->token)->postJson('/api/nhl-lineups', $this->body)->assertStatus(409);
+        NhlGame::predictionActivity(2026010088, 'second', false);
+        $this->withToken($this->token)->postJson('/api/nhl-lineups', $this->body)->assertCreated();
+    });
+
+    it('expires abandoned API activity without requiring a worker restart', function (): void {
+        NhlGame::predictionActivity(2026010088, 'abandoned', true);
+        $this->travel(86401)->seconds();
+        $this->withToken($this->token)->postJson('/api/nhl-lineups', $this->body)->assertCreated();
+    });
+});
+
 describe('sectioned mixed-team roster submissions', function (): void {
     beforeEach(function (): void {
         $names = ['Oliver Moore', 'Anton Frondell', 'Ryan Greene', 'Dillon Boucher', 'Connor Mylymok',

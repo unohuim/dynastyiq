@@ -153,7 +153,7 @@ class NhlGamesController extends Controller
         $team = mb_strtoupper(trim($input['team_abbrev']));
 
         return DB::transaction(function () use ($request, $nhlGameId, $selector, $input, $team): JsonResponse {
-            $game = NhlGame::query()->where('nhl_game_id', $nhlGameId)->lockForUpdate()->firstOrFail();
+            $game = NhlGame::lockForLineupChange($nhlGameId);
             abort_unless(in_array($team, [$game->home_team_abbrev, $game->away_team_abbrev], true), 422, 'Team is not playing in this game.');
             $player = $selector->teamGoalies($team)->firstWhere('id', (int) $input['player_id']);
             abort_if($player === null, 422, 'Select a goalie belonging to this team.');
@@ -183,7 +183,7 @@ class NhlGamesController extends Controller
         $team = mb_strtoupper(trim($input['team_abbrev']));
 
         [$run, $created, $teamId] = DB::transaction(function () use ($nhlGameId, $team, $payload): array {
-            $game = NhlGame::query()->where('nhl_game_id', $nhlGameId)->lockForUpdate()->firstOrFail();
+            $game = NhlGame::lockForLineupChange($nhlGameId);
             abort_unless(in_array($team, [$game->home_team_abbrev, $game->away_team_abbrev], true), 422, 'Team is not playing in this game.');
             $today = Carbon::now('America/Toronto')->startOfDay();
             abort_unless(in_array(Carbon::parse($game->game_date)->toDateString(), [
@@ -289,7 +289,7 @@ class NhlGamesController extends Controller
         }
 
         return DB::transaction(function () use ($request, $nhlGameId, $input, $importer, $payload, $ocr): JsonResponse {
-            $game = NhlGame::query()->where('nhl_game_id', $nhlGameId)->lockForUpdate()->firstOrFail();
+            $game = NhlGame::lockForLineupChange($nhlGameId);
             $team = mb_strtoupper($input['team_abbrev']);
             abort_unless(in_array($team, [$game->home_team_abbrev, $game->away_team_abbrev], true), 422, 'Team is not playing in this game.');
             $teamId = DB::table('nhl_teams')->where('abbrev', $team)->value('nhl_id');

@@ -221,31 +221,38 @@ class NhlCustomGameForecast
             'game' => [$game->nhl_game_id, $game->game_date, $game->start_time_utc, $game->away_team_id, $game->home_team_id],
             'participants' => $record];
 
-        return ['fingerprint' => hash('sha256', json_encode($identity, JSON_THROW_ON_ERROR)),
+        $historyIdentity = $identity;
+        unset($historyIdentity['participants']);
+        $evidence = ['fingerprint' => hash('sha256', json_encode($identity, JSON_THROW_ON_ERROR)),
+            'history_fingerprint' => hash('sha256', json_encode($historyIdentity, JSON_THROW_ON_ERROR)),
+            'history_identity' => $historyIdentity,
             'cutoff_at' => $cutoff->format('Y-m-d H:i:s'),
             'team_ids' => [(int) $game->away_team_id, (int) $game->home_team_id],
             'players' => $record['players'], 'starters' => $record['starters'] ?? [], 'participants' => $record];
+        $reusable = $this->reusableContextTeams((int) $model->id, (int) $game->nhl_game_id, $evidence);
+        if ($reusable->count() === 2) {
+            // Unchanged prior results permit the original cutoff for added participants too.
+            $evidence['cutoff_at'] = (string) $reusable->first()->source_cutoff_at;
+        }
+
+        return $evidence;
     }
 
     /** A ready context includes both teams, each selected player and committed comparisons. */
     public function contextReady(int $modelId, int $gameId, array $evidence): bool
     {
-        $teams = DB::table('nhl_team_game_pregame_contexts')->where('model_run_id', $modelId)
-            ->where('nhl_game_id', $gameId)->where('context_version', NhlPregameContextBuilder::VERSION)
-            ->whereIn('nhl_team_id', $evidence['team_ids'])->get(['id', 'run_id', 'nhl_team_id', 'schedule_metrics']);
+        $teams = $this->reusableContextTeams($modelId, $gameId, $evidence);
         if ($teams->count() !== 2) {
             return false;
         }
-        foreach ($teams as $team) {
-            if (data_get(json_decode($team->schedule_metrics, true), 'prediction_evidence.fingerprint') !== $evidence['fingerprint']
-                || ! DB::table('nhl_pregame_context_run_games')->where('run_id', $team->run_id)
-                    ->where('nhl_game_id', $gameId)->where('state', 'complete')->whereNotNull('comparisons_completed_at')->exists()) {
-                return false;
-            }
-        }
         $players = DB::table('nhl_player_game_pregame_contexts')->where('model_run_id', $modelId)
             ->where('nhl_game_id', $gameId)->where('context_version', NhlPregameContextBuilder::VERSION)
-            ->whereIn('team_context_id', $teams->pluck('id'))->get(['nhl_player_id', 'nhl_team_id']);
+            ->whereIn('team_context_id', $teams->pluck('id'))
+            ->where('source_cutoff_at', $teams->first()->source_cutoff_at)
+            ->whereExists(fn ($query) => $query->selectRaw('1')->from('nhl_pregame_context_run_games as work')
+                ->whereColumn('work.run_id', 'nhl_player_game_pregame_contexts.run_id')
+                ->where('work.nhl_game_id', $gameId)->where('work.state', 'complete')->whereNotNull('work.comparisons_completed_at'))
+            ->get(['nhl_player_id', 'nhl_team_id']);
         $keys = $players->mapWithKeys(fn (object $player): array => [$player->nhl_player_id.':'.$player->nhl_team_id => true]);
         foreach ($evidence['players'] as $id => $player) {
             if (! $keys->has($id.':'.$player['team'])) {
@@ -259,6 +266,42 @@ class NhlCustomGameForecast
             }
         }
         return true;
+    }
+
+    /** Reuse committed team history independently of player selection, deployment and starters. */
+    public function reusableContextTeams(int $modelId, int $gameId, array $evidence): \Illuminate\Support\Collection
+    {
+        $teams = DB::table('nhl_team_game_pregame_contexts')->where('model_run_id', $modelId)
+            ->where('nhl_game_id', $gameId)->where('context_version', NhlPregameContextBuilder::VERSION)
+            ->whereIn('nhl_team_id', $evidence['team_ids'])->get();
+        if ($teams->count() !== 2 || $teams->pluck('source_cutoff_at')->unique()->count() !== 1) {
+            return collect();
+        }
+        foreach ($teams as $team) {
+            $saved = data_get(json_decode($team->schedule_metrics, true), 'prediction_evidence', []);
+            $matches = isset($saved['history_fingerprint'], $evidence['history_fingerprint'])
+                && $saved['history_fingerprint'] === $evidence['history_fingerprint'];
+            if (! $matches && ! isset($saved['history_fingerprint'])) {
+                $matches = ($saved['fingerprint'] ?? null) === ($evidence['fingerprint'] ?? null);
+                // Older snapshots stored a full participant hash. Verify it with their frozen roster
+                // and today's source identity rather than trusting old data or forcing a rebuild.
+                if (! $matches && isset($evidence['history_identity'])) {
+                    $options = DB::table('nhl_pregame_context_runs')->where('id', $team->run_id)->value('options');
+                    $record = data_get(json_decode($options ?? '{}', true), 'prediction_evidence.'.$gameId.'.participants');
+                    if (is_array($record)) {
+                        $oldIdentity = $evidence['history_identity'];
+                        $oldIdentity['participants'] = $record;
+                        $matches = ($saved['fingerprint'] ?? null) === hash('sha256', json_encode($oldIdentity, JSON_THROW_ON_ERROR));
+                    }
+                }
+            }
+            if (! $matches || ! DB::table('nhl_pregame_context_run_games')->where('run_id', $team->run_id)
+                ->where('nhl_game_id', $gameId)->where('state', 'complete')->whereNotNull('comparisons_completed_at')->exists()) {
+                return collect();
+            }
+        }
+
+        return $teams;
     }
 
     /** Fingerprint actual result values; polling timestamps are not statistical evidence.

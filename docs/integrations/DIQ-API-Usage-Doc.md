@@ -271,6 +271,13 @@ applies to DynastyIQ manual submissions and authorized partner text, image and
 post-URL submissions. Stored timestamps retain the actual submission time; the
 latest valid manual submission still replaces the earlier lineup for that game/team.
 
+While predictions for that game are queued, preparing or running, lineup
+submissions and pregame starter updates return **HTTP 409** with
+`Predictions are in progress for this game. Try again after they finish.`
+No submitted lineup or goalie observation is accepted on that conflict. Retry
+after the prediction finishes; other games remain editable. This applies to
+partner submissions, DynastyIQ edits and automated lineup/goalie updates.
+
 ### Separate Write Key And Environment
 
 In DynastyIQ **Admin → API Keys**, create a key named `gner8 Lineups Write` with

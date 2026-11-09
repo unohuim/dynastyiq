@@ -97,8 +97,6 @@ class NhlAnticipatedLineupImporter
         $observed = 0;
         $skipped = 0;
         $this->persistCandidates([$candidate], $game, $teamAbbrev, $teamId, $observed, $skipped);
-        $this->refreshCurrent((int) $game->nhl_game_id, $teamId, $teamAbbrev);
-
         return compact('observed', 'skipped');
     }
 
@@ -170,6 +168,15 @@ class NhlAnticipatedLineupImporter
     /** Re-evaluate identity fields while preserving the immutable reported evidence. */
     private function reconcileUnresolved(int $gameId, int $teamId, string $teamAbbrev): void
     {
+        DB::transaction(function () use ($gameId, $teamId, $teamAbbrev): void {
+            \App\Models\NhlGame::lockForLineupChange($gameId);
+            $this->reconcileUnlocked($gameId, $teamId, $teamAbbrev);
+        });
+    }
+
+    /** Reconcile only while the caller holds the game's lineup-write lock. */
+    private function reconcileUnlocked(int $gameId, int $teamId, string $teamAbbrev): void
+    {
         $rows = \App\Models\NhlLineupObservationPlayer::query()
             ->where('team_id', $teamId)
             ->where('team_abbrev', $teamAbbrev)
@@ -232,6 +239,7 @@ class NhlAnticipatedLineupImporter
                 $completeness,
                 &$observed
             ): void {
+                \App\Models\NhlGame::lockForLineupChange((int) $game->nhl_game_id);
                 $source = $this->source($candidate, $teamId, $teamAbbrev);
                 $this->recordEngagement($source, $candidate);
                 $structureHash = hash('sha256', json_encode(array_map(

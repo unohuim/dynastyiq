@@ -4,6 +4,7 @@ location:
   - database/migrations/2026_10_22_000001_create_nhl_game_prediction_history_tables.php
   - app/Services/NhlGamePredictionHistory.php
   - app/Services/NhlGamePredictionResponseCache.php
+  - app/Models/NhlGame.php
   - app/Http/Controllers/Admin/NhlGamePredictionController.php
   - app/Jobs/RunNhlGamePredictionJob.php
   - resources/js/pages/Admin/GamePredictions.vue
@@ -20,6 +21,8 @@ rules:
   - Existing payload, evidence and summary JSON columns support the default-engine transition without a migration. The legacy requested-stack run field now freezes the requested algorithm/model definition. Earlier rows and their original evidence retain their historical meaning.
   - Manual admission validates the existing inclusive date/range rules and known default model, then includes every stored scheduled game type/state in scope. A saved default stack is not required. One game work item runs on projections through the same payload/cache boundary as the API.
   - API source refresh remains on lineups. Missing model-owned pregame dependencies queue on projections through the shared forecast boundary. No schedule imports, season syncs or migrations are started as a prediction side effect. Pending manual work returns to queued and does not archive placeholders; successful continuation records a real revision through the existing idempotent boundary.
+  - Reject manual/partner and automated lineup or pregame starter writes for a game while its manual prediction item is queued/running or API prediction activity is pending. Return HTTP 409 with the actionable in-progress message before accepting observations or promoting current evidence; other games remain editable. Targeted lineup refresh admission obeys the same rule. Official started-game starter locks and live NHL presentation retain their existing authority.
+  - Prediction admission and lineup/goalie persistence serialize on the same short nhl_games row lock. Admin admission locks its games in stable identity order before inserting queued work. API synchronous owners and deduplicated refresh variants use independent expiring owners in the existing shared cache; releases cannot clear another owner's protection. Preserve refresh admission across preparing releases and clear it on success or terminal failure. Expire abandoned owners within the existing one-day job deadline. No database row lock is held throughout prediction calculation or provider requests.
   - Preserve existing latest-successful canonical selection, explicit request-variant ownership, full-game market-only canonical requests, status transitions, retry idempotency and parent-run reconciliation. Failed or unavailable later work never deletes an earlier success.
   - All operational endpoints keep their existing authenticated super-admin and lifecycle middleware. Date navigation and read endpoints do not calculate predictions.
   - Admin game rows expose derived engine_time_seconds for the selected run. Measure total wall-clock seconds from run admission until that game work finishes, including queue waits, preparation, retries and persistence; it is not CPU time. Running and queued work use the server measurement time, terminal work freezes at finished_at, and absent work or missing terminal timestamps remain unavailable. Preserve the first worker started_at across retries. No new timing column is stored in the database.
@@ -31,6 +34,8 @@ public_interface:
   - GET /admin/game-predictions/games/{game}/revisions
   - GET /admin/game-predictions/revisions/{revision}
   - NhlGamePredictionHistory
+  - NhlGame::lockForLineupChange
+  - NhlGame::predictionActivity
 example_usage: |
   An admin requests a date without selecting a legacy stack.
   Each scheduled game gets a work item using the shared pregame engine.

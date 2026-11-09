@@ -3051,8 +3051,8 @@ identifies a completed empty missing-work selection. Updates keep the existing
 
 ## Operational prediction preparation
 
-- `nhl-custom-prediction.input_pipeline_version`: `saved_pregame_checkpointed_v6`
-  identifies saved-context preparation reusing player strength-window aggregates, with bounded cache checkpoints, actual participant selection for finished games, statistical-content freshness, recency-first pregame starter selection and stored internal-confidence inputs. The scoring algorithm is independently versioned; the current version is `custom_ev_pp_v3`.
+- `nhl-custom-prediction.input_pipeline_version`: `saved_pregame_checkpointed_v7`
+  identifies saved-context preparation reusing player strength-window aggregates, lineup-independent committed context history, active-prediction lineup-write exclusion, bounded cache checkpoints, actual participant selection for finished games, statistical-content freshness, recency-first starter selection and stored internal-confidence inputs. The scoring algorithm is independently versioned; the current version is `custom_ev_pp_v3`.
 - `nhl_pregame_context_runs.options.trigger`: `prediction` identifies an explicit
   prediction dependency. Existing `manual_update` and `auto_sync` keep their meaning.
 - Prediction run options `game_ids`, `prediction_evidence` and
@@ -3064,6 +3064,7 @@ identifies a completed empty missing-work selection. Updates keep the existing
 - HTTP prediction `status: preparing` is a transient HTTP 202 response with
   `prediction_available: false` and `Retry-After: 15`, not a database run status.
   Pending manual game work retains the existing `queued` state.
+- Context prediction evidence additionally stores `history_fingerprint` separately from the complete participant fingerprint; private run evidence retains `history_identity` to verify older snapshots without a blanket rebuild.
 
 - Private result-evidence version `result_values_v1` fingerprints selected completed-game
   statistical fields and summary values. Polling/creation/update timestamps are

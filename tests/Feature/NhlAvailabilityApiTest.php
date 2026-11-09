@@ -59,6 +59,17 @@ describe('super admin goalie picker', function (): void {
         $this->assertDatabaseCount('nhl_starting_goalie_observations', 0);
     })->with([['GET', false], ['GET', true], ['POST', false], ['POST', true]]);
 
+    it('rejects starter edits and targeted lineup refreshes during API prediction preparation', function (string $action): void {
+        config(['cache.default' => 'array']);
+        Cache::flush();
+        NhlGame::predictionActivity(2026010098, 'refresh-fixture', true);
+        $body = ['team_abbrev' => 'TOR', 'player_id' => $this->pickerGoalie->id];
+        $this->actingAs($this->pickerAdmin)->postJson('/games/2026010098/'.$action, $body)
+            ->assertStatus(409)->assertJsonPath('message', 'Predictions are in progress for this game. Try again after they finish.');
+        $this->assertDatabaseCount('nhl_starting_goalie_observations', 0);
+        NhlGame::predictionActivity(2026010098, 'refresh-fixture', false);
+    })->with(['starting-goalie', 'lineup/refresh']);
+
     it('lists prospects and unidentified goalies but not skaters or another team', function (): void {
         $unknown = Player::query()->create(['full_name' => 'Unsigned Goalie', 'team_abbrev' => 'TOR', 'pos_type' => 'G']);
         Player::query()->create(['full_name' => 'Other Goalie', 'team_abbrev' => 'MTL', 'position' => 'G']);

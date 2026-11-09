@@ -57,15 +57,20 @@ class NhlStartingGoalieImporter
                 $seen[$observationKey] = true;
                 $player = $this->players->resolve($name, $team, true);
 
-                NhlStartingGoalieObservation::query()->create([
-                    'nhl_game_id' => $gameId, 'game_date' => $date->toDateString(), 'team_abbrev' => $team,
-                    'opponent_abbrev' => $opponent, 'is_home' => $isHome, 'player_id' => $player?->id,
-                    'nhl_player_id' => $player?->nhl_id, 'player_name' => $name, 'provider' => 'rotowire',
-                    'provider_player_key' => data_get($matchup, $side . 'PlayerID'),
-                    'status' => $this->status((string) data_get($matchup, $side . 'Status', 'unknown')),
-                    'provider_published_at' => null, 'fetched_at' => $fetchedAt,
-                    'source_url' => self::SOURCE_URL . '?date=' . $date->toDateString(), 'raw_evidence' => $matchup,
-                ]);
+                DB::transaction(function () use ($gameId, $date, $team, $opponent, $isHome, $player, $name, $matchup, $side, $fetchedAt): void {
+                    if ($gameId !== null) {
+                        \App\Models\NhlGame::lockForLineupChange((int) $gameId);
+                    }
+                    NhlStartingGoalieObservation::query()->create([
+                        'nhl_game_id' => $gameId, 'game_date' => $date->toDateString(), 'team_abbrev' => $team,
+                        'opponent_abbrev' => $opponent, 'is_home' => $isHome, 'player_id' => $player?->id,
+                        'nhl_player_id' => $player?->nhl_id, 'player_name' => $name, 'provider' => 'rotowire',
+                        'provider_player_key' => data_get($matchup, $side . 'PlayerID'),
+                        'status' => $this->status((string) data_get($matchup, $side . 'Status', 'unknown')),
+                        'provider_published_at' => null, 'fetched_at' => $fetchedAt,
+                        'source_url' => self::SOURCE_URL . '?date=' . $date->toDateString(), 'raw_evidence' => $matchup,
+                    ]);
+                });
                 $observed++;
                 $unresolved += $player === null ? 1 : 0;
             }

@@ -5,6 +5,8 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Class NhlGame
@@ -15,6 +17,42 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  */
 class NhlGame extends Model
 {
+    /** Lock the shared game admission row before any lineup or starter mutation. */
+    public static function lockForLineupChange(int $gameId): self
+    {
+        if (DB::transactionLevel() === 0) {
+            throw new \LogicException('Lineup changes require a transaction.');
+        }
+        $game = static::query()->whereKey($gameId)->lockForUpdate()->firstOrFail();
+        $active = DB::table('nhl_game_prediction_run_games')->where('nhl_game_id', $gameId)
+            ->whereIn('status', ['queued', 'running'])->exists();
+        $leases = Cache::get('nhl:prediction-input-writers:'.$gameId, []);
+        $active = $active || collect($leases)->contains(fn ($expires): bool => $expires > now()->timestamp);
+        abort_if($active, 409, 'Predictions are in progress for this game. Try again after they finish.');
+
+        return $game;
+    }
+
+    /** Track overlapping API builds/refreshes under the same row lock as lineup writers. */
+    public static function predictionActivity(int $gameId, string $owner, bool $active, int $seconds = 86400): void
+    {
+        DB::transaction(function () use ($gameId, $owner, $active, $seconds): void {
+            static::query()->whereKey($gameId)->lockForUpdate()->firstOrFail();
+            $key = 'nhl:prediction-input-writers:'.$gameId;
+            $leases = array_filter(Cache::get($key, []), fn ($expires): bool => $expires > now()->timestamp);
+            if ($active) {
+                $leases[$owner] = now()->addSeconds(max(1, min(86400, $seconds)))->timestamp;
+            } else {
+                unset($leases[$owner]);
+            }
+            if ($leases === []) {
+                Cache::forget($key);
+            } elseif (! Cache::put($key, $leases, 86400)) {
+                throw new \RuntimeException('Unable to protect active prediction inputs.');
+            }
+        });
+    }
+
     protected $guarded = [];
 
     protected $primaryKey = 'nhl_game_id';
