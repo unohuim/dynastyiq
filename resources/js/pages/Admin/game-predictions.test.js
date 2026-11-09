@@ -257,4 +257,45 @@ describe('Operational Game Predictions', () => {
         expect(document.querySelectorAll('tbody tr')[0].children[2].textContent).toBe('—');
     });
 
+
+    it('shows an Engine Time column with total elapsed timing explained', async () => {
+        list.games[0].engine_time_seconds = 12;
+        await mount();
+        expect([...document.querySelectorAll('thead th')].map(node => node.textContent)).toContain('Engine Time');
+        const cell = document.querySelector('[data-engine-time]');
+        expect(cell.textContent).toBe('12s');
+        expect(cell.title).toContain('including queue and preparation waits');
+    });
+    it.each([[0, '0s'], [59, '59s'], [60, '1m'], [85, '1m 25s'], [300, '5m'], [3600, '60m']])(
+        'formats %s seconds as %s', async (seconds, expected) => {
+            list.games[0].engine_time_seconds = seconds;
+            await mount();
+            expect(document.querySelector('[data-engine-time]').textContent).toBe(expected);
+        },
+    );
+    it.each([null, undefined, '', -1, 'invalid'])('keeps unavailable timing blank for %s', async value => {
+        list.games[0].engine_time_seconds = value;
+        await mount();
+        expect(document.querySelector('[data-engine-time]').textContent).toBe('—');
+    });
+    it('updates engine time through the existing polling response', async () => {
+        list.games[0].engine_time_seconds = 55;
+        list.games[0].work = { status: 'queued' };
+        await mount();
+        expect(document.querySelector('[data-engine-time]').textContent).toBe('55s');
+        list.games[0].engine_time_seconds = 60;
+        await vi.advanceTimersByTimeAsync(5000); await settle();
+        expect(document.querySelector('[data-engine-time]').textContent).toBe('1m');
+        list.games[0].engine_time_seconds = 85;
+        list.games[0].work.status = 'completed';
+        await vi.advanceTimersByTimeAsync(5000); await settle();
+        expect(document.querySelector('[data-engine-time]').textContent).toBe('1m 25s');
+        await vi.advanceTimersByTimeAsync(10000); await settle();
+        expect(document.querySelector('[data-engine-time]').textContent).toBe('1m 25s');
+    });
+    it('keeps revision disclosure rows aligned under the timing column', async () => {
+        await mount(); button('Revisions').click(); await settle();
+        expect(document.querySelector('tbody td[colspan]').getAttribute('colspan')).toBe('11');
+    });
+
 });

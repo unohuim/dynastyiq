@@ -32,6 +32,14 @@ const number = value => value === null || value === undefined ? '—' : Number(v
 const dateTime = value => value ? new Date(/(?:Z|[+-]\d\d:\d\d)$/.test(value) ? value : `${value.replace(' ', 'T')}Z`).toLocaleString() : '—';
 const score = revision => revision ? `${number(revision.away_goals)}–${number(revision.home_goals)}` : '—';
 
+function engineTime(seconds) {
+    if (seconds === null || seconds === undefined || seconds === '' || !Number.isFinite(Number(seconds)) || Number(seconds) < 0) return '—';
+    const total = Math.floor(Number(seconds));
+    if (total < 60) return `${total}s`;
+    const remainder = total % 60;
+    return `${Math.floor(total / 60)}m${remainder ? ` ${remainder}s` : ''}`;
+}
+
 async function request(url, options = {}, controller = new AbortController()) {
     controllers.add(controller);
     try {
@@ -247,11 +255,11 @@ onBeforeUnmount(() => {
             </div>
             <div class="overflow-x-auto">
                 <table class="min-w-full divide-y divide-gray-200 text-left text-xs">
-                    <thead class="bg-gray-50 text-gray-600"><tr><th scope="col" class="p-3">Date / Game</th><th scope="col" class="p-3">Prediction<br /><span class="font-normal">Away–Home</span></th><th scope="col" class="p-3">Total goals</th><th scope="col" class="p-3">Pick</th><th scope="col" class="p-3">Win probability</th><th scope="col" class="p-3">Confidence</th><th scope="col" class="p-3">Qualified</th><th scope="col" class="p-3">Actual<br /><span class="font-normal">Away–Home</span></th><th scope="col" class="p-3">Updated / Status</th><th scope="col" class="p-3">History</th></tr></thead>
+                    <thead class="bg-gray-50 text-gray-600"><tr><th scope="col" class="p-3">Date / Game</th><th scope="col" class="p-3">Prediction<br /><span class="font-normal">Away–Home</span></th><th scope="col" class="p-3">Total goals</th><th scope="col" class="p-3">Pick</th><th scope="col" class="p-3">Win probability</th><th scope="col" class="p-3">Confidence</th><th scope="col" class="p-3">Qualified</th><th scope="col" class="p-3">Actual<br /><span class="font-normal">Away–Home</span></th><th scope="col" class="p-3">Updated / Status</th><th scope="col" class="whitespace-nowrap p-3">Engine Time</th><th scope="col" class="p-3">History</th></tr></thead>
                     <tbody class="divide-y divide-gray-100">
                         <template v-for="game in data.games" :key="game.nhl_game_id">
-                            <tr><td class="whitespace-nowrap p-3"><p class="text-gray-500">{{ game.date }}</p><b>{{ game.away }} @ {{ game.home }}</b></td><td class="p-3 tabular-nums">{{ score(game.revision) }}</td><td class="p-3 tabular-nums">{{ number(game.revision?.total_goals) }}</td><td class="p-3">{{ game.revision?.winner ?? '—' }}</td><td class="p-3">{{ percent(game.revision?.win_probability) }}</td><td class="p-3">{{ game.revision?.confidence === null || !game.revision ? '—' : `${number(game.revision.confidence)}%` }}</td><td class="p-3">{{ !game.revision ? '—' : game.revision.qualified ? 'Yes' : 'No' }}</td><td class="p-3 tabular-nums">{{ game.actual_away === null ? '—' : `${game.actual_away}–${game.actual_home}` }}</td><td class="max-w-xs p-3"><p>{{ dateTime(game.revision?.predicted_at) }}</p><p v-if="game.work" class="mt-1 text-gray-500">{{ game.work.status }}</p><p v-if="game.work?.last_error" class="mt-1 text-red-700">{{ game.work.last_error }}</p></td><td class="p-3"><button type="button" :aria-expanded="!!histories[game.nhl_game_id]?.open" class="rounded text-indigo-700 hover:underline focus-visible:ring-2 focus-visible:ring-indigo-500" @click="history(game.nhl_game_id, histories[game.nhl_game_id]?.current_page ?? 1)">Revisions</button></td></tr>
-                            <tr v-if="histories[game.nhl_game_id]?.open"><td colspan="10" class="bg-gray-50 p-4">
+                            <tr><td class="whitespace-nowrap p-3"><p class="text-gray-500">{{ game.date }}</p><b>{{ game.away }} @ {{ game.home }}</b></td><td class="p-3 tabular-nums">{{ score(game.revision) }}</td><td class="p-3 tabular-nums">{{ number(game.revision?.total_goals) }}</td><td class="p-3">{{ game.revision?.winner ?? '—' }}</td><td class="p-3">{{ percent(game.revision?.win_probability) }}</td><td class="p-3">{{ game.revision?.confidence === null || !game.revision ? '—' : `${number(game.revision.confidence)}%` }}</td><td class="p-3">{{ !game.revision ? '—' : game.revision.qualified ? 'Yes' : 'No' }}</td><td class="p-3 tabular-nums">{{ game.actual_away === null ? '—' : `${game.actual_away}–${game.actual_home}` }}</td><td class="max-w-xs p-3"><p>{{ dateTime(game.revision?.predicted_at) }}</p><p v-if="game.work" class="mt-1 text-gray-500">{{ game.work.status }}</p><p v-if="game.work?.last_error" class="mt-1 text-red-700">{{ game.work.last_error }}</p></td><td class="whitespace-nowrap p-3 tabular-nums" data-engine-time title="Total elapsed time for this game in the selected run, including queue and preparation waits.">{{ engineTime(game.engine_time_seconds) }}</td><td class="p-3"><button type="button" :aria-expanded="!!histories[game.nhl_game_id]?.open" class="rounded text-indigo-700 hover:underline focus-visible:ring-2 focus-visible:ring-indigo-500" @click="history(game.nhl_game_id, histories[game.nhl_game_id]?.current_page ?? 1)">Revisions</button></td></tr>
+                            <tr v-if="histories[game.nhl_game_id]?.open"><td colspan="11" class="bg-gray-50 p-4">
                                 <p v-if="histories[game.nhl_game_id].loading" role="status">Loading revisions…</p>
                                 <p v-if="histories[game.nhl_game_id].error" role="alert" class="text-red-700">{{ histories[game.nhl_game_id].error }}</p>
                                 <div v-for="revision in histories[game.nhl_game_id].revisions" :key="revision.id" class="border-b border-gray-200 py-3">
@@ -263,7 +271,7 @@ onBeforeUnmount(() => {
                                 <div v-if="histories[game.nhl_game_id].last_page > 1" class="mt-2 flex items-center gap-3"><button type="button" :disabled="histories[game.nhl_game_id].current_page <= 1" class="text-indigo-700 disabled:text-gray-400" @click="history(game.nhl_game_id, histories[game.nhl_game_id].current_page - 1)">Newer</button><span>Page {{ histories[game.nhl_game_id].current_page }} / {{ histories[game.nhl_game_id].last_page }}</span><button type="button" :disabled="histories[game.nhl_game_id].current_page >= histories[game.nhl_game_id].last_page" class="text-indigo-700 disabled:text-gray-400" @click="history(game.nhl_game_id, histories[game.nhl_game_id].current_page + 1)">Older</button></div>
                             </td></tr>
                         </template>
-                        <tr v-if="!data.games.length"><td colspan="10" class="p-6 text-center text-gray-500">{{ loading ? 'Loading games…' : 'No stored games for these dates.' }}</td></tr>
+                        <tr v-if="!data.games.length"><td colspan="11" class="p-6 text-center text-gray-500">{{ loading ? 'Loading games…' : 'No stored games for these dates.' }}</td></tr>
                     </tbody>
                 </table>
             </div>

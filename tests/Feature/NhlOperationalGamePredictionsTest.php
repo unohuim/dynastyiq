@@ -302,3 +302,65 @@ it('keeps manual game work queued while pregame context is preparing', function 
     $this->assertDatabaseCount('nhl_game_prediction_revisions', 0);
     ($this->index)()->assertOk()->assertJsonPath('run.status', 'running');
 });
+
+
+it('measures engine time from queue admission before the first worker starts', function (): void {
+    $runId = ($this->start)()->assertAccepted()->json('run_id');
+    $item = DB::table('nhl_game_prediction_run_games')->where('run_id', $runId)->first();
+    $this->travel(12)->seconds();
+    ($this->index)()->assertOk()->assertJsonPath('games.0.engine_time_seconds', 12)
+        ->assertJsonPath('games.0.work.status', 'queued');
+    expect(DB::table('nhl_game_prediction_run_games')->find($item->id)->started_at)->toBeNull();
+    $this->assertDatabaseCount('nhl_game_prediction_revisions', 0);
+});
+
+it('freezes completed engine time while retaining the duration after later reads', function (string $status): void {
+    $runId = ($this->start)()->assertAccepted()->json('run_id');
+    $item = DB::table('nhl_game_prediction_run_games')->where('run_id', $runId)->first();
+    $this->travel(300)->seconds();
+    app(NhlGamePredictionHistory::class)->finish((int) $item->id, $status);
+    ($this->index)()->assertOk()->assertJsonPath('games.0.engine_time_seconds', 300);
+    $this->travel(10)->minutes();
+    ($this->index)()->assertOk()->assertJsonPath('games.0.engine_time_seconds', 300);
+})->with(['completed', 'unavailable', 'failed']);
+
+it('preserves the first worker start and total waiting time across preparation retries', function (): void {
+    $runId = ($this->start)()->assertAccepted()->json('run_id');
+    $item = DB::table('nhl_game_prediction_run_games')->where('run_id', $runId)->first();
+    $builder = Mockery::mock(NhlGamePredictionPayload::class);
+    $builder->shouldReceive('build')->twice()->andThrow(new \App\Exceptions\NhlGamePredictionPreparing((int) $item->nhl_game_id));
+    $queue = Mockery::mock(\Illuminate\Contracts\Queue\Job::class);
+    $queue->shouldReceive('release')->twice()->with(15);
+    $job = new RunNhlGamePredictionJob((int) $item->id);
+    $job->setJob($queue);
+    $this->travel(5)->seconds();
+    $job->handle($builder, app(NhlGamePredictionResponseCache::class), app(NhlGamePredictionHistory::class));
+    $firstStart = DB::table('nhl_game_prediction_run_games')->find($item->id)->started_at;
+    $this->travel(80)->seconds();
+    $job->handle($builder, app(NhlGamePredictionResponseCache::class), app(NhlGamePredictionHistory::class));
+    expect(DB::table('nhl_game_prediction_run_games')->find($item->id)->started_at)->toBe($firstStart);
+    ($this->index)()->assertOk()->assertJsonPath('games.0.engine_time_seconds', 85);
+});
+
+it('does not invent engine time without work belonging to the selected run', function (): void {
+    ($this->publish)();
+    ($this->index)()->assertOk()->assertJsonPath('games.0.engine_time_seconds', null)
+        ->assertJsonPath('games.0.work', null);
+});
+
+it('leaves terminal legacy timing unavailable when a finish timestamp was not recorded', function (): void {
+    $runId = ($this->start)()->assertAccepted()->json('run_id');
+    DB::table('nhl_game_prediction_run_games')->where('run_id', $runId)->update(['status' => 'completed']);
+    ($this->index)()->assertOk()->assertJsonPath('games.0.engine_time_seconds', null);
+});
+
+it('uses each selected runs admission time rather than a later run or worker start', function (): void {
+    $first = ($this->start)()->assertAccepted()->json('run_id');
+    $this->travel(60)->seconds();
+    $second = ($this->start)()->assertAccepted()->json('run_id');
+    $this->travel(12)->seconds();
+    $this->getJson(route('admin.game-predictions.index', ['start_date' => '2026-10-22', 'run_id' => $first]))
+        ->assertOk()->assertJsonPath('games.0.engine_time_seconds', 72);
+    $this->getJson(route('admin.game-predictions.index', ['start_date' => '2026-10-22', 'run_id' => $second]))
+        ->assertOk()->assertJsonPath('games.0.engine_time_seconds', 12);
+});

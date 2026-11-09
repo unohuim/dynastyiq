@@ -50,9 +50,11 @@ final class RunNhlGamePredictionJob implements ShouldQueue
         }
         DB::table('nhl_game_prediction_runs')->where('id', $item->run_id)->where('status', 'queued')
             ->update(['status' => 'running', 'started_at' => now(), 'updated_at' => now()]);
+        DB::table('nhl_game_prediction_run_games')->where('id', $this->itemId)->whereNull('started_at')
+            ->whereIn('status', ['queued', 'running'])->update(['started_at' => now(), 'updated_at' => now()]);
         $claimed = DB::table('nhl_game_prediction_run_games')->where('id', $this->itemId)
             ->whereIn('status', ['queued', 'running'])->update([
-                'status' => 'running', 'started_at' => now(), 'last_error' => null, 'updated_at' => now(),
+                'status' => 'running', 'last_error' => null, 'updated_at' => now(),
             ]);
         if ($claimed === 0) {
             return;

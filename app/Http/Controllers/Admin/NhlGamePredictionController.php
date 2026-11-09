@@ -70,6 +70,8 @@ final class NhlGamePredictionController extends Controller
             ->selectRaw('status, COUNT(*) as total')->groupBy('status')->pluck('total', 'status');
         $recent = DB::table('nhl_game_prediction_runs')->orderByDesc('id')->limit(20)
             ->get(['id', 'start_date', 'end_date', 'status', 'total_games', 'created_at']);
+        $measuredAt = Carbon::now('UTC');
+
         return response()->json([
             'run' => $run === null ? null : ['id' => $run->id, 'status' => $run->status, 'total_games' => $run->total_games,
                 'counts' => $counts, 'created_at' => $run->created_at, 'finished_at' => $run->finished_at],
@@ -81,9 +83,26 @@ final class NhlGamePredictionController extends Controller
                 'actual_home' => in_array($game->game_state, ['OFF', 'FINAL'], true) ? $game->home_team_score : null,
                 'revision' => $revisions->has($game->nhl_game_id) ? $history->summary($revisions[$game->nhl_game_id]) : null,
                 'work' => $items->get($game->nhl_game_id),
+                'engine_time_seconds' => $this->engineTime(
+                    $items->get($game->nhl_game_id), $run?->created_at, $measuredAt
+                ),
             ]),
             'current_page' => $games->currentPage(), 'last_page' => $games->lastPage(), 'total' => $games->total(),
         ]);
+    }
+
+    /** Total wall time for the selected run, including queue, preparation and retries. */
+    private function engineTime(?object $work, ?string $queuedAt, Carbon $measuredAt): ?int
+    {
+        if ($work === null || $queuedAt === null) {
+            return null;
+        }
+        if ($work->finished_at === null && in_array($work->status, ['completed', 'unavailable', 'failed'], true)) {
+            return null;
+        }
+        $end = $work->finished_at === null ? $measuredAt : Carbon::parse($work->finished_at, 'UTC');
+
+        return max(0, $end->getTimestamp() - Carbon::parse($queuedAt, 'UTC')->getTimestamp());
     }
 
     /** Paginated immutable history includes unavailable and explicitly overridden variants. */

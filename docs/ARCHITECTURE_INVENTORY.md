@@ -4323,3 +4323,13 @@ expiring per-game summary digests reuse the existing cache. Actual corrections
 and completed derived-fact publication continue to invalidate affected evidence.
 Authority: `docs/architecture/stats/NhlCustomGamePrediction.yaml` and
 `docs/architecture/imports/NhlGameDataImportServices.yaml`.
+
+
+### Admin prediction elapsed time
+
+Game Predictions displays Engine Time for each selected-run game, measured from
+run admission through terminal work completion. Queue, pregame preparation and
+retry waits are included. The admin response derives seconds from existing run
+and work timestamps; the Vue table formats seconds/minutes and reuses its polling.
+First worker starts survive retries. Missing timing remains unavailable.
+Authority: `docs/architecture/stats/NhlGamePredictionHistory.yaml`.
