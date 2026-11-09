@@ -1236,12 +1236,12 @@ describe('public game preview and recap', () => {
         mount({ mode: 'preview', preview_analysis: { teams: { away: { abbrev: 'BOS', goals: 3,
             contributors: [{ id: 1, name: 'Forward', goals: .5, comparisons: [
                 { metric: 'EV SAT/GP', recent: 3, delta_pct: -25, baseline_label: 'Last 3 Seasons' },
-                { metric: 'PP PTS/GP', recent: 0, delta_pct: null, baseline_label: 'Last 3 Seasons' },
+                { metric: 'PP G/GP', recent: 0, delta_pct: null, baseline_label: 'Last 3 Seasons' },
             ] }] } }, insights: [] } });
         await selectPreview('Factors');
         expect(document.querySelector('[data-player-factors]').textContent).toContain('(↓25.0%)');
-        expect(document.querySelector('[data-player-factors]').textContent).toContain('PP PTS/GP');
-        expect(document.querySelector('[data-player-factors]').textContent).not.toContain('PP G/GP');
+        expect(document.querySelector('[data-player-factors]').textContent).toContain('PP G/GP');
+        expect(document.querySelector('[data-player-factors]').textContent).not.toContain('PP PTS/GP');
         expect(document.querySelector('[data-player-factor] .text-red-400')).not.toBeNull();
         expect(document.querySelector('[data-player-factors]').textContent).not.toContain('Infinity');
         expect(document.querySelectorAll('[data-player-factor] [aria-label]')).toHaveLength(1);

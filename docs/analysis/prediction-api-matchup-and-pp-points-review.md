@@ -1,5 +1,9 @@
 # Prediction API Matchup and player PP points
 
+Subsequent approved rollback restores PP G/GP and removes the added builder points
+field. The API Matchup addition remains. The implementation and counts below
+describe the earlier PP-points change, not the current Factors metric.
+
 Approved scope: include the existing Matchup statistics in the prediction API and
 replace player PP G/GP with PP PTS/GP in Factors, retaining L10-versus-Train changes.
 

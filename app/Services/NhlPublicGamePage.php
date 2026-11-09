@@ -369,7 +369,7 @@ final class NhlPublicGamePage
             $tokens[$entity] = $revision->model_id === null ? [] : $contexts($entity)
                 ->selectRaw('MAX(context.updated_at) AS updated_at, MAX(context.run_id) AS run_id, COUNT(*) AS rows')->first();
         }
-        $key = 'nhl:public-preview-analysis:v4:'.$revision->id.':'.hash('sha256', json_encode($tokens, JSON_THROW_ON_ERROR));
+        $key = 'nhl:public-preview-analysis:v5:'.$revision->id.':'.hash('sha256', json_encode($tokens, JSON_THROW_ON_ERROR));
 
         return Cache::remember($key, 300, function () use ($revision, $contexts, $game, $empty): array {
             $saved = $this->previewProjection((int) $revision->id);
@@ -543,7 +543,7 @@ final class NhlPublicGamePage
         $comparisons = [];
         foreach ([['EV SAT/60', 'EV', 'sat', 'seconds', 3600], ['EV SAT/GP', 'EV', 'sat', 'games', 1],
             ['EV SH%', 'EV', 'goals', 'sog', 100],
-            ['PP PTS/GP', 'PP', 'points', 'games', 1]] as [$metric, $lane, $numerator, $denominator, $scale]) {
+            ['PP G/GP', 'PP', 'goals', 'games', 1]] as [$metric, $lane, $numerator, $denominator, $scale]) {
             $rates = [];
             foreach (['baseline' => 'train', 'recent' => 'last_10'] as $key => $period) {
                 $sample = $history[$lane][$period] ?? [];
@@ -555,7 +555,7 @@ final class NhlPublicGamePage
                 }
                 $rates[$key] = $n !== null && $n >= 0 && $d !== null && $d > 0 ? $scale * $n / $d : null;
             }
-            if ($rates['baseline'] === null && $rates['recent'] === null && $numerator !== 'points') {
+            if ($rates['baseline'] === null && $rates['recent'] === null) {
                 continue;
             }
             $comparisons[] = ['recent' => $rates['recent'], 'metric' => $metric, 'baseline_label' => $baselineLabel,

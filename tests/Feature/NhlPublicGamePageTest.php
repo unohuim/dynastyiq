@@ -108,8 +108,8 @@ describe('saved pregame explanations and insights', function (): void {
                         'last_10' => ['games' => 10, 'seconds' => 6000, 'sat' => 50, 'sog' => 25, 'goals' => 3],
                         'last_20' => ['games' => 20, 'seconds' => 12000, 'sat' => 100, 'sog' => 60, 'goals' => 6],
                         'last_season' => ['games' => 82, 'seconds' => 49200, 'sat' => 300, 'sog' => 150, 'goals' => 18]],
-                    'PP' => ['train' => ['games' => 100, 'seconds' => 12000, 'goals' => 10, 'points' => 30],
-                        'last_10' => ['games' => 10, 'seconds' => 1200, 'goals' => 2, 'points' => 6],
+                    'PP' => ['train' => ['games' => 100, 'seconds' => 12000, 'goals' => 10],
+                        'last_10' => ['games' => 10, 'seconds' => 1200, 'goals' => 2],
                         'last_20' => ['games' => 20, 'seconds' => 2400, 'goals' => 4]],
                 ]];
                 $inputs[$side]['pp_offense_sources'][$playerId] = 'last_20';
@@ -153,7 +153,7 @@ describe('saved pregame explanations and insights', function (): void {
             'recent_label' => 'Last 10 Games']);
         expect($values[1])->toMatchArray(['metric' => 'EV SAT/GP', 'recent' => 5.0, 'delta_pct' => 25.0]);
         expect($values[2])->toMatchArray(['metric' => 'EV SH%', 'recent' => 12.0, 'delta_pct' => 20.0, 'is_percentage' => true]);
-        expect($values[3])->toMatchArray(['metric' => 'PP PTS/GP', 'recent' => .6, 'delta_pct' => 100.0]);
+        expect($values[3])->toMatchArray(['metric' => 'PP G/GP', 'recent' => .2, 'delta_pct' => 100.0]);
         expect(array_unique(array_column($values, 'recent_label')))->toBe(['Last 10 Games']);
         foreach ($values as $comparison) {
             expect($comparison)->not->toHaveKey('baseline');
@@ -197,7 +197,7 @@ describe('saved pregame explanations and insights', function (): void {
         $metrics['strength'] = ['EV' => [
             'train' => ['games' => 100, 'sat' => 400, 'sat_per_60' => 24, 'goals' => 20, 'sog' => 200],
             'last_10' => ['games' => 10, 'sat' => 30, 'sat_per_60' => 18, 'goals' => 0, 'sog' => 20]],
-            'PP' => ['train' => ['games' => 100, 'goals' => 0, 'points' => 0], 'last_10' => ['games' => 10, 'goals' => 0, 'points' => 0]]];
+            'PP' => ['train' => ['games' => 100, 'goals' => 0], 'last_10' => ['games' => 10, 'goals' => 0]]];
         DB::table('nhl_player_game_pregame_contexts')->where('nhl_player_id', 601)->update(['metrics' => json_encode($metrics)]);
         $rates = ($this->analysis)()['teams']['away']['contributors'][0]['comparisons'];
         expect($rates[0])->toMatchArray(['recent' => 18.0, 'delta_pct' => -25.0])
@@ -212,14 +212,6 @@ describe('saved pregame explanations and insights', function (): void {
         $rates = ($this->analysis)()['teams']['away']['contributors'][0]['comparisons'];
         expect($rates[0])->toMatchArray(['recent' => null, 'delta_pct' => null, 'recent_label' => 'Last 10 Games'])
             ->and($rates[2])->toMatchArray(['recent' => null, 'delta_pct' => null]);
-    });
-
-    it('does not substitute PP goals when saved PP points are unavailable', function (): void {
-        unset($this->insightInputs['away']['players'][601]['history']['PP']['train']['points'],
-            $this->insightInputs['away']['players'][601]['history']['PP']['last_10']['points']);
-        ($this->publishInsights)();
-        expect(($this->analysis)()['teams']['away']['contributors'][0]['comparisons'][3])
-            ->toMatchArray(['metric' => 'PP PTS/GP', 'recent' => null, 'delta_pct' => null]);
     });
 
     it('does not rank an opponent or mismatched parent as an own points leader', function (): void {
@@ -341,9 +333,7 @@ describe('saved pregame explanations and insights', function (): void {
     it('does not guess source periods when a historical revision lacks provenance', function (): void {
         $this->insightInputs = [];
         ($this->publishInsights)();
-        expect(($this->analysis)()['teams']['away']['contributors'][0]['comparisons'])->toHaveCount(1)
-            ->and(($this->analysis)()['teams']['away']['contributors'][0]['comparisons'][0])
-            ->toMatchArray(['metric' => 'PP PTS/GP', 'recent' => null, 'delta_pct' => null]);
+        expect(($this->analysis)()['teams']['away']['contributors'][0]['comparisons'])->toBe([]);
     });
 
     it('rejects malformed revision selections', function (string $id): void {

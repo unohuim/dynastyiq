@@ -1224,11 +1224,6 @@ class NhlPregameContextBuilder
                 'away_team_id' => $appearance->away_team_id,
                 'season_id' => $appearance->season_id,
                 'exposure' => $strengthRow,
-                'points' => $strength === 'ALL' ? ($appearance->pts ?? null)
-                    : ($strengthRow === null ? ($strengthRows->isNotEmpty() ? 0 : null)
-                        : (($strengthRow->individual_pts ?? null) !== null && $strengthRow->gf !== null
-                            && $strengthRow->individual_pts <= $strengthRow->gf
-                            ? (int) $strengthRow->individual_pts : null)),
                 'available' => $available,
                 'toi' => $toi,
                 'sat' => (int) ($counts->sat ?? 0),
@@ -1265,8 +1260,6 @@ class NhlPregameContextBuilder
             'individual_missing_games' => $missing,
             ...($completeGamesOnly ? ['usable_games' => $rows->count()] : []),
             'sat' => $sat, 'sog' => $sog, 'goals' => $goals,
-            'points' => $available && $rows->every(fn (object $row): bool => $row->points !== null && $row->points >= 0)
-                ? (int) $rows->sum('points') : null,
             'sat_per_60' => $available && $toi > 0 ? round($sat * 3600 / $toi, 4) : null,
             'sog_per_60' => $available && $toi > 0 ? round($sog * 3600 / $toi, 4) : null,
             'goals_per_60' => $available && $toi > 0 ? round($goals * 3600 / $toi, 4) : null,

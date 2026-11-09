@@ -133,30 +133,6 @@ it('persists individual EV PP PK counts and rates separately from on ice totals'
         ->and($metrics['all']['last_5']['sat'])->toBe(9);
 });
 
-it('stores personal strength points including assists for compact PP comparisons', function (): void {
-    ($this->fact)(2025020001, 'PP', true, false);
-    $metrics = ($this->build)();
-    expect($metrics['strength']['PP']['last_10'])->toMatchArray(['games' => 1, 'goals' => 0, 'points' => 1]);
-    $contextId = DB::table('nhl_player_game_pregame_contexts')->where('nhl_game_id', 2025020010)->value('id');
-    $this->assertDatabaseHas('nhl_player_game_pregame_context_metrics', [
-        'player_context_id' => $contextId, 'strength' => 'PP', 'window_key' => 'l10', 'metric_key' => 'points', 'value' => 1,
-    ]);
-});
-
-it('stores zero PP points for an appearance without PP exposure rather than excluding the game', function (): void {
-    ($this->fact)(2025020001, 'EV', true);
-    DB::table('nhl_player_game_strength_summaries')->where('strength', 'PP')->delete();
-    expect(($this->build)()['strength']['PP']['last_10'])->toMatchArray(['games' => 1, 'points' => 0]);
-});
-
-it('keeps invalid or unavailable strength points unknown', function (): void {
-    ($this->fact)(2025020001, 'PP', true);
-    DB::table('nhl_player_game_strength_summaries')->where('strength', 'PP')->update(['individual_pts' => 3, 'gf' => 2]);
-    expect(($this->build)()['strength']['PP']['last_10']['points'])->toBeNull();
-    DB::table('nhl_player_game_strength_summaries')->delete();
-    expect(($this->build)()['strength']['PP']['last_10']['points'])->toBeNull();
-});
-
 it('keeps missing facts unavailable rather than claiming zero attempts', function (): void {
     $row = ($this->build)()['strength']['EV']['last_5'];
     expect($row['sat'])->toBeNull()->and($row['sat_per_60'])->toBeNull()
