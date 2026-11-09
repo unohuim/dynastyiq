@@ -216,9 +216,29 @@ Winner probabilities use independent Poisson team goal distributions, splitting
 regulation ties **50/50**, then applying the approved schedule probability delta.
 Winner comparisons use official final results including OT/SO. Goal comparisons
 use retained-bucket regulation EV + PP actuals. JSON and saved rows retain both
-views. No short-handed goals or qualification cutoff are included. A separate
-confidence calibration has not been established: confidence stays unavailable,
-and input completeness is reported separately rather than labelled confidence.
+views. No short-handed goals or qualification cutoff are included. Successful
+predictions now return the restored existing internal input-confidence score,
+separate from win probability and input completeness. Outcome calibration is
+not claimed and does not prevent publishing internal confidence.
+
+### Restored internal confidence
+
+The existing `NhlGamePredictionPayload::confidenceScore` and
+`teamInputConfidence` calculations are reused unchanged. Team confidence remains
+70% skater and 30% goalie input confidence; skater values are weighted by player
+goal contributions through the existing 99% contribution selection. Average
+the two teams, round and bound to 1–100. Existing missing-value defaults remain.
+No legacy presentation boost, win-record blend or confidence qualification gate
+is reintroduced.
+
+Preparation reads confidence from the same model's stored rate/profile evidence
+and selected starter's exact EV bucket samples. It does not rerun annual scoring
+or goalie performance calculations. Confidence consumes the new engine's
+already-calculated goal/attempt weights and never changes goals, win probability
+or the pick. Earlier immutable predictions can retain null confidence.
+
+Details and authored regression coverage:
+[internal-confidence-restoration-review.md](analysis/internal-confidence-restoration-review.md).
 
 This implementation establishes an executable definition for a **new measured
 baseline**. None of the historical 56.40%, 53.92% or 37.57%-p20 results below is

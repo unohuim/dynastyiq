@@ -434,9 +434,74 @@ it('does not change goals when starting goalie identity changes in neutral mode'
     expect($this->engine->predict($this->input)['total_goals'])->toBe($baseline['total_goals']);
 });
 
-it('keeps win probability separate from uncalibrated confidence', function (): void {
+it('keeps win probability separate from numeric internal input confidence', function (): void {
     $result = $this->engine->predict($this->input);
-    expect($result['home_win_probability'])->toBeGreaterThan(0.5)->and($result['confidence_score'])->toBeNull();
+    expect($result['home_win_probability'])->toBeGreaterThan(0.5)->and($result['confidence_score'])->toBe(50);
+});
+
+it('reuses the unchanged internal confidence formula with actual skater and goalie inputs', function (): void {
+    $baseline = $this->engine->predict($this->input);
+    foreach (['away', 'home'] as $venue) {
+        foreach ($this->input['teams'][$venue]['players'] as &$player) {
+            $player['confidence_score'] = 0.8;
+        }
+        unset($player);
+        $this->input['teams'][$venue]['goalie_confidence_buckets'] = ['B' => ['confidence_score' => 0.6, 'source_sat' => 100]];
+    }
+    $result = $this->engine->predict($this->input);
+    expect($result['confidence_score'])->toBe(74)
+        ->and($result['teams']['away']['goalie_input_confidence_score'])->toBe(60.0)
+        ->and($result['teams']['home']['input_confidence_score'])->toBe(74.0)
+        ->and($result['total_goals'])->toBe($baseline['total_goals'])
+        ->and($result['home_win_probability'])->toBe($baseline['home_win_probability'])
+        ->and($result['recommendation'])->toBe($baseline['recommendation']);
+});
+
+it('preserves zero evidence without confusing filled inputs with confidence', function (): void {
+    foreach (['away', 'home'] as $venue) {
+        foreach ($this->input['teams'][$venue]['players'] as &$player) {
+            $player['confidence_score'] = 0.0;
+        }
+        unset($player);
+        $this->input['teams'][$venue]['goalie_confidence_buckets'] = [];
+    }
+    $result = $this->engine->predict($this->input);
+    expect($result['confidence_score'])->toBe(1)
+        ->and($result['confidence_inputs']['effective_input_completeness']['EV'])->toBe(1.0)
+        ->and($result['teams']['away']['goalie_input_confidence_score'])->toBe(0.0);
+});
+
+it('weights goalie confidence by the opponents EV bucket attempts including missing buckets', function (): void {
+    foreach (['away', 'home'] as $venue) {
+        foreach ($this->input['teams'][$venue]['players'] as &$player) {
+            $player['buckets']['EV']['C'] = $player['buckets']['EV']['B'];
+        }
+        unset($player);
+        $this->input['teams'][$venue]['goalie_confidence_buckets'] = ['B' => ['confidence_score' => 0.8]];
+    }
+    $this->input['retained_bucket_keys'][] = 'C';
+    $result = $this->engine->predict($this->input);
+    expect($result['teams']['away']['goalie_input_confidence_score'])->toBe(40.0)
+        ->and($result['teams']['home']['goalie_input_confidence_score'])->toBe(40.0);
+});
+
+it('retains the existing ninety nine percent goal contribution weighting', function (): void {
+    foreach (['away', 'home'] as $venue) {
+        foreach ($this->input['teams'][$venue]['players'] as &$player) {
+            $player['confidence_score'] = 0.8;
+        }
+        unset($player);
+    }
+    $base = $this->engine->predict($this->input);
+    $tiny = $this->input['teams']['away']['players'][100];
+    $tiny['name'] = 'Tiny contribution';
+    $tiny['usage'] = ['EV' => 6.0, 'PP' => 6.0];
+    $tiny['confidence_score'] = 0.0;
+    $this->input['teams']['away']['players'][102] = $tiny;
+    $result = $this->engine->predict($this->input);
+    expect($result['confidence_score'])->toBe($base['confidence_score'])
+        ->and($result['teams']['away']['input_confidence_score'])->toBe($base['teams']['away']['input_confidence_score'])
+        ->and($result['teams']['away']['players'][102]['strengths']['EV']['goals'])->toBeGreaterThan(0);
 });
 
 it('splits tied regulation outcomes evenly with no invented home advantage', function (): void {

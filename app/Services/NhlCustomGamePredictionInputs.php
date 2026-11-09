@@ -658,6 +658,10 @@ class NhlCustomGamePredictionInputs
         if (! $prospective && (! $record['valid'] || $record['unmatched_shooter'])) {
             throw new DomainException('Target source facts, regulation clocks or shooter identities are incomplete.');
         }
+        $confidence = app(NhlSatModelPredictionService::class);
+        $skaterConfidence = $confidence->confidenceScores($this->metadata['model_id'], array_keys($record['players']));
+        $goalieIds = array_values(array_unique(array_map('intval', array_filter($record['starters'] ?? []))));
+        $goalieConfidence = $confidence->goalieConfidenceBuckets($this->metadata['model_id'], $goalieIds, $this->filter['keys']);
         $input = ['game_id' => (int) $game->nhl_game_id, 'source_cutoff_at' => $game->prediction_cutoff_at ?? $game->start_time_utc,
             'retained_bucket_keys' => $this->filter['keys'],
             'teams' => [], 'league_usage_seconds' => [], 'league_pk_probability' => $this->leaguePk((string) $game->season_id)];
@@ -710,6 +714,8 @@ class NhlCustomGamePredictionInputs
             }
             $side = ['id' => (int) $team, 'abbrev' => $venue === 'away' ? $game->away_team_abbrev : $game->home_team_abbrev,
                 'context_id' => $context->id === null ? null : (int) $context->id, 'starting_goalie_id' => $record['starters'][$team] ?? null,
+                'goalie_confidence_buckets' => isset($record['starters'][$team])
+                    ? ($goalieConfidence[(int) $record['starters'][$team]] ?? []) : null,
                 'lineup_source' => $record['lineup_sources'][$team] ?? 'historical_participants', 'schedule' => $schedule,
                 'context_source' => $context->evidence_source ?? ($prospective ? 'transient_prior_results' : 'saved_model_snapshot'),
                 'team_metrics' => json_decode($context->metrics, true, 512, JSON_THROW_ON_ERROR),
@@ -729,6 +735,7 @@ class NhlCustomGamePredictionInputs
                     throw new DomainException('Player context does not reference this team context.');
                 }
                 $prepared = ['name' => $player['name'], 'role' => $player['role'], 'context_id' => $playerContext->id === null ? null : (int) $playerContext->id,
+                    'confidence_score' => $skaterConfidence->get((int) $id),
                     'line_key' => $player['line_key'] ?? null,
                     'usage' => [], 'complete' => [], 'buckets' => [], 'history' => []];
                 foreach (['EV', 'PP'] as $lane) {

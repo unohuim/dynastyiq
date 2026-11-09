@@ -123,6 +123,7 @@ class NhlGamePredictionPayload
             $goalie['matchup_predicted_ga_per_game'] = $custom['teams'][$opponent]['goals'];
             $goalie['matchup_value_per_game'] = null;
             $goalie['goal_adjustment_applied'] = false;
+            $goalie['confidence_score'] = $custom['teams'][$venue]['goalie_input_confidence_score'] ?? $goalie['confidence_score'] ?? 50;
             $goalies[$venue] = $goalie;
             $lineups[$venue] = ($overrides['use_stored_boxscore'] ?? false) ? null
                 : $this->anticipatedLineups->forGameTeam($gameId, $abbrev, false);
@@ -857,7 +858,7 @@ class NhlGamePredictionPayload
         $team['roster'] = $this->predictionRoster($team['roster'] ?? []);
         $goalies = collect($lineup['players'] ?? [])->where('lineup_role', 'goalie')
             ->where('line_key', 'G')->whereIn('slot_index', [1, 2])->sortBy('slot_index')->values();
-        if (in_array($starter['selection_source'] ?? null, ['manual_starter_override', 'nhl_boxscore'], true)) {
+        if (in_array($starter['selection_source'] ?? null, ['manual_starter_override', 'nhl_boxscore', 'starting_goalie_observation'], true)) {
             $listedStarter = $goalies->firstWhere('slot_index', 1);
             $backup = $goalies->firstWhere('slot_index', 2);
             if (($backup['nhl_player_id'] ?? null) === $starter['nhl_player_id']) {

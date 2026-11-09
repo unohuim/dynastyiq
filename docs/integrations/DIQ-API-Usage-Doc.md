@@ -17,8 +17,10 @@ is filled from the agreed personal/team Train and league references. Observed
 zeros remain zeros. Observed coverage is diagnostic and does not reject a game.
 Game state does not prevent an explicitly requested prediction.
 
-Current prediction/market confidence is nullable until separately calibrated.
-It is not win probability or completed-input coverage. Moneyline probabilities
+Successful current predictions and markets return a numeric internal input-confidence
+score from 1 to 100 using the restored existing formula. It is not win probability
+or completed-input coverage, and is not outcome-calibrated. Earlier revisions
+may retain null confidence. Moneyline probabilities
 come directly from the shared calculator, including its equal regulation-tie
 resolution and approved schedule adjustment. Scores are already final EV+PP
 team estimates; do not divide them by legacy offensive/defensive weights.
@@ -344,10 +346,13 @@ slots in this table format. Mixed-team table filtering remains active in preseas
 so opponent columns are not combined; ordinary preseason line submissions permit cross-team players.
 This endpoint does not accept a
 goalie-only submission. Goalies are optional additions: G1 becomes the expected
-manual starter, G2 remains the dressed backup. The latest manual goalie decision
-(UI, API, or explicit goalie picker) takes precedence over provider expectations
-and confirmations for prediction selection. Explicit prediction request goalie
-overrides remain first; live NHL boxscore presentation stays unchanged.
+manual starter, G2 remains the dressed backup. The latest valid goalie report
+by server observation time wins across manual decisions and provider expectations
+or confirmations; observation ID breaks time ties. A newer RotoWire report can
+replace a submitted G1, and a newer manual decision can replace RotoWire.
+Explicit prediction request goalie overrides remain first before puck drop;
+the locked NHL starter is authoritative afterward. Submitted lineup history and
+live NHL boxscore presentation stay unchanged.
 
 ### Submit An X Post URL
 
@@ -1013,13 +1018,14 @@ must check this field before reading prediction or market output.
 New calculations are durably archived before publication. `meta.prediction_revision_id` identifies the saved calculation and `meta.predicted_at` is its calculation timestamp. Fresh and stale cache reads retain that identity; a successful recalculation receives a new revision. These additive fields do not change prediction or qualification math. Manual admin default-engine runs also publish through this pathway.
 
 `meta.cache` is `fresh` for a current cached or synchronous response and `stale`
-only when DynastyIQ has queued a rebuild of a response no more than five minutes old
+only when DynastyIQ has queued a rebuild of a response no more than three hours old
 whose input fingerprint still matches. Algorithm configuration, selected-model, source-result and lineup/starter changes invalidate previous responses;
 an outdated fingerprint is never served as stale.
 Routine sync timestamps and unchanged lineup observations do not invalidate a
 prediction. Actual prior-result changes, selected lineup/starter changes and
 completed derived-fact import publications do. This does not change the HTTP
-200/202 contract or the existing one-minute/five-minute response age limits.
+200/202 contract. Responses remain fresh for one minute and eligible for stale
+reuse with a queued refresh for up to three hours.
 
 To request a new prediction immediately, send `force_refresh=1`:
 
@@ -1230,21 +1236,23 @@ rewritten. If a provider read fails or identifies no starter, stored official
 starter data and then existing fallbacks apply. An official starter missing a
 usable goalie projection still produces a prerequisite error, not a substitute.
 
-Otherwise, starter selection precedence is request override, latest authoritative manual starter selection, official NHL starter, current
-starting-goalie observation, goalie season projection, then workload projection.
-Within observations, confirmed evidence outranks expected evidence, with newest
-evidence breaking ties.
+Otherwise, starter selection precedence is request override, newest eligible
+confirmed/expected observation, stored official NHL starter when no eligible
+observation exists, goalie season projection, then workload projection.
+Observation recency uses server-recorded `fetched_at`, then observation ID,
+descending. Neither manual origin nor confirmed status outranks a newer valid
+report. Unknown reports cannot suppress earlier valid starter evidence.
 
-An explicit super-admin goalie-picker selection takes precedence immediately
-after a request override, ahead of provider starter evidence. It is returned with
+An explicit super-admin goalie-picker selection joins that same recency order.
+When selected, it is returned with
 `selection_source: manual_starter_override` (and `provider: manual` in availability
-responses). It applies only to the selected game/team, persists until replaced by
-another accepted manual goalie decision, and does not change live NHL-owned presentation.
-Validated UI and partner API lineup G1 submissions have the same manual authority;
-the latest accepted decision wins, with record ID breaking timestamp ties.
+responses). It applies only to the selected game/team and can be superseded by
+a newer eligible provider or manual report. It does not change live NHL-owned presentation.
+Validated UI and partner API lineup G1 submissions have the same recency rules;
+the original submitted lineup and goalie observations remain immutable.
 If the chosen player lacks an NHL ID or usable goalie model, predictions report
 the missing prerequisite rather than silently selecting another goalie.
-The prediction dressed roster uses this starter as G1; selecting the listed G2
+The prediction dressed roster uses the selected current starter as G1; selecting the listed G2
 swaps the two goalie slots. Other changes preserve the listed backup where possible.
 
 The picker uses session-authenticated, super-admin-only browser endpoints (not
@@ -1381,7 +1389,7 @@ used by the prediction. When the lineup source is `nhl_boxscore` or
 | `projected_sat` | number | Expected game shot attempts at the applied game TOI, including historical bucket fallbacks when available. |
 | `nhle_factor` | number/null | Applied versioned league factor; null when NHLe was not used. |
 | `confidence` | string/null | Human-readable projection confidence bucket. NHLe and replacement rows are `low`. |
-| `confidence_score` | number/null | Input confidence when available; current uncalibrated game output is null. |
+| `confidence_score` | number/null | Player input-evidence confidence on a 0–1 scale when available; this is distinct from the game-level 1–100 internal score. |
 | `baseline_toi_seconds` | number | Existing season TOI projection before applying tonight's role. |
 | `game_projected_toi_seconds` | integer | Game-specific projected TOI used to scale the player's rates. |
 | `game_projected_toi` | string | Display form of game TOI in `M:SS` format. |
@@ -1572,7 +1580,7 @@ Common row shape:
 | `loss_probability` | Probability the selection loses. |
 | `fair_odds_american` | American fair odds derived from probability, or `null` when probability is exactly `0` or `1` because fair odds are infinite. |
 | `fair_odds_decimal` | Decimal fair odds derived from probability, or `null` when probability is exactly `0` or `1` because fair odds are infinite. |
-| `confidence_score` | Confidence from `0` to `100`, or null when unavailable. It is distinct from win probability. |
+| `confidence_score` | Internal input confidence from `1` to `100` on current successful predictions; earlier/unavailable output may be null. It is distinct from win probability. |
 | `model.method` | Probability method. See method values below. |
 | `model.source` | `prediction.selection_score` for moneyline/puckline; `prediction.predicted_score` for totals. |
 | `model.includes_overtime` | Whether the probability includes overtime resolution in the score distribution. |

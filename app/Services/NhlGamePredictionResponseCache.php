@@ -15,7 +15,7 @@ use Throwable;
 final class NhlGamePredictionResponseCache
 {
     private const FRESH_SECONDS = 60;
-    private const STALE_SECONDS = 300;
+    private const STALE_SECONDS = 10800;
     private const BUILD_LOCK_SECONDS = 600;
 
     /** @param array<string,mixed> $input @param callable():array<string,mixed> $build @return array<string,mixed> */

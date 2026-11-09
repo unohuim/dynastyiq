@@ -800,7 +800,7 @@ it('shares goalie evidence priority between public payloads and prediction selec
     expect(app(\App\Services\NhlStartingGoalieSelector::class)->select(2026020001, 'TOR')['name'])->toBe($expected);
     $this->travelBack();
 })->with([
-    'lineup beats newer expectation' => ['rotowire', 'expected', 'Lineup Goalie'],
+    'newer provider expectation replaces older lineup' => ['rotowire', 'expected', 'Other Goalie'],
     'confirmation still wins' => ['rotowire', 'confirmed', 'Other Goalie'],
     'official starter wins' => ['nhl_boxscore', 'confirmed', 'Other Goalie'],
     'newer lineup replaces older lineup' => ['public_lineup', 'expected', 'Other Goalie'],
@@ -2914,7 +2914,7 @@ it('derives an expected starting goalie observation from a newly observed G1', f
     $this->travelBack();
 });
 
-it('keeps confirmed goalie evidence ahead of newer lineup-derived expectations', function (): void {
+it('uses newer valid lineup expectations ahead of older confirmed goalie reports', function (): void {
     createGoalieObservation([
         'nhl_game_id' => 2026020008, 'game_date' => '2026-09-20',
         'player_name' => 'Confirmed Goalie', 'status' => 'confirmed',
@@ -2929,8 +2929,8 @@ it('keeps confirmed goalie evidence ahead of newer lineup-derived expectations',
     $this->getJson('/starting-goalies/payload?date=2026-09-20')
         ->assertOk()
         ->assertJsonCount(1, 'starting_goalies')
-        ->assertJsonPath('starting_goalies.0.player_name', 'Confirmed Goalie')
-        ->assertJsonPath('starting_goalies.0.status', 'confirmed');
+        ->assertJsonPath('starting_goalies.0.player_name', 'Expected Goalie')
+        ->assertJsonPath('starting_goalies.0.status', 'expected');
 });
 
 it('does not expose a current lineup whose evidence predates the day-before-game window', function (): void {
@@ -4011,4 +4011,93 @@ beforeEach(function (): void {
             'boxscore' => ['id' => $id, ...$box], 'pbp' => ['id' => $id, 'plays' => []], 'game' => [],
         ], 120);
     };
+});
+
+describe('starter report recency', function (): void {
+    beforeEach(function (): void {
+        $this->travelTo(Carbon::parse('2026-11-09 12:00:00 America/Toronto'));
+        NhlGame::query()->create(['nhl_game_id' => 2026020001, 'season_id' => '20262027', 'game_type' => 2,
+            'game_date' => '2026-11-09', 'game_dow' => 'Monday', 'game_month' => 'November',
+            'home_team_id' => 10, 'away_team_id' => 8, 'home_team_abbrev' => 'TOR', 'away_team_abbrev' => 'MTL',
+            'game_state' => 'PRE', 'start_time_utc' => '2026-11-10 00:00:00']);
+        $this->starterSelector = app(\App\Services\NhlStartingGoalieSelector::class);
+    });
+
+    afterEach(function (): void { $this->travelBack(); });
+
+    it('replaces a Saturday manual decision with Mondays provider report without rewriting history', function (string $status): void {
+        $manual = createGoalieObservation(['provider' => 'manual', 'player_name' => 'Saturday Goalie',
+            'nhl_player_id' => 8470002, 'fetched_at' => now()->subDays(2),
+            'raw_evidence' => ['manual_starter_override' => true, 'submitted_by_user_id' => 123]]);
+        $original = $manual->getRawOriginal('raw_evidence');
+        createGoalieObservation(['provider' => 'rotowire', 'player_name' => 'Monday Goalie',
+            'nhl_player_id' => 8470003, 'status' => $status, 'fetched_at' => now()]);
+
+        $this->withToken(availabilityToken())->getJson('/api/nhl-starting-goalies?date=2026-11-09')
+            ->assertOk()->assertJsonPath('starting_goalies.0.player_name', 'Monday Goalie')
+            ->assertJsonPath('starting_goalies.0.status', $status);
+        $selected = $this->starterSelector->select(2026020001, 'TOR');
+        expect($selected['nhl_player_id'])->toBe(8470003)
+            ->and($selected['selection_source'])->toBe('starting_goalie_observation')
+            ->and($manual->fresh()->getRawOriginal('raw_evidence'))->toBe($original)
+            ->and($manual->fresh()->nhl_player_id)->toBe(8470002);
+        $this->assertDatabaseCount('nhl_starting_goalie_observations', 2);
+    })->with(['confirmed', 'expected']);
+
+    it('allows a genuinely newer manual selection to replace a confirmed provider', function (): void {
+        createGoalieObservation(['provider' => 'rotowire', 'nhl_player_id' => 8470003,
+            'status' => 'confirmed', 'fetched_at' => now()->subMinute()]);
+        createGoalieObservation(['provider' => 'manual', 'nhl_player_id' => 8470002, 'fetched_at' => now()]);
+        $selected = $this->starterSelector->select(2026020001, 'TOR');
+        expect($selected['nhl_player_id'])->toBe(8470002)
+            ->and($selected['selection_source'])->toBe('manual_starter_override');
+    });
+
+    it('uses the latest valid report within one provider even when status changes from confirmed to expected', function (): void {
+        createGoalieObservation(['nhl_player_id' => 8470002, 'status' => 'confirmed', 'fetched_at' => now()->subMinute()]);
+        createGoalieObservation(['nhl_player_id' => 8470003, 'status' => 'expected', 'fetched_at' => now()]);
+        $rows = $this->starterSelector->rankedObservations(today());
+        expect($rows)->toHaveCount(1)
+            ->and($rows->first()->nhl_player_id)->toBe(8470003)
+            ->and($this->starterSelector->select(2026020001, 'TOR')['nhl_player_id'])->toBe(8470003);
+    });
+
+    it('breaks identical observation times by the newer record id without provider priority', function (string $first, string $last): void {
+        createGoalieObservation(['provider' => $first, 'nhl_player_id' => 8470002, 'status' => 'confirmed', 'fetched_at' => now()]);
+        createGoalieObservation(['provider' => $last, 'nhl_player_id' => 8470003, 'status' => 'expected', 'fetched_at' => now()]);
+        expect($this->starterSelector->select(2026020001, 'TOR')['nhl_player_id'])->toBe(8470003);
+    })->with([['manual', 'rotowire'], ['rotowire', 'manual'], ['rotowire', 'rotowire']]);
+
+    it('does not let a newer unknown status hide an earlier valid starter', function (string $provider): void {
+        createGoalieObservation(['provider' => 'rotowire', 'nhl_player_id' => 8470002,
+            'status' => 'confirmed', 'fetched_at' => now()->subMinute()]);
+        createGoalieObservation(['provider' => $provider, 'nhl_player_id' => 8470003,
+            'status' => 'unknown', 'fetched_at' => now()]);
+        expect($this->starterSelector->select(2026020001, 'TOR')['nhl_player_id'])->toBe(8470002);
+    })->with(['rotowire', 'manual']);
+
+    it('uses server observation time rather than a claimed publication date', function (): void {
+        createGoalieObservation(['provider' => 'manual', 'nhl_player_id' => 8470002,
+            'provider_published_at' => '2099-01-01 00:00:00', 'fetched_at' => now()->subDays(2)]);
+        createGoalieObservation(['provider' => 'rotowire', 'nhl_player_id' => 8470003, 'fetched_at' => now()]);
+        expect($this->starterSelector->select(2026020001, 'TOR')['nhl_player_id'])->toBe(8470003);
+    });
+
+    it('retains explicit request overrides before puck drop', function (): void {
+        createGoalieObservation(['nhl_player_id' => 8470003, 'status' => 'confirmed', 'fetched_at' => now()]);
+        expect($this->starterSelector->select(2026020001, 'TOR', providedGoalieId: 8470004)['nhl_player_id'])->toBe(8470004);
+    });
+
+    it('preserves the locked NHL starter after puck drop over newer reports and request overrides', function (): void {
+        NhlGame::query()->findOrFail(2026020001)->update(['game_state' => 'LIVE', 'home_starter_lock' => [
+            'nhl_player_id' => 8470002, 'name' => 'Locked Starter', 'locked_at' => now()->subMinutes(2)->toIso8601String(),
+        ]]);
+        createGoalieObservation(['provider' => 'rotowire', 'nhl_player_id' => 8470003,
+            'status' => 'confirmed', 'fetched_at' => now()]);
+        createGoalieObservation(['provider' => 'manual', 'nhl_player_id' => 8470004, 'fetched_at' => now()]);
+        expect($this->starterSelector->select(2026020001, 'TOR', providedGoalieId: 8470004)['nhl_player_id'])->toBe(8470002)
+            ->and($this->starterSelector->selectForPrediction(2026020001, 'TOR', providedGoalieId: 8470004)['nhl_player_id'])
+            ->toBe(8470002);
+        Http::assertNothingSent();
+    });
 });

@@ -158,6 +158,7 @@ class NhlCustomGamePredictionEngine
         $probabilityDelta = $withSchedule && $this->fourthGameBackToBack($sides['away']['schedule'] ?? [])
             ? $definition['schedule']['away_fourth_b2b_home_probability_delta'] : 0.0;
         $homeProbability = max(0.0, min(1.0, $probabilities['home'] + $probabilityDelta));
+        $confidence = $this->internalConfidence($input, $teams);
 
         return [
             'game_id' => (int) $input['game_id'], 'source_cutoff_at' => $input['source_cutoff_at'],
@@ -169,11 +170,51 @@ class NhlCustomGamePredictionEngine
             'regulation_tie_probability' => $probabilities['tie'],
             'recommendation' => abs($homeProbability - 0.5) < 1.0e-12 ? 'OT'
                 : $teams[$homeProbability > 0.5 ? 'home' : 'away']['abbrev'],
-            'confidence_score' => null,
+            'confidence_score' => $confidence['score'],
             'confidence_inputs' => ['input_completeness' => $this->completeness($sides),
                 'effective_input_completeness' => ['EV' => 1.0, 'PP' => 1.0],
-                'calibration' => 'unavailable', 'schedule_enabled' => $withSchedule],
+                'calibration' => 'unavailable', 'schedule_enabled' => $withSchedule,
+                'teams' => $confidence['teams']],
         ];
+    }
+
+    /** Reconnect the unchanged internal input-quality helper after score and winner calculation.
+     * @param array<string,mixed> $input
+     * @param array<string,array<string,mixed>> $teams
+     * @return array{score:int,teams:array<string,array<string,int|float|bool>>}
+     */
+    private function internalConfidence(array $input, array &$teams): array
+    {
+        $helper = app(NhlGamePredictionPayload::class);
+        $sides = $goalies = $components = [];
+        foreach (['away' => 'home', 'home' => 'away'] as $venue => $opponent) {
+            $roster = [];
+            foreach ($teams[$venue]['players'] as $id => $player) {
+                $roster[] = ['adjusted_xgf_per_game' => $player['strengths']['EV']['goals'] + $player['strengths']['PP']['goals'],
+                    'confidence_score' => $input['teams'][$venue]['players'][$id]['confidence_score'] ?? null];
+                $teams[$venue]['players'][$id]['confidence_score'] = $input['teams'][$venue]['players'][$id]['confidence_score'] ?? null;
+            }
+            $evidence = $input['teams'][$venue]['goalie_confidence_buckets'] ?? null;
+            $weights = [];
+            foreach ($teams[$opponent]['players'] as $player) {
+                foreach ($player['strengths']['EV']['buckets'] as $key => $bucket) {
+                    $weights[] = (object) ['projected_sata' => $bucket['sat'],
+                        'source_confidence_score' => $evidence[$key]['confidence_score'] ?? 0.0];
+                }
+            }
+            $goalieScore = $evidence === null ? null : round(100 * app(NhlHistoricalPredictionService::class)
+                ->confidence(collect($weights), 'projected_sata', 'source_confidence_score'));
+            $sides[$venue] = ['roster' => $roster];
+            $goalies[$venue] = ['confidence_score' => $goalieScore];
+            $teamScore = round(100 * $helper->teamInputConfidence($sides[$venue], $goalies[$venue]), 4);
+            $teams[$venue]['input_confidence_score'] = $teamScore;
+            $teams[$venue]['goalie_input_confidence_score'] = $goalieScore ?? 50;
+            $components[$venue] = ['input_confidence_score' => $teamScore,
+                'goalie_input_confidence_score' => $goalieScore ?? 50, 'goalie_evidence_available' => $evidence !== null];
+        }
+
+        return ['score' => $helper->confidenceScore($sides['away'], $sides['home'], $goalies['away'], $goalies['home']),
+            'teams' => $components];
     }
 
     /** Compare saved L5 team records without querying history or changing player usage.

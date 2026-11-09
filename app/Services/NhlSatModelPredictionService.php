@@ -66,17 +66,7 @@ class NhlSatModelPredictionService
     /** Resolve an uncached input snapshot; see inputs() for its input contract. */
     private function loadInputs(int $modelId, ?array $ids = null): Collection
     {
-        if ($ids === []) {
-            return collect();
-        }
-        $metrics = NhlModelRun::query()->find($modelId)?->metrics ?? [];
-        $started = $metrics['toi_projections_started_at'] ?? null;
-        $done = $metrics['toi_projections_completed_at'] ?? null;
-        if ($started !== null && ($done === null || strtotime($done) < strtotime($started))) {
-            return collect();
-        }
-        if (array_key_exists('toi_projection_entities_queued', $metrics)
-            && (int) ($metrics['toi_projection_entities_completed'] ?? 0) !== (int) $metrics['toi_projection_entities_queued']) {
+        if ($ids === [] || ! $this->inputBuildReady($modelId)) {
             return collect();
         }
         $toi = DB::table('nhl_sat_model_entity_toi_projections')->where('model_run_id', $modelId)
@@ -122,6 +112,55 @@ class NhlSatModelPredictionService
                 'sog_rate' => (float) $projected->sum('baseline_xsog') * 3600 / $seconds,
                 'goal_rate' => (float) $projected->sum('baseline_xgf') * 3600 / $seconds];
         })->filter();
+    }
+
+    /** Preserve the existing same-run TOI publication gate for inputs and their confidence. */
+    private function inputBuildReady(int $modelId): bool
+    {
+        $metrics = NhlModelRun::query()->find($modelId)?->metrics ?? [];
+        $started = $metrics['toi_projections_started_at'] ?? null;
+        $done = $metrics['toi_projections_completed_at'] ?? null;
+        if ($started !== null && ($done === null || strtotime($done) < strtotime($started))) {
+            return false;
+        }
+        if (array_key_exists('toi_projection_entities_queued', $metrics)
+            && (int) ($metrics['toi_projection_entities_completed'] ?? 0) !== (int) $metrics['toi_projection_entities_queued']) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /** Read existing skater confidence without recomputing projected attempts or conversions.
+     * @param array<int,int> $ids
+     * @return Collection<int,float>
+     */
+    public function confidenceScores(int $modelId, array $ids): Collection
+    {
+        if ($ids === []) {
+            return collect();
+        }
+        $rows = $this->inputBuildReady($modelId)
+            ? DB::table('nhl_sat_model_entity_rate_projection_buckets')->where('model_run_id', $modelId)
+                ->where('profile_type', 'skater_offense')->where('game_type', 2)->whereIn('entity_id', $ids)
+                ->get(['entity_id', 'source_sat', 'confidence_score', 'projected_xsat_per_60'])->groupBy('entity_id')
+            : collect();
+        $toi = DB::table('nhl_sat_model_entity_toi_projections')->where('model_run_id', $modelId)
+            ->where('profile_type', 'skater_offense')->where('game_type', 2)
+            ->whereIn('entity_id', $ids)
+            ->where('projected_toi_per_game_seconds', '>', 0)->pluck('projected_toi_per_game_seconds', 'entity_id');
+        $fallbackIds = array_values(array_filter($ids, function (int $id) use ($rows, $toi): bool {
+            $buckets = $rows->get($id, collect());
+
+            return $buckets->isEmpty() || (float) $toi->get($id, 0) <= 0 || $buckets->contains(
+                fn (object $row): bool => $this->usableRate($row->projected_xsat_per_60 ?? null) === null
+            );
+        }));
+        $profiles = $fallbackIds === [] ? collect() : $this->historical->profiles($modelId, 'skater_offense', $fallbackIds);
+
+        return collect($ids)->mapWithKeys(fn (int $id): array => [$id => $this->historical->confidence(
+            in_array($id, $fallbackIds, true) ? $profiles->get($id, collect()) : $rows->get($id)
+        )]);
     }
 
     /** Return an available predicted /60 rate, retaining zero and rejecting malformed values. */
@@ -432,6 +471,41 @@ class NhlSatModelPredictionService
         })->values();
     }
 
+    /** Read exact EV goalie evidence confidence without calculating a goalie scoring adjustment.
+     * @param array<int,int> $ids
+     * @param array<int,string> $keys
+     * @return array<int,array<string,array<string,int|float|bool>>>
+     */
+    public function goalieConfidenceBuckets(int $modelId, array $ids, array $keys): array
+    {
+        if ($ids === []) {
+            return [];
+        }
+        $profiles = $this->historical->profiles($modelId, 'goalie_faced', $ids);
+        $out = [];
+        foreach ($ids as $id) {
+            $rows = $profiles->get($id, collect());
+            foreach ($keys as $key) {
+                $matching = $rows->where('matched_bucket_key', $key);
+                $profile = $matching->first(fn (object $row): bool => mb_strtolower((string) ($row->strength ?? '')) === 'ev')
+                    ?? $matching->first();
+                $out[$id][$key] = ['confidence_score' => $this->goalieEvidenceConfidence($profile),
+                    'source_sat' => (int) ($profile->source_sat ?? 0), 'exact' => $profile !== null];
+            }
+        }
+
+        return $out;
+    }
+
+    /** Retain the existing stored-profile ceiling and one-hundred-attempt evidence scale. */
+    private function goalieEvidenceConfidence(?object $profile): float
+    {
+        return $profile === null ? 0.0 : max(0.0, min(
+            1.0, (float) $profile->confidence_score,
+            sqrt(max(0.0, (float) $profile->source_sat) / self::GOALIE_CONFIDENCE_SAT)
+        ));
+    }
+
     /**
      * Build goalie response in exactly the environment's SAT-model buckets.
      * Returned volumes are per game; persisted season builds scale them by workload.
@@ -457,9 +531,7 @@ class NhlSatModelPredictionService
             $sat = $profile === null ? 0.0 : (float) $profile->source_sat;
             // Stored goalie profile confidence remains the ceiling; 100 historical
             // attempts provide full same-scale evidence as skater buckets.
-            $confidence = $profile === null ? 0.0 : max(0.0, min(
-                1.0, (float) $profile->confidence_score, sqrt(max(0.0, $sat) / self::GOALIE_CONFIDENCE_SAT)
-            ));
+            $confidence = $this->goalieEvidenceConfidence($profile);
             $gsaxPerSat = $sat > 0 ? ((float) $profile->expected_goals - (float) $profile->source_goals) / $sat : 0.0;
             $skillWeight = $confidence * ($strength === 'PP' ? 0.25 : 1.0);
             $xga = (float) $bucket->baseline_xgf;

@@ -403,7 +403,7 @@ class NhlCustomGameForecast
                     'position' => $player['role'], 'line_key' => $player['line_key'] ?? null, 'projection_source' => 'custom_pregame',
                     'model_run_id' => $forecast['model']->id, 'bucket_model_run_id' => $forecast['model']->id,
                     'bucket_projection_source' => 'custom_pregame',
-                    'toi_seconds' => $ev['seconds'] + $pp['seconds'], 'confidence_score' => null,
+                    'toi_seconds' => $ev['seconds'] + $pp['seconds'], 'confidence_score' => $player['confidence_score'] ?? null,
                     'projected_sat' => $ev['sat'] + $pp['sat'], 'projected_sog' => $ev['sog'] + $pp['sog'],
                     'projected_goals' => $goals, 'team_xgf_share' => $team['goals'] > 0 ? $goals / $team['goals'] : 0.0,
                     'baseline_xsat_per_game' => $raw['sat'], 'adjusted_xsat_per_game' => $ev['sat'] + $pp['sat'],
@@ -427,7 +427,9 @@ class NhlCustomGameForecast
                 'summary' => $summary, 'roster' => $roster, 'defense_roster' => [], 'defense_summary' => [],
                 'offense_profile' => [], 'defense_profile' => [], 'goalie_environment_profile' => [],
                 'goalie_reasons' => [], 'goalie_reason_summary' => [], 'goalie_bucket_coverage' => [],
-                'goalie_input_confidence' => null, 'input_confidence_score' => null];
+                'goalie_input_confidence' => isset($prediction['teams'][$opponent]['goalie_input_confidence_score'])
+                    ? $prediction['teams'][$opponent]['goalie_input_confidence_score'] / 100 : null,
+                'input_confidence_score' => $team['input_confidence_score'] ?? null];
         }
 
         return ['is_available' => true, 'inputs' => ['algorithm_version' => config('nhl-custom-prediction.algorithm_version'),

@@ -2902,8 +2902,9 @@ least one resolved peer in the same line or pair.
 - Injury evidence levels: `suspected`, `reported`, `corroborated`, `confirmed_unavailable`, `confirmed_available`.
 - Anticipated-return precision: `exact_date`, `not_before`, `season_start`, `indefinite`, `unknown`.
 - Starting-goalie observation status: `confirmed`, `expected`, `unknown`.
-- Starting-goalie observation provider: `rotowire`, `public_lineup`, `nhl_boxscore`, `manual` (explicit super-admin game-specific starter selection).
+- Starting-goalie observation provider: `rotowire`, `public_lineup`, `nhl_boxscore`, `manual` (super-admin game-specific selection or validated UI/API lineup G1).
 - Starting-goalie selection source: `provided`, `manual_starter_override`, `nhl_boxscore`, `starting_goalie_observation`, `goalie_projection`, `workload_projection`.
+  `manual_starter_override` records selected manual attribution, not permanent priority over newer eligible provider reports.
 
 The following enum-like areas are intentionally documented because they are not fully constrained in the database or are inconsistent across code paths:
 
@@ -3050,9 +3051,8 @@ identifies a completed empty missing-work selection. Updates keep the existing
 
 ## Operational prediction preparation
 
-- `nhl-custom-prediction.input_pipeline_version`: `saved_pregame_checkpointed_v4`
-  identifies saved-context preparation reusing player strength-window aggregates, with bounded cache checkpoints, actual participant selection for finished games and statistical-content freshness; the scoring
-  scoring algorithm is independently versioned; the current version is `custom_ev_pp_v3`.
+- `nhl-custom-prediction.input_pipeline_version`: `saved_pregame_checkpointed_v6`
+  identifies saved-context preparation reusing player strength-window aggregates, with bounded cache checkpoints, actual participant selection for finished games, statistical-content freshness, recency-first pregame starter selection and stored internal-confidence inputs. The scoring algorithm is independently versioned; the current version is `custom_ev_pp_v3`.
 - `nhl_pregame_context_runs.options.trigger`: `prediction` identifies an explicit
   prediction dependency. Existing `manual_update` and `auto_sync` keep their meaning.
 - Prediction run options `game_ids`, `prediction_evidence` and

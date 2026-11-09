@@ -92,17 +92,13 @@ class NhlStartingGoalieSelector
         }
 
         $observed = $this->observed($nhlGameId, $teamAbbrev);
-        if (($observed['selection_source'] ?? null) === 'manual_starter_override') {
+        if ($observed !== null) {
             return $observed;
         }
 
         $official = $this->official($nhlGameId, $teamAbbrev);
         if ($official !== null) {
             return $this->result($official, 'nhl_boxscore', 'confirmed');
-        }
-
-        if ($observed !== null) {
-            return $observed;
         }
 
         // Team-level workload cannot identify which split squad a goalie belongs to.
@@ -338,7 +334,6 @@ class NhlStartingGoalieSelector
                     ->orWhere(fn ($query) => $query->where('provider', 'rotowire')
                         ->whereIn('team_abbrev', array_filter([$game?->away_team_abbrev, $game?->home_team_abbrev])));
             }))
-            ->orderByRaw("CASE status WHEN 'confirmed' THEN 0 WHEN 'expected' THEN 1 ELSE 2 END")
             ->orderByDesc('fetched_at')->orderByDesc('id')->get();
         $lineupIds = $rows->whereIn('provider', ['public_lineup', 'manual'])->map(
             fn (NhlStartingGoalieObservation $row) => data_get($row->raw_evidence, 'lineup_observation_id')
@@ -349,6 +344,8 @@ class NhlStartingGoalieSelector
                 && $current->observation->isEligibleForGameDate($date)
                 && $current->hasVerifiedPlayers())
             ->keyBy('nhl_lineup_observation_id');
+        // Stable sorting retains descending server observation time/id among
+        // eligible reports; provider and confirmation status do not override it.
         $rows = $rows->filter(function (NhlStartingGoalieObservation $row) use ($currentLineups): bool {
             $lineupId = data_get($row->raw_evidence, 'lineup_observation_id');
             if (! in_array($row->provider, ['public_lineup', 'manual'], true) || ! $lineupId) {
@@ -361,16 +358,8 @@ class NhlStartingGoalieSelector
 
             return $current !== null && (int) $current->nhl_game_id === (int) $row->nhl_game_id
                 && $current->team_abbrev === $row->team_abbrev;
-        })->sortBy(fn (NhlStartingGoalieObservation $row): int => match (true) {
-            $row->provider === 'manual' || (bool) $row->getAttribute('manual_lineup') => -1,
-            $row->provider === 'nhl_boxscore' && $row->status === 'confirmed' => 0,
-            $row->status === 'confirmed' => 1,
-            $row->provider === 'public_lineup' && $row->status === 'expected'
-                && (bool) data_get($currentLineups->get(data_get($row->raw_evidence, 'lineup_observation_id'))?->observation?->raw_evidence, 'manual_override', false) => 2,
-            $row->provider === 'public_lineup' && $row->status === 'expected' => 3,
-            $row->status === 'expected' => 4,
-            default => 5,
-        })
+        })->sortBy(fn (NhlStartingGoalieObservation $row): int =>
+            in_array($row->status, ['confirmed', 'expected'], true) ? 0 : 1)
             ->unique(fn (NhlStartingGoalieObservation $row): string => $row->provider . ':'
                 . ($row->nhl_game_id ?? $row->game_date->toDateString()) . ':' . $row->team_abbrev);
 

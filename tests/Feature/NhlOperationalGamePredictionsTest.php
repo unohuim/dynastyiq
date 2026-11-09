@@ -127,9 +127,12 @@ it('archives each forced API recalculation and displays the newest one', functio
 
 it('does not append history for fresh cache reads', function (): void {
     $first = ($this->publish)();
+    $this->travel(59)->seconds();
     $second = ($this->publish)(force: false);
-    expect($second['meta']['prediction_revision_id'])->toBe($first['meta']['prediction_revision_id']);
+    expect($second['meta']['prediction_revision_id'])->toBe($first['meta']['prediction_revision_id'])
+        ->and($second['meta']['cache'])->toBe('fresh');
     $this->assertDatabaseCount('nhl_game_prediction_revisions', 1);
+    Bus::assertNotDispatched(RefreshNhlGamePredictionJob::class);
 });
 
 it('does not append for stale cache reads but queues the existing refresh', function (): void {
@@ -138,6 +141,49 @@ it('does not append for stale cache reads but queues the existing refresh', func
     expect(($this->publish)(force: false)['meta']['cache'])->toBe('stale');
     $this->assertDatabaseCount('nhl_game_prediction_revisions', 1);
     Bus::assertDispatched(RefreshNhlGamePredictionJob::class);
+});
+
+it('serves matching predictions beyond five minutes until the three hour limit with one queued refresh', function (int $age): void {
+    $first = ($this->publish)();
+    $this->travel($age)->seconds();
+    foreach ([1, 2] as $request) {
+        $cached = ($this->publish)(['prediction' => ['predicted_score' => ['home' => 9.9]]], force: false);
+        expect($cached['meta']['cache'])->toBe('stale')
+            ->and($cached['meta']['prediction_revision_id'])->toBe($first['meta']['prediction_revision_id'])
+            ->and($cached['prediction']['predicted_score']['home'])->toBe(3.1);
+    }
+    $this->assertDatabaseCount('nhl_game_prediction_revisions', 1);
+    Bus::assertDispatchedTimes(RefreshNhlGamePredictionJob::class, 1);
+})->with([301, 3600, 10799]);
+
+it('recalculates a prediction when its three hour cache retention expires', function (int $age): void {
+    $first = ($this->publish)();
+    $this->travel($age)->seconds();
+    $next = ($this->publish)(['prediction' => ['predicted_score' => ['home' => 4.1]]], force: false);
+    expect($next['meta']['cache'])->toBe('fresh')
+        ->and($next['meta']['prediction_revision_id'])->toBeGreaterThan($first['meta']['prediction_revision_id'])
+        ->and($next['prediction']['predicted_score']['home'])->toBe(4.1);
+    $this->assertDatabaseCount('nhl_game_prediction_revisions', 2);
+})->with([10800, 10801]);
+
+it('honors force refresh inside the extended stale window', function (): void {
+    $first = ($this->publish)();
+    $this->travel(7200)->seconds();
+    $next = ($this->publish)(['prediction' => ['predicted_score' => ['home' => 4.1]]], force: true);
+    expect($next['meta']['cache'])->toBe('fresh')
+        ->and($next['meta']['prediction_revision_id'])->toBeGreaterThan($first['meta']['prediction_revision_id'])
+        ->and($next['prediction']['predicted_score']['home'])->toBe(4.1);
+    $this->assertDatabaseCount('nhl_game_prediction_revisions', 2);
+});
+
+it('invalidates changed engine evidence inside the extended stale window', function (): void {
+    $first = ($this->publish)();
+    $this->travel(7200)->seconds();
+    config(['nhl-custom-prediction.team_l5_win_pct_weight' => 0.25]);
+    $next = ($this->publish)(['prediction' => ['predicted_score' => ['home' => 4.1]]], force: false);
+    expect($next['meta']['cache'])->toBe('fresh')
+        ->and($next['meta']['prediction_revision_id'])->toBeGreaterThan($first['meta']['prediction_revision_id']);
+    $this->assertDatabaseCount('nhl_game_prediction_revisions', 2);
 });
 
 it('archives queued refreshes through the same publication boundary', function (): void {

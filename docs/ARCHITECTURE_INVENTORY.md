@@ -4115,7 +4115,8 @@ attribution. Key setup and examples belong in `DIQ-API-Usage-Doc.md`.
 
 `Games/GoaliePicker.vue` provides super-admin-only, immediate AJAX starter
 selection from all team-associated goalies, including prospects. Append-only
-manual observations take precedence in the shared starter selector for that game;
+manual observations compete with provider reports by server observation time
+and id in the shared starter selector for that game; NHL starter locks remain first;
 live NHL presentation is unchanged. Authority: `NhlPlayerAvailability.yaml`.
 
 Relative X dates are anchored to publication in America/Toronto, including reads
@@ -4184,11 +4185,16 @@ uses matching retained Train fallbacks, preserving measured zeros and observed
 coverage diagnostics; the old 90% observed gate is removed. No legacy stack
 weights, dilution or qualification filter changes new outcomes. Default model
 selection prefers eligible SAT_V2. Frozen coefficient provenance remains
-explicit. PK contributes time only; confidence is unavailable pending calibration.
+explicit. PK contributes time only. Internal confidence uses the restored
+existing input-quality helper with real same-model skater and goalie evidence;
+it remains distinct from win probability and completed-input coverage.
 Prepared-date inputs are cached with source/configuration fingerprints and a
 preparation lock. Existing response-cache/history paths archive private inputs
 and immutable revisions. Standalone replay can still save separate custom runs.
 No target results are used as requested-date forecast inputs.
+Matching response-cache entries remain fresh for one minute and may be served
+stale with a queued refresh for up to three hours. Changed evidence and forced
+refresh retain their existing invalidation behavior.
 The adopted L5 team-win% gap scales EV bucket volume at weight 0.50 in every
 quarter. It reads saved team metrics, leaves PP and minutes unchanged, and is
 neutral for both teams when either sample is unavailable. Revision evidence

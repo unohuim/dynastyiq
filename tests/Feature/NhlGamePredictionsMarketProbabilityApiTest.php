@@ -169,9 +169,29 @@ it('does not dilute new goals using saved legacy engine percentages', function (
         ->assertJsonPath('pick_qualified', true);
 });
 
-it('keeps unavailable confidence distinct from winning probability', function (): void {
-    ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction.confidence_score', null)
-        ->assertJsonPath('market_probabilities.0.confidence_score', null);
+it('returns internal input confidence separately from winning probability', function (): void {
+    ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction.confidence_score', 50)
+        ->assertJsonPath('market_probabilities.0.confidence_score', 50);
+});
+
+it('publishes numeric internal confidence in the API and immutable revision without changing the pick', function (): void {
+    $before = ($this->calculate)();
+    foreach (['away', 'home'] as $venue) {
+        foreach ($this->input['teams'][$venue]['players'] as &$player) {
+            $player['confidence_score'] = 0.8;
+        }
+        unset($player);
+        $this->input['teams'][$venue]['goalie_confidence_buckets'] = ['B' => ['confidence_score' => 0.6, 'source_sat' => 100]];
+    }
+    $response = ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction.confidence_score', 74)
+        ->assertJsonPath('market_probabilities.0.confidence_score', 74)
+        ->assertJsonPath('teams.away.roster.0.confidence_score', 0.8)
+        ->assertJsonPath('prediction.home_win_probability', $before['home_win_probability'])
+        ->assertJsonPath('prediction.predicted_total_goals', round($before['total_goals'], 2));
+    $row = DB::table('nhl_game_prediction_revisions')->find($response->json('meta.prediction_revision_id'));
+    expect(json_decode($row->summary, true)['confidence'])->toBe(74)
+        ->and(json_decode($row->evidence, true)['custom_prediction']['input']['teams']['away']['players'][100]['confidence_score'])
+        ->toBe(0.8);
 });
 
 it('uses the engines exact winning probability including its schedule adjustment', function (): void {
@@ -261,7 +281,7 @@ it('uses the same new calculation in individual engine previews', function (): v
         'settings' => ['offense' => 200, 'defense' => 200]]);
     $preview = app(NhlGamePredictionPayload::class)->previewEngine(2026020001, $engine, null);
     expect($preview['prediction']['predicted_total_goals'])->toBe(round(($this->calculate)()['total_goals'], 2))
-        ->and($preview['prediction']['confidence_score'])->toBeNull();
+        ->and($preview['prediction']['confidence_score'])->toBe(50);
 });
 
 it('uses the same new calculation in empty saved stack previews', function (): void {
@@ -280,6 +300,20 @@ it('returns current algorithm provenance in saved revision summaries', function 
     $response = ($this->requestPrediction)()->assertOk();
     $row = DB::table('nhl_game_prediction_revisions')->find($response->json('meta.prediction_revision_id'));
     expect(json_decode($row->summary, true)['algorithm_version'])->toBe('custom_ev_pp_v3');
+});
+
+it('reuses a two hour old API revision with a queued refresh and replaces it after three hours', function (): void {
+    $first = ($this->requestPrediction)()->assertOk()->json('meta.prediction_revision_id');
+    $this->travel(7200)->seconds();
+    ($this->requestPrediction)()->assertOk()->assertJsonPath('meta.cache', 'stale')
+        ->assertJsonPath('meta.prediction_revision_id', $first);
+    $this->assertDatabaseCount('nhl_game_prediction_revisions', 1);
+    Bus::assertDispatchedTimes(\App\Jobs\RefreshNhlGamePredictionJob::class, 1);
+    $this->travel(3601)->seconds();
+    $second = ($this->requestPrediction)()->assertOk()->assertJsonPath('meta.cache', 'fresh')
+        ->json('meta.prediction_revision_id');
+    expect($second)->not->toBe($first);
+    $this->assertDatabaseCount('nhl_game_prediction_revisions', 2);
 });
 
 it('publishes L5 adjusted scores and probabilities while archiving its source evidence privately', function (): void {

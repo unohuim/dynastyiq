@@ -439,6 +439,28 @@ it('orders UI and API manual submissions equally even within the same second', f
     $this->assertDatabaseHas('nhl_current_lineups', ['nhl_lineup_observation_id' => $last]);
 });
 
+it('lets a newer provider starter supersede a submitted G1 without replacing the manual skater lineup', function (): void {
+    $first = $this->withToken($this->token)->postJson('/api/nhl-lineups', $this->body)
+        ->assertCreated()->assertJsonPath('starting_goalie.nhl_player_id', 8488019)->json('submission_id');
+    $this->travel(1)->minutes();
+    \App\Models\NhlStartingGoalieObservation::query()->create([
+        'nhl_game_id' => 2026010088, 'game_date' => '2026-09-23', 'team_abbrev' => 'TOR',
+        'opponent_abbrev' => 'MTL', 'is_home' => true, 'nhl_player_id' => 8488020,
+        'player_name' => 'Backup Goalie', 'provider' => 'rotowire', 'status' => 'confirmed',
+        'fetched_at' => now(), 'raw_evidence' => [],
+    ]);
+    $this->client->update(['scopes' => ['nhl-stats:read']]);
+    $this->getJson('/api/nhl/lineups/2026010088')->assertOk()
+        ->assertJsonPath('game.teams.home.lineup_status', 'manual')
+        ->assertJsonCount(20, 'game.teams.home.players')
+        ->assertJsonPath('game.teams.home.starting_goalie.nhl_player_id', 8488020)
+        ->assertJsonPath('game.teams.home.starting_goalie.status', 'confirmed');
+    $this->assertDatabaseHas('nhl_current_lineups', ['nhl_lineup_observation_id' => $first]);
+    $this->assertDatabaseHas('nhl_starting_goalie_observations', [
+        'nhl_game_id' => 2026010088, 'provider' => 'manual', 'nhl_player_id' => 8488019,
+    ]);
+});
+
 it('leaves the previous accepted submission unchanged on validation failure', function (string $case): void {
     $id = $this->withToken($this->token)->postJson('/api/nhl-lineups', $this->body)->assertCreated()->json('submission_id');
     $body = match ($case) {

@@ -65,6 +65,43 @@ it('multiplies model bucket rates by same-run TOI in seconds', function (): void
         ->and($input['buckets']->sum('baseline_xgf'))->toEqualWithDelta(0.15, 0.000001);
 });
 
+it('reads the same stored skater confidence without rebuilding its performance projection', function (): void {
+    ($this->toi)();
+    ($this->rate)(['source_sat' => 100, 'confidence_score' => 0.8]);
+    ($this->rate)(['matched_bucket_key' => 'B', 'source_sat' => 300, 'confidence_score' => 0.4]);
+    $scores = $this->service->confidenceScores($this->run->id, [101]);
+    expect($scores->get(101))->toBe(0.5)
+        ->and($scores->get(101))->toBe($this->service->inputs($this->run->id, [101])->get(101)['confidence_score']);
+});
+
+it('uses personal training confidence when model usage is unavailable and zero for absent personal evidence', function (): void {
+    ($this->rate)(['source_sat' => 100, 'confidence_score' => 0.9]);
+    ($this->profile)(['confidence_score' => 0.2]);
+    $scores = $this->service->confidenceScores($this->run->id, [101, 999]);
+    expect($scores->get(101))->toBe(0.2)->and($scores->get(999))->toBe(0.0);
+});
+
+it('keeps confidence source selection on the existing model publication gate', function (): void {
+    ($this->toi)();
+    ($this->rate)(['source_sat' => 100, 'confidence_score' => 0.9]);
+    ($this->profile)(['confidence_score' => 0.3]);
+    $this->run->update(['metrics' => ['toi_projections_started_at' => '2026-09-27T12:00:00Z']]);
+    expect($this->service->inputs($this->run->id, [101]))->toBeEmpty()
+        ->and($this->service->confidenceScores($this->run->id, [101])->get(101))->toBe(0.3);
+});
+
+it('reads existing exact goalie bucket confidence with its historical sample ceiling', function (): void {
+    ($this->profile)(['profile_type' => 'goalie_faced', 'entity_key' => 'goalie_faced:900',
+        'entity_id' => 900, 'strength' => 'ev', 'source_sat' => 25, 'confidence_score' => 0.9]);
+    $skill = Mockery::mock(\App\Services\NhlGoalieEvSkillProjectionService::class);
+    $skill->shouldNotReceive('adjustment');
+    app()->instance(\App\Services\NhlGoalieEvSkillProjectionService::class, $skill);
+    $values = $this->service->goalieConfidenceBuckets($this->run->id, [900, 901], ['A', 'B']);
+    expect($values[900]['A'])->toBe(['confidence_score' => 0.5, 'source_sat' => 25, 'exact' => true])
+        ->and($values[900]['B']['confidence_score'])->toBe(0.0)
+        ->and($values[901]['A']['confidence_score'])->toBe(0.0);
+});
+
 it('uses projected bucket conversion ahead of personal historical conversion', function (): void {
     ($this->rate)(['projected_xsog_per_60' => 8, 'projected_xg_per_60' => 1.2]);
     ($this->toi)();
@@ -242,6 +279,22 @@ it('does not apply the goalie confidence shrink twice', function (): void {
     ], 10, 5, 0.4, 'sat_model', $this->run->id)]);
     $bucket = $this->service->goalieBuckets($this->run->id, 900, $environment)->get('A');
     expect($bucket->source_confidence_score)->toBe(0.99)->and($bucket->confidence_score)->toBe(1.0);
+});
+
+it('aligns the dressed G1 with a newer provider starter and preserves the other goalie', function (): void {
+    $method = new ReflectionMethod(\App\Services\NhlGamePredictionPayload::class, 'withDressedRoster');
+    $team = ['roster' => [['nhl_player_id' => 101, 'player_name' => 'Skater', 'position' => 'C']]];
+    $lineup = ['players' => [
+        ['nhl_player_id' => 901, 'player_name' => 'Old Starter', 'lineup_role' => 'goalie', 'line_key' => 'G', 'slot_index' => 1],
+        ['nhl_player_id' => 902, 'player_name' => 'Listed Backup', 'lineup_role' => 'goalie', 'line_key' => 'G', 'slot_index' => 2],
+    ]];
+    $starter = ['nhl_player_id' => 902, 'name' => 'Listed Backup', 'selection_source' => 'starting_goalie_observation'];
+    $result = $method->invoke(app(\App\Services\NhlGamePredictionPayload::class), $team, $lineup, $starter);
+    $goalies = collect($result['dressed_roster'])->where('line_key', 'G')->sortBy('slot_index')->values();
+    expect($goalies->pluck('nhl_player_id')->all())->toBe([902, 901])
+        ->and($goalies->pluck('is_starter')->all())->toBe([true, false])
+        ->and($result['roster'][0]['nhl_player_id'])->toBe(101)
+        ->and($lineup['players'][0]['nhl_player_id'])->toBe(901);
 });
 
 it('routes matchup requests to the single new default calculator', function (): void {
