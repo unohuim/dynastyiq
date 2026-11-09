@@ -2038,3 +2038,61 @@ describe('derived on-ice rebuild service', function (): void {
         expect(DB::table('nhl_unit_shifts')->where('id', $this->oldRebuildShift)->exists())->toBeTrue();
     });
 });
+
+
+it('does not rewrite an unchanged goalie shutout or boxscore summary during repeated refreshes', function (): void {
+    ($this->insertGame)();
+    ($this->makePlayer)(31, 'Stable Goalie')->update(['position' => 'G', 'pos_type' => 'G']);
+    DB::table('nhl_game_summaries')->insert(['nhl_game_id' => 2026020001, 'nhl_player_id' => 31,
+        'nhl_team_id' => 1, 'so' => 0, 'created_at' => now(), 'updated_at' => now()]);
+    $response = ['id' => 2026020001, 'gameState' => 'OFF',
+        'homeTeam' => ['id' => 1, 'abbrev' => 'TOR', 'score' => 3],
+        'awayTeam' => ['id' => 2, 'abbrev' => 'MTL', 'score' => 0],
+        'playerByGameStats' => ['homeTeam' => ['goalies' => [[
+            'playerId' => 31, 'position' => 'G', 'toi' => '60:00', 'starter' => true,
+            'shotsAgainst' => 30, 'saves' => 30, 'goalsAgainst' => 0,
+            'evenStrengthShotsAgainst' => '25/25', 'powerPlayShotsAgainst' => '5/5',
+        ]]], 'awayTeam' => []]];
+    $rail = Mockery::mock(\App\Services\NhlRightRailService::class);
+    $rail->shouldReceive('payload')->andReturnNull();
+    app()->instance(\App\Services\NhlRightRailService::class, $rail);
+    $page = Mockery::mock(\App\Services\NhlPublicGamePage::class);
+    $page->shouldReceive('refreshAfterCommit')->times(3)->with(2026020001);
+    app()->instance(\App\Services\NhlPublicGamePage::class, $page);
+    $service = Mockery::mock(ImportNhlBoxscore::class)->makePartial();
+    $service->shouldReceive('getAPIData')->times(3)->andReturnUsing(function () use (&$response): array { return $response; });
+    $service->import(2026020001);
+    $first = DB::table('nhl_game_summaries')->where('nhl_player_id', 31)->first();
+    expect((int) $first->so)->toBe(1);
+    $this->travel(5)->minutes();
+    $service->import(2026020001);
+    $unchanged = DB::table('nhl_game_summaries')->where('nhl_player_id', 31)->first();
+    expect($unchanged->updated_at)->toBe($first->updated_at)->and((int) $unchanged->so)->toBe(1);
+    $response['playerByGameStats']['homeTeam']['goalies'][0]['goalsAgainst'] = 1;
+    $response['playerByGameStats']['homeTeam']['goalies'][0]['saves'] = 29;
+    $response['awayTeam']['score'] = 1;
+    $this->travel(5)->minutes();
+    $service->import(2026020001);
+    $corrected = DB::table('nhl_game_summaries')->where('nhl_player_id', 31)->first();
+    expect((int) $corrected->so)->toBe(0)->and((int) $corrected->ga)->toBe(1)
+        ->and($corrected->updated_at)->not->toBe($first->updated_at);
+});
+
+it('writes goalie decisions only when their stored values change', function (): void {
+    ($this->insertGame)();
+    DB::table('nhl_game_summaries')->insert(['nhl_game_id' => 2026020001, 'nhl_player_id' => 31,
+        'nhl_team_id' => 1, 'goalie_started' => true, 'goalie_decision' => 'W', 'updated_at' => now()->subHour()]);
+    $response = ['homeTeam' => ['id' => 1, 'score' => 3], 'awayTeam' => ['id' => 2, 'score' => 1],
+        'playerByGameStats' => ['homeTeam' => ['goalies' => [[
+            'playerId' => 31, 'toi' => '60:00', 'starter' => true,
+        ]]]]];
+    $service = Mockery::mock(ImportNhlBoxscore::class)->makePartial();
+    $service->shouldReceive('getAPIData')->andReturnUsing(function () use (&$response): array { return $response; });
+    $old = DB::table('nhl_game_summaries')->where('nhl_player_id', 31)->value('updated_at');
+    expect($service->refreshGoalieDecisions(2026020001))->toBe(0)
+        ->and(DB::table('nhl_game_summaries')->where('nhl_player_id', 31)->value('updated_at'))->toBe($old);
+    $response['awayTeam']['score'] = 4;
+    expect($service->refreshGoalieDecisions(2026020001))->toBe(1)
+        ->and(DB::table('nhl_game_summaries')->where('nhl_player_id', 31)->value('goalie_decision'))->toBe('L');
+    expect($service->refreshGoalieDecisions(2026020001))->toBe(0);
+});

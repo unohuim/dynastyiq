@@ -4311,3 +4311,15 @@ receive HTTP 202 preparing, and prediction continuation automatically publishes
 an immutable revision when ready. No new table or scoring equation is introduced.
 Authority: `docs/architecture/stats/NhlCustomGamePrediction.yaml` and
 `docs/architecture/stats/NhlGamePredictionResponseCache.yaml`.
+
+
+### Pregame freshness and completed-game polling
+
+Routine boxscore scheduling excludes FINAL and OFF. Goalie refreshes persist
+changed shutout/decision values only. `NhlCustomGameForecast::resultEvidence()`
+provides shared statistical-content fingerprints for context, prepared inputs and
+public response caching; polling timestamps alone do not invalidate them. Small,
+expiring per-game summary digests reuse the existing cache. Actual corrections
+and completed derived-fact publication continue to invalidate affected evidence.
+Authority: `docs/architecture/stats/NhlCustomGamePrediction.yaml` and
+`docs/architecture/imports/NhlGameDataImportServices.yaml`.

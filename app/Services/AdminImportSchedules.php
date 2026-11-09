@@ -282,7 +282,7 @@ class AdminImportSchedules
         return \App\Models\NhlGame::query()
             ->whereBetween('game_date', [$now->utc()->subDay()->toDateString(), $now->utc()->toDateString()])
             ->whereNotNull('start_time_utc')
-            ->where(fn ($query) => $query->whereNull('game_state')->orWhere('game_state', '<>', 'FINAL'))
+            ->where(fn ($query) => $query->whereNull('game_state')->orWhereNotIn('game_state', ['FINAL', 'OFF']))
             ->orderBy('start_time_utc')->get()
             ->filter(function ($game) use ($now, $timing): bool {
                 $start = CarbonImmutable::parse($game->start_time_utc);
@@ -290,7 +290,7 @@ class AdminImportSchedules
                     return false;
                 }
                 $state = strtoupper((string) $game->game_state);
-                $live = ! in_array($state, ['', 'FUT', 'PRE', 'FINAL'], true);
+                $live = ! in_array($state, ['', 'FUT', 'PRE', 'FINAL', 'OFF'], true);
                 $interval = $live ? (int) ($timing['live_seconds'] ?? 300)
                     : (int) ($timing['pregame_seconds'] ?? $timing['within_one_hour_seconds'] ?? 900);
 

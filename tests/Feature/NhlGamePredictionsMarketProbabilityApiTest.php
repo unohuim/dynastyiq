@@ -499,3 +499,23 @@ it('admits a new refresh after a terminal queued refresh failure', function (): 
     Bus::assertDispatchedTimes(\App\Jobs\RefreshNhlGamePredictionJob::class, 2);
     $this->assertDatabaseCount('nhl_game_prediction_revisions', 0);
 });
+
+
+it('retains a published revision after timestamp only syncs and rebuilds after an actual source correction', function (): void {
+    DB::table('nhl_games')->insert(['nhl_game_id' => 2025020001, 'season_id' => '20252026', 'game_type' => 2,
+        'game_date' => '2025-11-01', 'game_dow' => 'Saturday', 'game_month' => 'November',
+        'game_state' => 'OFF', 'start_time_utc' => '2025-11-01 23:00:00', 'home_team_score' => 3, 'away_team_score' => 2]);
+    DB::table('nhl_game_summaries')->insert(['nhl_game_id' => 2025020001, 'nhl_player_id' => 101,
+        'nhl_team_id' => 1, 'g' => 1, 'updated_at' => now()->subHour()]);
+    $first = ($this->requestPrediction)()->assertOk()->json('meta.prediction_revision_id');
+    DB::table('nhl_games')->where('nhl_game_id', 2025020001)->update(['updated_at' => now(), 'boxscore_synced_at' => now()]);
+    DB::table('nhl_games')->where('nhl_game_id', 2026020001)->update(['updated_at' => now(), 'boxscore_synced_at' => now()]);
+    DB::table('nhl_game_summaries')->where('nhl_game_id', 2025020001)->update(['updated_at' => now()]);
+    ($this->requestPrediction)()->assertOk()->assertJsonPath('meta.prediction_revision_id', $first);
+    $this->assertDatabaseCount('nhl_game_prediction_revisions', 1);
+    $this->travel(1)->seconds();
+    DB::table('nhl_game_summaries')->where('nhl_game_id', 2025020001)->update(['g' => 2, 'updated_at' => now()]);
+    $second = ($this->requestPrediction)()->assertOk()->json('meta.prediction_revision_id');
+    expect($second)->not->toBe($first);
+    $this->assertDatabaseCount('nhl_game_prediction_revisions', 2);
+});

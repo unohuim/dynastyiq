@@ -126,6 +126,12 @@ synchronously. Lineup, starter, configuration and completed-source publication
 changes invalidate pending work before it is published. Ready inputs have
 per-game cache entries and a small date manifest. This changes input readiness,
 not EV/PP formulas, travel coefficients, coverage rules or measured win rates.
+Source freshness compares actual game and summary values rather than polling
+or update timestamps. Per-game summary digests are cached and rehashed in bounded
+pages only when their source metadata changes. Completed derived-fact import
+publication and processed PBP revisions remain invalidators so bucket/strength corrections are picked up.
+Routine boxscore scheduling excludes both FINAL and OFF, and unchanged goalie
+shutout/decision refreshes preserve their stored timestamps.
 
 Update Pregame now also selects today's unfinished regular-season games in the
 model's Test season, or its own prediction season when Test is unset. It uses

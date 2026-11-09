@@ -150,16 +150,23 @@ final class NhlGamePredictionResponseCache
     private function evidence(int $gameId, array $input): array
     {
         ksort($input);
-        $game = DB::table('nhl_games')->where('nhl_game_id', $gameId)->first(['updated_at', 'season_id', 'away_starter_lock', 'home_starter_lock']);
-        $model = app(NhlCustomGameForecast::class)->model(isset($input['sat_model_run_id']) ? (int) $input['sat_model_run_id'] : null, $game?->season_id);
+        $game = DB::table('nhl_games')->where('nhl_game_id', $gameId)->first([
+            'nhl_game_id', 'season_id', 'game_date', 'start_time_utc', 'home_team_id', 'away_team_id',
+            'game_state', 'away_starter_lock', 'home_starter_lock',
+        ]);
+        abort_if($game === null, 404);
+        $forecast = app(NhlCustomGameForecast::class);
+        $model = $forecast->model(isset($input['sat_model_run_id']) ? (int) $input['sat_model_run_id'] : null, $game->season_id);
         $models = collect([['id' => $model->id, 'updated_at' => $model->updated_at, 'train_season_ids' => $model->train_season_ids]]);
         $lineups = DB::table('nhl_current_lineups')->where('nhl_game_id', $gameId)
-            ->orderBy('team_id')->get(['team_id', 'nhl_lineup_observation_id', 'structure_hash', 'last_observed_at', 'updated_at']);
+            ->orderBy('team_id')->get(['team_id', 'structure_hash']);
         $goalies = DB::table('nhl_starting_goalie_observations')->where('nhl_game_id', $gameId)
-            ->orderBy('id')->get(['id', 'team_abbrev', 'nhl_player_id', 'updated_at']);
+            ->orderByRaw("CASE status WHEN 'confirmed' THEN 0 WHEN 'expected' THEN 1 ELSE 2 END")
+            ->orderByDesc('fetched_at')->orderByDesc('id')
+            ->get(['team_abbrev', 'nhl_player_id', 'provider', 'status'])
+            ->unique(fn (object $row): string => implode('|', [$row->team_abbrev, (string) $row->nhl_player_id, $row->provider, $row->status]))->values();
 
-        $source = DB::table('nhl_games')->where('game_type', 2)->whereIn('game_state', ['OFF', 'FINAL'])
-            ->selectRaw('COUNT(*) AS games, MAX(updated_at) AS changed')->first();
+        $source = $forecast->resultEvidence($model, $game);
 
         return ['request' => $input, 'game' => $game, 'stack' => null, 'models' => $models,
             'algorithm' => config('nhl-custom-prediction'), 'source' => $source,
@@ -171,7 +178,7 @@ final class NhlGamePredictionResponseCache
     {
         ksort($input);
 
-        return 'nhl:game-prediction:pregame-dependencies-v12:' . $gameId . ':' . hash('sha256', json_encode($input, JSON_THROW_ON_ERROR));
+        return 'nhl:game-prediction:pregame-dependencies-v13:' . $gameId . ':' . hash('sha256', json_encode($input, JSON_THROW_ON_ERROR));
     }
 
     /** @param array<string,mixed> $input */

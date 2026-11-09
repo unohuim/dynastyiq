@@ -1007,6 +1007,10 @@ New calculations are durably archived before publication. `meta.prediction_revis
 only when DynastyIQ has queued a rebuild of a response no more than five minutes old
 whose input fingerprint still matches. Algorithm configuration, selected-model, source-result and lineup/starter changes invalidate previous responses;
 an outdated fingerprint is never served as stale.
+Routine sync timestamps and unchanged lineup observations do not invalidate a
+prediction. Actual prior-result changes, selected lineup/starter changes and
+completed derived-fact import publications do. This does not change the HTTP
+200/202 contract or the existing one-minute/five-minute response age limits.
 
 To request a new prediction immediately, send `force_refresh=1`:
 

@@ -215,22 +215,9 @@ class NhlCustomGameForecast
         );
         $asOf ??= CarbonImmutable::now('UTC');
         $cutoff = $game->start_time_utc ? CarbonImmutable::parse($game->start_time_utc, 'UTC')->min($asOf) : $asOf;
-        $source = DB::table('nhl_games')->where('game_type', 2)->whereIn('game_state', ['OFF', 'FINAL'])
-            ->where('season_id', '>=', min($model->train_season_ids))->where('season_id', '<=', $game->season_id)
-            ->where('nhl_game_id', '<>', $game->nhl_game_id)->where('start_time_utc', '<', $cutoff)
-            ->selectRaw('COUNT(*) AS games, MAX(updated_at) AS changed')->first();
-        $summaries = DB::table('nhl_game_summaries as s')->join('nhl_games as g', 'g.nhl_game_id', '=', 's.nhl_game_id')
-            ->where('g.game_type', 2)->whereIn('g.game_state', ['OFF', 'FINAL'])
-            ->where('g.season_id', '>=', min($model->train_season_ids))->where('g.season_id', '<=', $game->season_id)
-            ->where('g.nhl_game_id', '<>', $game->nhl_game_id)->where('g.start_time_utc', '<', $cutoff)
-            ->selectRaw('COUNT(*) AS summaries, MAX(s.updated_at) AS changed')->first();
-        $imports = DB::table('nhl_import_progress as p')->join('nhl_games as g', DB::raw('CAST(g.nhl_game_id AS VARCHAR)'), '=', 'p.game_id')
-            ->where('g.game_type', 2)->whereIn('g.game_state', ['OFF', 'FINAL'])->where('p.status', 'completed')
-            ->where('g.season_id', '>=', min($model->train_season_ids))->where('g.season_id', '<=', $game->season_id)
-            ->where('g.nhl_game_id', '<>', $game->nhl_game_id)->where('g.start_time_utc', '<', $cutoff)
-            ->selectRaw('COUNT(*) AS stages, MAX(p.updated_at) AS changed')->first();
+        $results = $this->resultEvidence($model, $game, $cutoff);
         $identity = ['model' => [$model->id, $model->updated_at, $model->train_season_ids],
-            'version' => NhlPregameContextBuilder::VERSION, 'source' => $source, 'summaries' => $summaries, 'imports' => $imports,
+            'version' => NhlPregameContextBuilder::VERSION, 'results' => $results,
             'game' => [$game->nhl_game_id, $game->game_date, $game->start_time_utc, $game->away_team_id, $game->home_team_id],
             'participants' => $record];
 
@@ -274,18 +261,92 @@ class NhlCustomGameForecast
         return true;
     }
 
+    /** Fingerprint actual result values; polling timestamps are not statistical evidence.
+     * @return array<string,mixed>
+     */
+    public function resultEvidence(NhlModelRun $model, object $game, ?CarbonImmutable $cutoff = null): array
+    {
+        $games = DB::table('nhl_games')->where('game_type', 2)->whereIn('game_state', ['OFF', 'FINAL'])
+            ->where('season_id', '>=', min($model->train_season_ids))->where('season_id', '<=', $game->season_id)
+            ->whereDate('game_date', '<=', $game->game_date)
+            ->when($cutoff !== null, fn ($query) => $query->where('start_time_utc', '<', $cutoff)
+                ->where('nhl_game_id', '<>', $game->nhl_game_id))
+            ->orderBy('nhl_game_id')->get([
+                'nhl_game_id', 'season_id', 'game_type', 'game_date', 'start_time_utc', 'home_team_id', 'away_team_id',
+                'home_team_score', 'away_team_score', 'home_team_sog', 'away_team_sog',
+                'home_pp_goals', 'away_pp_goals', 'home_pp_opportunities', 'away_pp_opportunities',
+            ]);
+        $ids = $games->pluck('nhl_game_id')->all();
+        $summaries = $this->summaryValueEvidence($ids);
+        // A completed import publishes derived shot/strength facts beyond the summary columns.
+        $imports = DB::table('nhl_import_progress')->whereIn('game_id', array_map('strval', $ids))
+            ->where('status', 'completed')->selectRaw('COUNT(*) AS stages, MAX(updated_at) AS published_at')->first();
+
+        $processed = DB::table('nhl_pbp_processing_states')->whereIn('nhl_game_id', $ids)
+            ->where('processed_version', '>', 0)->orderBy('nhl_game_id')->get(['nhl_game_id', 'processed_version']);
+
+        return ['version' => 'result_values_v1',
+            'games' => hash('sha256', json_encode($games, JSON_THROW_ON_ERROR)),
+            'summaries' => $summaries, 'imports' => $imports,
+            'processed_pbp' => hash('sha256', json_encode($processed, JSON_THROW_ON_ERROR))];
+    }
+
+    /** Rehash only touched games, retaining a content digest rather than their touch timestamps.
+     * @param array<int,int> $gameIds
+     */
+    private function summaryValueEvidence(array $gameIds): string
+    {
+        $query = DB::table('nhl_game_summaries')->whereIn('nhl_game_id', $gameIds)
+            ->groupBy('nhl_game_id')->orderBy('nhl_game_id')
+            ->selectRaw('nhl_game_id, COUNT(*) AS rows, MAX(updated_at) AS touched_at');
+        if (DB::getDriverName() === 'pgsql') {
+            // Transaction identity also detects corrections within the same timestamp precision.
+            $query->selectRaw('SUM(CAST(CAST(xmin AS TEXT) AS BIGINT)) AS row_revision');
+        }
+        $metadata = $query->get();
+        $keys = $metadata->map(fn (object $row): string => 'nhl:pregame:summary-values:v1:'.$row->nhl_game_id)->all();
+        $cached = $keys === [] ? [] : Cache::many($keys);
+        $missing = $tokens = $digests = [];
+        foreach ($metadata as $row) {
+            $id = (int) $row->nhl_game_id;
+            $tokens[$id] = hash('sha256', json_encode($row, JSON_THROW_ON_ERROR));
+            $entry = $cached['nhl:pregame:summary-values:v1:'.$id] ?? null;
+            if (is_array($entry) && ($entry['token'] ?? null) === $tokens[$id] && is_string($entry['digest'] ?? null)) {
+                $digests[$id] = $entry['digest'];
+            } else {
+                $missing[] = $id;
+            }
+        }
+        foreach (array_chunk($missing, max(1, min(100, (int) config('nhl-custom-prediction.batch_games', 25)))) as $page) {
+            $hashes = [];
+            foreach ($page as $id) {
+                $hashes[$id] = hash_init('sha256');
+            }
+            $rows = DB::table('nhl_game_summaries')->whereIn('nhl_game_id', $page)
+                ->orderBy('nhl_game_id')->orderBy('nhl_player_id')->orderBy('id')->get();
+            foreach ($rows as $row) {
+                $values = (array) $row;
+                unset($values['id'], $values['created_at'], $values['updated_at']);
+                ksort($values);
+                hash_update($hashes[(int) $row->nhl_game_id], json_encode($values, JSON_THROW_ON_ERROR)."\n");
+            }
+            $entries = [];
+            foreach ($page as $id) {
+                $digests[$id] = hash_final($hashes[$id]);
+                $entries['nhl:pregame:summary-values:v1:'.$id] = ['token' => $tokens[$id], 'digest' => $digests[$id]];
+            }
+            Cache::putMany($entries, $this->preparationLifetime());
+        }
+        ksort($digests, SORT_NUMERIC);
+
+        return hash('sha256', json_encode($digests, JSON_THROW_ON_ERROR));
+    }
+
     /** Stable date keys prevent abandoned input variants from accumulating without expiry. */
     private function preparationIdentity(object $game, NhlModelRun $model, bool $storedBoxscore, array $rosterOverrides): array
     {
         $date = (string) $game->game_date;
-        $source = DB::table('nhl_games')->where('game_type', 2)->whereIn('game_state', ['OFF', 'FINAL'])
-            ->where('game_date', '<=', $date)->selectRaw('COUNT(*) AS games, MAX(updated_at) AS changed')->first();
-        $summaries = DB::table('nhl_game_summaries as s')->join('nhl_games as g', 'g.nhl_game_id', '=', 's.nhl_game_id')
-            ->where('g.game_type', 2)->whereIn('g.game_state', ['OFF', 'FINAL'])->where('g.game_date', '<=', $date)
-            ->selectRaw('COUNT(*) AS rows, MAX(s.updated_at) AS changed')->first();
-        $imports = DB::table('nhl_import_progress as p')->join('nhl_games as g', DB::raw('CAST(g.nhl_game_id AS VARCHAR)'), '=', 'p.game_id')
-            ->where('g.game_type', 2)->whereIn('g.game_state', ['OFF', 'FINAL'])->where('g.game_date', '<=', $date)
-            ->where('p.status', 'completed')->selectRaw('COUNT(*) AS stages, MAX(p.updated_at) AS changed')->first();
+        $results = $this->resultEvidence($model, $game);
         $schedule = DB::table('nhl_games')->where('game_date', $date)->orderBy('nhl_game_id')
             ->get(['nhl_game_id', 'start_time_utc', 'home_team_id', 'away_team_id', 'away_starter_lock', 'home_starter_lock']);
         $lineups = DB::table('nhl_current_lineups')->whereIn('nhl_game_id', $schedule->pluck('nhl_game_id'))
@@ -297,7 +358,7 @@ class NhlCustomGameForecast
             ->unique(fn (object $row): string => implode('|', [(string) $row->nhl_game_id, $row->team_abbrev,
                 (string) $row->nhl_player_id, $row->provider, $row->status]))->values();
         $identity = ['model' => [$model->id, $model->updated_at, $model->train_season_ids], 'definition' => config('nhl-custom-prediction'),
-            'date' => $date, 'schedule' => $schedule, 'source' => $source, 'summaries' => $summaries, 'imports' => $imports,
+            'date' => $date, 'schedule' => $schedule, 'results' => $results,
             'lineups' => $lineups, 'goalies' => $goalies, 'stored_boxscore' => $storedBoxscore,
             'roster_overrides' => $rosterOverrides, 'override_game' => $rosterOverrides === [] ? null : $game->nhl_game_id];
         $key = 'nhl:custom-inputs:queued-v3:'.$model->id.':'.$date.':'.(int) $storedBoxscore.':'

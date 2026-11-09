@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 return [
     'algorithm_version' => 'custom_ev_pp_v2',
-    'input_pipeline_version' => 'saved_pregame_checkpointed_v2',
+    'input_pipeline_version' => 'saved_pregame_checkpointed_v3',
     'reference_train_seasons' => ['20222023', '20232024', '20242025'],
     // Required completion after fallbacks, not a gate on observed player history.
     'minimum_input_completeness' => 1.0,

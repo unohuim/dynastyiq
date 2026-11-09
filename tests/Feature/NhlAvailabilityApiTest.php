@@ -3912,7 +3912,7 @@ it('does not substitute stored live data on provider failure while retaining fin
 
 it('keeps yesterday unfinished games on the scheduler while excluding final and older games', function (): void {
     $now = Carbon::parse('2026-09-22 00:30:00 UTC')->toImmutable();
-    foreach ([['2026-09-21', 'LIVE'], ['2026-09-21', 'FINAL'], ['2026-09-20', 'LIVE']] as $index => [$date, $state]) {
+    foreach ([['2026-09-21', 'LIVE'], ['2026-09-21', 'FINAL'], ['2026-09-21', 'OFF'], ['2026-09-20', 'LIVE']] as $index => [$date, $state]) {
         NhlGame::query()->create([
             'nhl_game_id' => 2026010392 + $index, 'season_id' => '20262027', 'game_type' => 1,
             'game_date' => $date, 'game_dow' => 'Monday', 'game_month' => 'September',

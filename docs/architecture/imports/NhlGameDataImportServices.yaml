@@ -46,6 +46,7 @@ when_not_to_use:
   - Discovering games.
 rules:
   - ImportNhlBoxscore supplements player boxscores with actual team PP goals/opportunities from right-rail teamGameStats powerPlay pairs. It persists those totals independently of officials availability and player-row counts. Missing or malformed pairs remain unknown; an unavailable supplement retains existing totals. Historical missing totals also fill automatically through the same parser during Teams cache preparation after season sync or on a cold read; ordinary Boxscore imports continue refreshing their own game totals. Refs and Staff owns only officials/coaches context for their SAT profiles and never writes team PP totals.
+  - Repeated boxscore refreshes must not rewrite unchanged goalie shutout or decision values. Preserve summary timestamps on no-op updates and persist real corrections normally.
   - Stage services own transformation behavior only.
   - Stage ordering belongs to NhlImportOrchestrator.
   - Progress persistence belongs to NhlImportProgressRepo.
@@ -65,7 +66,7 @@ rules:
   - PBP game summarization must reconcile goalie-facing goals against, saves, shots against, strength splits, save percentage, goals-against average, and time on ice from official boxscore rows after PBP-derived summaries are persisted.
   - Goalie empty-net shiftchart artifacts must be excluded from normalized shift-derived outputs when play-by-play goalie and situation state proves the goalie was no longer on ice, while raw provider payload files remain preserved for audit.
   - Boxscore import must run before shift import so official shift and time-on-ice targets are available to shift reconciliation.
-  - Scheduled today-game boxscore refreshes cover UTC today and yesterday, respecting each game's configured start window and pregame or live interval across midnight. FINAL games are excluded. Successful scheduled refreshes persist boxscore_synced_at. FUT and PRE remain eligible inside the start window.
+  - Scheduled today-game boxscore refreshes cover UTC today and yesterday, respecting each game's configured start window and pregame or live interval across midnight. Both FINAL and OFF games are excluded; their explicit import and final-correction pathways remain available. Successful scheduled refreshes persist boxscore_synced_at. FUT and PRE remain eligible inside the start window.
   - Game import stages must process only NHL game types documented as supported in docs/ENUMS.md.
   - Play-by-play import must establish the provider game type before later stages advance.
   - Later game import stages must not run unless PBP has stored an allowed game type for the game.

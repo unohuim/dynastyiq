@@ -290,6 +290,7 @@ class ImportNhlBoxscore
 
             NhlGameSummary::where('nhl_game_id', (int)$gameId)
                 ->where('nhl_player_id', $gkId)
+                ->where(fn ($query) => $query->whereNull('so')->orWhere('so', '<>', $so))
                 ->update(['so' => $so]);
         }
     }
@@ -463,14 +464,20 @@ class ImportNhlBoxscore
                     ? $this->goalieDecision($teamId, $response)
                     : 'ND');
 
-            $updated += NhlGameSummary::query()
+            $summary = NhlGameSummary::query()
                 ->where('nhl_game_id', (int) $gameId)
-                ->where('nhl_player_id', (string) $goalieId)
-                ->update([
+                ->where('nhl_player_id', (string) $goalieId)->first();
+            if ($summary !== null) {
+                $summary->fill([
                     'nhl_team_id' => $teamId,
                     'goalie_started' => $started,
                     'goalie_decision' => $decision,
                 ]);
+                if ($summary->isDirty()) {
+                    $summary->save();
+                    $updated++;
+                }
+            }
         }
 
         return $updated;

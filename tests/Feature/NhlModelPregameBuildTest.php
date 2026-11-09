@@ -72,6 +72,18 @@ beforeEach(function (): void {
 
         return ['run' => $owner, 'teams' => $contexts, 'player' => $player];
     };
+    $this->fingerprintFixture = function (): array {
+        Cache::flush();
+        ($this->updateGame)(2024020001, '2024-10-08', '20242025');
+        ($this->updateGame)(2025020001, '2025-10-08', '20252026', 'FUT');
+        $db = \Illuminate\Support\Facades\DB::class;
+        $db::table('nhl_game_summaries')->insert(['nhl_game_id' => 2024020001, 'nhl_player_id' => 101,
+            'nhl_team_id' => 1, 'toi' => 900, 'g' => 2, 'sog' => 5, 'updated_at' => now()->subHour()]);
+        $target = $db::table('nhl_games')->where('nhl_game_id', 2025020001)->first();
+        $record = ['players' => [101 => ['team' => 1]], 'starters' => [], 'lineup_sources' => [1 => 'anticipated_lineup']];
+
+        return [app(\App\Services\NhlCustomGameForecast::class), $target, $record];
+    };
     $this->admin = User::factory()->create();
     $role = Role::firstOrCreate(['slug' => 'super-admin'], [
         'name' => 'Super Admin', 'level' => 99, 'scope' => 'global', 'is_active' => true,
@@ -1560,3 +1572,65 @@ it('selects actual or anticipated evidence according to whether the requested ga
     $evidence = app(\App\Services\NhlCustomGameForecast::class)->contextEvidence($this->model, $game);
     expect($evidence['participants'])->toBe($record);
 })->with([['FUT', false], ['LIVE', false], ['FINAL', true], ['OFF', true]]);
+
+
+it('keeps pregame fingerprints stable when sync timestamps change without statistical changes', function (): void {
+    [$service, $target, $record] = ($this->fingerprintFixture)();
+    $before = $service->contextEvidence($this->model, $target, $record)['fingerprint'];
+    $db = \Illuminate\Support\Facades\DB::class;
+    $db::table('nhl_games')->where('nhl_game_id', 2024020001)->update(['updated_at' => now(), 'boxscore_synced_at' => now()]);
+    $db::table('nhl_game_summaries')->where('nhl_game_id', 2024020001)->update(['updated_at' => now()]);
+    expect($service->contextEvidence($this->model, $target, $record)['fingerprint'])->toBe($before);
+});
+
+it('invalidates pregame fingerprints when real result values are corrected', function (string $kind): void {
+    [$service, $target, $record] = ($this->fingerprintFixture)();
+    $before = $service->contextEvidence($this->model, $target, $record)['fingerprint'];
+    $db = \Illuminate\Support\Facades\DB::class;
+    match ($kind) {
+        'score' => $db::table('nhl_games')->where('nhl_game_id', 2024020001)->update(['home_team_score' => 4]),
+        'opportunities' => $db::table('nhl_games')->where('nhl_game_id', 2024020001)->update(['home_pp_opportunities' => 4]),
+        'player goals' => $db::table('nhl_game_summaries')->where('nhl_game_id', 2024020001)->update(['g' => 3, 'updated_at' => now()]),
+    };
+    expect($service->contextEvidence($this->model, $target, $record)['fingerprint'])->not->toBe($before);
+})->with(['score', 'opportunities', 'player goals']);
+
+it('detects added and removed historical participants without using target outcomes', function (): void {
+    [$service, $target, $record] = ($this->fingerprintFixture)();
+    $before = $service->contextEvidence($this->model, $target, $record)['fingerprint'];
+    $db = \Illuminate\Support\Facades\DB::class;
+    $id = $db::table('nhl_game_summaries')->insertGetId(['nhl_game_id' => 2024020001, 'nhl_player_id' => 102,
+        'nhl_team_id' => 1, 'toi' => 600, 'g' => 1, 'updated_at' => now()]);
+    expect($service->contextEvidence($this->model, $target, $record)['fingerprint'])->not->toBe($before);
+    $db::table('nhl_game_summaries')->where('id', $id)->delete();
+    expect($service->contextEvidence($this->model, $target, $record)['fingerprint'])->toBe($before);
+});
+
+it('invalidates pregame evidence when derived facts are republished by a completed import', function (): void {
+    [$service, $target, $record] = ($this->fingerprintFixture)();
+    $before = $service->contextEvidence($this->model, $target, $record)['fingerprint'];
+    \Illuminate\Support\Facades\DB::table('nhl_import_progress')->insert(['season_id' => '20242025',
+        'game_date' => '2024-10-08', 'game_id' => '2024020001', 'game_type' => 2, 'import_type' => 'summary',
+        'status' => 'completed', 'items_count' => 40, 'created_at' => now(), 'updated_at' => now()]);
+    expect($service->contextEvidence($this->model, $target, $record)['fingerprint'])->not->toBe($before);
+});
+
+it('keeps lineup changes independent from unchanged historical statistics', function (): void {
+    [$service, $target, $record] = ($this->fingerprintFixture)();
+    $before = $service->contextEvidence($this->model, $target, $record)['fingerprint'];
+    $record['players'] = [102 => ['team' => 1]];
+    expect($service->contextEvidence($this->model, $target, $record)['fingerprint'])->not->toBe($before);
+});
+
+
+it('invalidates on processed PBP corrections while ignoring repeated observation timestamps', function (): void {
+    [$service, $target, $record] = ($this->fingerprintFixture)();
+    $db = \Illuminate\Support\Facades\DB::class;
+    $db::table('nhl_pbp_processing_states')->insert(['nhl_game_id' => 2024020001,
+        'pending_version' => 1, 'processed_version' => 1, 'observed_at' => now()->subHour()]);
+    $first = $service->contextEvidence($this->model, $target, $record)['fingerprint'];
+    $db::table('nhl_pbp_processing_states')->where('nhl_game_id', 2024020001)->update(['observed_at' => now()]);
+    expect($service->contextEvidence($this->model, $target, $record)['fingerprint'])->toBe($first);
+    $db::table('nhl_pbp_processing_states')->where('nhl_game_id', 2024020001)->update(['processed_version' => 2, 'pending_version' => 2]);
+    expect($service->contextEvidence($this->model, $target, $record)['fingerprint'])->not->toBe($first);
+});

@@ -3048,8 +3048,8 @@ identifies a completed empty missing-work selection. Updates keep the existing
 
 ## Operational prediction preparation
 
-- `nhl-custom-prediction.input_pipeline_version`: `saved_pregame_checkpointed_v2`
-  identifies saved-context preparation with bounded cache checkpoints and actual participant selection for finished games; the scoring
+- `nhl-custom-prediction.input_pipeline_version`: `saved_pregame_checkpointed_v3`
+  identifies saved-context preparation with bounded cache checkpoints, actual participant selection for finished games and statistical-content freshness; the scoring
   algorithm remains `custom_ev_pp_v2`.
 - `nhl_pregame_context_runs.options.trigger`: `prediction` identifies an explicit
   prediction dependency. Existing `manual_update` and `auto_sync` keep their meaning.
@@ -3062,3 +3062,8 @@ identifies a completed empty missing-work selection. Updates keep the existing
 - HTTP prediction `status: preparing` is a transient HTTP 202 response with
   `prediction_available: false` and `Retry-After: 15`, not a database run status.
   Pending manual game work retains the existing `queued` state.
+
+- Private result-evidence version `result_values_v1` fingerprints selected completed-game
+  statistical fields and summary values. Polling/creation/update timestamps are
+  excluded from those value fingerprints; completed import publication and processed PBP revisions remain
+  separate invalidators for derived shot/strength facts.
