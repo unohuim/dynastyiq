@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\NhlGame;
 use App\Services\NhlGamePredictionPayload;
 use App\Services\NhlGamePredictionResponseCache;
+use App\Services\NhlPublicGamePage;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -15,8 +17,13 @@ use Illuminate\Http\Request;
  */
 class NhlGamePredictionsController extends Controller
 {
-    public function __invoke(Request $request, NhlGamePredictionPayload $payload, NhlGamePredictionResponseCache $cache): JsonResponse
-    {
+    /** Attach descriptive prior-game Matchup statistics without rewriting cached forecasts. */
+    public function __invoke(
+        Request $request,
+        NhlGamePredictionPayload $payload,
+        NhlGamePredictionResponseCache $cache,
+        NhlPublicGamePage $pages,
+    ): JsonResponse {
         $input = $request->validate([
             'nhl_game_id' => ['required', 'integer'],
             'force_refresh' => ['sometimes', 'boolean'],
@@ -40,7 +47,10 @@ class NhlGamePredictionsController extends Controller
         $forceRefresh = (bool) ($input['force_refresh'] ?? false);
         unset($input['force_refresh']);
 
-        return response()->json($cache->respond((int) $input['nhl_game_id'], $input,
-            fn (): array => $payload->build((int) $input['nhl_game_id'], $input), $forceRefresh), 200, [], JSON_PRESERVE_ZERO_FRACTION);
+        $prediction = $cache->respond((int) $input['nhl_game_id'], $input,
+            fn (): array => $payload->build((int) $input['nhl_game_id'], $input), $forceRefresh);
+        $prediction['matchup'] = $pages->matchup(NhlGame::query()->findOrFail((int) $input['nhl_game_id']));
+
+        return response()->json($prediction, 200, [], JSON_PRESERVE_ZERO_FRACTION);
     }
 }

@@ -134,6 +134,58 @@ it('predicts every requested game state without using target scores', function (
         ->assertJsonPath('prediction.winner.team_abbrev', 'COL');
 })->with(['FUT', 'LIVE', 'FINAL', 'OFF', 'PPD', 'CNCL']);
 
+it('includes prior season form and the last ten cross-season meetings in API Matchup', function (): void {
+    $games = [];
+    foreach (range(1, 11) as $day) {
+        $games[] = ['nhl_game_id' => 2025020100 + $day, 'season_id' => '20252026', 'game_type' => 2,
+            'game_date' => '2026-03-'.str_pad((string) $day, 2, '0', STR_PAD_LEFT), 'game_state' => 'OFF',
+            'home_team_id' => 2, 'away_team_id' => 1, 'home_team_score' => 1, 'away_team_score' => 2];
+    }
+    $games[] = ['nhl_game_id' => 2026020002, 'season_id' => '20262027', 'game_type' => 2,
+        'game_date' => '2026-11-04', 'game_state' => 'OFF', 'home_team_id' => 2, 'away_team_id' => 1,
+        'home_team_score' => 4, 'away_team_score' => 2];
+    DB::table('nhl_games')->insert(array_map(static fn (array $row): array => [...$row,
+        'game_dow' => \Carbon\CarbonImmutable::parse($row['game_date'])->format('D'),
+        'game_month' => \Carbon\CarbonImmutable::parse($row['game_date'])->format('M'),
+        'start_time_utc' => $row['game_date'].' 23:00:00'], $games));
+    DB::table('nhl_games')->where('nhl_game_id', 2026020002)->update([
+        'home_pp_goals' => 1, 'home_pp_opportunities' => 4, 'away_pp_goals' => 1, 'away_pp_opportunities' => 5,
+    ]);
+    $reader = Mockery::mock(\App\Services\NhlStatsDashboardPayload::class);
+    $reader->shouldNotReceive('teamExpectationsForGames');
+    app()->instance(\App\Services\NhlStatsDashboardPayload::class, $reader);
+    $first = ($this->requestPrediction)()->assertOk()
+        ->assertJsonPath('matchup.through_date', '2026-11-04')->assertJsonPath('matchup.head_to_head_limit', 10)
+        ->assertJsonPath('matchup.away.team_id', 1)->assertJsonPath('matchup.home.team_abbrev', 'COL')
+        ->assertJsonPath('matchup.home.form.gp', 1)->assertJsonPath('matchup.home.form.wins', 1)
+        ->assertJsonPath('matchup.home.form.h2h_gp', 10)->assertJsonPath('matchup.home.form.h2h_losses', 9)
+        ->assertJsonPath('matchup.home.form.gf_gp', 4)->assertJsonPath('matchup.home.form.ga_gp', 2)
+        ->assertJsonPath('matchup.home.form.pp_pct', 25)->assertJsonPath('matchup.home.form.pk_pct', 80)
+        ->assertJsonPath('matchup.home.form.pp_opps_gp', 4)->assertJsonPath('matchup.home.form.pp_opps_allowed_gp', 5)
+        ->assertJsonPath('matchup.home.form.xgf_gp', null)->assertJsonPath('matchup.expected_pending', true);
+    $id = $first->json('meta.prediction_revision_id');
+    $this->assertDatabaseHas('nhl_game_prediction_revisions', ['id' => $id, 'nhl_game_id' => 2026020001]);
+    expect(json_decode(DB::table('nhl_game_prediction_revisions')->where('id', $id)->value('payload'), true))
+        ->not->toHaveKey('matchup');
+    ($this->requestPrediction)()->assertOk()->assertJsonPath('meta.prediction_revision_id', $id)
+        ->assertJsonPath('matchup.home.form.pp_opps_allowed_gp', 5);
+    $this->assertDatabaseCount('nhl_game_prediction_revisions', 1);
+    Bus::assertDispatchedTimes(\App\Jobs\RefreshNhlPublicGamePageJob::class, 1);
+    Http::assertNothingSent();
+});
+
+it('includes pregame Matchup for live and finished prediction requests without target results', function (string $state): void {
+    $this->game->update(['game_state' => $state, 'home_team_score' => 99, 'away_team_score' => 0]);
+    DB::table('nhl_games')->insert(['nhl_game_id' => 2026020003, 'season_id' => '20262027', 'game_type' => 2,
+        'game_date' => '2026-11-06', 'game_dow' => 'Fri', 'game_month' => 'Nov', 'game_state' => 'OFF', 'home_team_id' => 2, 'away_team_id' => 1,
+        'home_team_score' => 20, 'away_team_score' => 0]);
+    ($this->requestPrediction)()->assertOk()->assertJsonPath('matchup.home.form.gp', 0)
+        ->assertJsonPath('matchup.home.form.gf_gp', null)->assertJsonPath('matchup.home.form.h2h_gp', 0)
+        ->assertJsonPath('matchup.expected_pending', false);
+    Bus::assertNotDispatched(\App\Jobs\RefreshNhlPublicGamePageJob::class);
+    Http::assertNothingSent();
+})->with(['LIVE', 'FINAL', 'OFF']);
+
 it('completes missing observed player evidence instead of rejecting the game', function (): void {
     foreach ($this->input['teams'] as &$side) {
         foreach ($side['players'] as &$player) {

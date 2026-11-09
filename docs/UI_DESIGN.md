@@ -10,7 +10,7 @@ Factors contains Why this pick and Matchup insights. Match dark navy surfaces,
 subtle borders, sky-blue team accents and compact typography. Team summaries
 appear before separate compact player rows. Include goal contributors and L10
 points-per-game leaders. Under Last 10 Games show EV SAT/60, EV SAT/GP, EV SH%
-and PP G/GP with green up/red down relative percentages versus personal Train;
+and PP PTS/GP (goals plus assists) with green up/red down relative percentages versus personal Train;
 hide the historical baseline value and blend formulas. Name the actual training
 horizon in the caption. Preview content does not disappear for periodic reloads.
 Insights show both values, units, period, GP and direction,

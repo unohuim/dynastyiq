@@ -1128,6 +1128,65 @@ Regular-season roster fallback behavior is unchanged.
 }
 ```
 
+### Matchup statistics
+
+Every HTTP 200 prediction response includes a top-level `matchup` block, including
+fresh or stale cached predictions and responses without an available pick. This
+is the same descriptive statistics reader as the game page's Matchup tab; it does
+not adjust scores, probabilities, qualification or confidence. Existing immutable
+prediction revisions are unchanged: the API attaches this block when responding.
+The HTTP 202 preparing response retains its existing shape.
+
+```json
+{
+  "matchup": {
+    "through_date": "2026-11-04",
+    "head_to_head_limit": 10,
+    "expected_pending": true,
+    "away": {
+      "team_id": 1,
+      "team_abbrev": "BUF",
+      "form": {
+        "gp": 12, "wins": 7, "losses": 4, "otl": 1,
+        "l10_gp": 10, "l10_wins": 6, "l10_losses": 3, "l10_otl": 1,
+        "h2h_gp": 10, "h2h_wins": 4, "h2h_losses": 5, "h2h_otl": 1,
+        "gf_gp": 3.25, "ga_gp": 2.75,
+        "xgf_gp": null, "xga_gp": null,
+        "pp_pct": 25.0, "pk_pct": 80.0,
+        "pp_opps_gp": 3.0, "pp_opps_allowed_gp": 3.25
+      }
+    },
+    "home": { "team_id": 21, "team_abbrev": "COL", "form": {} }
+  }
+}
+```
+
+The shortened home example has the same form keys as away in actual responses.
+`team_id` is the NHL team ID. Both sides are always present. Percentage fields use
+0–100; per-game fields are numeric averages. Missing rates remain `null`, and true
+zeros remain zero. Records use separate W/L/OTL counts with the actual recorded
+REG/OT/SO ending; rule-enabled schedule flags do not classify overtime losses.
+
+- Season form includes only completed results in the target season and game type,
+  strictly before the requested game's calendar date. `through_date` is the day
+  before that date, not the timestamp of the forecast calculation.
+- L10 records use the team's last ten such games; `l10_gp` reports the actual
+  available count.
+- H2H records use at most ten prior completed meetings between these two teams,
+  across seasons of the same game type. `h2h_gp` reports the actual available count.
+- PP% divides summed PP goals by summed own opportunities. PK% is one minus
+  summed opponent PP goals divided by summed opponent opportunities. PP opportunities
+  for/allowed per game divide those respective opportunity totals by team GP.
+- xGF/GP and xGA/GP read prepared statistics only. A cold upcoming-game read queues
+  shared background preparation and returns `expected_pending: true`; poll normally
+  to obtain the prepared values. No shot aggregation or provider call runs in this
+  Matchup reader. Live/final requests still return strictly pregame form; absent
+  prepared historical expected values remain null without queuing live/recap work.
+
+Matchup data is descriptive at response time, bounded by `through_date`; the saved
+prediction's original identity and calculation time remain in `meta`. Its current
+statistics are not an additional immutable prediction revision.
+
 ### Query Parameters
 
 | Parameter | Required | Meaning |

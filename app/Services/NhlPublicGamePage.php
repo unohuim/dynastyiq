@@ -73,20 +73,10 @@ final class NhlPublicGamePage
             abort(503, 'Live details temporarily unavailable.');
         }
         if ($current === null && $section === 'matchup') {
-            $expected = Cache::get($this->cacheKey($game).':matchup-expectations:v1');
-            $pending = ! is_array($expected);
-            if ($pending && Cache::add($this->cacheKey($game).':matchup-expectations:queued', true, 90)) {
-                try {
-                    \App\Jobs\RefreshNhlPublicGamePageJob::dispatch($gameId)->afterCommit();
-                } catch (\Throwable $error) {
-                    Cache::forget($this->cacheKey($game).':matchup-expectations:queued');
-                    throw $error;
-                }
-            }
-            $current = ['mode' => 'preview', 'matchup_expected_pending' => $pending];
+            $matchup = $this->matchup($game);
+            $current = ['mode' => 'preview', 'matchup_expected_pending' => $matchup['expected_pending']];
             foreach (['away', 'home'] as $side) {
-                $current[$side] = ['form' => [...$this->form($game, (int) $game->{$side.'_team_id'}),
-                    'xgf_gp' => $expected[$side]['xgf_gp'] ?? null, 'xga_gp' => $expected[$side]['xga_gp'] ?? null],
+                $current[$side] = ['form' => $matchup[$side]['form'],
                     'starting_goalie' => app(NhlStartingGoalieSelector::class)->select($gameId, (string) $game->{$side.'_team_abbrev'}, (string) $game->season_id)];
             }
         } elseif ($current === null && $section === 'factors') {
@@ -123,6 +113,32 @@ final class NhlPublicGamePage
         })];
 
         return ['nhl_game_id' => $gameId, 'mode' => $current['mode'], 'section' => $section, 'data' => $data];
+    }
+
+    /** Share strictly prior-date Matchup statistics with the partner API in every game state.
+     * @return array<string,mixed>
+     */
+    public function matchup(NhlGame $game): array
+    {
+        $expected = Cache::get($this->cacheKey($game).':matchup-expectations:v1');
+        $pending = ! is_array($expected) && in_array(strtoupper((string) $game->game_state), ['', 'FUT', 'PRE', 'PPD', 'CNCL'], true);
+        if ($pending && Cache::add($this->cacheKey($game).':matchup-expectations:queued', true, 90)) {
+            try {
+                \App\Jobs\RefreshNhlPublicGamePageJob::dispatch((int) $game->nhl_game_id)->afterCommit();
+            } catch (\Throwable $error) {
+                Cache::forget($this->cacheKey($game).':matchup-expectations:queued');
+                throw $error;
+            }
+        }
+        $result = ['through_date' => $game->game_date->copy()->subDay()->toDateString(),
+            'head_to_head_limit' => 10, 'expected_pending' => $pending];
+        foreach (['away', 'home'] as $side) {
+            $result[$side] = ['team_id' => (int) $game->{$side.'_team_id'}, 'team_abbrev' => (string) $game->{$side.'_team_abbrev'},
+                'form' => [...$this->form($game, (int) $game->{$side.'_team_id'}),
+                    'xgf_gp' => $expected[$side]['xgf_gp'] ?? null, 'xga_gp' => $expected[$side]['xga_gp'] ?? null]];
+        }
+
+        return $result;
     }
 
     /** Serialize cold detail builds across queue workers and deferred browser requests.
@@ -353,7 +369,7 @@ final class NhlPublicGamePage
             $tokens[$entity] = $revision->model_id === null ? [] : $contexts($entity)
                 ->selectRaw('MAX(context.updated_at) AS updated_at, MAX(context.run_id) AS run_id, COUNT(*) AS rows')->first();
         }
-        $key = 'nhl:public-preview-analysis:v3:'.$revision->id.':'.hash('sha256', json_encode($tokens, JSON_THROW_ON_ERROR));
+        $key = 'nhl:public-preview-analysis:v4:'.$revision->id.':'.hash('sha256', json_encode($tokens, JSON_THROW_ON_ERROR));
 
         return Cache::remember($key, 300, function () use ($revision, $contexts, $game, $empty): array {
             $saved = $this->previewProjection((int) $revision->id);
@@ -527,7 +543,7 @@ final class NhlPublicGamePage
         $comparisons = [];
         foreach ([['EV SAT/60', 'EV', 'sat', 'seconds', 3600], ['EV SAT/GP', 'EV', 'sat', 'games', 1],
             ['EV SH%', 'EV', 'goals', 'sog', 100],
-            ['PP G/GP', 'PP', 'goals', 'games', 1]] as [$metric, $lane, $numerator, $denominator, $scale]) {
+            ['PP PTS/GP', 'PP', 'points', 'games', 1]] as [$metric, $lane, $numerator, $denominator, $scale]) {
             $rates = [];
             foreach (['baseline' => 'train', 'recent' => 'last_10'] as $key => $period) {
                 $sample = $history[$lane][$period] ?? [];
@@ -539,7 +555,7 @@ final class NhlPublicGamePage
                 }
                 $rates[$key] = $n !== null && $n >= 0 && $d !== null && $d > 0 ? $scale * $n / $d : null;
             }
-            if ($rates['baseline'] === null && $rates['recent'] === null) {
+            if ($rates['baseline'] === null && $rates['recent'] === null && $numerator !== 'points') {
                 continue;
             }
             $comparisons[] = ['recent' => $rates['recent'], 'metric' => $metric, 'baseline_label' => $baselineLabel,
