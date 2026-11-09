@@ -123,12 +123,22 @@ beforeEach(function (): void {
                     'schedule_metrics' => json_encode(['back_to_back' => false, 'games_including_target_last_7_days' => 2]),
                 ]);
                 foreach ([0, 1] as $slot) {
+                    $strength = [];
+                    foreach (['EV' => [1500, 20, 8], 'PP' => [150, 4, 2]] as $lane => [$seconds, $sat, $sog]) {
+                        foreach (['train' => 3, 'last_game' => 1, 'last_5' => 4, 'last_10' => 4,
+                            'last_20' => 4, 'last_season' => 1, 'season_to_date' => 1] as $window => $games) {
+                            $strength[$lane][$window] = ['games' => $games, 'toi_seconds' => $games * $seconds,
+                                'sat' => $games * $sat, 'sog' => $games * $sog, 'goals' => $games,
+                                'individual_missing_games' => 0];
+                        }
+                    }
                     DB::table('nhl_player_game_pregame_contexts')->insert([
                         'model_run_id' => $model->id, 'run_id' => $run->id, 'team_context_id' => $parent,
                         'nhl_game_id' => 2026020002, 'nhl_player_id' => $team * 100 + $slot, 'nhl_team_id' => $team,
                         'opponent_team_id' => $team === 1 ? 2 : 1, 'game_date' => '2026-11-05',
                         'source_cutoff_at' => '2026-11-05 12:00:00', 'venue' => $venue,
-                        'participant_source' => 'anticipated_lineup', 'context_version' => NhlPregameContextBuilder::VERSION, 'metrics' => '{}',
+                        'participant_source' => 'anticipated_lineup', 'context_version' => NhlPregameContextBuilder::VERSION,
+                        'metrics' => json_encode(['individual_strength_version' => 1, 'strength' => $strength]),
                     ]);
                 }
             }
@@ -136,6 +146,17 @@ beforeEach(function (): void {
         return [$reader, $model->id, [2026020002 => $lineup]];
     };
     $this->testModel = null;
+    $this->finishQueuedForecast = function (NhlCustomGamePredictionInputs $reader, int $model, array $lineups): array {
+        $reader->beginQueuedForecast($model, '2026-11-05', $lineups);
+        for ($page = 0; $page < 30; $page++) {
+            $step = $reader->advanceQueuedForecast();
+            if ($step['complete']) {
+                return $step;
+            }
+        }
+
+        throw new \RuntimeException('Fixture preparation did not reach its bounded terminal step.');
+    };
     $this->input = ['game_id' => 2025020001, 'source_cutoff_at' => '2025-11-01 23:00:00',
         'retained_bucket_keys' => ['B'], 'league_usage_seconds' => ['EV' => 600.0, 'PP' => 60.0],
         'league_pk_probability' => 0.8, 'teams' => []];
@@ -1011,4 +1032,100 @@ it('keeps the full Train league fallback while checkpointing only selected playe
         ->and($input['league_usage_seconds']['PP'])->toBe(138.0)
         ->and($input['teams']['away']['players'])->not->toHaveKey(999)
         ->and($input['teams']['away']['players'][100]['history']['EV']['train']['games'])->toBe(3);
+});
+
+it('reads saved player exposure and overall totals while preserving the separate bucket history', function (): void {
+    [$reader, $model, $lineups] = ($this->forecastFixture)('FUT', true);
+    $row = DB::table('nhl_player_game_pregame_contexts')->where('nhl_player_id', 100)->first();
+    $metrics = json_decode($row->metrics, true);
+    $metrics['strength']['EV']['last_10']['toi_seconds'] = 6002;
+    $metrics['strength']['EV']['last_20']['sat'] = 81;
+    DB::table('nhl_player_game_pregame_contexts')->where('id', $row->id)->update(['metrics' => json_encode($metrics)]);
+
+    $step = ($this->finishQueuedForecast)($reader, $model, $lineups);
+    expect($step['errors'])->toBe([]);
+    $player = $step['inputs'][2026020002]['teams']['away']['players'][100];
+    expect($player['usage']['EV'])->toBe(1500.5)
+        ->and($player['history']['EV']['last_20']['sat'])->toBe(81)
+        ->and($player['buckets']['EV']['B']['sog_probability'])->toBe(0.4)
+        ->and($player['buckets']['EV']['B']['defense_reference'])->toBeGreaterThan(0);
+});
+
+it('does not accumulate duplicated personal counts or exposure during operational history preparation', function (): void {
+    [$reader, $model, $lineups] = ($this->forecastFixture)('FUT', true);
+    $step = ($this->finishQueuedForecast)($reader, $model, $lineups);
+    expect($step['errors'])->toBe([]);
+    $property = new \ReflectionProperty(NhlCustomGamePredictionInputs::class, 'train');
+    $train = $property->getValue($reader);
+    expect($train[100]['EV']['games'])->toBe(0)
+        ->and($train[100]['EV']['seconds'])->toBe(0.0)
+        ->and($train[100]['EV']['buckets']['B'])->toBe(['sat' => 60, 'sog' => 24, 'goals' => 3])
+        ->and($step['inputs'][2026020002]['teams']['away']['players'][100]['history']['EV']['train']['games'])->toBe(3);
+});
+
+it('uses saved player PP goals per appearance for the L20 offense allocation', function (): void {
+    [$reader, $model, $lineups] = ($this->forecastFixture)('FUT', true);
+    $row = DB::table('nhl_player_game_pregame_contexts')->where('nhl_player_id', 100)->first();
+    $metrics = json_decode($row->metrics, true);
+    $metrics['strength']['PP']['last_20']['goals'] = 2;
+    DB::table('nhl_player_game_pregame_contexts')->where('id', $row->id)->update(['metrics' => json_encode($metrics)]);
+
+    $step = ($this->finishQueuedForecast)($reader, $model, $lineups);
+    expect($step['errors'])->toBe([])
+        ->and($step['inputs'][2026020002]['teams']['away']['pp_offense_l20'])->toBe(1.5)
+        ->and($step['inputs'][2026020002]['teams']['away']['pp_offense_sources'][100])->toBe('last_20');
+});
+
+it('does not silently replay missing or invalid saved individual aggregates', function (string $case): void {
+    [$reader, $model, $lineups] = ($this->forecastFixture)('FUT', true);
+    $row = DB::table('nhl_player_game_pregame_contexts')->where('nhl_player_id', 100)->first();
+    $metrics = json_decode($row->metrics, true);
+    if ($case === 'version') {
+        unset($metrics['individual_strength_version']);
+    } elseif ($case === 'window') {
+        unset($metrics['strength']['EV']['last_10']);
+    } elseif ($case === 'field') {
+        unset($metrics['strength']['EV']['last_10']['toi_seconds']);
+    } else {
+        $metrics['strength']['EV']['last_10']['toi_seconds'] = -1;
+    }
+    DB::table('nhl_player_game_pregame_contexts')->where('id', $row->id)->update(['metrics' => json_encode($metrics)]);
+
+    $step = ($this->finishQueuedForecast)($reader, $model, $lineups);
+    expect($step['inputs'])->not->toHaveKey(2026020002)
+        ->and($step['errors'][2026020002])->toContain('Saved individual-strength pregame');
+})->with(['version', 'window', 'field', 'negative']);
+
+it('retains incomplete recent-window fallback and usable Train samples from saved context', function (): void {
+    [$reader, $model, $lineups] = ($this->forecastFixture)('FUT', true);
+    $row = DB::table('nhl_player_game_pregame_contexts')->where('nhl_player_id', 100)->first();
+    $metrics = json_decode($row->metrics, true);
+    $metrics['strength']['PP']['last_20']['individual_missing_games'] = 1;
+    foreach (['sat', 'sog', 'goals'] as $metric) {
+        $metrics['strength']['PP']['last_20'][$metric] = null;
+    }
+    $metrics['strength']['PP']['train']['individual_missing_games'] = 1;
+    DB::table('nhl_player_game_pregame_contexts')->where('id', $row->id)->update(['metrics' => json_encode($metrics)]);
+
+    $step = ($this->finishQueuedForecast)($reader, $model, $lineups);
+    expect($step['errors'])->toBe([])
+        ->and($step['inputs'][2026020002]['teams']['away']['players'][100]['history']['PP']['last_20'])->toBeNull()
+        ->and($step['inputs'][2026020002]['teams']['away']['pp_offense_sources'][100])->toBe('player_train')
+        ->and($step['inputs'][2026020002]['teams']['away']['pp_offense_l20'])->toBe(2.0);
+});
+
+it('retains zero-strength appearances when reusing saved exposure', function (): void {
+    [$reader, $model, $lineups] = ($this->forecastFixture)('FUT', true);
+    $row = DB::table('nhl_player_game_pregame_contexts')->where('nhl_player_id', 100)->first();
+    $metrics = json_decode($row->metrics, true);
+    $metrics['strength']['PP']['last_10'] = ['games' => 4, 'toi_seconds' => 0,
+        'sat' => 0, 'sog' => 0, 'goals' => 0, 'individual_missing_games' => 0];
+    DB::table('nhl_player_game_pregame_contexts')->where('id', $row->id)->update(['metrics' => json_encode($metrics)]);
+
+    $step = ($this->finishQueuedForecast)($reader, $model, $lineups);
+    expect($step['errors'])->toBe([]);
+    $player = $step['inputs'][2026020002]['teams']['away']['players'][100];
+    expect($player['usage']['PP'])->toBe(0.0)
+        ->and($player['complete']['PP'])->toBeTrue()
+        ->and($player['history']['PP']['last_10']['games'])->toBe(4);
 });

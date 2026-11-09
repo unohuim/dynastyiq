@@ -44,6 +44,8 @@ class NhlCustomGamePredictionInputs
 
     private ?array $forecastPlayerIds = null;
 
+    private bool $useSavedPlayerAggregates = false;
+
     /** Resolve one model universe and freeze its Train bucket mapping before reading Test. */
     public function prepare(int $modelId, ?string $predictionSeason = null): array
     {
@@ -94,6 +96,7 @@ class NhlCustomGamePredictionInputs
     /** Predict any scheduled state from prior results and supplied or anticipated lineup identities. */
     public function forecasts(int $modelId, string $date, array $lineups = [], ?Closure $progress = null): Generator
     {
+        $this->useSavedPlayerAggregates = false;
         if (! preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)
             || ! CarbonImmutable::hasFormatWithModifiers($date, 'Y-m-d')
             || CarbonImmutable::createFromFormat('!Y-m-d', $date)->format('Y-m-d') !== $date) {
@@ -166,6 +169,7 @@ class NhlCustomGamePredictionInputs
     /** Freeze an operational date once; each continuation performs only a bounded page. */
     public function beginQueuedForecast(int $modelId, string $date, array $lineups): void
     {
+        $this->useSavedPlayerAggregates = true;
         $targets = DB::table('nhl_games')->where('game_date', $date)->orderBy('start_time_utc')->orderBy('nhl_game_id')->get();
         if ($targets->isEmpty() || $targets->pluck('season_id')->unique()->count() !== 1) {
             throw new DomainException('A prediction date must identify games in one season.');
@@ -412,6 +416,7 @@ class NhlCustomGamePredictionInputs
     /** Forecast before advancing history; excluded targets still become past evidence afterwards. */
     public function games(?string $from = null, ?string $to = null): Generator
     {
+        $this->useSavedPlayerAggregates = false;
         if ($this->metadata === []) {
             throw new DomainException('Prepare the model before requesting game inputs.');
         }
@@ -727,7 +732,7 @@ class NhlCustomGamePredictionInputs
                     'line_key' => $player['line_key'] ?? null,
                     'usage' => [], 'complete' => [], 'buckets' => [], 'history' => []];
                 foreach (['EV', 'PP'] as $lane) {
-                    $sources = $this->sources((int) $id, $lane, (string) $game->season_id);
+                    $sources = $this->sources((int) $id, $lane, (string) $game->season_id, $playerContext);
                     $t = $sources['train'];
                     $ten = $sources['last_10'];
                     $usage = $ten !== null && $ten['games'] > 0 ? $ten['seconds'] / $ten['games'] : null;
@@ -737,9 +742,9 @@ class NhlCustomGamePredictionInputs
                     foreach ($sources as $window => $values) {
                         $prepared['history'][$lane][$window] = $values === null ? null
                             : ['games' => $values['games'], 'seconds' => $values['seconds'],
-                                'sat' => array_sum(array_column($values['buckets'], 'sat')),
-                                'sog' => array_sum(array_column($values['buckets'], 'sog')),
-                                'goals' => array_sum(array_column($values['buckets'], 'goals'))];
+                                'sat' => $values['totals']['sat'] ?? array_sum(array_column($values['buckets'], 'sat')),
+                                'sog' => $values['totals']['sog'] ?? array_sum(array_column($values['buckets'], 'sog')),
+                                'goals' => $values['totals']['goals'] ?? array_sum(array_column($values['buckets'], 'goals'))];
                     }
                     foreach ($this->filter['keys'] as $key) {
                         $league = $this->league[$lane];
@@ -775,10 +780,10 @@ class NhlCustomGamePredictionInputs
                             'source' => $validRate ? 'train_l10' : 'train_league_fallback'];
                     }
                 }
-                $twenty = $this->pool(array_slice($this->recent[$id] ?? [], -20), 'PP');
+                $twenty = $sources['last_20'];
                 $goalSource = 'last_20';
                 if ($twenty === null || $twenty['games'] <= 0) {
-                    $twenty = $this->train[$id]['PP'] ?? null;
+                    $twenty = $sources['train'];
                     $goalSource = 'player_train';
                 }
                 if ($twenty === null || $twenty['games'] <= 0) {
@@ -789,7 +794,8 @@ class NhlCustomGamePredictionInputs
                     throw new DomainException('Train league player PP goal history is unavailable.');
                 }
                 $side['pp_offense_sources'][$id] = $goalSource;
-                $side['pp_offense_l20'] += array_sum(array_column($twenty['buckets'], 'goals')) / $twenty['games'];
+                $side['pp_offense_l20'] += ($twenty['totals']['goals']
+                    ?? array_sum(array_column($twenty['buckets'], 'goals'))) / $twenty['games'];
                 $side['players'][$id] = $prepared;
             }
             if ($side['players'] === []) {
@@ -823,17 +829,19 @@ class NhlCustomGamePredictionInputs
             if (! ($record['valid'][$lane] ?? false)) {
                 return null;
             }
-            $this->merge($out, $record, $lane);
+            $this->merge($out, $record, $lane, ! $this->useSavedPlayerAggregates);
         }
 
         return $out;
     }
 
     /** Aggregate a valid appearance without averaging individual percentages. */
-    private function merge(array &$target, array $record, string $lane): void
+    private function merge(array &$target, array $record, string $lane, bool $includeAggregates = true): void
     {
-        $target['games'] = ($target['games'] ?? 0) + 1;
-        $target['seconds'] = ($target['seconds'] ?? 0) + ($record['seconds'][$lane] ?? 0);
+        if ($includeAggregates) {
+            $target['games'] = ($target['games'] ?? 0) + 1;
+            $target['seconds'] = ($target['seconds'] ?? 0) + ($record['seconds'][$lane] ?? 0);
+        }
         foreach ($record['counts'][$lane] ?? [] as $key => $values) {
             foreach (['sat', 'sog', 'goals'] as $metric) {
                 $target['buckets'][$key][$metric] = ($target['buckets'][$key][$metric] ?? 0) + $values[$metric];
@@ -843,18 +851,61 @@ class NhlCustomGamePredictionInputs
     }
 
     /** LSeason and season-to-date with incomplete source appearances remain unavailable. */
-    private function sources(int $id, string $lane, string $season): array
+    private function sources(int $id, string $lane, string $season, ?object $context = null): array
     {
         $previous = $this->seasons[(string) ((int) $season - 10001)][$id][$lane] ?? null;
         $current = $this->seasons[$season][$id][$lane] ?? null;
 
-        return ['train' => $this->train[$id][$lane] ?? null,
+        $sources = ['train' => $this->train[$id][$lane] ?? null,
             'last_game' => $this->pool(array_slice($this->recent[$id] ?? [], -1), $lane),
             'last_5' => $this->pool(array_slice($this->recent[$id] ?? [], -5), $lane),
             'last_10' => $this->pool(array_slice($this->recent[$id] ?? [], -10), $lane),
             'last_20' => $this->pool(array_slice($this->recent[$id] ?? [], -20), $lane),
             'last_season' => ($previous['missing'] ?? true) ? null : $previous,
             'season_to_date' => ($current['missing'] ?? true) ? null : $current];
+
+        if (! $this->useSavedPlayerAggregates) {
+            return $sources;
+        }
+
+        $metrics = json_decode($context->metrics ?? '{}', true, 512, JSON_THROW_ON_ERROR);
+        if (($metrics['individual_strength_version'] ?? null) !== 1) {
+            throw new DomainException('Saved individual-strength pregame aggregates are unavailable.');
+        }
+        foreach ($sources as $window => $source) {
+            $values = $metrics['strength'][$lane][$window] ?? null;
+            $sources[$window] = $this->savedPlayerSource($values, $source, $window);
+        }
+
+        return $sources;
+    }
+
+    /** Reuse exact saved counts/exposure; only per-bucket counts are assembled by this reader. */
+    private function savedPlayerSource(?array $values, ?array $source, string $window): ?array
+    {
+        if ($values === null) {
+            throw new DomainException('Saved individual-strength pregame window '.$window.' is unavailable.');
+        }
+        foreach (['games', 'toi_seconds', 'sat', 'sog', 'goals', 'individual_missing_games'] as $field) {
+            if (! array_key_exists($field, $values)) {
+                throw new DomainException('Saved individual-strength pregame window '.$window.' is incomplete.');
+            }
+        }
+        if ($values['games'] === 0 || ($window !== 'train' && $values['individual_missing_games'] > 0)) {
+            return null;
+        }
+        foreach (['games', 'toi_seconds', 'sat', 'sog', 'goals', 'individual_missing_games'] as $field) {
+            if (! is_numeric($values[$field]) || ! is_finite((float) $values[$field]) || $values[$field] < 0) {
+                throw new DomainException('Saved individual-strength pregame window '.$window.' has invalid counts.');
+            }
+        }
+        if ($source === null) {
+            throw new DomainException('Bucket history does not support saved pregame window '.$window.'.');
+        }
+
+        return ['games' => (int) $values['games'], 'seconds' => (float) $values['toi_seconds'],
+            'totals' => array_intersect_key($values, array_flip(['sat', 'sog', 'goals'])),
+            'buckets' => $source['buckets']];
     }
 
     /** Personal observed zeros are supported; only missing denominators reach league fallback. */
@@ -976,10 +1027,10 @@ class NhlCustomGamePredictionInputs
                 $target ??= ['games' => 0, 'seconds' => 0.0, 'buckets' => [], 'missing' => false];
                 $target['missing'] = $target['missing'] || ! $current['valid'][$lane];
                 if ($current['valid'][$lane]) {
-                    $this->merge($target, $current, $lane);
+                    $this->merge($target, $current, $lane, ! $this->useSavedPlayerAggregates);
                     if ($isTrain) {
                         $this->train[$id][$lane] ??= ['games' => 0, 'seconds' => 0.0, 'buckets' => []];
-                        $this->merge($this->train[$id][$lane], $current, $lane);
+                        $this->merge($this->train[$id][$lane], $current, $lane, ! $this->useSavedPlayerAggregates);
                         $this->trainOpponents[$id][$lane][$opponent]
                             = ($this->trainOpponents[$id][$lane][$opponent] ?? 0) + ($player['seconds'][$lane] ?? 0);
                     }

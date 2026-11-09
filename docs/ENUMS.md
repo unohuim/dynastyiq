@@ -3048,8 +3048,8 @@ identifies a completed empty missing-work selection. Updates keep the existing
 
 ## Operational prediction preparation
 
-- `nhl-custom-prediction.input_pipeline_version`: `saved_pregame_checkpointed_v3`
-  identifies saved-context preparation with bounded cache checkpoints, actual participant selection for finished games and statistical-content freshness; the scoring
+- `nhl-custom-prediction.input_pipeline_version`: `saved_pregame_checkpointed_v4`
+  identifies saved-context preparation reusing player strength-window aggregates, with bounded cache checkpoints, actual participant selection for finished games and statistical-content freshness; the scoring
   algorithm remains `custom_ev_pp_v2`.
 - `nhl_pregame_context_runs.options.trigger`: `prediction` identifies an explicit
   prediction dependency. Existing `manual_update` and `auto_sync` keep their meaning.
