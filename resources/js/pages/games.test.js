@@ -1099,10 +1099,12 @@ describe('public game preview and recap', () => {
     it('includes expected goals special teams and the head to head record in Matchup', () => {
         mount({ mode: 'preview', away: { team_abbrev: 'BOS', form: { gp: 5, wins: 3, losses: 1, otl: 1,
             h2h_gp: 2, h2h_wins: 1, h2h_losses: 1, h2h_otl: 0, gf_gp: 3.2, ga_gp: 2.4,
-            xgf_gp: 3.1, xga_gp: 2.8, pp_pct: 25, pk_pct: 80, pp_opps_gp: 3.5 } } });
+            xgf_gp: 3.1, xga_gp: 2.8, pp_pct: 25, pk_pct: 80, pp_opps_gp: 3.5, pp_opps_allowed_gp: 4.2 } } });
         const text = document.querySelector('#matchup').textContent;
         expect(text).toContain('GF/GP'); expect(text).toContain('GA/GP'); expect(text).toContain('xGF/GP');
         expect(text).toContain('xGA/GP'); expect(text).toContain('25.00%'); expect(text).toContain('80.00%');
+        expect(text).toContain('PP opportunities allowed/GP'); expect(text).toContain('4.20');
+        expect(document.querySelectorAll('[data-matchup-comparison] tbody tr')[0].querySelectorAll('td')).toHaveLength(2);
         expect(text).toContain('PP opportunities/GP'); expect(text).toContain('3.50'); expect(text).toContain('1–1–0');
     });
     it('supports keyboard navigation between preview tabs without page navigation', async () => {
@@ -1132,10 +1134,12 @@ describe('public game preview and recap', () => {
         await vi.advanceTimersByTimeAsync(60000);
         expect(inertia.router.reload).not.toHaveBeenCalled();
     });
-    it('refreshes previews after one minute', async () => {
+    it('keeps preview content visible without recurring page reloads', async () => {
         mount({ mode: 'preview', game_state: 'FUT' });
-        await vi.advanceTimersByTimeAsync(60000);
-        expect(inertia.router.reload).toHaveBeenCalledTimes(1);
+        const panel = document.querySelector('#matchup');
+        await vi.advanceTimersByTimeAsync(600000);
+        expect(inertia.router.reload).not.toHaveBeenCalled();
+        expect(document.querySelector('#matchup')).toBe(panel);
     });
     it('never polls a completed recap', async () => {
         mount();
@@ -1177,6 +1181,25 @@ describe('public game preview and recap', () => {
         await selectPreview('Lineups');
         expect(fetch.mock.calls.at(-1)[0].searchParams.get('section')).toBe('lineups');
     });
+    it('retains visible basic Matchup statistics while expected rates finish preparing', async () => {
+        let finish;
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({ ok: true, status: 200,
+            json: async () => ({ mode: 'preview', section: 'matchup', nhl_game_id: 2026020001,
+                data: { matchup_expected_pending: true, away: { form: { gf_gp: 3.2 } }, home: { form: {} } } }) })
+            .mockImplementationOnce(() => new Promise(resolve => { finish = resolve; })));
+        mount({ mode: 'preview' }, { detailsUrl: '/games/2026020001/details' });
+        await settle();
+        const panel = document.querySelector('#matchup');
+        expect(panel.textContent).toContain('3.20');
+        await vi.advanceTimersByTimeAsync(2000);
+        expect(document.querySelector('#matchup')).toBe(panel);
+        finish({ ok: true, status: 200, json: async () => ({ mode: 'preview', section: 'matchup', nhl_game_id: 2026020001,
+            data: { matchup_expected_pending: false, away: { form: { gf_gp: 3.2, xgf_gp: 3.1 } }, home: { form: {} } } }) });
+        await settle();
+        expect(document.querySelector('#matchup')).toBe(panel);
+        expect(panel.textContent).toContain('3.10');
+        expect(inertia.router.reload).not.toHaveBeenCalled();
+    });
     it('pins deferred Factors to the displayed prediction revision', async () => {
         vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
         mount({ mode: 'preview', prediction: { revision_id: 42 } }, { detailsUrl: '/games/2026020001/details' });
@@ -1191,7 +1214,7 @@ describe('public game preview and recap', () => {
         mount({ mode: 'preview', preview_analysis: { revision_id: 42, predicted_at: '2026-10-26 12:00:00',
             context_at: '2026-10-26 10:00:00', teams: { away: { abbrev: 'BOS', goals: 3, ev_goals: 2, pp_goals: 1, sog: 30,
                 contributors: [{ id: 1, name: 'Example Forward', goals: .6, ev_goals: .4, pp_goals: .2, share_pct: 20,
-                    comparisons: [{ metric: 'EV SAT/60', baseline: 22.1, recent: 24.6,
+                    points_per_game: 1.6, comparisons: [{ metric: 'EV SAT/60', recent: 24.6, delta_pct: 11.3,
                         baseline_label: 'Last 3 Seasons', recent_label: 'Last 10 Games', is_percentage: false }] }] } }, insights: [
                 { team: 'BOS', name: 'Example Forward', metric: 'SOG/GP', value: 4, baseline: 2, games: 5,
                     baseline_games: 82, delta_pct: 100, direction: 'higher', period: 'Last 5 vs TOR', baseline_label: 'Last 3 Seasons', is_percentage: false },
@@ -1199,13 +1222,27 @@ describe('public game preview and recap', () => {
         expect(document.querySelector('[data-prediction-explanation]')).toBeNull();
         await selectPreview('Factors');
         const why = document.querySelector('[data-prediction-explanation]').textContent;
-        expect(why).toContain('Why this pick'); expect(why).toContain('0.60 G');
-        expect(why).toContain('20.0% of team goals'); expect(why).toContain('Last 3 Seasons');
-        expect(why).toContain('Last 10 Games'); expect(why).toContain('22.10'); expect(why).toContain('24.60');
+        expect(why).toContain('Why this pick'); expect(why).toContain('0.60 projected G');
+        expect(why).toContain('1.60 PTS/GP'); expect(why).toContain('last 3 seasons');
+        expect(why).toContain('Last 10 Games'); expect(why).not.toContain('22.10'); expect(why).toContain('24.60');
+        expect(why).toContain('(↑11.3%)');
+        expect(document.querySelector('[data-player-factor] .text-emerald-400')).not.toBeNull();
         expect(why).not.toContain('Train'); expect(why).not.toContain('50%'); expect(why).not.toContain('League Train');
         const facts = document.querySelector('[data-matchup-insights]').textContent;
         expect(facts).toContain('Last 5 vs TOR'); expect(facts).toContain('4.00'); expect(facts).toContain('2.00');
         expect(facts).toContain('5 GP vs 82 GP'); expect(facts).toContain('do not necessarily influence');
+    });
+    it('shows red decreases and unavailable changes without inventing Train percentages', async () => {
+        mount({ mode: 'preview', preview_analysis: { teams: { away: { abbrev: 'BOS', goals: 3,
+            contributors: [{ id: 1, name: 'Forward', goals: .5, comparisons: [
+                { metric: 'EV SAT/GP', recent: 3, delta_pct: -25, baseline_label: 'Last 3 Seasons' },
+                { metric: 'PP G/GP', recent: 0, delta_pct: null, baseline_label: 'Last 3 Seasons' },
+            ] }] } }, insights: [] } });
+        await selectPreview('Factors');
+        expect(document.querySelector('[data-player-factors]').textContent).toContain('(↓25.0%)');
+        expect(document.querySelector('[data-player-factor] .text-red-400')).not.toBeNull();
+        expect(document.querySelector('[data-player-factors]').textContent).not.toContain('Infinity');
+        expect(document.querySelectorAll('[data-player-factor] [aria-label]')).toHaveLength(1);
     });
     it('shows honest missing historical comparison states', async () => {
         mount({ mode: 'preview', preview_analysis: { teams: { away: { abbrev: 'BOS', goals: 3,

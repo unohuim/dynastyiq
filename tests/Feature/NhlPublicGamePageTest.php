@@ -109,6 +109,7 @@ describe('saved pregame explanations and insights', function (): void {
                         'last_20' => ['games' => 20, 'seconds' => 12000, 'sat' => 100, 'sog' => 60, 'goals' => 6],
                         'last_season' => ['games' => 82, 'seconds' => 49200, 'sat' => 300, 'sog' => 150, 'goals' => 18]],
                     'PP' => ['train' => ['games' => 100, 'seconds' => 12000, 'goals' => 10],
+                        'last_10' => ['games' => 10, 'seconds' => 1200, 'goals' => 2],
                         'last_20' => ['games' => 20, 'seconds' => 2400, 'goals' => 4]],
                 ]];
                 $inputs[$side]['pp_offense_sources'][$playerId] = 'last_20';
@@ -148,11 +149,15 @@ describe('saved pregame explanations and insights', function (): void {
 
     it('shows saved historical rates without formula or fallback descriptions', function (): void {
         $values = ($this->analysis)()['teams']['away']['contributors'][0]['comparisons'];
-        expect($values[0])->toMatchArray(['metric' => 'EV SAT/60', 'baseline' => 24.0, 'recent' => 30.0,
+        expect($values[0])->toMatchArray(['metric' => 'EV SAT/60', 'recent' => 30.0, 'delta_pct' => 25.0,
             'recent_label' => 'Last 10 Games']);
-        expect($values[1])->toMatchArray(['baseline' => 50.0, 'recent' => 60.0, 'is_percentage' => true]);
-        expect($values[2])->toMatchArray(['baseline' => 10.0, 'recent' => 12.0, 'recent_label' => 'Last Season']);
-        expect($values[3])->toMatchArray(['baseline' => .1, 'recent' => .2]);
+        expect($values[1])->toMatchArray(['metric' => 'EV SAT/GP', 'recent' => 5.0, 'delta_pct' => 25.0]);
+        expect($values[2])->toMatchArray(['metric' => 'EV SH%', 'recent' => 12.0, 'delta_pct' => 20.0, 'is_percentage' => true]);
+        expect($values[3])->toMatchArray(['metric' => 'PP G/GP', 'recent' => .2, 'delta_pct' => 100.0]);
+        expect(array_unique(array_column($values, 'recent_label')))->toBe(['Last 10 Games']);
+        foreach ($values as $comparison) {
+            expect($comparison)->not->toHaveKey('baseline');
+        }
         config(['nhl-custom-prediction.train_rate_weight' => .99]);
         expect(($this->analysis)()['teams']['away']['contributors'][0]['comparisons'])->toBe($values);
     });
@@ -172,6 +177,50 @@ describe('saved pregame explanations and insights', function (): void {
             ->and($away['contributors'][0]['ev_goals'])->toEqualWithDelta(.6, 1e-9)
             ->and($away['contributors'][0]['pp_goals'])->toEqualWithDelta(.2, 1e-9)
             ->and($away['goals'])->toEqual(4)->and($away['pp_goals'])->toEqual(1);
+    });
+
+    it('includes the leading L10 points player even outside the top three goal projections', function (): void {
+        $row = DB::table('nhl_player_game_pregame_contexts')->where('nhl_player_id', 604)->first();
+        $metrics = json_decode($row->metrics, true);
+        $metrics['all']['last_10'] = ['games' => 10, 'points' => 21];
+        DB::table('nhl_player_game_pregame_contexts')->where('nhl_player_id', 604)->update(['metrics' => json_encode($metrics)]);
+        $this->getJson('/games/2026020001/details?section=factors')->assertOk()
+            ->assertJsonCount(4, 'data.preview_analysis.teams.away.contributors')
+            ->assertJsonPath('data.preview_analysis.teams.away.contributors.0.id', 604)
+            ->assertJsonPath('data.preview_analysis.teams.away.contributors.0.points_per_game', 2.1);
+        expect(array_column(($this->analysis)()['teams']['away']['contributors'], 'id'))->toBe([604, 601, 602, 603]);
+    });
+
+    it('uses committed personal L10 strength context even when engine sources differ', function (): void {
+        $row = DB::table('nhl_player_game_pregame_contexts')->where('nhl_player_id', 601)->first();
+        $metrics = json_decode($row->metrics, true);
+        $metrics['strength'] = ['EV' => [
+            'train' => ['games' => 100, 'sat' => 400, 'sat_per_60' => 24, 'goals' => 20, 'sog' => 200],
+            'last_10' => ['games' => 10, 'sat' => 30, 'sat_per_60' => 18, 'goals' => 0, 'sog' => 20]],
+            'PP' => ['train' => ['games' => 100, 'goals' => 0], 'last_10' => ['games' => 10, 'goals' => 0]]];
+        DB::table('nhl_player_game_pregame_contexts')->where('nhl_player_id', 601)->update(['metrics' => json_encode($metrics)]);
+        $rates = ($this->analysis)()['teams']['away']['contributors'][0]['comparisons'];
+        expect($rates[0])->toMatchArray(['recent' => 18.0, 'delta_pct' => -25.0])
+            ->and($rates[1])->toMatchArray(['recent' => 3.0, 'delta_pct' => -25.0])
+            ->and($rates[2])->toMatchArray(['recent' => 0.0, 'delta_pct' => -100.0])
+            ->and($rates[3])->toMatchArray(['recent' => 0.0, 'delta_pct' => null]);
+    });
+
+    it('leaves missing L10 rates unknown instead of using another recent period', function (): void {
+        unset($this->insightInputs['away']['players'][601]['history']['EV']['last_10']);
+        ($this->publishInsights)();
+        $rates = ($this->analysis)()['teams']['away']['contributors'][0]['comparisons'];
+        expect($rates[0])->toMatchArray(['recent' => null, 'delta_pct' => null, 'recent_label' => 'Last 10 Games'])
+            ->and($rates[2])->toMatchArray(['recent' => null, 'delta_pct' => null]);
+    });
+
+    it('does not rank an opponent or mismatched parent as an own points leader', function (): void {
+        $row = DB::table('nhl_player_game_pregame_contexts')->where('nhl_player_id', 604)->first();
+        $metrics = json_decode($row->metrics, true);
+        $metrics['all']['last_10'] = ['games' => 10, 'points' => 99];
+        DB::table('nhl_player_game_pregame_contexts')->where('nhl_player_id', 604)
+            ->update(['metrics' => json_encode($metrics), 'opponent_team_id' => 99]);
+        expect(array_column(($this->analysis)()['teams']['away']['contributors'], 'id'))->toBe([601, 602, 603]);
     });
 
     it('balances six distinct facts across the teams and includes numeric comparisons', function (): void {
@@ -340,7 +389,7 @@ describe('Matchup season statistics', function (): void {
 
     it('calculates special teams percentages from summed goals and opportunities', function (): void {
         ($this->makeGame)(2026020003, ['game_date' => '2026-10-25', 'home_team_score' => 2, 'away_team_score' => 3,
-            'ot_in_use' => true, 'home_pp_goals' => 0, 'home_pp_opportunities' => 1,
+            'ot_in_use' => true, 'game_outcome' => ['lastPeriodType' => 'OT'], 'home_pp_goals' => 0, 'home_pp_opportunities' => 1,
             'away_pp_goals' => 2, 'away_pp_opportunities' => 3]);
         $form = ($this->matchup)()['home']['form'];
         expect($form)->toMatchArray(['gp' => 2, 'pp_pct' => 40, 'pk_pct' => 62.5, 'pp_opps_gp' => 2.5,
@@ -380,9 +429,104 @@ describe('Matchup season statistics', function (): void {
             ->and($data['home']['form']['xga_gp'])->toBeNull();
     });
 
+    it('counts allowed PP opportunities independently of missing opponent goals', function (): void {
+        DB::table('nhl_games')->where('nhl_game_id', 2026020002)->update(['away_pp_goals' => null]);
+        $this->getJson('/games/2026020001/details?section=matchup')->assertOk()
+            ->assertJsonPath('data.home.form.pp_opps_allowed_gp', 5)
+            ->assertJsonPath('data.away.form.pp_opps_allowed_gp', 4)
+            ->assertJsonPath('data.home.form.pk_pct', null);
+        DB::table('nhl_games')->where('nhl_game_id', 2026020002)->update(['away_pp_opportunities' => null]);
+        expect(($this->matchup)()['home']['form']['pp_opps_allowed_gp'])->toBeNull();
+    });
+
+    it('limits head to head to ten prior meetings across seasons without expanding season form', function (): void {
+        foreach (range(1, 11) as $index) {
+            ($this->makeGame)(2025020100 + $index, ['season_id' => '20252026',
+                'game_date' => '2026-03-'.str_pad((string) $index, 2, '0', STR_PAD_LEFT),
+                'home_team_score' => 1, 'away_team_score' => 3, 'game_outcome' => ['lastPeriodType' => 'REG']]);
+        }
+        ($this->makeGame)(2025030100, ['season_id' => '20252026', 'game_type' => 3, 'game_date' => '2026-04-01']);
+        ($this->makeGame)(2026020003, ['game_date' => '2026-10-28']);
+        $this->getJson('/games/2026020001/details?section=matchup')->assertOk()
+            ->assertJsonPath('data.home.form.gp', 1)->assertJsonPath('data.home.form.h2h_gp', 10)
+            ->assertJsonPath('data.home.form.h2h_wins', 1)->assertJsonPath('data.home.form.h2h_losses', 9)
+            ->assertJsonPath('data.away.form.h2h_wins', 9);
+    });
+
     it('does not count the requested game or future games in its season baseline', function (): void {
         ($this->makeGame)(2026020003, ['game_date' => '2026-10-28', 'home_team_score' => 20]);
         expect(($this->matchup)()['home']['form']['gp'])->toBe(1);
+    });
+});
+
+describe('recorded ending display classification', function (): void {
+    beforeEach(function (): void {
+        ($this->makeGame)(2026020001, ['game_state' => 'FUT', 'game_date' => '2026-10-27', 'start_time_utc' => '2026-10-27 23:00:00']);
+        $this->endingHistory = function (array $endings): void {
+            foreach ($endings as $index => $ending) {
+                $date = now('UTC')->startOfDay()->subDays($index + 1);
+                ($this->makeGame)(2026020100 + $index, [
+                    'game_date' => $date->toDateString(), 'start_time_utc' => $date->copy()->setTime(1, 0),
+                    'home_team_score' => $ending === 'W' ? 4 : 2, 'away_team_score' => $ending === 'W' ? 2 : 3,
+                    'ot_in_use' => true, 'shootout_in_use' => true,
+                    'game_outcome' => ['lastPeriodType' => $ending === 'W' ? 'REG' : $ending],
+                ]);
+            }
+        };
+        $this->endingForm = fn () => app(NhlPublicGamePage::class)->panel(2026020001, 'matchup')['data'];
+    });
+
+    it('keeps regulation losses out of OTL in season last ten and opponent records', function (): void {
+        ($this->endingHistory)(['W', 'W', 'W', 'W', 'REG', 'REG', 'REG', 'REG', 'REG', 'OT']);
+        $this->getJson('/games/2026020001/details?section=matchup')->assertOk()
+            ->assertJsonPath('data.home.form.wins', 4)->assertJsonPath('data.home.form.losses', 5)->assertJsonPath('data.home.form.otl', 1)
+            ->assertJsonPath('data.home.form.l10_wins', 4)->assertJsonPath('data.home.form.l10_losses', 5)->assertJsonPath('data.home.form.l10_otl', 1)
+            ->assertJsonPath('data.home.form.h2h_wins', 4)->assertJsonPath('data.home.form.h2h_losses', 5)->assertJsonPath('data.home.form.h2h_otl', 1)
+            ->assertJsonPath('data.away.form.wins', 6)->assertJsonPath('data.away.form.losses', 4)->assertJsonPath('data.away.form.otl', 0);
+    });
+
+    it('counts actual overtime and shootout losses even when rule flags are false', function (string $ending): void {
+        ($this->endingHistory)([$ending]);
+        DB::table('nhl_games')->where('nhl_game_id', 2026020100)->update(['ot_in_use' => false, 'shootout_in_use' => false]);
+        $form = ($this->endingForm)()['home']['form'];
+        expect($form)->toMatchArray(['wins' => 0, 'losses' => 0, 'otl' => 1, 'l10_otl' => 1, 'h2h_otl' => 1]);
+    })->with(['OT', 'SO']);
+
+    it('keeps the last ten and opponent windows separate from older season games', function (): void {
+        ($this->endingHistory)(['W', 'W', 'W', 'W', 'REG', 'REG', 'REG', 'REG', 'REG', 'SO', 'W']);
+        DB::table('nhl_games')->where('nhl_game_id', 2026020110)->update(['away_team_id' => 8, 'away_team_abbrev' => 'MTL']);
+        $form = ($this->endingForm)()['home']['form'];
+        expect($form)->toMatchArray(['gp' => 11, 'wins' => 5, 'losses' => 5, 'otl' => 1,
+            'l10_gp' => 10, 'l10_wins' => 4, 'l10_losses' => 5, 'l10_otl' => 1,
+            'h2h_gp' => 10, 'h2h_wins' => 4, 'h2h_losses' => 5, 'h2h_otl' => 1]);
+    });
+
+    it('falls back to the recorded period descriptor when the outcome is absent', function (string $period, int $losses, int $otl): void {
+        ($this->endingHistory)(['REG']);
+        \App\Models\NhlGame::findOrFail(2026020100)->update(['game_outcome' => null, 'period_type' => $period]);
+        expect(($this->endingForm)()['home']['form'])->toMatchArray(['losses' => $losses, 'otl' => $otl]);
+    })->with([['REG', 1, 0], ['OT', 0, 1], ['SO', 0, 1]]);
+
+    it('does not infer an overtime loss from enabled rules when ending evidence is missing', function (): void {
+        ($this->endingHistory)(['REG']);
+        \App\Models\NhlGame::findOrFail(2026020100)->update(['game_outcome' => null, 'period_type' => null]);
+        expect(($this->endingForm)()['home']['form'])->toMatchArray(['losses' => 1, 'otl' => 0]);
+    });
+
+    it('uses outcome ending for both first paint and prepared final labels', function (string $ending, string $label): void {
+        $game = \App\Models\NhlGame::findOrFail(2026020001);
+        $game->update(['game_state' => 'OFF', 'game_date' => '2026-10-26', 'ot_in_use' => true, 'shootout_in_use' => true,
+            'period_type' => 'SO', 'game_outcome' => ['lastPeriodType' => $ending]]);
+        $pages = app(NhlPublicGamePage::class);
+        expect($pages->overview(2026020001)['game']['status'])->toBe($label)
+            ->and($pages->payload(2026020001)['game']['status'])->toBe($label);
+        $this->get('/games/2026020001')->assertInertia(fn (Assert $page) => $page->where('game.status', $label));
+    })->with([['REG', 'Final'], ['OT', 'Final / OT'], ['SO', 'Final / SO']]);
+
+    it('supports the stored outcome periodType fallback and normalizes casing', function (): void {
+        ($this->endingHistory)(['REG']);
+        \App\Models\NhlGame::findOrFail(2026020100)->update(['game_outcome' => ['periodType' => ' so '], 'period_type' => 'REG']);
+        expect(($this->endingForm)()['home']['form']['otl'])->toBe(1);
     });
 });
 

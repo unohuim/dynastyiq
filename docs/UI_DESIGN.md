@@ -3,14 +3,17 @@
 This document defines the **authoritative UI design rules** for this repository.
 
 Game previews use Matchup, Lineups, Head-to-head and Factors tabs, defaulting to
-Matchup. Matchup shows a side-by-side season comparison including scoring,
-expected scoring, special teams, average power-play opportunities and head-to-head
-record. Factors contains Why this pick and Matchup insights. Match dark navy
-surfaces, subtle borders, sky-blue team accents and compact typography; use two
-team columns on desktop and stack on mobile. Contributors show EV/PP goals and
-team-goal share. Replace formulas and internal source terminology with actual
-historical values side by side, using plain labels such as Last 3 Seasons and
-Last 10 Games. Insights show both values, units, period, GP and direction,
+Matchup. Matchup uses a centered shared metric column and adjacent away/home
+value columns, including scoring, expected scoring, special teams, power-play
+opportunities for/allowed and the last ten head-to-head meetings across seasons.
+Factors contains Why this pick and Matchup insights. Match dark navy surfaces,
+subtle borders, sky-blue team accents and compact typography. Team summaries
+appear before separate compact player rows. Include goal contributors and L10
+points-per-game leaders. Under Last 10 Games show EV SAT/60, EV SAT/GP, EV SH%
+and PP G/GP with green up/red down relative percentages versus personal Train;
+hide the historical baseline value and blend formulas. Name the actual training
+horizon in the caption. Preview content does not disappear for periodic reloads.
+Insights show both values, units, period, GP and direction,
 naming the opponent explicitly. Keep descriptive insights distinct from the
 prediction. Show timestamps and unavailable states. Tabs use accessible keyboard
 navigation and calm opacity transitions that respect reduced motion. Keep the

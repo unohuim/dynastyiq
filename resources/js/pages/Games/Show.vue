@@ -144,10 +144,10 @@ const number = (value, digits = 2) => value == null || !Number.isFinite(Number(v
 const probability = (side) => game.value.prediction?.probabilities?.[side] == null ? '—' : `${number(game.value.prediction.probabilities[side] * 100, 1)}%`;
 const analysis = computed(() => game.value.preview_analysis ?? { teams: {}, insights: [] });
 const analysisTime = value => value ? new Date(/(?:Z|[+-]\d\d:\d\d)$/.test(value) ? value : `${value.replace(' ', 'T')}Z`).toLocaleString() : '—';
-const insightValue = (value, percentage) => `${number(value)}${percentage ? '%' : ''}`;
-const matchupRows = [['record', 'Season record'], ['l10_record', 'Last 10 Games'], ['h2h_record', 'Head-to-head'],
+const insightValue = (value, percentage) => value == null ? '—' : `${number(value)}${percentage ? '%' : ''}`;
+const matchupRows = [['record', 'Season record'], ['l10_record', 'Last 10 Games'], ['h2h_record', 'Head-to-head · Last 10'],
   ['gf_gp', 'GF/GP'], ['ga_gp', 'GA/GP'], ['xgf_gp', 'xGF/GP'], ['xga_gp', 'xGA/GP'],
-  ['pp_pct', 'PP%'], ['pk_pct', 'PK%'], ['pp_opps_gp', 'PP opportunities/GP']];
+  ['pp_pct', 'PP%'], ['pk_pct', 'PK%'], ['pp_opps_gp', 'PP opportunities/GP'], ['pp_opps_allowed_gp', 'PP opportunities allowed/GP']];
 const matchupValue = (form, key) => key.endsWith('record') ? record(form, key === 'record' ? '' : key.replace('record', ''))
   : form?.[key] == null ? '—' : `${number(form[key])}${key.endsWith('_pct') ? '%' : ''}`;
 const record = (form, prefix = '') => form && Number(form[`${prefix}gp`]) > 0 ? `${form[`${prefix}wins`]}–${form[`${prefix}losses`]}–${form[`${prefix}otl`]}` : '—';
@@ -156,23 +156,14 @@ const dateTime = computed(() => game.value.start_time_utc ? new Intl.DateTimeFor
 }).format(new Date(game.value.start_time_utc)) : game.value.game_date ?? '');
 const shortDate = (date) => new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(`${date}T12:00:00`));
 const playerStat = (player) => player.position === 'G' ? `${player.saves ?? '—'} SV · ${player.goals_against ?? '—'} GA` : `${player.goals ?? '—'} G · ${player.assists ?? '—'} A`;
-let timer;
 let request;
 let disposed = false;
-function scheduleRefresh() {
-  window.clearTimeout(timer);
-  if (disposed || mode.value !== 'preview' || ['PPD', 'CNCL'].includes(game.value.game_state)) return;
-  timer = window.setTimeout(() => {
-    if (document.visibilityState === 'hidden') { scheduleRefresh(); return; }
-    refresh();
-  }, mode.value === 'live' ? 15000 : 60000);
-}
 function refresh() {
   if (disposed || busy.value) return;
   busy.value = true;
   router.reload({ only: ['game'], preserveScroll: true,
     onCancelToken: (token) => { request = token; },
-    onFinish: () => { busy.value = false; request = null; scheduleRefresh(); loadPanels(); },
+    onFinish: () => { busy.value = false; request = null; loadPanels(); },
   });
 }
 const { warning: liveWarning } = useLiveGameFeed({
@@ -191,15 +182,15 @@ const { warning: liveWarning } = useLiveGameFeed({
     }
   },
 });
-watch(mode, (next, previous) => { if (next === 'preview' || previous === 'preview') activeTab.value = 'summary'; scheduleRefresh(); loadPanels(); }, { flush: 'sync' });
+watch(mode, (next, previous) => { if (next === 'preview' || previous === 'preview') activeTab.value = 'summary'; loadPanels(); }, { flush: 'sync' });
 watch(() => props.game.nhl_game_id, () => {
   activeTab.value = 'summary';
   previewTab.value = 'matchup';
   for (const name of Object.keys(panels)) delete panels[name];
   loadPanels();
 });
-onMounted(() => { scheduleRefresh(); loadPanels(); });
-onBeforeUnmount(() => { disposed = true; cancelPanels(); window.clearTimeout(timer); request?.cancel(); });
+onMounted(() => { loadPanels(); });
+onBeforeUnmount(() => { disposed = true; cancelPanels(); request?.cancel(); });
 </script>
 
 <template>
@@ -260,20 +251,35 @@ onBeforeUnmount(() => { disposed = true; cancelPanels(); window.clearTimeout(tim
                 <div v-for="(team, side) in analysis.teams" :key="side" class="min-w-0 rounded-lg border border-[#29404F] bg-[#102330] p-3">
                   <div class="flex items-center justify-between gap-3"><h3 class="text-sm font-semibold text-sky-300">{{ team.abbrev }}</h3><span class="font-mono text-sm">{{ number(team.goals) }} goals</span></div>
                   <p class="mt-1 text-[11px] text-[#91A8BA]">EV {{ number(team.ev_goals) }} · PP {{ number(team.pp_goals) }} · SOG {{ number(team.sog) }}</p>
-                  <ol v-if="team.contributors?.length" class="mt-3 divide-y divide-[#29404F]">
-                    <li v-for="player in team.contributors" :key="player.id" class="py-3 first:pt-0 last:pb-0">
-                      <div class="flex items-baseline justify-between gap-3 text-xs"><span class="min-w-0 font-semibold">{{ player.name }}</span><span class="shrink-0 font-mono text-sky-200">{{ number(player.goals) }} G</span></div>
-                      <p class="mt-1 text-[11px] text-[#A6B9C9]">EV {{ number(player.ev_goals) }} · PP {{ number(player.pp_goals) }}<span v-if="player.share_pct != null"> · {{ number(player.share_pct, 1) }}% of team goals</span></p>
-                      <dl v-if="player.comparisons?.length" class="mt-2 space-y-2 text-[10px] leading-relaxed">
-                        <div v-for="comparison in player.comparisons" :key="comparison.metric"><dt class="font-semibold text-[#A6B9C9]">{{ comparison.metric }}</dt><dd class="mt-0.5 grid grid-cols-2 gap-3"><span><span class="block text-[#91A8BA]">{{ comparison.baseline_label }}</span><b class="font-mono text-[#E7EEF6]">{{ insightValue(comparison.baseline, comparison.is_percentage) }}</b></span><span><span class="block text-[#91A8BA]">{{ comparison.recent_label }}</span><b class="font-mono text-sky-200">{{ insightValue(comparison.recent, comparison.is_percentage) }}</b></span></dd></div>
+
+                </div>
+              </div>
+              <p v-else class="mt-3 text-xs text-[#91A8BA]">Saved prediction details are not yet available.</p>
+              <div v-if="Object.keys(analysis.teams ?? {}).length" class="mt-4" data-player-factors>
+                <h3 class="text-xs font-semibold">Players · Last 10 Games</h3>
+                <p class="mt-1 text-[10px] text-[#91A8BA]">Changes compared with {{ (analysis.baseline_label ?? 'historical seasons').toLowerCase() }}.</p>
+                <div v-for="(team, side) in analysis.teams" :key="side" class="mt-3">
+                  <h4 class="mb-1 text-[11px] font-semibold text-sky-300">{{ team.abbrev }}</h4>
+                  <ol v-if="team.contributors?.length" class="divide-y divide-[#29404F]">
+                    <li v-for="player in team.contributors" :key="player.id" class="py-2" data-player-factor>
+                      <div class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-xs">
+                        <span class="font-semibold">{{ player.name }}<span v-if="player.points_per_game != null" class="ml-2 font-mono text-[10px] font-normal text-[#A6B9C9]">{{ number(player.points_per_game) }} PTS/GP</span></span>
+                        <span class="font-mono text-[10px] text-[#A6B9C9]">{{ number(player.goals) }} projected G · EV {{ number(player.ev_goals) }} · PP {{ number(player.pp_goals) }}</span>
+                      </div>
+                      <dl v-if="player.comparisons?.length" class="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[10px]">
+                        <div v-for="comparison in player.comparisons" :key="comparison.metric" class="flex items-baseline gap-1">
+                          <dt class="text-[#91A8BA]">{{ comparison.metric }}</dt>
+                          <dd class="font-mono">{{ insightValue(comparison.recent, comparison.is_percentage) }}
+                            <span v-if="comparison.delta_pct != null" :class="comparison.delta_pct > 0 ? 'text-emerald-400' : comparison.delta_pct < 0 ? 'text-red-400' : 'text-[#91A8BA]'" :aria-label="`${comparison.delta_pct > 0 ? 'Up' : comparison.delta_pct < 0 ? 'Down' : 'Unchanged'} ${number(Math.abs(comparison.delta_pct), 1)}% versus ${comparison.baseline_label}`">({{ comparison.delta_pct > 0 ? '↑' : comparison.delta_pct < 0 ? '↓' : '–' }}{{ number(Math.abs(comparison.delta_pct), 1) }}%)</span>
+                          </dd>
+                        </div>
                       </dl>
                       <p v-else class="mt-1 text-[10px] text-[#91A8BA]">Historical comparisons unavailable for this saved prediction.</p>
                     </li>
                   </ol>
-                  <p v-else class="mt-3 text-xs text-[#91A8BA]">Individual contributions unavailable for this saved prediction.</p>
+                  <p v-else class="text-xs text-[#91A8BA]">Individual contributions unavailable for this saved prediction.</p>
                 </div>
               </div>
-              <p v-else class="mt-3 text-xs text-[#91A8BA]">Saved prediction details are not yet available.</p>
             </div>
             <div class="mb-5 border-b border-[#29404F] pb-5" data-matchup-insights>
               <div class="flex flex-wrap items-baseline justify-between gap-2"><h2 class="text-sm font-semibold">Matchup insights</h2><span v-if="analysis.context_at" class="text-[10px] text-[#91A8BA]">Context through {{ analysisTime(analysis.context_at) }}</span></div>
@@ -293,14 +299,14 @@ onBeforeUnmount(() => { disposed = true; cancelPanels(); window.clearTimeout(tim
           <GameSectionState name="matchup" title="The matchup" :state="panelState('matchup')" @retry="loadPanel('matchup')" />
           <section v-if="panelReady('matchup')" id="matchup" class="rounded-xl border border-[#29404F] bg-[#0D1D29] p-4 sm:p-6">
             <h2 class="text-sm font-semibold">The matchup</h2>
-            <p class="mt-1 text-[11px] text-[#91A8BA]">Season to date · Head-to-head record this season</p>
+            <p class="mt-1 text-[11px] text-[#91A8BA]">Season to date · Head-to-head: last 10 completed meetings</p>
             <p v-if="game.matchup_expected_pending" role="status" class="mt-1 text-[10px] text-[#91A8BA]">Preparing expected-goal statistics…</p>
-            <div class="mt-4 grid grid-cols-2 gap-4 sm:gap-8">
-              <div v-for="side in sides" :key="side">
-                <p class="mb-3 text-xs font-semibold text-sky-300">{{ game[side].team_abbrev }}</p>
-                <dl class="space-y-2 text-xs"><div v-for="[key, label] in matchupRows" :key="key" class="flex justify-between gap-2"><dt class="text-[#91A8BA]">{{ label }}</dt><dd class="font-mono">{{ matchupValue(game[side].form, key) }}</dd></div></dl>
-                <div class="mt-4 border-t border-[#29404F] pt-3"><p class="text-[10px] uppercase tracking-wider text-[#91A8BA]">Starting goalie</p><p class="mt-1 text-sm font-semibold">{{ game[side].starting_goalie?.name ?? 'Not reported' }}</p><p v-if="game[side].starting_goalie" class="mt-1 text-xs capitalize text-[#91A8BA]">{{ game[side].starting_goalie.status ?? 'Projected' }}</p></div>
-              </div>
+            <table class="mx-auto mt-4 w-full max-w-xl table-fixed text-xs" data-matchup-comparison>
+              <thead><tr><th scope="col" class="w-[44%] py-2 text-left text-[#91A8BA]">Statistic</th><th v-for="side in sides" :key="side" scope="col" class="py-2 text-center text-sky-300">{{ game[side].team_abbrev }}</th></tr></thead>
+              <tbody><tr v-for="[key, label] in matchupRows" :key="key" class="border-t border-[#29404F]/50"><th scope="row" class="py-2 text-left font-normal text-[#91A8BA]">{{ label }}</th><td v-for="side in sides" :key="side" class="py-2 text-center font-mono">{{ matchupValue(game[side].form, key) }}</td></tr></tbody>
+            </table>
+            <div class="mx-auto mt-4 grid max-w-xl grid-cols-2 gap-4 border-t border-[#29404F] pt-3">
+              <div v-for="side in sides" :key="side" class="text-center"><p class="text-[10px] uppercase tracking-wider text-[#91A8BA]">{{ game[side].team_abbrev }} · Starting goalie</p><p class="mt-1 text-sm font-semibold">{{ game[side].starting_goalie?.name ?? 'Not reported' }}</p><p v-if="game[side].starting_goalie" class="mt-1 text-xs capitalize text-[#91A8BA]">{{ game[side].starting_goalie.status ?? 'Projected' }}</p></div>
             </div>
           </section>
           </template>

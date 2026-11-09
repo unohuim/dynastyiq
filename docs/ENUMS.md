@@ -9,7 +9,7 @@
 ## Public NHL game detail
 
 - Deferred `factors` section `preview_analysis` contains revision/context timestamps, curated team/contributor projections, historical value comparisons and descriptive insights. Its optional `prediction_revision_id` query selects only a successful canonical revision belonging to that game; overview `game.prediction.revision_id` identifies the displayed saved prediction.
-- Public preview tab keys: `matchup` (default), `lineups`, `meetings`, `factors`; labels: Matchup, Lineups, Head-to-head, Factors. Matchup response `matchup_expected_pending` indicates background expected-rate preparation.
+- Public preview tab keys: `matchup` (default), `lineups`, `meetings`, `factors`; labels: Matchup, Lineups, Head-to-head, Factors. Matchup response `matchup_expected_pending` indicates background expected-rate preparation. `form.pp_opps_allowed_gp` is season-to-date opponent PP opportunities divided by team GP; `form.h2h_*` covers the last ten completed cross-season meetings of the same game type. Factors contributor `points_per_game` is personal L10 PTS/GP; comparison `recent` is L10 and `delta_pct` is the signed relative change from personal Train (null for unavailable/zero baseline).
 
 - Public game details `section`: `matchup`, `lineups`, `meetings`, `factors`, `summary`, `goals`, `boxscore`. Browser section `status`: `loading`, `ready`, `error`; a pending preparation response uses HTTP 202 with `status=preparing`.
 - Public game detail `section`: `matchup`, `lineups`, `meetings`, `factors`, `summary`, `goals`, `boxscore`, `play_by_play`. These identify allowlisted deferred sections; `play_by_play` carries public plays and rink shot locations.

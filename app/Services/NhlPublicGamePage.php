@@ -53,7 +53,7 @@ final class NhlPublicGamePage
             'start_time_utc' => $game->start_time_utc?->toIso8601String(), 'venue' => $live ? null : $game->venue,
             'game_state' => $state, 'mode' => $final ? 'recap' : ($live ? 'live' : 'preview'),
             'live_data_unavailable' => $live,
-            'status' => $final ? ($game->shootout_in_use ? 'Final / SO' : ($game->ot_in_use ? 'Final / OT' : 'Final'))
+            'status' => $final ? $this->finalStatus($game)
                 : ($live ? 'Live' : match ($state) { 'PRE' => 'Starting soon', 'PPD' => 'Postponed', 'CNCL' => 'Cancelled', default => 'Preview' }),
             ...$teams, 'prediction' => ! $final && ! $live ? $this->prediction($game) : null,
         ]];
@@ -205,7 +205,30 @@ final class NhlPublicGamePage
     {
         $version = Cache::get('nhl:public-game:version:'.$game->nhl_game_id, 'initial');
 
-        return 'nhl:public-game:v2:'.$game->nhl_game_id.':'.sha1($game->game_state.':'.(string) $game->updated_at.':'.$version);
+        return 'nhl:public-game:v3:'.$game->nhl_game_id.':'.sha1($game->game_state.':'.(string) $game->updated_at.':'.$version);
+    }
+
+    /** Read the actual ending, not schedule flags describing which rules are enabled. */
+    private function finalPeriodType(NhlGame $game): string
+    {
+        foreach ([data_get($game->game_outcome, 'lastPeriodType'), data_get($game->game_outcome, 'periodType'), $game->period_type] as $value) {
+            $period = strtoupper(trim((string) $value));
+            if (in_array($period, ['REG', 'OT', 'SO'], true)) {
+                return $period;
+            }
+        }
+
+        return 'REG';
+    }
+
+    /** Keep first-paint and prepared final labels consistent with the recorded ending. */
+    private function finalStatus(NhlGame $game): string
+    {
+        return match ($this->finalPeriodType($game)) {
+            'OT' => 'Final / OT',
+            'SO' => 'Final / SO',
+            default => 'Final',
+        };
     }
 
     /** Build only the requested game's public facts; never run a prediction engine.
@@ -260,7 +283,7 @@ final class NhlPublicGamePage
             'start_time_utc' => $game->start_time_utc?->toIso8601String(), 'venue' => $game->venue,
             'game_state' => $game->game_state, 'mode' => $final ? 'recap' : 'preview',
             'status' => match (strtoupper((string) $game->game_state)) {
-                'OFF', 'FINAL' => $game->shootout_in_use ? 'Final / SO' : ($game->ot_in_use ? 'Final / OT' : 'Final'),
+                'OFF', 'FINAL' => $this->finalStatus($game),
                 'PPD' => 'Postponed', 'CNCL' => 'Cancelled', default => 'Preview',
             },
             ...$teams, ...$timeline, 'prediction' => $prediction, 'events' => $events,
@@ -330,7 +353,7 @@ final class NhlPublicGamePage
             $tokens[$entity] = $revision->model_id === null ? [] : $contexts($entity)
                 ->selectRaw('MAX(context.updated_at) AS updated_at, MAX(context.run_id) AS run_id, COUNT(*) AS rows')->first();
         }
-        $key = 'nhl:public-preview-analysis:v2:'.$revision->id.':'.hash('sha256', json_encode($tokens, JSON_THROW_ON_ERROR));
+        $key = 'nhl:public-preview-analysis:v3:'.$revision->id.':'.hash('sha256', json_encode($tokens, JSON_THROW_ON_ERROR));
 
         return Cache::remember($key, 300, function () use ($revision, $contexts, $game, $empty): array {
             $saved = $this->previewProjection((int) $revision->id);
@@ -343,7 +366,8 @@ final class NhlPublicGamePage
                 ->get(['context.id', 'context.nhl_team_id', 'context.opponent_team_id', 'context.source_cutoff_at', 'context.metrics', 'context.opponent_metrics'])->keyBy('nhl_team_id');
             $playerContexts = $revision->model_id === null ? collect() : $contexts('player')->whereIn('context.nhl_player_id', $ids)
                 ->get(['context.nhl_player_id', 'context.nhl_team_id', 'context.team_context_id', 'context.opponent_team_id',
-                    'context.source_cutoff_at', 'context.metrics->all as all_metrics', 'context.metrics->strength->PP as pp_metrics'])->keyBy('nhl_player_id');
+                    'context.source_cutoff_at', 'context.metrics->all as all_metrics', 'context.metrics->strength->EV as ev_metrics',
+                    'context.metrics->strength->PP as pp_metrics'])->keyBy('nhl_player_id');
             $result = [...$empty, 'revision_id' => (int) $revision->id, 'predicted_at' => $revision->predicted_at, 'baseline_label' => $baselineLabel];
             $candidates = [];
             foreach (['away', 'home'] as $side) {
@@ -358,22 +382,49 @@ final class NhlPublicGamePage
                     && (int) $p['nhl_player_id'] > 0)->unique('nhl_player_id');
                 $summary = $predicted['summary'] ?? [];
                 $total = $this->publicNumber($summary['adjusted_xgf_per_game'] ?? null);
-                $contributors = $roster->filter(fn (array $p): bool => ($this->publicNumber($p['projected_goals'] ?? null) ?? 0) > 0)
-                    ->sortByDesc('projected_goals')->take(3)->map(function (array $p) use ($total, $inputs, $side, $baselineLabel): array {
+                $parent = $teamContexts->get($teamId);
+                $eligible = $playerContexts->filter(fn ($context): bool => $parent !== null
+                    && (int) $parent->opponent_team_id === $opponent && (int) $context->team_context_id === (int) $parent->id
+                    && (int) $context->nhl_team_id === $teamId && (int) $context->opponent_team_id === $opponent
+                    && $context->source_cutoff_at === $parent->source_cutoff_at);
+                $players = $roster->map(function (array $p) use ($eligible, $inputs, $side, $baselineLabel): array {
+                    $id = (int) $p['nhl_player_id'];
+                    $context = $eligible->get($id);
+                    $history = $inputs[$side]['players'][$id]['history'] ?? [];
+                    $all = $context === null ? [] : json_decode($context->all_metrics ?? '{}', true, 512, JSON_THROW_ON_ERROR);
+                    foreach (['EV' => 'ev_metrics', 'PP' => 'pp_metrics'] as $lane => $field) {
+                        if ($context !== null) {
+                            $windows = json_decode($context->{$field} ?? '{}', true, 512, JSON_THROW_ON_ERROR) ?? [];
+                            if ($windows !== []) {
+                                $history[$lane] = $windows;
+                            }
+                        }
+                    }
+                    $p['comparisons'] = $this->contributorComparisons($history, $baselineLabel);
+                    $games = $this->publicNumber($all['last_10']['games'] ?? null);
+                    $points = $this->publicNumber($all['last_10']['points'] ?? null);
+                    $p['points_per_game'] = $games !== null && $games > 0 && $points !== null && $points >= 0 ? $points / $games : null;
+
+                    return $p;
+                });
+                $leaders = $players->whereNotNull('points_per_game')->sortBy([['points_per_game', 'desc'], ['nhl_player_id', 'asc']])->take(3);
+                $contributors = $leaders->concat($players->filter(fn (array $p): bool => ($this->publicNumber($p['projected_goals'] ?? null) ?? 0) > 0)
+                    ->sortByDesc('projected_goals')->take(3))->unique('nhl_player_id')
+                    ->map(function (array $p) use ($total): array {
                         $id = (int) $p['nhl_player_id'];
+                        $goals = $this->publicNumber($p['projected_goals'] ?? null);
 
                         return ['id' => $id, 'name' => (string) ($p['player_name'] ?? 'Player'),
-                            'goals' => (float) $p['projected_goals'],
+                            'goals' => $goals, 'points_per_game' => $p['points_per_game'],
                             'ev_goals' => $this->publicNumber(data_get($p, 'strengths.EV.goals')),
                             'pp_goals' => $this->publicNumber(data_get($p, 'strengths.PP.goals')),
-                            'share_pct' => $total !== null && $total > 0 ? 100 * $p['projected_goals'] / $total : null,
-                            'comparisons' => $this->contributorComparisons($inputs[$side]['players'][$id]['history'] ?? [], $baselineLabel)];
+                            'share_pct' => $total !== null && $total > 0 && $goals !== null ? 100 * $goals / $total : null,
+                            'comparisons' => $p['comparisons']];
                     })->values()->all();
                 $result['teams'][$side] = ['abbrev' => $abbrev, 'goals' => $total,
                     'ev_goals' => $this->publicNumber($summary['ev_xgf_per_game'] ?? null),
                     'pp_goals' => $this->publicNumber($summary['pp_xgf_per_game'] ?? null),
                     'sog' => $this->publicNumber($summary['adjusted_xsog_per_game'] ?? null), 'contributors' => $contributors];
-                $parent = $teamContexts->get($teamId);
                 if ($parent === null || (int) $parent->opponent_team_id !== $opponent) {
                     continue;
                 }
@@ -474,22 +525,27 @@ final class NhlPublicGamePage
     private function contributorComparisons(array $history, string $baselineLabel): array
     {
         $comparisons = [];
-        foreach ([['EV SAT/60', 'EV', 'last_10', 'Last 10 Games', 'sat', 'seconds', 3600],
-            ['EV SOG/SAT %', 'EV', 'last_20', 'Last 20 Games', 'sog', 'sat', 100],
-            ['EV SH%', 'EV', 'last_season', 'Last Season', 'goals', 'sog', 100],
-            ['PP G/GP', 'PP', 'last_20', 'Last 20 Games', 'goals', 'games', 1]] as [$metric, $lane, $window, $label, $numerator, $denominator, $scale]) {
+        foreach ([['EV SAT/60', 'EV', 'sat', 'seconds', 3600], ['EV SAT/GP', 'EV', 'sat', 'games', 1],
+            ['EV SH%', 'EV', 'goals', 'sog', 100],
+            ['PP G/GP', 'PP', 'goals', 'games', 1]] as [$metric, $lane, $numerator, $denominator, $scale]) {
             $rates = [];
-            foreach (['baseline' => 'train', 'recent' => $window] as $key => $period) {
+            foreach (['baseline' => 'train', 'recent' => 'last_10'] as $key => $period) {
                 $sample = $history[$lane][$period] ?? [];
                 $n = $this->publicNumber($sample[$numerator] ?? null);
-                $d = $this->publicNumber($sample[$denominator] ?? null);
+                $d = $this->publicNumber($sample[$denominator] ?? ($denominator === 'seconds' ? ($sample['toi_seconds'] ?? null) : null));
+                if ($denominator === 'seconds' && $d === null && ($sample['sat_per_60'] ?? null) !== null) {
+                    $rates[$key] = $this->publicNumber($sample['sat_per_60']);
+                    continue;
+                }
                 $rates[$key] = $n !== null && $n >= 0 && $d !== null && $d > 0 ? $scale * $n / $d : null;
             }
             if ($rates['baseline'] === null && $rates['recent'] === null) {
                 continue;
             }
-            $comparisons[] = [...$rates, 'metric' => $metric, 'baseline_label' => $baselineLabel,
-                'recent_label' => $label, 'is_percentage' => $scale === 100];
+            $comparisons[] = ['recent' => $rates['recent'], 'metric' => $metric, 'baseline_label' => $baselineLabel,
+                'delta_pct' => $rates['baseline'] !== null && $rates['baseline'] > 0 && $rates['recent'] !== null
+                    ? 100 * ($rates['recent'] - $rates['baseline']) / $rates['baseline'] : null,
+                'recent_label' => 'Last 10 Games', 'is_percentage' => $scale === 100];
         }
 
         return $comparisons;
@@ -561,7 +617,7 @@ final class NhlPublicGamePage
             $side = $home ? 'home' : 'away';
             $other = $home ? 'away' : 'home';
 
-            return ['gf' => $gf, 'ga' => $ga, 'win' => $gf > $ga, 'otl' => $gf < $ga && ($row->ot_in_use || $row->shootout_in_use),
+            return ['gf' => $gf, 'ga' => $ga, 'win' => $gf > $ga, 'otl' => $gf < $ga && in_array($this->finalPeriodType($row), ['OT', 'SO'], true),
                 'pp_goals' => $row->{$side.'_pp_goals'}, 'pp_opps' => $row->{$side.'_pp_opportunities'},
                 'pk_ga' => $row->{$other.'_pp_goals'}, 'pk_opps' => $row->{$other.'_pp_opportunities'},
                 'against_matchup' => ((int) $row->home_team_id === (int) $game->home_team_id
@@ -571,7 +627,18 @@ final class NhlPublicGamePage
         $wins = $records->where('win', true)->count();
         $otl = $records->where('otl', true)->count();
         $last = $records->take(10);
-        $h2h = $records->where('against_matchup', true);
+        $h2h = NhlGame::query()->where('game_type', $game->game_type)
+            ->where('game_date', '<', $game->game_date->toDateString())->whereIn('game_state', ['OFF', 'FINAL'])
+            ->whereNotNull('home_team_score')->whereNotNull('away_team_score')
+            ->whereIn('home_team_id', [$game->home_team_id, $game->away_team_id])
+            ->whereIn('away_team_id', [$game->home_team_id, $game->away_team_id])
+            ->orderByDesc('game_date')->orderByDesc('nhl_game_id')->limit(10)->get()
+            ->map(function (NhlGame $row) use ($teamId): array {
+                $home = (int) $row->home_team_id === $teamId;
+                $won = ($home ? $row->home_team_score : $row->away_team_score) > ($home ? $row->away_team_score : $row->home_team_score);
+
+                return ['win' => $won, 'otl' => !$won && in_array($this->finalPeriodType($row), ['OT', 'SO'], true)];
+            });
         $ppComplete = $records->isNotEmpty() && $records->every(fn (array $row): bool => $row['pp_goals'] !== null && $row['pp_opps'] !== null);
         $oppsComplete = $records->isNotEmpty() && $records->every(fn (array $row): bool => $row['pp_opps'] !== null);
         $pkComplete = $records->isNotEmpty() && $records->every(fn (array $row): bool => $row['pk_ga'] !== null && $row['pk_opps'] !== null);
@@ -582,6 +649,8 @@ final class NhlPublicGamePage
             'pp_pct' => $ppComplete && $records->sum('pp_opps') > 0 ? 100 * $records->sum('pp_goals') / $records->sum('pp_opps') : null,
             'pk_pct' => $pkComplete && $records->sum('pk_opps') > 0 ? 100 * (1 - $records->sum('pk_ga') / $records->sum('pk_opps')) : null,
             'pp_opps_gp' => $oppsComplete ? $records->sum('pp_opps') / $records->count() : null,
+            'pp_opps_allowed_gp' => $records->isNotEmpty() && $records->every(fn (array $row): bool => $row['pk_opps'] !== null)
+                ? $records->sum('pk_opps') / $records->count() : null,
             'h2h_gp' => $h2h->count(), 'h2h_wins' => $h2h->where('win', true)->count(),
             'h2h_losses' => $h2h->where('win', false)->where('otl', false)->count(), 'h2h_otl' => $h2h->where('otl', true)->count(),
             'l10_gp' => $last->count(), 'l10_wins' => $last->where('win', true)->count(),
