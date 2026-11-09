@@ -84,6 +84,8 @@ async function loadPanel(name, attempt = 0) {
   try {
     const url = new URL(props.detailsUrl, window.location.origin);
     url.searchParams.set('section', name);
+    if (name === 'matchup' && game.value.prediction?.revision_id)
+      url.searchParams.set('prediction_revision_id', game.value.prediction.revision_id);
     const response = await fetch(url, { headers: { Accept: 'application/json' }, cache: 'no-store', signal: controller.signal });
     if (disposed || generation !== panelGeneration || panelRequests.get(name) !== controller) return;
     if (response.status === 202) {
@@ -115,6 +117,9 @@ function loadPanels() {
 }
 const number = (value, digits = 2) => value == null || !Number.isFinite(Number(value)) ? '—' : Number(value).toFixed(digits);
 const probability = (side) => game.value.prediction?.probabilities?.[side] == null ? '—' : `${number(game.value.prediction.probabilities[side] * 100, 1)}%`;
+const analysis = computed(() => game.value.preview_analysis ?? { teams: {}, insights: [] });
+const analysisTime = value => value ? new Date(/(?:Z|[+-]\d\d:\d\d)$/.test(value) ? value : `${value.replace(' ', 'T')}Z`).toLocaleString() : '—';
+const insightValue = (value, percentage) => `${number(value)}${percentage ? '%' : ''}`;
 const record = (form, prefix = '') => form && Number(form[`${prefix}gp`]) > 0 ? `${form[`${prefix}wins`]}–${form[`${prefix}losses`]}–${form[`${prefix}otl`]}` : '—';
 const dateTime = computed(() => game.value.start_time_utc ? new Intl.DateTimeFormat(undefined, {
   weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
@@ -215,6 +220,38 @@ onBeforeUnmount(() => { disposed = true; cancelPanels(); window.clearTimeout(tim
         <template v-if="mode === 'preview'">
           <GameSectionState name="matchup" title="The matchup" :state="panelState('matchup')" @retry="loadPanel('matchup')" />
           <section v-if="panelReady('matchup')" id="matchup" class="scroll-mt-5 rounded-xl border border-[#29404F] bg-[#0D1D29] p-4 sm:p-6">
+            <div class="mb-5 border-b border-[#29404F] pb-5" data-prediction-explanation>
+              <div class="flex flex-wrap items-baseline justify-between gap-2"><h2 class="text-sm font-semibold">Why this pick</h2><span v-if="analysis.revision_id" class="text-[10px] text-[#91A8BA]">Prediction #{{ analysis.revision_id }} · {{ analysisTime(analysis.predicted_at) }}</span></div>
+              <p class="mt-1 text-xs text-[#91A8BA]">Projected team scoring and the players contributing most.</p>
+              <div v-if="Object.keys(analysis.teams ?? {}).length" class="mt-4 grid gap-4 lg:grid-cols-2">
+                <div v-for="(team, side) in analysis.teams" :key="side" class="min-w-0 rounded-lg border border-[#29404F] bg-[#102330] p-3">
+                  <div class="flex items-center justify-between gap-3"><h3 class="text-sm font-semibold text-sky-300">{{ team.abbrev }}</h3><span class="font-mono text-sm">{{ number(team.goals) }} goals</span></div>
+                  <p class="mt-1 text-[11px] text-[#91A8BA]">EV {{ number(team.ev_goals) }} · PP {{ number(team.pp_goals) }} · SOG {{ number(team.sog) }}</p>
+                  <ol v-if="team.contributors?.length" class="mt-3 divide-y divide-[#29404F]">
+                    <li v-for="player in team.contributors" :key="player.id" class="py-3 first:pt-0 last:pb-0">
+                      <div class="flex items-baseline justify-between gap-3 text-xs"><span class="min-w-0 font-semibold">{{ player.name }}</span><span class="shrink-0 font-mono text-sky-200">{{ number(player.goals) }} G</span></div>
+                      <p class="mt-1 text-[11px] text-[#A6B9C9]">EV {{ number(player.ev_goals) }} · PP {{ number(player.pp_goals) }}<span v-if="player.share_pct != null"> · {{ number(player.share_pct, 1) }}% of team goals</span></p>
+                      <ul v-if="player.periods?.length" class="mt-1 space-y-0.5 text-[10px] leading-relaxed text-[#91A8BA]"><li v-for="period in player.periods" :key="period">{{ period }}</li></ul>
+                      <p v-else class="mt-1 text-[10px] text-[#91A8BA]">Source periods unavailable for this saved prediction.</p>
+                    </li>
+                  </ol>
+                  <p v-else class="mt-3 text-xs text-[#91A8BA]">Individual contributions unavailable for this saved prediction.</p>
+                </div>
+              </div>
+              <p v-else class="mt-3 text-xs text-[#91A8BA]">Saved prediction details are not yet available.</p>
+            </div>
+            <div class="mb-5 border-b border-[#29404F] pb-5" data-matchup-insights>
+              <div class="flex flex-wrap items-baseline justify-between gap-2"><h2 class="text-sm font-semibold">Matchup insights</h2><span v-if="analysis.context_at" class="text-[10px] text-[#91A8BA]">Context through {{ analysisTime(analysis.context_at) }}</span></div>
+              <p class="mt-1 text-xs text-[#91A8BA]">Historical context; these facts do not necessarily influence the prediction.</p>
+              <ul v-if="analysis.insights?.length" class="mt-3 grid gap-3 sm:grid-cols-2">
+                <li v-for="(fact, index) in analysis.insights" :key="index" class="min-w-0 rounded-lg border border-[#29404F] p-3">
+                  <p class="text-xs font-semibold"><span class="mr-2 text-sky-300">{{ fact.team }}</span>{{ fact.name === fact.team ? 'Team' : fact.name }} · {{ fact.metric }}</p>
+                  <p class="mt-2 text-xs"><span class="font-mono text-white">{{ insightValue(fact.value, fact.is_percentage) }}</span> <span class="text-[#91A8BA]">{{ fact.period }} vs</span> <span class="font-mono text-white">{{ insightValue(fact.baseline, fact.is_percentage) }}</span> <span class="text-[#91A8BA]">Train</span></p>
+                  <p class="mt-1 text-[11px] text-[#A6B9C9]">{{ number(fact.delta_pct, 1) }}% {{ fact.direction }} · {{ fact.games }} GP vs {{ fact.baseline_games }} Train GP</p>
+                </li>
+              </ul>
+              <p v-else class="mt-3 text-xs text-[#91A8BA]">No qualifying differences in the available context. Insights require at least 5 GP and a 25% difference from Train.</p>
+            </div>
             <h2 class="text-sm font-semibold">The matchup</h2>
             <div class="mt-4 grid grid-cols-2 gap-4 sm:gap-8">
               <div v-for="side in sides" :key="side">

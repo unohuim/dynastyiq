@@ -2,6 +2,16 @@
 
 This document defines the **authoritative UI design rules** for this repository.
 
+Game previews place Why this pick and Matchup insights above the existing
+matchup statistics inside the deferred matchup panel. Match the dark navy
+surfaces, subtle borders, sky-blue team accents and compact typography. Use two
+team columns on desktop and stack on mobile. Contributors show EV/PP goals,
+team-goal share and saved source periods. Insights show both values, units,
+period, sample sizes and direction, naming the opponent for head-to-head windows.
+Label their descriptive purpose separately from prediction explanations. Show
+prediction/context timestamps and honest unavailable states; preserve first-paint
+loading, local Retry feedback and preview-to-live transitions.
+
 For the public root and authenticated dashboard, the approved visual reference is
 `docs/designs/diq-dashboard-desktop-design.png`. Its editorial grid, image overlays,
 panel arrangement, dark chrome and blue actions are explicitly approved for those

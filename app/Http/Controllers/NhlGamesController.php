@@ -93,8 +93,10 @@ class NhlGamesController extends Controller
             'section' => ['required', \Illuminate\Validation\Rule::in([
                 'matchup', 'lineups', 'meetings', 'summary', 'goals', 'boxscore', 'play_by_play',
             ])],
+            'prediction_revision_id' => ['nullable', 'integer', 'min:1'],
         ]);
-        $panel = $payload->panel($nhlGameId, $input['section']);
+        $panel = $payload->panel($nhlGameId, $input['section'],
+            isset($input['prediction_revision_id']) ? (int) $input['prediction_revision_id'] : null);
 
         return response()->json($panel ?? ['status' => 'preparing'], $panel === null ? 202 : 200)
             ->header('Cache-Control', 'no-store');

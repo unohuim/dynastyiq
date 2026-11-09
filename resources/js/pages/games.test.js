@@ -1141,6 +1141,44 @@ describe('public game preview and recap', () => {
         await settle();
         expect(fetch.mock.calls.map(([url]) => url.searchParams.get('section'))).toEqual(['matchup', 'lineups', 'meetings']);
     });
+    it('pins the deferred matchup explanation to the displayed prediction revision', async () => {
+        vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
+        mount({ mode: 'preview', prediction: { revision_id: 42 } }, { detailsUrl: '/games/2026020001/details' });
+        await settle();
+        const matchup = fetch.mock.calls.find(([url]) => url.searchParams.get('section') === 'matchup')[0];
+        expect(matchup.searchParams.get('prediction_revision_id')).toBe('42');
+        expect(fetch.mock.calls.filter(([url]) => url.searchParams.get('section') !== 'matchup')
+            .every(([url]) => !url.searchParams.has('prediction_revision_id'))).toBe(true);
+    });
+    it('shows saved contributions and historical insights with values periods and sample sizes', () => {
+        mount({ mode: 'preview', preview_analysis: { revision_id: 42, predicted_at: '2026-10-26 12:00:00',
+            context_at: '2026-10-26 10:00:00', teams: { away: { abbrev: 'BOS', goals: 3, ev_goals: 2, pp_goals: 1, sog: 30,
+                contributors: [{ id: 1, name: 'Example Forward', goals: .6, ev_goals: .4, pp_goals: .2, share_pct: 20,
+                    periods: ['EV SH%: LSeason'] }] } }, insights: [
+                { team: 'BOS', name: 'Example Forward', metric: 'SOG/GP', value: 4, baseline: 2, games: 5,
+                    baseline_games: 82, delta_pct: 100, direction: 'higher', period: 'Vs TOR L5', is_percentage: false },
+            ] } });
+        const why = document.querySelector('[data-prediction-explanation]').textContent;
+        expect(why).toContain('Why this pick'); expect(why).toContain('0.60 G');
+        expect(why).toContain('20.0% of team goals'); expect(why).toContain('EV SH%: LSeason');
+        const facts = document.querySelector('[data-matchup-insights]').textContent;
+        expect(facts).toContain('Vs TOR L5'); expect(facts).toContain('4.00'); expect(facts).toContain('2.00');
+        expect(facts).toContain('5 GP vs 82 Train GP'); expect(facts).toContain('do not necessarily influence');
+    });
+    it('shows honest missing analysis states and never guesses player source periods', () => {
+        mount({ mode: 'preview', preview_analysis: { teams: { away: { abbrev: 'BOS', goals: 3,
+            contributors: [{ id: 1, name: 'Forward', goals: .5, periods: [] }] } }, insights: [] } });
+        expect(document.querySelector('[data-prediction-explanation]').textContent).toContain('Source periods unavailable');
+        expect(document.querySelector('[data-matchup-insights]').textContent).toContain('at least 5 GP and a 25% difference');
+    });
+    it('keeps preview explanations hidden after the game becomes live', async () => {
+        mount({ mode: 'preview', preview_analysis: { teams: {}, insights: [] } });
+        expect(document.querySelector('[data-prediction-explanation]')).not.toBeNull();
+        state.game = { ...state.game, mode: 'live', game_state: 'LIVE' };
+        await nextTick();
+        expect(document.querySelector('[data-prediction-explanation]')).toBeNull();
+        expect(document.querySelector('[data-matchup-insights]')).toBeNull();
+    });
     it('shows a local error without removing the overview or successful sections', async () => {
         vi.stubGlobal('fetch', vi.fn(async url => ({ ok: url.searchParams.get('section') !== 'goals', status: 200,
             json: async () => ({ nhl_game_id: 2026020001, mode: 'recap', section: url.searchParams.get('section'), data: { comparison: [], away: { boxscore: [] }, home: { boxscore: [] } } }) })));
@@ -1188,6 +1226,13 @@ describe('public game preview and recap', () => {
     it('keeps matchup fields separate from unrelated player and scoring sections', () => {
         const merged = applyGamePanel({ home: {}, away: {} }, 'matchup', { home: { form: { gp: 10 }, predictions: [1] }, events: [1] });
         expect(merged.home.form.gp).toBe(10); expect(merged.home.predictions).toBeUndefined(); expect(merged.events).toBeUndefined();
+    });
+    it('merges curated analysis only through the matchup panel without changing public odds', () => {
+        const game = { home: {}, away: {}, prediction: { revision_id: 42, score: { home: 3, away: 2 } } };
+        const facts = { revision_id: 42, teams: {}, insights: [] };
+        const merged = applyGamePanel(game, 'matchup', { preview_analysis: facts, prediction: { score: { home: 99 } } });
+        expect(merged.preview_analysis).toEqual(facts); expect(merged.prediction).toEqual(game.prediction);
+        expect(applyGamePanel(game, 'lineups', { preview_analysis: facts }).preview_analysis).toBeUndefined();
     });
 
     it('switches accessible live tabs without navigating or changing the selected game', async () => {

@@ -74,6 +74,235 @@ it('opens the public recap for guests at the existing numeric URL', function ():
         ->component('Games/Show')->where('game.mode', 'recap')->where('canManageLineups', false));
 });
 
+describe('saved pregame explanations and insights', function (): void {
+    beforeEach(function (): void {
+        ($this->makeGame)(2026020001, ['game_state' => 'FUT', 'game_date' => '2026-10-27', 'start_time_utc' => '2026-10-27 23:00:00']);
+        $model = \App\Models\NhlModelRun::create(['run_key' => 'public-insights', 'name' => 'SAT_V2', 'model_family' => 'sat',
+            'workflow_stage' => 'training', 'model_version' => 'fixture', 'status' => 'complete', 'train_season_ids' => ['20252026']]);
+        $this->insightModel = $model;
+        $run = \App\Models\NhlPregameContextRun::create(['model_run_id' => $model->id, 'action' => 'backfill',
+            'status' => 'completed', 'season_ids' => ['20262027']]);
+        DB::table('nhl_pregame_context_run_games')->insert(['run_id' => $run->id, 'nhl_game_id' => 2026020001,
+            'game_date' => '2026-10-27', 'sequence' => 1, 'state' => 'complete', 'comparisons_completed_at' => now()]);
+        $this->insightRun = $run;
+        $teams = $inputs = [];
+        foreach (['away' => [6, 'BOS', 10], 'home' => [10, 'TOR', 6]] as $side => [$id, $abbrev, $opponent]) {
+            $parent = DB::table('nhl_team_game_pregame_contexts')->insertGetId([
+                'model_run_id' => $model->id, 'run_id' => $run->id, 'nhl_game_id' => 2026020001,
+                'nhl_team_id' => $id, 'opponent_team_id' => $opponent, 'game_date' => '2026-10-27',
+                'source_cutoff_at' => '2026-10-27 10:00:00', 'venue' => $side,
+                'context_version' => \App\Services\NhlPregameContextBuilder::VERSION,
+                'schedule_metrics' => '{}', 'opponent_metrics' => '{}', 'updated_at' => now(),
+                'metrics' => json_encode(['train' => ['games' => 82, 'goals_for_per_game' => 3],
+                    'last_5' => ['games' => 5, 'goals_for_per_game' => 4]]),
+            ]);
+            $teams[$side] = ['team_abbrev' => $abbrev, 'summary' => ['adjusted_xgf_per_game' => 4.0,
+                'ev_xgf_per_game' => 3.0, 'pp_xgf_per_game' => 1.0, 'adjusted_xsog_per_game' => 30.0], 'roster' => []];
+            foreach ([1 => .8, 2 => .6, 3 => .4, 4 => .2] as $slot => $goals) {
+                $playerId = $id * 100 + $slot;
+                $name = $abbrev.' Player '.$slot;
+                $teams[$side]['roster'][] = ['nhl_player_id' => $playerId, 'player_name' => $name, 'projected_goals' => $goals,
+                    'strengths' => ['EV' => ['goals' => .75 * $goals], 'PP' => ['goals' => .25 * $goals]]];
+                $inputs[$side]['players'][$playerId] = ['buckets' => ['EV' => ['B' => ['source' => 'train_l10',
+                    'sog_source' => 'last_20', 'goal_source' => 'last_season']]]];
+                $inputs[$side]['pp_offense_sources'][$playerId] = 'last_20';
+                DB::table('nhl_player_game_pregame_contexts')->insert([
+                    'run_id' => $run->id, 'model_run_id' => $model->id, 'team_context_id' => $parent,
+                    'nhl_game_id' => 2026020001, 'nhl_player_id' => $playerId, 'nhl_team_id' => $id,
+                    'opponent_team_id' => $opponent, 'game_date' => '2026-10-27', 'source_cutoff_at' => '2026-10-27 10:00:00',
+                    'venue' => $side, 'participant_source' => 'anticipated_lineup', 'updated_at' => now(),
+                    'context_version' => \App\Services\NhlPregameContextBuilder::VERSION,
+                    'metrics' => json_encode(['all' => ['train' => ['games' => 20, 'sog' => 40], 'last_5' => ['games' => 5, 'sog' => 20]]]),
+                ]);
+            }
+        }
+        $this->insightTeams = $teams;
+        $this->insightInputs = $inputs;
+        $this->publishInsights = fn () => ($this->savePrediction)([], [
+            'inputs' => ['sat_model_run_id' => $model->id, 'algorithm_definition' => ['train_rate_weight' => .5]],
+            'teams' => $this->insightTeams,
+            '_custom_prediction_evidence' => ['input' => ['teams' => $this->insightInputs]],
+        ]);
+        ($this->publishInsights)();
+        $this->analysis = fn () => app(NhlPublicGamePage::class)->panel(2026020001, 'matchup')['data']['preview_analysis'];
+    });
+
+    it('allows guests and authenticated viewers to read curated saved contributors', function (bool $signedIn): void {
+        if ($signedIn) {
+            $this->actingAs(User::factory()->create());
+        }
+        $this->getJson('/games/2026020001/details?section=matchup')->assertOk()
+            ->assertJsonCount(3, 'data.preview_analysis.teams.away.contributors')
+            ->assertJsonPath('data.preview_analysis.teams.away.contributors.0.name', 'BOS Player 1')
+            ->assertJsonPath('data.preview_analysis.teams.away.contributors.0.share_pct', 20)
+            ->assertJsonMissingPath('data.preview_analysis.inputs')->assertJsonMissingPath('data.preview_analysis.evidence');
+        Http::assertNothingSent();
+    })->with([false, true]);
+
+    it('reads actual saved source periods and blend weights', function (): void {
+        $periods = ($this->analysis)()['teams']['away']['contributors'][0]['periods'];
+        expect($periods)->toContain('EV SAT/60: Train 50% + L10 50%', 'EV SOG/SAT: L20', 'EV SH%: LSeason',
+            'PP goals: L20 player goals/GP; final team allocation');
+        config(['nhl-custom-prediction.train_rate_weight' => .99]);
+        expect(($this->analysis)()['teams']['away']['contributors'][0]['periods'])->toBe($periods);
+    });
+
+    it('ranks the top three contributions and keeps EV and PP separately', function (): void {
+        $away = ($this->analysis)()['teams']['away'];
+        expect(array_column($away['contributors'], 'id'))->toBe([601, 602, 603])
+            ->and($away['contributors'][0]['ev_goals'])->toEqualWithDelta(.6, 1e-9)
+            ->and($away['contributors'][0]['pp_goals'])->toEqualWithDelta(.2, 1e-9)
+            ->and($away['goals'])->toEqual(4)->and($away['pp_goals'])->toEqual(1);
+    });
+
+    it('balances six distinct facts across the teams and includes numeric comparisons', function (): void {
+        $facts = ($this->analysis)()['insights'];
+        expect($facts)->toHaveCount(6)->and(array_count_values(array_column($facts, 'side')))->toBe(['away' => 3, 'home' => 3]);
+        expect($facts[0])->toMatchArray(['metric' => 'SOG/GP', 'value' => 4.0, 'baseline' => 2.0,
+            'games' => 5, 'baseline_games' => 20, 'delta_pct' => 100.0, 'direction' => 'higher']);
+    });
+
+    it('rejects short samples and differences below the approved threshold', function (int $games, float $sog): void {
+        DB::table('nhl_player_game_pregame_contexts')->update(['metrics' => json_encode(['all' => [
+            'train' => ['games' => 20, 'sog' => 40], 'last_5' => ['games' => $games, 'sog' => $sog],
+        ]])]);
+        DB::table('nhl_team_game_pregame_contexts')->update(['metrics' => '{}']);
+        expect(($this->analysis)()['insights'])->toBe([]);
+    })->with([[4, 20.0], [5, 12.0]]);
+
+    it('accepts exactly five games and exactly twenty five percent difference', function (): void {
+        DB::table('nhl_player_game_pregame_contexts')->update(['metrics' => json_encode(['all' => [
+            'train' => ['games' => 20, 'sog' => 40], 'last_5' => ['games' => 5, 'sog' => 12.5],
+        ]])]);
+        $facts = ($this->analysis)()['insights'];
+        expect($facts[0]['delta_pct'])->toEqual(25);
+    });
+
+    it('deduplicates repeated windows for the same player metric', function (): void {
+        DB::table('nhl_player_game_pregame_contexts')->update(['metrics' => json_encode(['all' => [
+            'train' => ['games' => 20, 'sog' => 40], 'last_5' => ['games' => 5, 'sog' => 20],
+            'last_10' => ['games' => 10, 'sog' => 40],
+        ]])]);
+        $facts = ($this->analysis)()['insights'];
+        expect(collect($facts)->where('name', 'BOS Player 1'))->toHaveCount(1)
+            ->and($facts[0]['period'])->toBe('L10');
+    });
+
+    it('includes opponent history and labels the sample explicitly', function (): void {
+        DB::table('nhl_player_game_pregame_contexts')->update(['metrics' => json_encode(['all' => [
+            'train' => ['games' => 20, 'sog' => 40], 'opponent_last_5' => ['games' => 5, 'sog' => 25],
+        ]])]);
+        expect(($this->analysis)()['insights'][0])->toMatchArray(['period' => 'Vs TOR L5', 'value' => 5.0, 'baseline' => 2.0]);
+    });
+
+    it('does not use other models or uncommitted context', function (string $scenario): void {
+        if ($scenario === 'uncommitted') {
+            DB::table('nhl_pregame_context_run_games')->update(['comparisons_completed_at' => null]);
+        } else {
+            $other = $this->insightModel->replicate();
+            $other->run_key = 'other-public-insight-model';
+            $other->save();
+            ($this->savePrediction)([], ['inputs' => ['sat_model_run_id' => $other->id], 'teams' => $this->insightTeams]);
+        }
+        expect(($this->analysis)()['insights'])->toBe([]);
+    })->with(['uncommitted', 'other model']);
+
+    it('omits player history outside the displayed prediction roster', function (): void {
+        $this->insightTeams['away']['roster'] = [];
+        ($this->publishInsights)();
+        expect(collect(($this->analysis)()['insights'])->where('team', 'BOS')->pluck('name')->all())->not->toContain('BOS Player 1');
+    });
+
+    it('refreshes cached facts when committed context is updated', function (): void {
+        $before = ($this->analysis)();
+        $this->travel(1)->seconds();
+        DB::table('nhl_player_game_pregame_contexts')->update(['metrics' => '{}', 'updated_at' => now()]);
+        $after = ($this->analysis)();
+        expect($after['insights'])->not->toBe($before['insights']);
+    });
+
+    it('does not turn a zero Train baseline into an infinite percentage', function (): void {
+        DB::table('nhl_team_game_pregame_contexts')->update(['metrics' => '{}']);
+        DB::table('nhl_player_game_pregame_contexts')->update(['metrics' => json_encode(['all' => [
+            'train' => ['games' => 20, 'sog' => 0], 'last_5' => ['games' => 5, 'sog' => 20],
+        ]])]);
+        expect(($this->analysis)()['insights'])->toBe([]);
+    });
+
+    it('excludes contexts whose source cutoff is still in the future', function (): void {
+        DB::table('nhl_team_game_pregame_contexts')->update(['source_cutoff_at' => '2026-10-27 13:00:00']);
+        DB::table('nhl_player_game_pregame_contexts')->update(['source_cutoff_at' => '2026-10-27 13:00:00']);
+        expect(($this->analysis)()['insights'])->toBe([]);
+    });
+
+    it('formats team head to head percentage facts as percentages', function (): void {
+        DB::table('nhl_player_game_pregame_contexts')->update(['metrics' => '{}']);
+        DB::table('nhl_team_game_pregame_contexts')->update([
+            'metrics' => json_encode(['train' => ['games' => 82, 'corsi_pct' => 50]]),
+            'opponent_metrics' => json_encode(['last_5' => ['games' => 5, 'corsi_pct' => 65]]),
+        ]);
+        expect(($this->analysis)()['insights'][0])->toMatchArray([
+            'metric' => 'Corsi%', 'value' => 65.0, 'baseline' => 50.0, 'is_percentage' => true, 'period' => 'Vs TOR L5',
+        ]);
+    });
+
+    it('shows unavailable analysis when no saved canonical prediction exists', function (): void {
+        DB::table('nhl_game_prediction_revisions')->delete();
+        $analysis = ($this->analysis)();
+        expect($analysis['revision_id'])->toBeNull()->and($analysis['teams'])->toBe([])->and($analysis['insights'])->toBe([]);
+    });
+
+    it('pins explanations to the displayed revision when a newer prediction arrives', function (): void {
+        $old = ($this->analysis)()['revision_id'];
+        $this->insightTeams['away']['roster'][0]['player_name'] = 'Updated Contributor';
+        ($this->publishInsights)();
+        $this->getJson('/games/2026020001/details?section=matchup&prediction_revision_id='.$old)->assertOk()
+            ->assertJsonPath('data.preview_analysis.revision_id', $old)
+            ->assertJsonPath('data.preview_analysis.teams.away.contributors.0.name', 'BOS Player 1');
+        expect(($this->analysis)()['teams']['away']['contributors'][0]['name'])->toBe('Updated Contributor');
+    });
+
+    it('does not guess source periods when a historical revision lacks provenance', function (): void {
+        $this->insightInputs = [];
+        ($this->publishInsights)();
+        expect(($this->analysis)()['teams']['away']['contributors'][0]['periods'])->toBe([]);
+    });
+
+    it('rejects malformed revision selections', function (string $id): void {
+        $this->getJson('/games/2026020001/details?section=matchup&prediction_revision_id='.$id)
+            ->assertUnprocessable()->assertJsonValidationErrors('prediction_revision_id');
+    })->with(['0', '-1', 'invalid']);
+
+    it('does not substitute another revision when a requested saved revision is absent', function (): void {
+        $this->getJson('/games/2026020001/details?section=matchup&prediction_revision_id=999999999')->assertOk()
+            ->assertJsonPath('data.preview_analysis.revision_id', null)->assertJsonPath('data.preview_analysis.teams', []);
+    });
+
+    it('does not expose another games revision through a pinned explanation request', function (): void {
+        $other = ($this->savePrediction)();
+        $id = $other['meta']['prediction_revision_id'];
+        DB::table('nhl_game_prediction_revisions')->where('id', $id)->update(['nhl_game_id' => 2026020002]);
+        $this->getJson('/games/2026020001/details?section=matchup&prediction_revision_id='.$id)->assertOk()
+            ->assertJsonPath('data.preview_analysis.revision_id', null)->assertJsonPath('data.preview_analysis.teams', []);
+    });
+
+    it('does not publish a request variant as the canonical pregame explanation', function (): void {
+        $other = ($this->savePrediction)(['home_goalie_id' => 999]);
+        $id = $other['meta']['prediction_revision_id'];
+        $this->getJson('/games/2026020001/details?section=matchup&prediction_revision_id='.$id)->assertOk()
+            ->assertJsonPath('data.preview_analysis.revision_id', null);
+        expect(($this->analysis)()['revision_id'])->not->toBe($id);
+    });
+
+    it('keeps the first paint free of analysis and does not generate a prediction', function (): void {
+        $count = DB::table('nhl_game_prediction_revisions')->count();
+        $this->get('/games/2026020001')->assertInertia(fn (Assert $page) => $page->missing('game.preview_analysis'));
+        ($this->analysis)();
+        expect(DB::table('nhl_game_prediction_revisions')->count())->toBe($count);
+        Http::assertNothingSent();
+    });
+});
+
 it('allows ordinary authenticated viewers without granting lineup management', function (): void {
     ($this->makeGame)();
     $this->actingAs(User::factory()->create())->get('/games/2026020001')->assertOk()

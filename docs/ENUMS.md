@@ -8,6 +8,8 @@
 
 ## Public NHL game detail
 
+- Deferred matchup `preview_analysis` contains revision/context timestamps, curated team/contributor projections and descriptive insights. Its optional `prediction_revision_id` query selects only a successful canonical revision belonging to that game; overview `game.prediction.revision_id` identifies the displayed saved prediction. No new section name is introduced.
+
 - Public game details `section`: `matchup`, `lineups`, `meetings`, `summary`, `goals`, `boxscore`. Browser section `status`: `loading`, `ready`, `error`; a pending preparation response uses HTTP 202 with `status=preparing`.
 - Public game detail `section`: `matchup`, `lineups`, `meetings`, `summary`, `goals`, `boxscore`, `play_by_play`. These identify allowlisted deferred sections; `play_by_play` carries public plays and rink shot locations.
 - Public game local tab: `summary`, `boxscore`, `play_by_play`, `shot_map`, `game_flow`. Shot map and game flow reuse the play-by-play detail; they are not new HTTP sections.

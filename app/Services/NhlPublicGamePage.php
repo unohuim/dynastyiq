@@ -62,7 +62,7 @@ final class NhlPublicGamePage
     /** Read one deferred section without rebuilding unrelated preview sections.
      * @return array<string,mixed>|null Null means another builder already owns preparation.
      */
-    public function panel(int $gameId, string $section): ?array
+    public function panel(int $gameId, string $section, ?int $predictionRevisionId = null): ?array
     {
         $game = NhlGame::query()->findOrFail($gameId);
         $feed = app(NhlLiveGameFeed::class);
@@ -73,7 +73,7 @@ final class NhlPublicGamePage
             abort(503, 'Live details temporarily unavailable.');
         }
         if ($current === null && $section === 'matchup') {
-            $current = ['mode' => 'preview'];
+            $current = ['mode' => 'preview', 'preview_analysis' => $this->previewAnalysis($game, $predictionRevisionId)];
             foreach (['away', 'home'] as $side) {
                 $current[$side] = ['form' => $this->form($game, (int) $game->{$side.'_team_id'}),
                     'starting_goalie' => app(NhlStartingGoalieSelector::class)->select($gameId, (string) $game->{$side.'_team_abbrev'}, (string) $game->season_id)];
@@ -103,6 +103,7 @@ final class NhlPublicGamePage
             }
         }
         $data = [...$data, ...Arr::only($current, match ($section) {
+            'matchup' => ['preview_analysis'],
             'meetings' => ['head_to_head'], 'summary' => ['recap', 'comparison', 'period_scores'],
             'play_by_play' => ['plays', 'shots', 'map_events', 'plays_available'],
             'goals' => ['events', 'events_available'], default => [],
@@ -252,7 +253,7 @@ final class NhlPublicGamePage
     {
         $row = DB::table('nhl_game_prediction_revisions')->where('nhl_game_id', $game->nhl_game_id)
             ->where('is_canonical', true)->where('prediction_available', true)->orderByDesc('id')
-            ->first(['payload->market_probabilities as markets', 'payload->prediction->predicted_score as score',
+            ->first(['id', 'payload->market_probabilities as markets', 'payload->prediction->predicted_score as score',
                 'payload->prediction->predicted_total_goals as total_goals', 'predicted_at']);
         if ($row === null) {
             return null;
@@ -272,9 +273,254 @@ final class NhlPublicGamePage
             }
         }
 
-        return ['probabilities' => $probabilities, 'score' => $score,
+        return ['revision_id' => (int) $row->id, 'probabilities' => $probabilities, 'score' => $score,
             'total_goals' => is_numeric($row->total_goals) ? (float) $row->total_goals : null,
             'predicted_at' => $row->predicted_at];
+    }
+
+    /** Project a small public explanation from saved forecasts/context, never from raw results.
+     * @return array<string,mixed>
+     */
+    private function previewAnalysis(NhlGame $game, ?int $predictionRevisionId = null): array
+    {
+        $empty = ['revision_id' => null, 'predicted_at' => null, 'context_at' => null, 'teams' => [], 'insights' => []];
+        if (! in_array(strtoupper((string) $game->game_state), ['', 'FUT', 'PRE', 'PPD', 'CNCL'], true)) {
+            return $empty;
+        }
+        $revision = DB::table('nhl_game_prediction_revisions')->where('nhl_game_id', $game->nhl_game_id)
+            ->where('is_canonical', true)->where('prediction_available', true)
+            ->when($predictionRevisionId !== null, fn ($query) => $query->where('id', $predictionRevisionId))->orderByDesc('id')
+            ->first(['id', 'predicted_at', 'payload->inputs->sat_model_run_id as model_id']);
+        if ($revision === null) {
+            return $empty;
+        }
+        $cutoff = $game->start_time_utc?->min(now('UTC')) ?? now('UTC');
+        $contexts = fn (string $entity) => DB::table('nhl_'.$entity.'_game_pregame_contexts as context')
+            ->where('context.model_run_id', $revision->model_id)->where('context.nhl_game_id', $game->nhl_game_id)
+            ->where('context.context_version', NhlPregameContextBuilder::VERSION)->where('context.source_cutoff_at', '<=', $cutoff)
+            ->whereExists(fn ($query) => $query->selectRaw('1')->from('nhl_pregame_context_run_games as work')
+                ->whereColumn('work.run_id', 'context.run_id')->where('work.nhl_game_id', $game->nhl_game_id)
+                ->where('work.state', 'complete')->whereNotNull('work.comparisons_completed_at'));
+        $tokens = [];
+        foreach (['team', 'player'] as $entity) {
+            $tokens[$entity] = $revision->model_id === null ? [] : $contexts($entity)
+                ->selectRaw('MAX(context.updated_at) AS updated_at, MAX(context.run_id) AS run_id, COUNT(*) AS rows')->first();
+        }
+        $key = 'nhl:public-preview-analysis:v1:'.$revision->id.':'.hash('sha256', json_encode($tokens, JSON_THROW_ON_ERROR));
+
+        return Cache::remember($key, 300, function () use ($revision, $contexts, $game, $empty): array {
+            $saved = $this->previewProjection((int) $revision->id);
+            $teams = json_decode($saved->teams ?? '{}', true, 512, JSON_THROW_ON_ERROR) ?? [];
+            $inputs = json_decode($saved->inputs ?? '{}', true, 512, JSON_THROW_ON_ERROR) ?? [];
+            $ids = collect($teams)->flatMap(fn (array $team): array => array_column($team['roster'] ?? [], 'nhl_player_id'))->filter()->unique()->values();
+            $teamContexts = $revision->model_id === null ? collect() : $contexts('team')
+                ->get(['context.id', 'context.nhl_team_id', 'context.opponent_team_id', 'context.source_cutoff_at', 'context.metrics', 'context.opponent_metrics'])->keyBy('nhl_team_id');
+            $playerContexts = $revision->model_id === null ? collect() : $contexts('player')->whereIn('context.nhl_player_id', $ids)
+                ->get(['context.nhl_player_id', 'context.nhl_team_id', 'context.team_context_id', 'context.opponent_team_id',
+                    'context.source_cutoff_at', 'context.metrics->all as all_metrics', 'context.metrics->strength->PP as pp_metrics'])->keyBy('nhl_player_id');
+            $result = [...$empty, 'revision_id' => (int) $revision->id, 'predicted_at' => $revision->predicted_at];
+            $candidates = [];
+            foreach (['away', 'home'] as $side) {
+                $abbrev = (string) $game->{$side.'_team_abbrev'};
+                $teamId = (int) $game->{$side.'_team_id'};
+                $opponent = (int) $game->{($side === 'away' ? 'home' : 'away').'_team_id'};
+                $predicted = $teams[$side] ?? [];
+                if (($predicted['team_abbrev'] ?? null) !== $abbrev) {
+                    continue;
+                }
+                $roster = collect($predicted['roster'] ?? [])->filter(fn (array $p): bool => is_numeric($p['nhl_player_id'] ?? null)
+                    && (int) $p['nhl_player_id'] > 0)->unique('nhl_player_id');
+                $summary = $predicted['summary'] ?? [];
+                $total = $this->publicNumber($summary['adjusted_xgf_per_game'] ?? null);
+                $contributors = $roster->filter(fn (array $p): bool => ($this->publicNumber($p['projected_goals'] ?? null) ?? 0) > 0)
+                    ->sortByDesc('projected_goals')->take(3)->map(function (array $p) use ($total, $inputs, $side, $saved): array {
+                        $id = (int) $p['nhl_player_id'];
+
+                        return ['id' => $id, 'name' => (string) ($p['player_name'] ?? 'Player'),
+                            'goals' => (float) $p['projected_goals'],
+                            'ev_goals' => $this->publicNumber(data_get($p, 'strengths.EV.goals')),
+                            'pp_goals' => $this->publicNumber(data_get($p, 'strengths.PP.goals')),
+                            'share_pct' => $total !== null && $total > 0 ? 100 * $p['projected_goals'] / $total : null,
+                            'periods' => $this->contributorPeriods($inputs[$side] ?? [], $id, $this->publicNumber($saved->train_weight))];
+                    })->values()->all();
+                $result['teams'][$side] = ['abbrev' => $abbrev, 'goals' => $total,
+                    'ev_goals' => $this->publicNumber($summary['ev_xgf_per_game'] ?? null),
+                    'pp_goals' => $this->publicNumber($summary['pp_xgf_per_game'] ?? null),
+                    'sog' => $this->publicNumber($summary['adjusted_xsog_per_game'] ?? null), 'contributors' => $contributors];
+                $parent = $teamContexts->get($teamId);
+                if ($parent === null || (int) $parent->opponent_team_id !== $opponent) {
+                    continue;
+                }
+                $result['context_at'] = max($result['context_at'] ?? '', (string) $parent->source_cutoff_at);
+                $windows = json_decode($parent->metrics ?? '{}', true, 512, JSON_THROW_ON_ERROR) ?? [];
+                foreach (json_decode($parent->opponent_metrics ?? '{}', true, 512, JSON_THROW_ON_ERROR) ?? [] as $window => $values) {
+                    $windows['opponent_'.$window] = $values;
+                }
+                $candidates = [...$candidates, ...$this->contextInsights($side, $abbrev, 'team:'.$teamId, $abbrev, $windows, false)];
+                foreach ($roster as $p) {
+                    $context = $playerContexts->get((int) $p['nhl_player_id']);
+                    if ($context === null || (int) $context->team_context_id !== (int) $parent->id
+                        || (int) $context->nhl_team_id !== $teamId || (int) $context->opponent_team_id !== $opponent
+                        || $context->source_cutoff_at !== $parent->source_cutoff_at) {
+                        continue;
+                    }
+                    $candidates = [...$candidates, ...$this->contextInsights($side, $abbrev, 'player:'.$p['nhl_player_id'],
+                        (string) ($p['player_name'] ?? 'Player'), json_decode($context->all_metrics ?? '{}', true, 512, JSON_THROW_ON_ERROR) ?? [], true),
+                        ...$this->contextInsights($side, $abbrev, 'player:'.$p['nhl_player_id'],
+                            (string) ($p['player_name'] ?? 'Player'), json_decode($context->pp_metrics ?? '{}', true, 512, JSON_THROW_ON_ERROR) ?? [], true, true)];
+                }
+            }
+            // Rank relative departures, deduplicate windows, then balance the two teams.
+            $ranked = collect($candidates)->sortBy([['delta_pct', 'desc'], ['games', 'desc'], ['key', 'asc']])->unique('key');
+            $selected = ['away' => [], 'home' => []];
+            $entities = [];
+            foreach ($ranked as $fact) {
+                $limit = str_starts_with($fact['entity'], 'team:') ? 2 : 1;
+                if (count($selected[$fact['side']]) >= 3 || ($entities[$fact['entity']] ?? 0) >= $limit) {
+                    continue;
+                }
+                $fact['period'] = str_replace('opponent', (string) $game->{($fact['side'] === 'away' ? 'home' : 'away').'_team_abbrev'}, $fact['period']);
+                $selected[$fact['side']][] = Arr::except($fact, ['key', 'entity']);
+                $entities[$fact['entity']] = ($entities[$fact['entity']] ?? 0) + 1;
+            }
+            for ($i = 0; $i < 3; $i++) {
+                foreach (['away', 'home'] as $side) {
+                    if (isset($selected[$side][$i])) {
+                        $result['insights'][] = $selected[$side][$i];
+                    }
+                }
+            }
+
+            return $result;
+        });
+    }
+
+    /** Missing and invalid values remain unknown rather than becoming synthetic zero facts. */
+    private function publicNumber(mixed $value): ?float
+    {
+        return is_numeric($value) && is_finite((float) $value) ? (float) $value : null;
+    }
+
+    /** PostgreSQL projects just roster totals and distinct source names, never whole private bucket trees. */
+    private function previewProjection(int $revisionId): object
+    {
+        if (DB::getDriverName() !== 'pgsql') {
+            return DB::table('nhl_game_prediction_revisions')->where('id', $revisionId)->first([
+                'payload->teams as teams', 'evidence->custom_prediction->input->teams as inputs',
+                'payload->inputs->algorithm_definition->train_rate_weight as train_weight',
+            ]);
+        }
+        $rows = DB::select(<<<'SQL'
+            WITH saved AS MATERIALIZED (
+                SELECT payload::jsonb AS p, evidence::jsonb AS e
+                FROM nhl_game_prediction_revisions WHERE id = ?
+            ) SELECT side, p #>> '{inputs,algorithm_definition,train_rate_weight}' AS train_weight,
+                jsonb_build_object(
+                    'team_abbrev', p #> ARRAY['teams',side,'team_abbrev'],
+                    'summary', p #> ARRAY['teams',side,'summary'],
+                    'roster', COALESCE((SELECT jsonb_agg(jsonb_build_object(
+                        'nhl_player_id', r->'nhl_player_id', 'player_name', r->'player_name',
+                        'projected_goals', r->'projected_goals',
+                        'strengths', jsonb_build_object('EV', jsonb_build_object('goals', r #> '{strengths,EV,goals}'),
+                            'PP', jsonb_build_object('goals', r #> '{strengths,PP,goals}'))
+                    )) FROM jsonb_array_elements(CASE WHEN jsonb_typeof(p #> ARRAY['teams',side,'roster']) = 'array'
+                        THEN p #> ARRAY['teams',side,'roster'] ELSE '[]'::jsonb END) r), '[]'::jsonb)
+                ) AS team,
+                jsonb_build_object(
+                    'pp_offense_sources', e #> ARRAY['custom_prediction','input','teams',side,'pp_offense_sources'],
+                    'players', COALESCE((SELECT jsonb_object_agg(player.key, jsonb_build_object('ev_sources', jsonb_build_object(
+                        'source', (SELECT jsonb_agg(DISTINCT sources.value) FROM jsonb_path_query(player.value, '$.buckets.EV.*.source') AS sources(value)),
+                        'sog_source', (SELECT jsonb_agg(DISTINCT sources.value) FROM jsonb_path_query(player.value, '$.buckets.EV.*.sog_source') AS sources(value)),
+                        'goal_source', (SELECT jsonb_agg(DISTINCT sources.value) FROM jsonb_path_query(player.value, '$.buckets.EV.*.goal_source') AS sources(value))
+                    ))) FROM jsonb_each(CASE WHEN jsonb_typeof(e #> ARRAY['custom_prediction','input','teams',side,'players']) = 'object'
+                        THEN e #> ARRAY['custom_prediction','input','teams',side,'players'] ELSE '{}'::jsonb END) player), '{}'::jsonb)
+                ) AS inputs
+            FROM saved CROSS JOIN (VALUES ('away'), ('home')) AS sides(side)
+            SQL, [$revisionId]);
+        $teams = $inputs = [];
+        foreach ($rows as $row) {
+            $teams[$row->side] = json_decode($row->team, true, 512, JSON_THROW_ON_ERROR);
+            $inputs[$row->side] = json_decode($row->inputs, true, 512, JSON_THROW_ON_ERROR);
+        }
+
+        return (object) ['teams' => json_encode($teams, JSON_THROW_ON_ERROR),
+            'inputs' => json_encode($inputs, JSON_THROW_ON_ERROR), 'train_weight' => $rows[0]->train_weight ?? null];
+    }
+
+    /** Curate actual saved bucket-source periods; never infer a period from current configuration. */
+    private function contributorPeriods(array $side, int $playerId, ?float $trainWeight): array
+    {
+        $player = $side['players'][$playerId] ?? [];
+        $labels = ['last_5' => 'L5', 'last_10' => 'L10', 'last_20' => 'L20', 'last_season' => 'LSeason',
+            'season_to_date' => 'Current season', 'player_train' => 'Train', 'league_train' => 'League Train',
+            'train_league_bucket' => 'League Train bucket', 'train_league_strength' => 'League Train strength',
+            'train_league_fallback' => 'League Train fallback'];
+        if ($trainWeight !== null && $trainWeight >= 0 && $trainWeight <= 1) {
+            $weight = fn (float $value): string => rtrim(rtrim(number_format(100 * $value, 2, '.', ''), '0'), '.');
+            $labels['train_l10'] = 'Train '.$weight($trainWeight).'% + L10 '.$weight(1 - $trainWeight).'%';
+        }
+        $periods = [];
+        foreach (['source' => 'EV SAT/60', 'sog_source' => 'EV SOG/SAT', 'goal_source' => 'EV SH%'] as $field => $title) {
+            $values = collect($player['ev_sources'][$field] ?? collect($player['buckets']['EV'] ?? [])->pluck($field)->all())->unique()
+                ->map(fn ($key) => $labels[$key] ?? null)->filter()->values();
+            if ($values->isNotEmpty()) {
+                $periods[] = $title.': '.$values->implode(' / ');
+            }
+        }
+        $pp = $labels[$side['pp_offense_sources'][$playerId] ?? ''] ?? null;
+        if ($pp !== null) {
+            $periods[] = 'PP goals: '.$pp.' player goals/GP; final team allocation';
+        }
+
+        return $periods;
+    }
+
+    /** Compare saved windows with Train, requiring five appearances and a 25% relative departure. */
+    private function contextInsights(string $side, string $team, string $entity, string $name, array $windows, bool $player, bool $pp = false): array
+    {
+        $baseline = $windows['train'] ?? [];
+        if (($baseline['games'] ?? 0) < 5) {
+            return [];
+        }
+        $metrics = $player
+            ? ['sat' => 'SAT/GP', 'sog' => 'SOG/GP', 'goals' => 'G/GP', 'points' => 'PTS/GP', 'sat_per_60' => 'SAT/60', 'shooting_pct' => 'SH%']
+            : ['goals_for_per_game' => 'GF/GP', 'goals_against_per_game' => 'GA/GP', 'sat_for_per_game' => 'SAT/GP',
+                'corsi_pct' => 'Corsi%', 'shooting_pct' => 'SH%'];
+        if ($pp) {
+            $metrics = Arr::only($metrics, ['goals', 'sog']);
+        }
+        $periods = ['last_5' => 'L5', 'last_10' => 'L10', 'last_20' => 'L20', 'last_season' => 'LSeason',
+            'opponent_train' => 'Train vs opponent', 'opponent_last_5' => 'Vs opponent L5',
+            'opponent_last_10' => 'Vs opponent L10', 'opponent_last_20' => 'Vs opponent L20', 'opponent_last_season' => 'LSeason vs opponent'];
+        $facts = [];
+        foreach ($periods as $window => $label) {
+            $sample = $windows[$window] ?? [];
+            if (($sample['games'] ?? 0) < 5) {
+                continue;
+            }
+            foreach ($metrics as $key => $metric) {
+                $base = $this->publicNumber($baseline[$key] ?? null);
+                $value = $this->publicNumber($sample[$key] ?? null);
+                if ($player && in_array($key, ['sat', 'sog', 'goals', 'points'], true)) {
+                    $base = $base === null ? null : $base / $baseline['games'];
+                    $value = $value === null ? null : $value / $sample['games'];
+                }
+                if ($base === null || $value === null || $base <= 0 || $value < 0) {
+                    continue;
+                }
+                $delta = 100 * abs($value - $base) / $base;
+                if ($delta < 25) {
+                    continue;
+                }
+                $facts[] = ['key' => $entity.':'.($pp ? 'PP:' : '').$metric, 'entity' => $entity, 'side' => $side,
+                    'team' => $team, 'name' => $name, 'metric' => ($pp ? 'PP ' : '').$metric,
+                    'period' => $label, 'value' => $value, 'baseline' => $base, 'games' => (int) $sample['games'],
+                    'baseline_games' => (int) $baseline['games'], 'delta_pct' => $delta,
+                    'direction' => $value > $base ? 'higher' : 'lower', 'is_percentage' => str_ends_with($metric, '%')];
+            }
+        }
+
+        return $facts;
     }
 
     /** Summarize this season's completed games strictly before the selected matchup.
