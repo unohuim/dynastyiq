@@ -1129,3 +1129,119 @@ it('retains zero-strength appearances when reusing saved exposure', function ():
         ->and($player['complete']['PP'])->toBeTrue()
         ->and($player['history']['PP']['last_10']['games'])->toBe(4);
 });
+
+it('scales every EV bucket using the saved L5 record gap while preserving PP and minutes', function (): void {
+    $this->input['teams']['home']['team_metrics']['last_5'] = ['games' => 5, 'win_pct' => 60];
+    $this->input['teams']['away']['team_metrics']['last_5'] = ['games' => 5, 'win_pct' => 40];
+    config(['nhl-custom-prediction.team_l5_win_pct_weight' => 0]);
+    $baseline = $this->engine->predict($this->input);
+    config(['nhl-custom-prediction.team_l5_win_pct_weight' => 0.50]);
+    $adjusted = $this->engine->predict($this->input);
+
+    expect($adjusted['team_form_adjustment']['available'])->toBeTrue()
+        ->and($adjusted['team_form_adjustment']['win_pct'])->toBe(['home' => 60.0, 'away' => 40.0])
+        ->and($adjusted['team_form_adjustment']['sample_games'])->toBe(['home' => 5, 'away' => 5]);
+    foreach (['home' => 1.1, 'away' => 0.9] as $venue => $multiplier) {
+        $before = $baseline['teams'][$venue];
+        $after = $adjusted['teams'][$venue];
+        expect($after['time'])->toBe($before['time'])
+            ->and($after['pp_opportunities'])->toBe($before['pp_opportunities'])
+            ->and($after['strengths']['PP'])->toBe($before['strengths']['PP'])
+            ->and($after['pp_allocation'])->toBe($before['pp_allocation'])
+            ->and($after['ev_form_multiplier'])->toBe($multiplier);
+        foreach ($after['players'] as $id => $player) {
+            $old = $before['players'][$id];
+            expect($player['strengths']['EV']['seconds'])->toBe($old['strengths']['EV']['seconds'])
+                ->and($player['strengths']['EV']['share'])->toBe($old['strengths']['EV']['share'])
+                ->and($player['strengths']['PP'])->toBe($old['strengths']['PP']);
+            foreach (['sat', 'sog', 'goals'] as $metric) {
+                expect(abs($player['strengths']['EV']['buckets']['B'][$metric]
+                    - $old['strengths']['EV']['buckets']['B'][$metric] * $multiplier))->toBeLessThan(1.0e-12);
+            }
+        }
+    }
+    $expected = $this->engine->winProbabilities($adjusted['teams']['home']['goals'], $adjusted['teams']['away']['goals']);
+    expect($adjusted['home_win_probability'])->toBe($expected['home'])
+        ->and($adjusted['home_win_probability'])->toBeGreaterThan($baseline['home_win_probability'])
+        ->and($adjusted['away_win_probability'])->toBe(1 - $adjusted['home_win_probability']);
+});
+
+it('applies the same L5 factor in every quarter and at mismatched quarter boundaries', function (int $homeGame, int $awayGame): void {
+    $this->input['teams']['home']['team_metrics'] = ['last_5' => ['games' => 5, 'win_pct' => 60],
+        'season_to_date' => ['games' => $homeGame - 1]];
+    $this->input['teams']['away']['team_metrics'] = ['last_5' => ['games' => 5, 'win_pct' => 40],
+        'season_to_date' => ['games' => $awayGame - 1]];
+    $prediction = $this->engine->predict($this->input);
+    expect($prediction['teams']['home']['ev_form_multiplier'])->toBe(1.1)
+        ->and($prediction['teams']['away']['ev_form_multiplier'])->toBe(0.9);
+})->with([[1, 1], [20, 20], [21, 21], [40, 40], [41, 41], [60, 60], [61, 61], [82, 82], [20, 21], [60, 61]]);
+
+it('keeps both teams neutral when either saved L5 sample is missing or invalid', function (string $venue, string $case): void {
+    foreach (['home', 'away'] as $side) {
+        $this->input['teams'][$side]['team_metrics']['last_5'] = ['games' => 5, 'win_pct' => 60];
+    }
+    config(['nhl-custom-prediction.team_l5_win_pct_weight' => 0]);
+    $baseline = $this->engine->predict($this->input);
+    config(['nhl-custom-prediction.team_l5_win_pct_weight' => 0.50]);
+    $this->input['teams'][$venue]['team_metrics']['last_5'] = match ($case) {
+        'missing' => null,
+        'no_games' => ['games' => 0, 'win_pct' => 100],
+        'fractional_games' => ['games' => 2.5, 'win_pct' => 100],
+        'no_rate' => ['games' => 5, 'win_pct' => null],
+        'negative_rate' => ['games' => 5, 'win_pct' => -1],
+        'excess_rate' => ['games' => 5, 'win_pct' => 101],
+        'nonfinite_rate' => ['games' => 5, 'win_pct' => INF],
+    };
+    $adjusted = $this->engine->predict($this->input);
+    expect($adjusted['team_form_adjustment']['available'])->toBeFalse()
+        ->and($adjusted['teams']['home']['ev_form_multiplier'])->toBe(1.0)
+        ->and($adjusted['teams']['away']['ev_form_multiplier'])->toBe(1.0)
+        ->and($adjusted['total_goals'])->toBe($baseline['total_goals'])
+        ->and($adjusted['home_win_probability'])->toBe($baseline['home_win_probability']);
+})->with(['home', 'away'])->with(['missing', 'no_games', 'fractional_games', 'no_rate', 'negative_rate', 'excess_rate', 'nonfinite_rate']);
+
+it('accepts observed zero win percentages and nonempty opening-season samples', function (): void {
+    $this->input['teams']['home']['team_metrics']['last_5'] = ['games' => 2, 'win_pct' => 0];
+    $this->input['teams']['away']['team_metrics']['last_5'] = ['games' => 3, 'win_pct' => 100];
+    $prediction = $this->engine->predict($this->input);
+    expect($prediction['team_form_adjustment']['available'])->toBeTrue()
+        ->and($prediction['team_form_adjustment']['sample_games'])->toBe(['home' => 2, 'away' => 3])
+        ->and($prediction['teams']['home']['ev_form_multiplier'])->toBe(0.5)
+        ->and($prediction['teams']['away']['ev_form_multiplier'])->toBe(1.5);
+});
+
+it('leaves equal L5 records neutral and reverses the adjustment when records reverse', function (): void {
+    foreach (['home', 'away'] as $venue) {
+        $this->input['teams'][$venue]['team_metrics']['last_5'] = ['games' => 5, 'win_pct' => 60];
+    }
+    $equal = $this->engine->predict($this->input);
+    expect($equal['team_form_adjustment']['available'])->toBeTrue()
+        ->and($equal['teams']['home']['ev_form_multiplier'])->toBe(1.0)
+        ->and($equal['teams']['away']['ev_form_multiplier'])->toBe(1.0);
+    $this->input['teams']['away']['team_metrics']['last_5']['win_pct'] = 80;
+    $reversed = $this->engine->predict($this->input);
+    expect($reversed['teams']['home']['ev_form_multiplier'])->toBe(0.9)
+        ->and($reversed['teams']['away']['ev_form_multiplier'])->toBe(1.1)
+        ->and($reversed['home_win_probability'])->toBeLessThan($equal['home_win_probability']);
+});
+
+it('keeps the L5 layer independent of the schedule switch and preserves the separate travel delta', function (bool $withSchedule): void {
+    $this->input['teams']['home']['team_metrics']['last_5'] = ['games' => 5, 'win_pct' => 60];
+    $this->input['teams']['away']['team_metrics']['last_5'] = ['games' => 5, 'win_pct' => 40];
+    $this->input['teams']['away']['schedule'] = ['back_to_back' => true, 'games_including_target_last_7_days' => 4];
+    config(['nhl-custom-prediction.team_l5_win_pct_weight' => 0]);
+    $baseline = $this->engine->predict($this->input, $withSchedule);
+    config(['nhl-custom-prediction.team_l5_win_pct_weight' => 0.50]);
+    $adjusted = $this->engine->predict($this->input, $withSchedule);
+    expect($adjusted['teams']['away']['ev_form_multiplier'])->toBe(0.9)
+        ->and($adjusted['teams']['away']['schedule_adjustment_applied'])->toBe($withSchedule)
+        ->and($adjusted['home_probability_schedule_delta'])->toBe($baseline['home_probability_schedule_delta'])
+        ->and($adjusted['teams']['away']['players'][100]['strengths']['EV']['schedule_multiplier'])
+        ->toBe($withSchedule ? 0.98 : 1.0)
+        ->and($adjusted['teams']['away']['players'][101]['strengths']['EV']['schedule_multiplier'])
+        ->toBe($withSchedule ? 0.97 : 1.0)
+        ->and($adjusted['teams']['away']['strengths']['PP'])->toBe($baseline['teams']['away']['strengths']['PP']);
+    $probability = $this->engine->winProbabilities($adjusted['teams']['home']['goals'], $adjusted['teams']['away']['goals']);
+    expect(abs($adjusted['home_win_probability'] - min(1.0, $probability['home']
+        + $adjusted['home_probability_schedule_delta'])))->toBeLessThan(1.0e-12);
+})->with([true, false]);

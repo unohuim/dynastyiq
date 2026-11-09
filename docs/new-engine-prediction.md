@@ -4,7 +4,7 @@ Started November 2, 2026.
 
 This working guide records the ordered stages of the custom engine and the
 accuracy evidence available for them. The shared default calculator is
-`custom_ev_pp_v2`, used by API, admin, previews, evaluations, the matchup simulator
+`custom_ev_pp_v3`, used by API, admin, previews, evaluations, the matchup simulator
 and `nhl:custom-predict`. Earlier measured research cohorts below remain historical
 evidence; they are not measurements of this rollout.
 
@@ -40,6 +40,8 @@ Canonical rules and evidence remain in:
    player's appropriate historical windows and retained model buckets.
 8. **Apply opposing defense and the agreed production context.** Adjust the
    relevant player buckets and strength lanes before calculating final volume.
+   Apply the adopted L5 team-win% multiplier to EV SAT in every quarter,
+   including quarter-boundary matchups; missing either team's sample is neutral.
 9. **Convert player rates and minutes into SAT/game.** Convert each player and
    bucket separately before summing team totals.
 10. **Convert SAT into SOG and baseline goals.** Use player-specific bucket
@@ -67,6 +69,28 @@ The shared calculator uses the documented L10 allocation baseline. The older win
 replay's missing EV season-gap/PDO finishing math is historical evidence, not an
 active adjustment. Source rules distinguish adopted formulas, research
 candidates and measured results.
+
+## Adopted L5 team-record adjustment
+
+Adopted November 9, 2026, for all quarters and quarter-boundary games. Read each
+team's saved pregame L5 win percentage and sample count. The production rule is
+owned by [NhlCustomGamePrediction.yaml](architecture/stats/NhlCustomGamePrediction.yaml).
+With `d = (home L5 win% - away L5 win%) / 100`, multiply home EV bucket SAT by
+`1 + 0.50*d` and away EV bucket SAT by `1 - 0.50*d`. Existing bucket conversion
+probabilities carry that volume through to SOG and EV goals. Both sides are
+neutral if either L5 sample is unavailable; a measured zero win% remains valid.
+No new history read, quarter calculation or model fit is added. PP, player
+minutes and the existing defensive/schedule calculations retain their roles.
+
+The supporting Sep2026 2025–26 experiment changed 676/1,290 correct winners
+(52.40%) to 697/1,290 (54.03%), adding 21 correct picks. Its 22 source-integrity
+exclusions were identical. This was a full-Test-selected exploratory result,
+not a new execution of the edited engine or a guaranteed future win rate. The
+setting was adopted despite that limitation. The earlier-period-selected Train
+alternative did not add winners later and is not the adopted rule.
+
+Full evidence, quarter breakdown and next-factor status:
+[pregame-factor-win-impact.md](analysis/pregame-factor-win-impact.md).
 
 ## Executable custom replay runner
 

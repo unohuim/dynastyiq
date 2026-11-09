@@ -59,6 +59,7 @@ class NhlCustomGamePredictionEngine
         if ($shareTotal <= 0) {
             throw new DomainException('Combined Train opportunity shares have no positive denominator.');
         }
+        $form = $this->teamForm($sides, $this->probability($definition['team_l5_win_pct_weight'] ?? null));
         $opportunities = [];
         foreach (['away' => 'home', 'home' => 'away'] as $venue => $opponent) {
             $base = $definition['initial_game_pp_opportunities'] * $sides[$venue]['train_opportunity_share'] / $shareTotal;
@@ -95,6 +96,7 @@ class NhlCustomGamePredictionEngine
                 'pp_opportunities' => $opportunities[$venue],
                 'time' => ['EV' => $ev, 'PP' => $pp[$venue], 'PK' => $pp[$opponent]],
                 'schedule_adjustment_applied' => $qualifies,
+                'ev_form_multiplier' => $form['multipliers'][$venue],
                 'players' => [], 'strengths' => ['EV' => $this->emptyTotals(), 'PP' => $this->emptyTotals()],
             ];
             foreach ($side['players'] as $id => $player) {
@@ -113,8 +115,9 @@ class NhlCustomGamePredictionEngine
                     $seconds = 5 * $team['time'][$lane] * $share;
                     $multiplier = $qualifies
                         ? $definition['schedule'][$player['role'] === 'D' ? 'defense_sat_multiplier' : 'forward_sat_multiplier'] : 1.0;
+                    $formMultiplier = $lane === 'EV' ? $form['multipliers'][$venue] : 1.0;
                     $line = [...$this->emptyTotals(), 'share' => $share, 'seconds' => $seconds,
-                        'schedule_multiplier' => $multiplier, 'buckets' => []];
+                        'schedule_multiplier' => $multiplier, 'form_multiplier' => $formMultiplier, 'buckets' => []];
                     foreach ($player['buckets'][$lane] ?? [] as $key => $bucket) {
                         if (! isset($retained[$key])) {
                             throw new DomainException('A forecast bucket is outside the frozen Train-confidence filter.');
@@ -123,13 +126,14 @@ class NhlCustomGamePredictionEngine
                         $allowance = $this->positive($bucket['defense_allowance'] ?? null, 'Defensive allowance');
                         $reference = $this->positive($bucket['defense_reference'] ?? null, 'Historical defensive reference');
                         $defense = ($allowance / $reference) ** $definition['defense']['coefficients'][$lane];
-                        $sat = $rate * $seconds / 3600 * $defense * $multiplier;
+                        $sat = $rate * $seconds / 3600 * $defense * $multiplier * $formMultiplier;
                         $sog = $sat * $this->probability($bucket['sog_probability'] ?? null);
                         $goals = $sog * $this->probability($bucket['goal_probability'] ?? null);
                         $line['buckets'][$key] = ['sat' => $sat, 'sog' => $sog, 'goals' => $goals,
                             'defense_allowance_source' => $bucket['defense_allowance_source'] ?? null,
                             'defense_reference_sources' => $bucket['defense_reference_sources'] ?? [],
-                            'defense_multiplier' => $defense, 'schedule_multiplier' => $multiplier];
+                            'defense_multiplier' => $defense, 'schedule_multiplier' => $multiplier,
+                            'form_multiplier' => $formMultiplier];
                         foreach (['sat', 'sog', 'goals'] as $metric) {
                             $line[$metric] += $line['buckets'][$key][$metric];
                         }
@@ -160,6 +164,7 @@ class NhlCustomGamePredictionEngine
             'teams' => $teams, 'total_goals' => $teams['home']['goals'] + $teams['away']['goals'],
             'home_win_probability' => $homeProbability, 'away_win_probability' => 1 - $homeProbability,
             'home_probability_schedule_delta' => $probabilityDelta,
+            'team_form_adjustment' => $form,
             'base_home_win_probability' => $probabilities['home'],
             'regulation_tie_probability' => $probabilities['tie'],
             'recommendation' => abs($homeProbability - 0.5) < 1.0e-12 ? 'OT'
@@ -169,6 +174,31 @@ class NhlCustomGamePredictionEngine
                 'effective_input_completeness' => ['EV' => 1.0, 'PP' => 1.0],
                 'calibration' => 'unavailable', 'schedule_enabled' => $withSchedule],
         ];
+    }
+
+    /** Compare saved L5 team records without querying history or changing player usage.
+     * @param array<string,array<string,mixed>> $sides
+     * @return array<string,mixed>
+     */
+    private function teamForm(array $sides, float $weight): array
+    {
+        $rates = $samples = [];
+        foreach (['home', 'away'] as $venue) {
+            $row = $sides[$venue]['team_metrics']['last_5'] ?? [];
+            $games = is_array($row) ? ($row['games'] ?? null) : null;
+            $rate = is_array($row) ? ($row['win_pct'] ?? null) : null;
+            $valid = is_numeric($games) && is_finite((float) $games) && $games > 0
+                && floor((float) $games) === (float) $games
+                && is_numeric($rate) && is_finite((float) $rate) && $rate >= 0 && $rate <= 100;
+            $rates[$venue] = $valid ? (float) $rate : null;
+            $samples[$venue] = $valid ? (int) $games : null;
+        }
+        $available = $rates['home'] !== null && $rates['away'] !== null;
+        $delta = $available ? ($rates['home'] - $rates['away']) / 100 : 0.0;
+
+        return ['window' => 'last_5', 'weight' => $weight, 'available' => $available,
+            'win_pct' => $rates, 'sample_games' => $samples,
+            'multipliers' => ['home' => 1 + $weight * $delta, 'away' => 1 - $weight * $delta]];
     }
 
     /** Exact-fourth B2Bs are mutually exclusive with standalone B2B and third-in-seven. */

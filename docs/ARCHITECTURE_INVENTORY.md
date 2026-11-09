@@ -4177,7 +4177,7 @@ NHL gamecenter boxscore rosters are checked only for game/teams without complete
 **Name:** NHL Custom Game Prediction Evidence
 **Type:** Default Pregame Game Calculator And Immutable Prediction Evidence
 
-`NhlCustomGameForecast` supplies the shared `custom_ev_pp_v2` calculator to API,
+`NhlCustomGameForecast` supplies the shared `custom_ev_pp_v3` calculator to API,
 manual admin runs, engine/stack previews, evaluation, simulator and command
 callers. Every requested scheduled state is admitted. The 100% completion target
 uses matching retained Train fallbacks, preserving measured zeros and observed
@@ -4189,6 +4189,10 @@ Prepared-date inputs are cached with source/configuration fingerprints and a
 preparation lock. Existing response-cache/history paths archive private inputs
 and immutable revisions. Standalone replay can still save separate custom runs.
 No target results are used as requested-date forecast inputs.
+The adopted L5 team-win% gap scales EV bucket volume at weight 0.50 in every
+quarter. It reads saved team metrics, leaves PP and minutes unchanged, and is
+neutral for both teams when either sample is unavailable. Revision evidence
+records the rates, samples and multipliers; older algorithm revisions remain.
 
 The custom game predictor persists its own versioned runs, per-game winner
 probabilities, confidence, recommendations, and final outcomes. Each prediction

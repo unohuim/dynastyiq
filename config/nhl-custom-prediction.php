@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 return [
-    'algorithm_version' => 'custom_ev_pp_v2',
+    'algorithm_version' => 'custom_ev_pp_v3',
     'input_pipeline_version' => 'saved_pregame_checkpointed_v4',
     'reference_train_seasons' => ['20222023', '20232024', '20242025'],
     // Required completion after fallbacks, not a gate on observed player history.
@@ -13,6 +13,7 @@ return [
     'pp_minutes_per_opportunity' => 1.6367061050638902,
     'opponent_opportunity_weight' => 0.75,
     'train_rate_weight' => 0.50,
+    'team_l5_win_pct_weight' => 0.50,
     'defense' => [
         'prior_minutes' => 150.0,
         'fit_iterations' => 100,

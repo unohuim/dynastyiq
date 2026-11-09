@@ -124,7 +124,7 @@ it('rejects nonpositive totals', function (): void {
 it('uses the new shared engine and SAT_V2 for an ordinary API request', function (): void {
     ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction_available', true)
         ->assertJsonPath('inputs.sat_model_run_id', $this->model->id)
-        ->assertJsonPath('inputs.algorithm_version', 'custom_ev_pp_v2')
+        ->assertJsonPath('inputs.algorithm_version', 'custom_ev_pp_v3')
         ->assertJsonPath('inputs.engine_id', null)->assertJsonPath('inputs.stack_id', null);
 });
 
@@ -272,14 +272,48 @@ it('uses the same new calculation in empty saved stack previews', function (): v
 
 it('routes the standalone matchup simulator through the same new engine', function (): void {
     $result = app(NhlProjectedTeamMatchupSimulator::class)->simulate('20252026', '20262027', '', '', '', 'BUF', 'COL');
-    expect($result['inputs']['algorithm_version'])->toBe('custom_ev_pp_v2')
+    expect($result['inputs']['algorithm_version'])->toBe('custom_ev_pp_v3')
         ->and($result['sides'][0]['summary']['total_goalie_adjusted_xgf_per_game'])->toBe(($this->calculate)()['teams']['away']['goals']);
 });
 
 it('returns current algorithm provenance in saved revision summaries', function (): void {
     $response = ($this->requestPrediction)()->assertOk();
     $row = DB::table('nhl_game_prediction_revisions')->find($response->json('meta.prediction_revision_id'));
-    expect(json_decode($row->summary, true)['algorithm_version'])->toBe('custom_ev_pp_v2');
+    expect(json_decode($row->summary, true)['algorithm_version'])->toBe('custom_ev_pp_v3');
+});
+
+it('publishes L5 adjusted scores and probabilities while archiving its source evidence privately', function (): void {
+    $this->input['teams']['home']['team_metrics']['last_5'] = ['games' => 5, 'win_pct' => 60];
+    $this->input['teams']['away']['team_metrics']['last_5'] = ['games' => 5, 'win_pct' => 40];
+    $expected = ($this->calculate)();
+    $response = ($this->requestPrediction)()->assertOk()
+        ->assertJsonPath('inputs.algorithm_version', 'custom_ev_pp_v3')
+        ->assertJsonPath('inputs.algorithm_definition.team_l5_win_pct_weight', 0.5)
+        ->assertJsonPath('prediction.predicted_score.home', round($expected['teams']['home']['goals'], 2))
+        ->assertJsonPath('prediction.home_win_probability', $expected['home_win_probability'])
+        ->assertJsonMissingPath('_custom_prediction_evidence');
+    $revision = DB::table('nhl_game_prediction_revisions')->find($response->json('meta.prediction_revision_id'));
+    $evidence = json_decode($revision->evidence, true)['custom_prediction'];
+    expect($evidence['team_form_adjustment'])->toEqual($expected['team_form_adjustment'])
+        ->and($evidence['input']['teams']['home']['team_metrics']['last_5']['win_pct'])->toBe(60);
+});
+
+it('invalidates earlier algorithm cache entries while retaining the previous immutable revision', function (): void {
+    $this->input['teams']['home']['team_metrics']['last_5'] = ['games' => 5, 'win_pct' => 60];
+    $this->input['teams']['away']['team_metrics']['last_5'] = ['games' => 5, 'win_pct' => 40];
+    config(['nhl-custom-prediction.algorithm_version' => 'custom_ev_pp_v2',
+        'nhl-custom-prediction.team_l5_win_pct_weight' => 0]);
+    $first = ($this->requestPrediction)()->assertOk()->json('meta.prediction_revision_id');
+    $original = DB::table('nhl_game_prediction_revisions')->find($first);
+    config(['nhl-custom-prediction.algorithm_version' => 'custom_ev_pp_v3',
+        'nhl-custom-prediction.team_l5_win_pct_weight' => 0.50]);
+    $second = ($this->requestPrediction)()->assertOk()
+        ->assertJsonPath('inputs.algorithm_version', 'custom_ev_pp_v3')->json('meta.prediction_revision_id');
+    expect($second)->not->toBe($first)
+        ->and(DB::table('nhl_game_prediction_revisions')->where('id', $first)->value('payload'))->toBe($original->payload)
+        ->and(json_decode(DB::table('nhl_game_prediction_revisions')->where('id', $first)->value('summary'), true)['algorithm_version'])
+        ->toBe('custom_ev_pp_v2');
+    $this->assertDatabaseCount('nhl_game_prediction_revisions', 2);
 });
 
 it('defaults explicit puckline requests to the NHL standard 1.5 spread', function (): void {
@@ -469,7 +503,7 @@ it('automatically saves and publishes the prediction when queued dependencies be
     $job->handle(app(\App\Services\NhlGamePredictionResponseCache::class), app(NhlGamePredictionPayload::class));
     $this->assertDatabaseCount('nhl_game_prediction_revisions', 1);
     ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction_available', true)
-        ->assertJsonPath('inputs.algorithm_version', 'custom_ev_pp_v2');
+        ->assertJsonPath('inputs.algorithm_version', 'custom_ev_pp_v3');
     $this->assertDatabaseCount('nhl_game_prediction_revisions', 1);
 });
 

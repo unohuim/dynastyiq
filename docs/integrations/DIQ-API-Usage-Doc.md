@@ -23,6 +23,15 @@ come directly from the shared calculator, including its equal regulation-tie
 resolution and approved schedule adjustment. Scores are already final EV+PP
 team estimates; do not divide them by legacy offensive/defensive weights.
 
+The current scoring version includes the adopted L5 team-record adjustment to
+EV bucket production in every quarter. It reads saved pregame team records;
+PP and player minutes retain their calculations, and missing either L5 sample
+keeps both teams neutral. The weight is recorded in
+`inputs.algorithm_definition.team_l5_win_pct_weight`. Consumers should use the
+returned scores and probabilities directly rather than applying this factor
+again. Exact rules remain in
+[NhlCustomGamePrediction.yaml](../architecture/stats/NhlCustomGamePrediction.yaml).
+
 Read `inputs.algorithm_version`, `inputs.sat_model_run_id`,
 `inputs.training_season_ids`, `inputs.algorithm_definition`, and
 `prediction.confidence_inputs`. Legacy engine/stack IDs may be null even for a

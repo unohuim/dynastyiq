@@ -178,7 +178,8 @@ class NhlGamePredictionPayload
             'anticipated_lineups' => $lineups, 'teams' => $teams, 'reasons' => $reasons,
             'meta' => ['source_system' => 'dynastyiq', 'source_fetched_at' => now()->toIso8601String(),
                 'algorithm_version' => config('nhl-custom-prediction.algorithm_version')],
-            '_custom_prediction_evidence' => ['metadata' => $forecast['metadata'], 'input' => $forecast['input']]];
+            '_custom_prediction_evidence' => ['metadata' => $forecast['metadata'], 'input' => $forecast['input'],
+                'team_form_adjustment' => $custom['team_form_adjustment'] ?? null]];
     }
 
     /** Shared priority delegation for both ordinary predictions and admin stack previews.

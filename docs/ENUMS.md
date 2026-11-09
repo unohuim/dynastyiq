@@ -2927,6 +2927,8 @@ These values select the test-page data source only; they do not add canonical li
 `nhl_custom_game_prediction_runs.algorithm_version` uses `custom_ev_pp_v1` for
 the first executable isolated EV/PP replay. `custom_ev_pp_v2` identifies the
 shared default calculator with fallback-filled inputs for all requested games.
+`custom_ev_pp_v3` adds the all-quarter L5 team-win-percentage EV production
+adjustment at weight 0.50. Earlier revisions retain their original algorithm.
 The frozen run definition records
 its schedule mode and coefficient horizon; changing those inputs creates a new
 run rather than rewriting earlier predictions.
@@ -3050,7 +3052,7 @@ identifies a completed empty missing-work selection. Updates keep the existing
 
 - `nhl-custom-prediction.input_pipeline_version`: `saved_pregame_checkpointed_v4`
   identifies saved-context preparation reusing player strength-window aggregates, with bounded cache checkpoints, actual participant selection for finished games and statistical-content freshness; the scoring
-  algorithm remains `custom_ev_pp_v2`.
+  scoring algorithm is independently versioned; the current version is `custom_ev_pp_v3`.
 - `nhl_pregame_context_runs.options.trigger`: `prediction` identifies an explicit
   prediction dependency. Existing `manual_update` and `auto_sync` keep their meaning.
 - Prediction run options `game_ids`, `prediction_evidence` and

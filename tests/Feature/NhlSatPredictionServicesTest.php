@@ -252,14 +252,14 @@ it('routes matchup requests to the single new default calculator', function (): 
     $service = Mockery::mock(\App\Services\NhlCustomGameForecast::class);
     $service->shouldReceive('predict')->once()->with(2026020990, $this->run->id, false, ['away' => [101], 'home' => [102]])
         ->andReturn(['fixture' => true]);
-    $expected = ['is_available' => true, 'inputs' => ['algorithm_version' => 'custom_ev_pp_v2'],
+    $expected = ['is_available' => true, 'inputs' => ['algorithm_version' => 'custom_ev_pp_v3'],
         'sides' => [['offense_team' => 'AAA'], ['offense_team' => 'BBB']]];
     $service->shouldReceive('matchup')->once()->with(['fixture' => true])->andReturn($expected);
     app()->instance(\App\Services\NhlCustomGameForecast::class, $service);
     $result = app(\App\Services\NhlProjectedTeamMatchupSimulator::class)->simulateWithRosters(
         '20242025', '20262027', '', '', '', 'AAA', 'BBB', null, null, [101], [102], $this->run->id
     );
-    expect($result['inputs']['algorithm_version'])->toBe('custom_ev_pp_v2')
+    expect($result['inputs']['algorithm_version'])->toBe('custom_ev_pp_v3')
         ->and($result['inputs']['nhl_game_id'])->toBe(2026020990);
 });
 
@@ -335,7 +335,7 @@ it('exposes new engine values through the real API without replacing saved model
         'token_hash' => \App\Models\ApiClient::hashToken($token), 'scopes' => ['nhl-stats:read']]);
     $this->withToken($token)->getJson('/api/nhl-game-predictions?nhl_game_id=2026020990')->assertOk()
         ->assertJsonPath('inputs.sat_model_run_id', $this->run->id)
-        ->assertJsonPath('inputs.algorithm_version', 'custom_ev_pp_v2')
+        ->assertJsonPath('inputs.algorithm_version', 'custom_ev_pp_v3')
         ->assertJsonPath('teams.away.roster.0.nhl_player_id', 101)
         ->assertJsonPath('teams.away.roster.0.projection_source', 'custom_pregame')
         ->assertJsonPath('prediction.predicted_score.away', 1.1)
