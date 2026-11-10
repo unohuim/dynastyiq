@@ -291,6 +291,22 @@ describe('saved pregame explanations and insights', function (): void {
             ->and($data['defense_sat_change_pct'])->toEqualWithDelta(-3, 1e-9);
     });
 
+    it('reads matching committed context for L5 goals and its previous-season norm', function (): void {
+        foreach (range(1, 5) as $day) {
+            ($this->makeGame)(2026020700 + $day, ['game_date' => '2026-10-'.(27 - $day), 'home_team_score' => 4, 'away_team_score' => 2]);
+        }
+        ($this->makeGame)(2025020700, ['season_id' => '20252026', 'game_date' => '2026-04-01', 'home_team_score' => 3, 'away_team_score' => 4]);
+        DB::table('nhl_team_game_pregame_contexts')->where('nhl_team_id', 10)->update(['metrics' => json_encode([
+            'last_5' => ['games' => 5, 'goals_for_per_game' => 4, 'goals_against_per_game' => 2],
+            'last_season' => ['games' => 1, 'goals_for_per_game' => 3, 'goals_against_per_game' => 4],
+        ])]);
+        $this->getJson('/games/2026020001/details?section=matchup')->assertOk()
+            ->assertJsonPath('data.home.form.scoring_trend.gf_gp.value', 4)
+            ->assertJsonPath('data.home.form.scoring_trend.gf_gp.norm', 3)
+            ->assertJsonPath('data.home.form.scoring_trend.ga_gp.value', 2)
+            ->assertJsonPath('data.home.form.scoring_trend.ga_gp.norm', 4);
+    });
+
     it('balances six distinct facts across the teams and includes numeric comparisons', function (): void {
         $facts = ($this->analysis)()['insights'];
         expect($facts)->toHaveCount(6)->and(array_count_values(array_column($facts, 'side')))->toBe(['away' => 3, 'home' => 3]);
@@ -485,16 +501,71 @@ describe('Matchup season statistics', function (): void {
         Bus::assertDispatched(RefreshNhlPublicGamePageJob::class, 1);
     });
 
-    it('uses prepared expected goal rates and withholds incomplete coverage', function (): void {
+    it('uses available prepared xG without blanking partially rated samples', function (): void {
         $reader = Mockery::mock(\App\Services\NhlStatsDashboardPayload::class);
-        $reader->shouldReceive('teamExpectationsForGames')->once()->with('20262027', [2026020002], '2026-10-26', 2)
-            ->andReturn([collect([10 => (object) ['games' => 1, 'scored' => 3, 'attempts' => 3, 'xg' => 2.5]]),
-                collect([10 => (object) ['games' => 1, 'scored' => 1, 'attempts' => 2, 'xg' => 1.2]])]);
+        $reader->shouldReceive('teamExpectationsForGames')->once()->with('20262027', [2026020002], '2026-10-26', 2, true)
+            ->andReturn([collect(['2026020002:10' => (object) ['games' => 1, 'scored' => 3, 'attempts' => 3, 'xg' => 2.5]]),
+                collect(['2026020002:10' => (object) ['games' => 1, 'scored' => 1, 'attempts' => 2, 'xg' => 1.2]])]);
         app()->instance(\App\Services\NhlStatsDashboardPayload::class, $reader);
         app(NhlPublicGamePage::class)->prepare(2026020001);
         $data = ($this->matchup)();
         expect($data['matchup_expected_pending'])->toBeFalse()->and($data['home']['form']['xgf_gp'])->toEqual(2.5)
-            ->and($data['home']['form']['xga_gp'])->toBeNull();
+            ->and($data['home']['form']['xga_gp'])->toEqual(1.2)
+            ->and($data['home']['form']['scoring_trend']['xga_gp'])->toMatchArray(['value' => 1.2, 'norm' => null, 'change_pct' => null]);
+    });
+
+    it('uses season norm at ten completed games and last season below ten', function (int $games, string $period): void {
+        foreach (range(1, $games - 1) as $day) {
+            ($this->makeGame)(2026020100 + $day, ['game_date' => '2026-10-'.(26 - $day),
+                'home_team_score' => $day < 5 ? 4 : 2, 'away_team_score' => $day < 5 ? 2 : 4]);
+        }
+        ($this->makeGame)(2025020100, ['season_id' => '20252026', 'game_date' => '2026-04-01', 'home_team_score' => 2, 'away_team_score' => 4]);
+        ($this->makeGame)(2026020999, ['game_date' => '2026-10-28', 'home_team_score' => 99]);
+        $data = $this->getJson('/games/2026020001/details?section=matchup')->assertOk()
+            ->assertJsonPath('data.home.form.scoring_trend.norm_period', $period)
+            ->assertJsonPath('data.home.form.scoring_trend.games', 5)
+            ->assertJsonPath('data.home.form.scoring_trend.gf_gp.value', 4)
+            ->json('data.home.form.scoring_trend');
+        if ($games === 10) {
+            expect($data['norm_games'])->toBe(10)->and($data['gf_gp']['norm'])->toEqual(3)
+                ->and($data['gf_gp']['change_pct'])->toEqualWithDelta(100 / 3, 1e-7)
+                ->and($data['ga_gp']['change_pct'])->toEqualWithDelta(-100 / 3, 1e-7);
+        } else {
+            expect($data['norm_games'])->toBe(1)->and($data['gf_gp']['norm'])->toEqual(2)
+                ->and($data['gf_gp']['change_pct'])->toEqual(100);
+        }
+    })->with([[9, 'last_season'], [10, 'season_to_date']]);
+
+    it('uses prior-season games in early L5 while retaining a zero norm without dividing by zero', function (): void {
+        ($this->makeGame)(2025020100, ['season_id' => '20252026', 'game_date' => '2026-04-01', 'home_team_score' => 0, 'away_team_score' => 2]);
+        $trend = ($this->matchup)()['home']['form']['scoring_trend'];
+        expect($trend['games'])->toBe(2)->and($trend['norm_period'])->toBe('last_season')
+            ->and($trend['gf_gp'])->toMatchArray(['value' => 2, 'norm' => 0, 'change_pct' => null]);
+    });
+
+    it('aggregates per-game xG over exact L5 and season memberships using full game denominators', function (): void {
+        $for = collect();
+        foreach (range(0, 9) as $day) {
+            $id = $day === 0 ? 2026020002 : 2026020100 + $day;
+            if ($day > 0) {
+                ($this->makeGame)($id, ['game_date' => '2026-10-'.(26 - $day)]);
+            }
+            $for->put($id.':10', (object) ['scored' => 1, 'attempts' => $day === 0 ? 2 : 1, 'xg' => $day === 0 ? 2 : ($day < 5 ? 3 : 1)]);
+        }
+        $reader = Mockery::mock(\App\Services\NhlStatsDashboardPayload::class);
+        $reader->shouldReceive('teamExpectationsForGames')->once()->andReturn([$for, collect()]);
+        app()->instance(\App\Services\NhlStatsDashboardPayload::class, $reader);
+        app(NhlPublicGamePage::class)->prepare(2026020001);
+        $this->getJson('/games/2026020001/details?section=matchup')->assertOk()
+            ->assertJsonPath('data.home.form.scoring_trend.xgf_gp.value', 2.8)
+            ->assertJsonPath('data.home.form.scoring_trend.xgf_gp.norm', 1.9)
+            ->assertJsonPath('data.home.form.xgf_gp', 1.9);
+        expect(($this->matchup)()['home']['form']['scoring_trend']['xgf_gp']['change_pct'])->toEqualWithDelta(100 * .9 / 1.9, 1e-7);
+        ($this->makeGame)(2026020998, ['game_date' => '2026-10-16']);
+        $this->getJson('/games/2026020001/details?section=matchup')->assertOk()
+            ->assertJsonPath('data.matchup_expected_pending', true)
+            ->assertJsonPath('data.home.form.scoring_trend.xgf_gp.value', null);
+        Http::assertNothingSent();
     });
 
     it('counts allowed PP opportunities independently of missing opponent goals', function (): void {

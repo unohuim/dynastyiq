@@ -161,7 +161,12 @@ const driverValue = (team, key) => key === 'l5_used'
   ? team?.l5_wins != null && team?.l5_games > 0 ? `${team.l5_wins}/${team.l5_games}` : '—'
   : key === 'pp_source' ? team?.pp_source ?? '—'
     : key === 'ev_form_change_pct' ? signedPercent(team?.[key]) : number(team?.[key]);
-const matchupValue = (form, key) => key.endsWith('record') ? record(form, key === 'record' ? '' : key.replace('record', ''))
+const scoringKeys = ['gf_gp', 'ga_gp', 'xgf_gp', 'xga_gp'];
+const normLabel = trend => trend?.norm_period === 'season_to_date' ? 'This season' : 'Last season';
+const scoringChange = (form, key) => scoringKeys.includes(key) ? form?.scoring_trend?.[key]?.change_pct : null;
+const matchupValue = (form, key) => scoringKeys.includes(key) && form?.scoring_trend
+  ? number(form.scoring_trend[key]?.value)
+  : key.endsWith('record') ? record(form, key === 'record' ? '' : key.replace('record', ''))
   : form?.[key] == null ? '—' : `${number(form[key])}${key.endsWith('_pct') ? '%' : ''}`;
 const record = (form, prefix = '') => form && Number(form[`${prefix}gp`]) > 0 ? `${form[`${prefix}wins`]}–${form[`${prefix}losses`]}–${form[`${prefix}otl`]}` : '—';
 const dateTime = computed(() => game.value.start_time_utc ? new Intl.DateTimeFormat(undefined, {
@@ -311,11 +316,11 @@ onBeforeUnmount(() => { disposed = true; cancelPanels(); request?.cancel(); });
           <GameSectionState name="matchup" title="The matchup" :state="panelState('matchup')" @retry="loadPanel('matchup')" />
           <section v-if="panelReady('matchup')" id="matchup" class="rounded-xl border border-[#29404F] bg-[#0D1D29] p-4 sm:p-6">
             <h2 class="text-sm font-semibold">The matchup</h2>
-            <p class="mt-1 text-[11px] text-[#91A8BA]">Season to date · Head-to-head: last 10 completed meetings</p>
+            <p class="mt-1 text-[11px] text-[#91A8BA]">GF, GA, xGF and xGA: Last 5 Games, with change versus each team’s norm. Other averages: season to date. Head-to-head: last 10 meetings.</p>
             <p v-if="game.matchup_expected_pending" role="status" class="mt-1 text-[10px] text-[#91A8BA]">Preparing expected-goal statistics…</p>
             <table class="mx-auto mt-4 w-full max-w-xl table-fixed text-xs" data-matchup-comparison>
-              <thead><tr><th scope="col" class="w-[44%] py-2 text-left text-[#91A8BA]">Statistic</th><th v-for="side in sides" :key="side" scope="col" class="py-2 text-center text-sky-300">{{ game[side].team_abbrev }}</th></tr></thead>
-              <tbody><tr v-for="[key, label] in matchupRows" :key="key" class="border-t border-[#29404F]/50"><th scope="row" class="py-2 text-left font-normal text-[#91A8BA]">{{ label }}</th><td v-for="side in sides" :key="side" class="py-2 text-center font-mono">{{ matchupValue(game[side].form, key) }}</td></tr></tbody>
+              <thead><tr><th scope="col" class="w-[44%] py-2 text-left text-[#91A8BA]">Statistic</th><th v-for="side in sides" :key="side" scope="col" class="py-2 text-center text-sky-300">{{ game[side].team_abbrev }}<span v-if="game[side].form?.scoring_trend" class="mt-1 block text-[9px] font-normal text-[#91A8BA]">Norm: {{ normLabel(game[side].form.scoring_trend) }} · {{ game[side].form.scoring_trend.norm_games }} GP</span></th></tr></thead>
+              <tbody><tr v-for="[key, label] in matchupRows" :key="key" class="border-t border-[#29404F]/50"><th scope="row" class="py-2 text-left font-normal text-[#91A8BA]">{{ label }}</th><td v-for="side in sides" :key="side" class="py-2 text-center font-mono">{{ matchupValue(game[side].form, key) }}<span v-if="scoringChange(game[side].form, key) != null" class="ml-1 whitespace-nowrap text-[10px] text-[#91A8BA]" :aria-label="`${scoringChange(game[side].form, key) > 0 ? 'Up' : scoringChange(game[side].form, key) < 0 ? 'Down' : 'Unchanged'} ${number(Math.abs(scoringChange(game[side].form, key)), 1)}% versus ${normLabel(game[side].form.scoring_trend)}`">({{ scoringChange(game[side].form, key) > 0 ? '↑' : scoringChange(game[side].form, key) < 0 ? '↓' : '' }}{{ number(Math.abs(scoringChange(game[side].form, key)), 1) }}%)</span></td></tr></tbody>
             </table>
             <div v-if="drivers?.revision_id" class="mx-auto mt-5 max-w-xl border-t border-[#29404F] pt-4" data-prediction-drivers>
               <div class="flex flex-wrap items-baseline justify-between gap-2"><h3 class="text-xs font-semibold">What drives this prediction</h3><span class="text-[10px] text-[#91A8BA]">Prediction #{{ drivers.revision_id }}</span></div>

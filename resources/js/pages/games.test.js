@@ -1130,6 +1130,20 @@ describe('public game preview and recap', () => {
         expect(document.querySelectorAll('[data-matchup-comparison] tbody tr')[0].querySelectorAll('td')).toHaveLength(2);
         expect(text).toContain('PP opportunities/GP'); expect(text).toContain('3.50'); expect(text).toContain('1–1–0');
     });
+    it('shows L5 scoring values and changes against each teams own norm period', () => {
+        mount({ mode: 'preview', away: { team_abbrev: 'BOS', form: { gf_gp: 9.99,
+            scoring_trend: { norm_period: 'season_to_date', norm_games: 18,
+                gf_gp: { value: 4.2, norm: 3.5, change_pct: 20 }, ga_gp: { value: 2.4, norm: 3, change_pct: -20 },
+                xgf_gp: { value: 3.2, norm: 3, change_pct: 6.6667 } } } },
+            home: { team_abbrev: 'TOR', form: { scoring_trend: { norm_period: 'last_season', norm_games: 82,
+                gf_gp: { value: 0, norm: 3, change_pct: -100 } } } } });
+        const table = document.querySelector('[data-matchup-comparison]');
+        expect(table.textContent).toContain('4.20'); expect(table.textContent).toContain('(↑20.0%)');
+        expect(table.textContent).toContain('(↓20.0%)'); expect(table.textContent).toContain('(↓100.0%)');
+        expect(table.textContent).toContain('This season · 18 GP'); expect(table.textContent).toContain('Last season · 82 GP');
+        expect(table.textContent).not.toContain('9.99'); expect(table.textContent).not.toContain('Infinity');
+    });
+
     it('shows saved recent form and PP drivers in Matchup without exposing equations', () => {
         mount({ mode: 'preview', prediction_drivers: { revision_id: 42, teams: {
             away: { abbrev: 'BOS', l5_wins: 3, l5_games: 5, ev_form_change_pct: 20, ev_goals_before_form: 2.48,

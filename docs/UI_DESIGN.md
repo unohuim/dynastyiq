@@ -26,7 +26,7 @@ Game previews use Matchup, Lineups, Head-to-head and Factors tabs, defaulting to
 Matchup. Matchup uses a centered shared metric column and adjacent away/home
 value columns, including scoring, expected scoring, special teams, power-play
 opportunities for/allowed and the last ten head-to-head meetings across seasons.
-Matchup shows Last 5 Games record and a compact What drives this prediction comparison using the displayed forecast's saved L5 form effects, PP histories, projected components and applied schedule effects. Keep descriptive statistics distinct from saved prediction inputs; show values/effects without equations or weights. Factors contains Why this pick and Matchup insights. Match dark navy surfaces,
+GF/GP, GA/GP, xGF/GP and xGA/GP show L5 averages with relative percentage changes in parentheses (up/down arrows). Each team labels its norm: This season after at least 10 completed games, otherwise Last season, with GP. Other averages retain their existing periods. Never divide percentage change by a zero norm. Matchup shows Last 5 Games record and a compact What drives this prediction comparison using the displayed forecast's saved L5 form effects, PP histories, projected components and applied schedule effects. Keep descriptive statistics distinct from saved prediction inputs; show values/effects without equations or weights. Factors contains Why this pick and Matchup insights. Match dark navy surfaces,
 subtle borders, sky-blue team accents and compact typography. Team summaries
 appear before separate compact player rows. Include goal contributors and L10
 points-per-game leaders. Under Last 10 Games show EV SAT/60, EV SAT/GP, EV SH%

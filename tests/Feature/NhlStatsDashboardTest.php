@@ -135,6 +135,16 @@ it('reuses team expectation scoring rules for a bounded prior game preview', fun
         ->and((int) $for[10]->games)->toBe(1);
 });
 
+it('returns per-game xG totals for cached exact-window Matchup comparisons', function (): void {
+    ($this->teamShots)(false);
+    [$for, $against] = app(NhlStatsDashboardPayload::class)->teamExpectationsForGames('20262027', [2026020001], '2026-10-22', 2, true);
+    expect((float) $for['2026020001:10']->xg)->toEqualWithDelta(.2, 1e-9)
+        ->and((int) $for['2026020001:10']->attempts)->toBe(2)
+        ->and((int) $for['2026020001:10']->scored)->toBe(1)
+        ->and((float) $against['2026020001:8']->xg)->toEqualWithDelta(.2, 1e-9)
+        ->and($for->has(10))->toBeFalse();
+});
+
 it('excludes games beyond the preview cutoff even if their identities are supplied', function (): void {
     ($this->teamShots)();
     [$for, $against] = app(NhlStatsDashboardPayload::class)->teamExpectationsForGames('20262027', [2026020001], '2026-10-21');

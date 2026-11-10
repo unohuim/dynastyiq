@@ -6,6 +6,7 @@ namespace App\Services;
 
 use App\Models\NhlGame;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -121,25 +122,44 @@ final class NhlPublicGamePage
      */
     public function matchup(NhlGame $game): array
     {
-        $expected = Cache::get($this->cacheKey($game).':matchup-expectations:v1');
+        $expected = Cache::get($this->cacheKey($game).':matchup-expectations:v2');
         $pending = ! is_array($expected) && in_array(strtoupper((string) $game->game_state), ['', 'FUT', 'PRE', 'PPD', 'CNCL'], true);
-        if ($pending && Cache::add($this->cacheKey($game).':matchup-expectations:queued', true, 90)) {
-            try {
-                \App\Jobs\RefreshNhlPublicGamePageJob::dispatch((int) $game->nhl_game_id)->afterCommit();
-            } catch (\Throwable $error) {
-                Cache::forget($this->cacheKey($game).':matchup-expectations:queued');
-                throw $error;
-            }
+        if ($pending) {
+            $this->queueMatchupExpectationPreparation($game);
         }
         $result = ['through_date' => $game->game_date->copy()->subDay()->toDateString(),
             'head_to_head_limit' => 10, 'expected_pending' => $pending];
         foreach (['away', 'home'] as $side) {
-            $result[$side] = ['team_id' => (int) $game->{$side.'_team_id'}, 'team_abbrev' => (string) $game->{$side.'_team_abbrev'},
-                'form' => [...$this->form($game, (int) $game->{$side.'_team_id'}),
-                    'xgf_gp' => $expected[$side]['xgf_gp'] ?? null, 'xga_gp' => $expected[$side]['xga_gp'] ?? null]];
+            $form = $this->form($game, (int) $game->{$side.'_team_id'});
+            $cachedTrend = $expected[$side]['scoring_trend'] ?? [];
+            $sameWindow = is_array($expected) && collect(['games', 'season_games', 'norm_games', 'norm_period'])
+                ->every(fn (string $key): bool => ($cachedTrend[$key] ?? null) === $form['scoring_trend'][$key]);
+            if (! $sameWindow && ! $pending && in_array(strtoupper((string) $game->game_state), ['', 'FUT', 'PRE', 'PPD', 'CNCL'], true)) {
+                $result['expected_pending'] = true;
+                $this->queueMatchupExpectationPreparation($game);
+            }
+            foreach (['xgf_gp', 'xga_gp'] as $key) {
+                $form[$key] = $expected[$side][$key] ?? null;
+                $form['scoring_trend'][$key] = $sameWindow ? $cachedTrend[$key] : ['value' => null, 'norm' => null, 'change_pct' => null];
+            }
+            $result[$side] = ['team_id' => (int) $game->{$side.'_team_id'}, 'team_abbrev' => (string) $game->{$side.'_team_abbrev'}, 'form' => $form];
         }
 
         return $result;
+    }
+
+    /** Coalesce optional expected-stat preparation without calculating it in a public request. */
+    private function queueMatchupExpectationPreparation(NhlGame $game): void
+    {
+        $key = $this->cacheKey($game).':matchup-expectations:queued';
+        if (Cache::add($key, true, 90)) {
+            try {
+                \App\Jobs\RefreshNhlPublicGamePageJob::dispatch((int) $game->nhl_game_id)->afterCommit();
+            } catch (\Throwable $error) {
+                Cache::forget($key);
+                throw $error;
+            }
+        }
     }
 
     /** Serialize cold detail builds across queue workers and deferred browser requests.
@@ -741,7 +761,7 @@ final class NhlPublicGamePage
         $oppsComplete = $records->isNotEmpty() && $records->every(fn (array $row): bool => $row['pp_opps'] !== null);
         $pkComplete = $records->isNotEmpty() && $records->every(fn (array $row): bool => $row['pk_ga'] !== null && $row['pk_opps'] !== null);
 
-        return ['gp' => $records->count(), 'wins' => $wins, 'losses' => $records->count() - $wins - $otl, 'otl' => $otl,
+        return ['scoring_trend' => $this->scoringTrend($game, $teamId, $rows), 'gp' => $records->count(), 'wins' => $wins, 'losses' => $records->count() - $wins - $otl, 'otl' => $otl,
             'gf_gp' => $records->isEmpty() ? null : $records->sum('gf') / $records->count(),
             'ga_gp' => $records->isEmpty() ? null : $records->sum('ga') / $records->count(),
             'pp_pct' => $ppComplete && $records->sum('pp_opps') > 0 ? 100 * $records->sum('pp_goals') / $records->sum('pp_opps') : null,
@@ -757,27 +777,112 @@ final class NhlPublicGamePage
             'l10_losses' => $last->where('win', false)->where('otl', false)->count(), 'l10_otl' => $last->where('otl', true)->count()];
     }
 
-    /** Prepare expected-goal rates off the request path using the existing scored-statistics reader. */
+    /** Keep L5 and its ten-game season/last-season norm on the same prior-date result boundary.
+     * @return array<string,mixed>
+     */
+    private function scoringWindows(NhlGame $game, int $teamId, ?Collection $season = null): array
+    {
+        $query = fn (string $seasonId) => NhlGame::query()->where('season_id', $seasonId)->where('game_type', $game->game_type)
+            ->whereDate('game_date', '<', $game->game_date->toDateString())->whereIn('game_state', ['OFF', 'FINAL'])
+            ->whereNotNull('home_team_score')->whereNotNull('away_team_score')
+            ->where(fn ($q) => $q->where('home_team_id', $teamId)->orWhere('away_team_id', $teamId))
+            ->orderByDesc('game_date')->orderByDesc('nhl_game_id')->get();
+        $season ??= $query((string) $game->season_id);
+        $previous = $season->count() < 10 ? $query((string) ((int) $game->season_id - 10001)) : collect();
+
+        return ['season' => $season, 'recent' => $season->concat($previous)->take(5)->values(),
+            'norm' => $season->count() >= 10 ? $season : $previous,
+            'norm_period' => $season->count() >= 10 ? 'season_to_date' : 'last_season'];
+    }
+
+    /** Read personal model-owned team context when present, with lightweight stored-result compatibility.
+     * @return array<string,mixed>
+     */
+    private function scoringTrend(NhlGame $game, int $teamId, Collection $season): array
+    {
+        $windows = $this->scoringWindows($game, $teamId, $season);
+        $trend = ['games' => $windows['recent']->count(), 'season_games' => $season->count(),
+            'norm_period' => $windows['norm_period'], 'norm_games' => $windows['norm']->count()];
+        $modelId = DB::table('nhl_game_prediction_revisions')->where('nhl_game_id', $game->nhl_game_id)
+            ->where('is_canonical', true)->where('prediction_available', true)->orderByDesc('id')->value('payload->inputs->sat_model_run_id');
+        if ($modelId === null) {
+            try {
+                $modelId = app(NhlCustomGameForecast::class)->model(null, (string) $game->season_id)->id;
+            } catch (\Illuminate\Validation\ValidationException) {
+                $modelId = null;
+            }
+        }
+        $opponent = (int) $game->home_team_id === $teamId ? $game->away_team_id : $game->home_team_id;
+        $context = $modelId === null ? null : DB::table('nhl_team_game_pregame_contexts as c')
+            ->where('c.model_run_id', $modelId)->where('c.nhl_game_id', $game->nhl_game_id)->where('c.nhl_team_id', $teamId)
+            ->where('c.opponent_team_id', $opponent)->where('c.context_version', NhlPregameContextBuilder::VERSION)
+            ->where('c.source_cutoff_at', '<=', $game->start_time_utc?->min(now('UTC')) ?? now('UTC'))
+            ->whereExists(fn ($q) => $q->selectRaw('1')->from('nhl_pregame_context_run_games as w')->whereColumn('w.run_id', 'c.run_id')
+                ->where('w.nhl_game_id', $game->nhl_game_id)->where('w.state', 'complete')->whereNotNull('w.comparisons_completed_at'))
+            ->first(['c.metrics->last_5 as recent', 'c.metrics->'.$windows['norm_period'].' as norm']);
+        foreach (['gf_gp' => 'goals_for_per_game', 'ga_gp' => 'goals_against_per_game'] as $metric => $contextKey) {
+            $rates = [];
+            foreach (['value' => 'recent', 'norm' => 'norm'] as $key => $period) {
+                $rows = $windows[$period];
+                $saved = $context === null ? [] : json_decode($context->{$period} ?? '{}', true, 512, JSON_THROW_ON_ERROR) ?? [];
+                $rate = ($saved['games'] ?? null) === $rows->count() ? $this->publicNumber($saved[$contextKey] ?? null) : null;
+                if ($rate === null && $rows->isNotEmpty()) {
+                    $total = $rows->sum(fn (NhlGame $row): int => (int) ($metric === 'gf_gp'
+                        ? ((int) $row->home_team_id === $teamId ? $row->home_team_score : $row->away_team_score)
+                        : ((int) $row->home_team_id === $teamId ? $row->away_team_score : $row->home_team_score)));
+                    $rate = $total / $rows->count();
+                }
+                $rates[$key] = $rate;
+            }
+            $trend[$metric] = [...$rates, 'change_pct' => $this->relativeChange($rates['value'], $rates['norm'])];
+        }
+
+        return $trend;
+    }
+
+    /** Relative change is unknown for an absent or zero baseline; recent zero remains valid. */
+    private function relativeChange(?float $value, ?float $norm): ?float
+    {
+        return $value !== null && $norm !== null && $norm > 0 ? 100 * ($value - $norm) / $norm : null;
+    }
+
+    /** Cache per-game xG once per season, then aggregate exact L5/norm memberships without public shot scans. */
     private function prepareMatchupExpectations(NhlGame $game): void
     {
-        $ids = DB::table('nhl_games')->where('season_id', $game->season_id)->where('game_type', $game->game_type)
-            ->whereIn('game_state', ['OFF', 'FINAL'])->whereDate('game_date', '<', $game->game_date->toDateString())
-            ->where(fn ($query) => $query->whereIn('home_team_id', [$game->away_team_id, $game->home_team_id])
-                ->orWhereIn('away_team_id', [$game->away_team_id, $game->home_team_id]))->pluck('nhl_game_id')->all();
-        [$for, $against] = app(NhlStatsDashboardPayload::class)->teamExpectationsForGames((string) $game->season_id, $ids,
-            $game->game_date->copy()->subDay()->toDateString(), (int) $game->game_type);
+        $sources = [];
+        foreach (['away', 'home'] as $side) {
+            $sources[$side] = $this->scoringWindows($game, (int) $game->{$side.'_team_id'});
+        }
+        $games = collect($sources)->flatMap(fn (array $windows) => $windows['season']->concat($windows['recent'])->concat($windows['norm']))
+            ->unique('nhl_game_id');
+        $for = $against = collect();
+        foreach ($games->groupBy('season_id') as $season => $rows) {
+            [$f, $a] = app(NhlStatsDashboardPayload::class)->teamExpectationsForGames((string) $season, $rows->pluck('nhl_game_id')->all(),
+                $game->game_date->copy()->subDay()->toDateString(), (int) $game->game_type, true);
+            $for = $for->merge($f);
+            $against = $against->merge($a);
+        }
         $result = [];
         foreach (['away', 'home'] as $side) {
             $id = (int) $game->{$side.'_team_id'};
-            $gp = $this->form($game, $id)['gp'];
-            $rates = [];
-            foreach (['xgf_gp' => $for->get($id), 'xga_gp' => $against->get($id)] as $key => $row) {
-                $rates[$key] = $gp > 0 && $row !== null && (int) $row->games === $gp
-                    && (int) $row->scored === (int) $row->attempts && $row->xg !== null ? (float) $row->xg / $gp : null;
+            $windows = $sources[$side];
+            $trend = ['games' => $windows['recent']->count(), 'season_games' => $windows['season']->count(),
+                'norm_games' => $windows['norm']->count(), 'norm_period' => $windows['norm_period']];
+            foreach (['xgf_gp' => $for, 'xga_gp' => $against] as $key => $totals) {
+                $rates = [];
+                foreach (['value' => 'recent', 'norm' => 'norm', 'season' => 'season'] as $name => $window) {
+                    $rows = $windows[$window];
+                    $rated = $rows->map(fn (NhlGame $row) => $totals->get($row->nhl_game_id.':'.$id))->filter();
+                    $sum = $rated->whereNotNull('xg')->sum('xg');
+                    $rates[$name] = $rows->isNotEmpty() && $rated->sum('scored') > 0 ? $sum / $rows->count() : null;
+                }
+                $result[$side][$key] = $rates['season'];
+                $trend[$key] = ['value' => $rates['value'], 'norm' => $rates['norm'],
+                    'change_pct' => $this->relativeChange($rates['value'], $rates['norm'])];
             }
-            $result[$side] = $rates;
+            $result[$side]['scoring_trend'] = $trend;
         }
-        Cache::put($this->cacheKey($game).':matchup-expectations:v1', $result, 300);
+        Cache::put($this->cacheKey($game).':matchup-expectations:v2', $result, 300);
     }
 
     /** Read the five previous completed meetings without leaking the selected result.

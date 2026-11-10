@@ -1181,7 +1181,18 @@ REG/OT/SO ending; rule-enabled schedule flags do not classify overtime losses.
 - PP% divides summed PP goals by summed own opportunities. PK% is one minus
   summed opponent PP goals divided by summed opponent opportunities. PP opportunities
   for/allowed per game divide those respective opportunity totals by team GP.
-- xGF/GP and xGA/GP read prepared statistics only. A cold upcoming-game read queues
+- `form.gf_gp`, `ga_gp`, `xgf_gp` and `xga_gp` retain their season scope for compatibility.
+  The Matchup screen now reads `form.scoring_trend` for these four rows. It includes
+  `games` (L5 sample size), `season_games`, `norm_period` (`season_to_date` at 10+
+  completed games, otherwise `last_season`), and `norm_games`. Each rate key contains
+  `{ "value": 4.2, "norm": 3.5, "change_pct": 20.0 }`. L5 continues into the prior
+  season when needed. Percentage changes are relative, not percentage-point gaps;
+  missing or zero norms have null change. GF/GA reuse committed matching context
+  where present, otherwise completed stored scores.
+- xGF/GP and xGA/GP read prepared statistics only. Matchup sums available scored xG
+  and divides by the full window GP, ignoring missing ratings rather than hiding
+  a partially rated average. This can understate xG; entirely unrated windows
+  remain unavailable. Existing statistics dashboard coverage policies are unchanged. A cold upcoming-game read queues
   shared background preparation and returns `expected_pending: true`; poll normally
   to obtain the prepared values. No shot aggregation or provider call runs in this
   Matchup reader. Live/final requests still return strictly pregame form; absent

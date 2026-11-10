@@ -635,7 +635,7 @@ class NhlStatsDashboardPayload
     }
 
     /** Aggregate team attempt populations directly, preserving historical team identity and scored coverage. */
-    private function teamAttemptTotals(string $season, ?int $model, ?array $gameIds = null, int $gameType = 2, ?string $throughDate = null): array
+    private function teamAttemptTotals(string $season, ?int $model, ?array $gameIds = null, int $gameType = 2, ?string $throughDate = null, bool $byGame = false): array
     {
         $facts = DB::table('nhl_shot_attempts_facts as f')->join('nhl_games as g', 'g.nhl_game_id', '=', 'f.nhl_game_id')
             ->where('f.season_id', $season)->where('g.game_type', $gameType)->whereIn('g.game_state', ['OFF', 'FINAL'])
@@ -659,20 +659,29 @@ class NhlStatsDashboardPayload
         }
         $select = 'COUNT(DISTINCT nhl_game_id) AS games, COUNT(*) AS attempts, COUNT(xg) AS scored, SUM(xg) AS xg, SUM(goal) AS goals, SUM(ev_sat) AS ev_sat, COUNT(goalie_player_id) AS goalie_attempts';
 
-        return [DB::query()->fromSub(clone $facts, 'attempt')->groupBy('team_id')->select('team_id')->selectRaw($select)->get()->keyBy('team_id'),
-            DB::query()->fromSub(clone $facts, 'attempt')->groupBy('defending_team_id')->select('defending_team_id')->selectRaw($select)->get()->keyBy('defending_team_id')];
+        $totals = [];
+        foreach (['team_id', 'defending_team_id'] as $teamColumn) {
+            $query = DB::query()->fromSub(clone $facts, 'attempt')->groupBy($teamColumn)->select($teamColumn)->selectRaw($select);
+            if ($byGame) {
+                $query->addSelect('nhl_game_id')->groupBy('nhl_game_id');
+            }
+            $rows = $query->get();
+            $totals[] = $byGame ? $rows->keyBy(fn (object $row): string => $row->nhl_game_id.':'.$row->{$teamColumn}) : $rows->keyBy($teamColumn);
+        }
+
+        return $totals;
     }
 
     /** Reuse the scored-statistics rules for bounded prior-game background preview preparation.
      * @return array{0:Collection,1:Collection}
      */
-    public function teamExpectationsForGames(string $season, array $gameIds, string $throughDate, int $gameType = 2): array
+    public function teamExpectationsForGames(string $season, array $gameIds, string $throughDate, int $gameType = 2, bool $byGame = false): array
     {
         if ($gameIds === []) {
             return [collect(), collect()];
         }
         $model = $this->goalModelId($season, $gameType, ['date_to' => $throughDate]);
 
-        return $model === null ? [collect(), collect()] : $this->teamAttemptTotals($season, $model, $gameIds, $gameType, $throughDate);
+        return $model === null ? [collect(), collect()] : $this->teamAttemptTotals($season, $model, $gameIds, $gameType, $throughDate, $byGame);
     }
 }
