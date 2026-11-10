@@ -1148,6 +1148,7 @@ The HTTP 202 preparing response retains its existing shape.
       "team_abbrev": "BUF",
       "form": {
         "gp": 12, "wins": 7, "losses": 4, "otl": 1,
+        "l5_gp": 5, "l5_wins": 3, "l5_losses": 1, "l5_otl": 1,
         "l10_gp": 10, "l10_wins": 6, "l10_losses": 3, "l10_otl": 1,
         "h2h_gp": 10, "h2h_wins": 4, "h2h_losses": 5, "h2h_otl": 1,
         "gf_gp": 3.25, "ga_gp": 2.75,
@@ -1170,6 +1171,9 @@ REG/OT/SO ending; rule-enabled schedule flags do not classify overtime losses.
 - Season form includes only completed results in the target season and game type,
   strictly before the requested game's calendar date. `through_date` is the day
   before that date, not the timestamp of the forecast calculation.
+- L5 records (`l5_gp`, `l5_wins`, `l5_losses`, `l5_otl`) use the team's last five
+  such games and correspond to the Matchup screen. L10 fields remain available
+  for compatibility.
 - L10 records use the team's last ten such games; `l10_gp` reports the actual
   available count.
 - H2H records use at most ten prior completed meetings between these two teams,
@@ -1792,6 +1796,13 @@ Subscribe before requesting the initial snapshot, then apply updates by increasi
 `GET /games/{nhl_game_id}` returns the Inertia game overview immediately from schedule facts, saved public probabilities and the shared live snapshot. Player projections, lineup panels, matchup form, previous meetings and recap details load separately through `GET /games/{nhl_game_id}/details?section={section}`. The section vocabulary is canonical in `docs/ENUMS.md`.
 
 A ready section returns `{ "nhl_game_id": 123, "mode": "preview", "section": "lineups", "data": { ... } }`. A cold prepared-payload miss returns HTTP 202 with `{ "status": "preparing" }` and queues background preparation. These responses use `Cache-Control: no-store`. Invalid section names return 422; missing games return 404. Guests and authenticated users share the same public read contract; lineup mutation authorization remains unchanged.
+
+Browser Matchup and Factors requests may pin `prediction_revision_id` to the
+displayed same-game successful canonical prediction. Matchup additionally exposes
+`prediction_drivers`: a curated saved-input/effect comparison for L5 form, EV goals,
+PP histories and projections, and any applied schedule effects. It contains no
+raw evidence or blend equations and is separate from the partner API's descriptive
+`matchup` statistics. Missing or invalid pinned revisions return no driver summary.
 
 Section data contains only that panel's fields. Clients must not replace game identity, score, clock, mode or odds with section responses. Ignore obsolete responses after navigation or a mode change, and keep live updates independent of section loading. Existing partner prediction payloads are unchanged.
 

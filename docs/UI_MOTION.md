@@ -95,6 +95,11 @@ Do not combine overlay and panel movement into one transition.
 
 ## Loading And Async State
 
+Automatic background feed work follows Silent background updates in
+`docs/UI_DESIGN.md`: retain the rendered view without notification elements,
+loading transitions, overlays or layout movement. The guidance below applies to
+initial empty loads and explicit user actions, not automatic feed recovery.
+
 - Loading placeholders may fade in, but should not block the full page unless the whole page is unavailable.
 - Asynchronous disclosure content should open first with a lightweight loading row, then replace the content in place.
 - Error states should appear inline inside the same animated region when possible.

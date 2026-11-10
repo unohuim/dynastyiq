@@ -20,7 +20,6 @@ const end = ref(null);
 const loading = ref(false);
 const loadingEdge = ref(null);
 const error = ref('');
-const liveError = computed(() => liveWarning.value);
 const scroller = ref(null);
 const days = computed(() => scoreboardDays(start.value, end.value, games.value));
 const dateLabel = computed(() => slateNavigationLabel(selectedDate.value, clock.value));
@@ -75,7 +74,7 @@ function isRecentDate(date) {
     return date >= shiftSlateDate(today, -1) && date <= today;
 }
 
-const { warning: liveWarning, resync: refreshRecentGames } = useLiveGameFeed({
+const { resync: refreshRecentGames } = useLiveGameFeed({
     update(snapshot) {
         const row = snapshot.game;
         const current = games.value.find(game => Number(game.nhl_game_id) === Number(row.nhl_game_id));
@@ -308,6 +307,6 @@ onBeforeUnmount(() => {
             <span aria-hidden="true" class="h-5 w-5 animate-spin rounded-full border-2 border-sky-400/20 border-t-sky-300 motion-reduce:animate-none" />
             <span>{{ loadingEdge === 'previous' ? 'Loading previous week…' : 'Loading next week…' }}</span>
         </div>
-        <div v-if="error || liveError" role="status" class="absolute inset-x-2 top-full z-20 flex items-center justify-center gap-2 rounded-b-md border border-[#1F2B37] bg-[#101923] px-3 py-1 text-xs text-gray-300 shadow-lg md:inset-x-40">{{ error || liveError }} <button type="button" class="min-h-11 underline" @click="retryRange">Retry</button></div>
+        <div v-if="error" role="status" class="absolute inset-x-2 top-full z-20 flex items-center justify-center gap-2 rounded-b-md border border-[#1F2B37] bg-[#101923] px-3 py-1 text-xs text-gray-300 shadow-lg md:inset-x-40">{{ error }} <button type="button" class="min-h-11 underline" @click="retryRange">Retry</button></div>
     </header>
 </template>

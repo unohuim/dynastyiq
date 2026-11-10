@@ -74,7 +74,8 @@ final class NhlPublicGamePage
         }
         if ($current === null && $section === 'matchup') {
             $matchup = $this->matchup($game);
-            $current = ['mode' => 'preview', 'matchup_expected_pending' => $matchup['expected_pending']];
+            $current = ['mode' => 'preview', 'matchup_expected_pending' => $matchup['expected_pending'],
+                'prediction_drivers' => $this->predictionDrivers($game, $predictionRevisionId)];
             foreach (['away', 'home'] as $side) {
                 $current[$side] = ['form' => $matchup[$side]['form'],
                     'starting_goalie' => app(NhlStartingGoalieSelector::class)->select($gameId, (string) $game->{$side.'_team_abbrev'}, (string) $game->season_id)];
@@ -106,7 +107,7 @@ final class NhlPublicGamePage
             }
         }
         $data = [...$data, ...Arr::only($current, match ($section) {
-            'matchup' => ['matchup_expected_pending'], 'factors' => ['preview_analysis'],
+            'matchup' => ['matchup_expected_pending', 'prediction_drivers'], 'factors' => ['preview_analysis'],
             'meetings' => ['head_to_head'], 'summary' => ['recap', 'comparison', 'period_scores'],
             'play_by_play' => ['plays', 'shots', 'map_events', 'plays_available'],
             'goals' => ['events', 'events_available'], default => [],
@@ -339,6 +340,86 @@ final class NhlPublicGamePage
         return ['revision_id' => (int) $row->id, 'probabilities' => $probabilities, 'score' => $score,
             'total_goals' => is_numeric($row->total_goals) ? (float) $row->total_goals : null,
             'predicted_at' => $row->predicted_at];
+    }
+
+    /** Curate actual saved scoring inputs/effects for Matchup without recalculating forecasts.
+     * @return array<string,mixed>|null
+     */
+    private function predictionDrivers(NhlGame $game, ?int $revisionId): ?array
+    {
+        $fields = ['id', 'predicted_at', 'payload->inputs->algorithm_definition as definition',
+            'payload->inputs->algorithm_version as algorithm_version',
+            'payload->prediction->confidence_inputs->schedule_enabled as schedule_enabled',
+            'payload->prediction->home_win_probability as home_probability',
+            'evidence->custom_prediction->input->league_pk_probability as league_pk'];
+        foreach (['away', 'home'] as $side) {
+            $fields[] = 'payload->teams->'.$side.'->team_abbrev as '.$side.'_abbrev';
+            $fields[] = 'payload->teams->'.$side.'->summary as '.$side.'_summary';
+            foreach (['games', 'wins', 'win_pct'] as $metric) {
+                $fields[] = 'evidence->custom_prediction->input->teams->'.$side.'->team_metrics->last_5->'.$metric.' as '.$side.'_l5_'.$metric;
+            }
+            foreach (['pp_offense_l20', 'pp_allowed_l5', 'pk_probability'] as $metric) {
+                $fields[] = 'evidence->custom_prediction->input->teams->'.$side.'->'.$metric.' as '.$side.'_'.$metric;
+            }
+            foreach (['back_to_back', 'games_including_target_last_7_days'] as $metric) {
+                $fields[] = 'evidence->custom_prediction->input->teams->'.$side.'->schedule->'.$metric.' as '.$side.'_'.$metric;
+            }
+        }
+        $row = DB::table('nhl_game_prediction_revisions')->where('nhl_game_id', $game->nhl_game_id)
+            ->where('is_canonical', true)->where('prediction_available', true)
+            ->when($revisionId !== null, fn ($query) => $query->where('id', $revisionId))
+            ->orderByDesc('id')->first($fields);
+        if ($row === null || ! str_starts_with((string) $row->algorithm_version, 'custom_ev_pp_')
+            || $row->away_abbrev !== $game->away_team_abbrev || $row->home_abbrev !== $game->home_team_abbrev) {
+            return null;
+        }
+        $definition = json_decode($row->definition ?? '{}', true, 512, JSON_THROW_ON_ERROR) ?? [];
+        $weight = $this->publicNumber($definition['team_l5_win_pct_weight'] ?? null);
+        $home = $this->publicNumber($row->home_l5_win_pct);
+        $away = $this->publicNumber($row->away_l5_win_pct);
+        $formKnown = $weight !== null && $weight >= 0 && $weight <= 1 && $home !== null && $away !== null
+            && $home >= 0 && $home <= 100 && $away >= 0 && $away <= 100
+            && ($this->publicNumber($row->home_l5_games) ?? 0) > 0 && ($this->publicNumber($row->away_l5_games) ?? 0) > 0
+            && floor((float) $row->home_l5_games) === (float) $row->home_l5_games
+            && floor((float) $row->away_l5_games) === (float) $row->away_l5_games;
+        $result = ['revision_id' => (int) $row->id, 'predicted_at' => $row->predicted_at, 'teams' => []];
+        foreach (['away' => 'home', 'home' => 'away'] as $side => $opponent) {
+            $summary = json_decode($row->{$side.'_summary'} ?? '{}', true, 512, JSON_THROW_ON_ERROR) ?? [];
+            $change = $formKnown ? $weight * ($side === 'home' ? $home - $away : $away - $home) : null;
+            $ev = $this->publicNumber($summary['ev_xgf_per_game'] ?? null);
+            $pk = $this->publicNumber($row->{$opponent.'_pk_probability'});
+            $leaguePk = $this->publicNumber($row->league_pk);
+            $qualifies = in_array($row->schedule_enabled, [true, 1, 'true', '1'], true)
+                && in_array($row->{$side.'_back_to_back'}, [true, 1, 'true', '1'], true)
+                && $this->publicNumber($row->{$side.'_games_including_target_last_7_days'}) === 4.0;
+            $result['teams'][$side] = ['abbrev' => $row->{$side.'_abbrev'},
+                'l5_wins' => $this->publicNumber($row->{$side.'_l5_wins'}),
+                'l5_games' => $this->publicNumber($row->{$side.'_l5_games'}),
+                'ev_form_change_pct' => $change,
+                'ev_goals_before_form' => $change !== null && 1 + $change / 100 > 0 && $ev !== null ? $ev / (1 + $change / 100) : null,
+                'ev_goals' => $ev, 'pp_goals' => $this->publicNumber($summary['pp_xgf_per_game'] ?? null),
+                'total_goals' => $this->publicNumber($summary['adjusted_xgf_per_game'] ?? null),
+                'sog' => $this->publicNumber($summary['adjusted_xsog_per_game'] ?? null),
+                'pp_offense_l20' => $this->publicNumber($row->{$side.'_pp_offense_l20'}),
+                'pp_allowed_l5' => $this->publicNumber($row->{$side.'_pp_allowed_l5'}),
+                'pp_source' => $pk !== null && $leaguePk !== null
+                    ? ($pk > $leaguePk ? $row->{$opponent.'_abbrev'}.' goals allowed · Last 5' : 'Lineup goals · Last 20') : null,
+                'schedule_applied' => $qualifies,
+                'forward_sat_change_pct' => $qualifies && is_numeric($definition['schedule']['forward_sat_multiplier'] ?? null)
+                    ? 100 * ($definition['schedule']['forward_sat_multiplier'] - 1) : null,
+                'defense_sat_change_pct' => $qualifies && is_numeric($definition['schedule']['defense_sat_multiplier'] ?? null)
+                    ? 100 * ($definition['schedule']['defense_sat_multiplier'] - 1) : null,
+            ];
+        }
+        $homeProbability = $this->publicNumber($row->home_probability);
+        $result['home_probability_schedule_change_points'] = $result['teams']['away']['schedule_applied']
+            && $homeProbability !== null && $homeProbability > 0 && $homeProbability < 1
+            ? $this->publicNumber($definition['schedule']['away_fourth_b2b_home_probability_delta'] ?? null) : null;
+        if ($result['home_probability_schedule_change_points'] !== null) {
+            $result['home_probability_schedule_change_points'] *= 100;
+        }
+
+        return $result;
     }
 
     /** Project a small public explanation from saved forecasts/context, never from raw results.
@@ -643,6 +724,7 @@ final class NhlPublicGamePage
         $wins = $records->where('win', true)->count();
         $otl = $records->where('otl', true)->count();
         $last = $records->take(10);
+        $lastFive = $records->take(5);
         $h2h = NhlGame::query()->where('game_type', $game->game_type)
             ->where('game_date', '<', $game->game_date->toDateString())->whereIn('game_state', ['OFF', 'FINAL'])
             ->whereNotNull('home_team_score')->whereNotNull('away_team_score')
@@ -669,6 +751,8 @@ final class NhlPublicGamePage
                 ? $records->sum('pk_opps') / $records->count() : null,
             'h2h_gp' => $h2h->count(), 'h2h_wins' => $h2h->where('win', true)->count(),
             'h2h_losses' => $h2h->where('win', false)->where('otl', false)->count(), 'h2h_otl' => $h2h->where('otl', true)->count(),
+            'l5_gp' => $lastFive->count(), 'l5_wins' => $lastFive->where('win', true)->count(),
+            'l5_losses' => $lastFive->where('win', false)->where('otl', false)->count(), 'l5_otl' => $lastFive->where('otl', true)->count(),
             'l10_gp' => $last->count(), 'l10_wins' => $last->where('win', true)->count(),
             'l10_losses' => $last->where('win', false)->where('otl', false)->count(), 'l10_otl' => $last->where('otl', true)->count()];
     }

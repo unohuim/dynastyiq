@@ -123,13 +123,23 @@ describe('saved pregame explanations and insights', function (): void {
                 ]);
             }
         }
+        foreach (['away', 'home'] as $side) {
+            $inputs[$side]['team_metrics']['last_5'] = ['games' => 5, 'wins' => $side === 'away' ? 3 : 1, 'win_pct' => $side === 'away' ? 60 : 20];
+            $inputs[$side]['pp_offense_l20'] = $side === 'away' ? .7 : .9;
+            $inputs[$side]['pp_allowed_l5'] = $side === 'away' ? .6 : 1.2;
+            $inputs[$side]['pk_probability'] = .85;
+            $inputs[$side]['schedule'] = ['back_to_back' => false, 'games_including_target_last_7_days' => 3];
+        }
         $this->insightTeams = $teams;
         $this->insightInputs = $inputs;
         $this->publishInsights = fn () => ($this->savePrediction)([], [
             'inputs' => ['sat_model_run_id' => $model->id, 'training_season_ids' => $model->train_season_ids,
-                'algorithm_definition' => ['train_rate_weight' => .5]],
+                'algorithm_version' => 'custom_ev_pp_v3',
+                'algorithm_definition' => ['train_rate_weight' => .5, 'team_l5_win_pct_weight' => .5,
+                    'schedule' => ['forward_sat_multiplier' => .98, 'defense_sat_multiplier' => .97,
+                        'away_fourth_b2b_home_probability_delta' => .04]]],
             'teams' => $this->insightTeams,
-            '_custom_prediction_evidence' => ['input' => ['teams' => $this->insightInputs]],
+            '_custom_prediction_evidence' => ['input' => ['teams' => $this->insightInputs, 'league_pk_probability' => .8]],
         ]);
         ($this->publishInsights)();
         $this->analysis = fn () => app(NhlPublicGamePage::class)->panel(2026020001, 'factors')['data']['preview_analysis'];
@@ -221,6 +231,64 @@ describe('saved pregame explanations and insights', function (): void {
         DB::table('nhl_player_game_pregame_contexts')->where('nhl_player_id', 604)
             ->update(['metrics' => json_encode($metrics), 'opponent_team_id' => 99]);
         expect(array_column(($this->analysis)()['teams']['away']['contributors'], 'id'))->toBe([601, 602, 603]);
+    });
+
+    it('exposes saved Matchup drivers without raw algorithm definitions or bucket evidence', function (bool $signedIn): void {
+        if ($signedIn) {
+            $this->actingAs(User::factory()->create());
+        }
+        $response = $this->getJson('/games/2026020001/details?section=matchup')->assertOk()
+            ->assertJsonPath('data.prediction_drivers.teams.away.l5_wins', 3)
+            ->assertJsonPath('data.prediction_drivers.teams.away.ev_form_change_pct', 20)
+            ->assertJsonPath('data.prediction_drivers.teams.home.ev_form_change_pct', -20)
+            ->assertJsonPath('data.prediction_drivers.teams.away.pp_source', 'TOR goals allowed · Last 5')
+            ->assertJsonPath('data.prediction_drivers.teams.away.ev_goals', 3)
+            ->assertJsonPath('data.prediction_drivers.teams.away.pp_goals', 1)
+            ->assertJsonMissingPath('data.prediction_drivers.definition')
+            ->assertJsonMissingPath('data.prediction_drivers.input');
+        expect($response->json('data.prediction_drivers.teams.away.ev_goals_before_form'))->toEqualWithDelta(2.5, 1e-9);
+        config(['nhl-custom-prediction.team_l5_win_pct_weight' => 0]);
+        $this->getJson('/games/2026020001/details?section=matchup')
+            ->assertJsonPath('data.prediction_drivers.teams.away.ev_form_change_pct', 20);
+        Http::assertNothingSent();
+    })->with([false, true]);
+
+    it('pins Matchup drivers to the displayed revision and rejects another games revision', function (): void {
+        $old = ($this->analysis)()['revision_id'];
+        $this->insightInputs['away']['team_metrics']['last_5']['win_pct'] = 20;
+        ($this->publishInsights)();
+        $this->getJson('/games/2026020001/details?section=matchup&prediction_revision_id='.$old)->assertOk()
+            ->assertJsonPath('data.prediction_drivers.revision_id', $old)
+            ->assertJsonPath('data.prediction_drivers.teams.away.ev_form_change_pct', 20);
+        DB::table('nhl_game_prediction_revisions')->where('id', $old)->update(['nhl_game_id' => 2026020999]);
+        $this->getJson('/games/2026020001/details?section=matchup&prediction_revision_id='.$old)->assertOk()
+            ->assertJsonPath('data.prediction_drivers', null);
+    });
+
+    it('leaves missing historical driver inputs unknown rather than reading current settings', function (): void {
+        $this->insightInputs = [];
+        ($this->publishInsights)();
+        $this->getJson('/games/2026020001/details?section=matchup')->assertOk()
+            ->assertJsonPath('data.prediction_drivers.teams.away.ev_form_change_pct', null)
+            ->assertJsonPath('data.prediction_drivers.teams.away.pp_source', null);
+    });
+
+    it('reports only the exact fourth-in-seven B2B schedule effects from frozen settings', function (): void {
+        $this->insightInputs['away']['schedule'] = ['back_to_back' => true, 'games_including_target_last_7_days' => 4];
+        $saved = ($this->publishInsights)();
+        $id = $saved['meta']['prediction_revision_id'];
+        $row = DB::table('nhl_game_prediction_revisions')->where('id', $id)->first();
+        $payload = json_decode($row->payload, true);
+        $payload['prediction']['confidence_inputs']['schedule_enabled'] = true;
+        $payload['prediction']['home_win_probability'] = .6;
+        DB::table('nhl_game_prediction_revisions')->where('id', $id)->update(['payload' => json_encode($payload)]);
+        $data = $this->getJson('/games/2026020001/details?section=matchup')->assertOk()
+            ->assertJsonPath('data.prediction_drivers.teams.away.schedule_applied', true)
+            ->assertJsonPath('data.prediction_drivers.teams.home.schedule_applied', false)
+            ->assertJsonPath('data.prediction_drivers.home_probability_schedule_change_points', 4)
+            ->json('data.prediction_drivers.teams.away');
+        expect($data['forward_sat_change_pct'])->toEqualWithDelta(-2, 1e-9)
+            ->and($data['defense_sat_change_pct'])->toEqualWithDelta(-3, 1e-9);
     });
 
     it('balances six distinct facts across the teams and includes numeric comparisons', function (): void {
@@ -499,6 +567,14 @@ describe('recorded ending display classification', function (): void {
         expect($form)->toMatchArray(['gp' => 11, 'wins' => 5, 'losses' => 5, 'otl' => 1,
             'l10_gp' => 10, 'l10_wins' => 4, 'l10_losses' => 5, 'l10_otl' => 1,
             'h2h_gp' => 10, 'h2h_wins' => 4, 'h2h_losses' => 5, 'h2h_otl' => 1]);
+    });
+
+    it('adds last five record while preserving API-compatible last ten fields', function (): void {
+        ($this->endingHistory)(['W', 'W', 'W', 'REG', 'OT', 'W', 'W', 'W', 'W', 'W']);
+        $this->getJson('/games/2026020001/details?section=matchup')->assertOk()
+            ->assertJsonPath('data.home.form.l5_gp', 5)->assertJsonPath('data.home.form.l5_wins', 3)
+            ->assertJsonPath('data.home.form.l5_losses', 1)->assertJsonPath('data.home.form.l5_otl', 1)
+            ->assertJsonPath('data.home.form.l10_gp', 10)->assertJsonPath('data.home.form.l10_wins', 8);
     });
 
     it('falls back to the recorded period descriptor when the outcome is absent', function (string $period, int $losses, int $otl): void {

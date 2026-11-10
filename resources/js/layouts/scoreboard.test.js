@@ -376,12 +376,21 @@ describe('Mobile scoreboard lifecycle', () => {
         await settle(); const tile = document.querySelector('a[href="/games/2"]');
         expect(tile.textContent).toContain('12:34 | 1st'); expect(tile.querySelector('.text-emerald-400')).not.toBeNull();
     });
-    it('reports interrupted streams and permits shared-snapshot retry', async () => {
-        mount(); await settle(); liveWarning.value = 'Live updates delayed. Reconnecting…'; await settle();
-        expect(document.querySelector('[role="status"]').textContent).toContain('Live updates delayed');
-        expect(document.querySelector('a[href="/games/2"]')).not.toBeNull();
-        [...document.querySelectorAll('button')].find(button => button.textContent === 'Retry').click(); await settle();
-        expect(resyncLive).toHaveBeenCalled(); expect(document.querySelector('[role="status"]')).toBeNull();
+    it('keeps feed delays disconnections and recovery silent without changing the header', async () => {
+        mount(); await settle();
+        const header = document.querySelector('header');
+        const tile = document.querySelector('a[href="/games/2"]');
+        const before = header.outerHTML;
+        for (const message of ['Live updates delayed. Reconnecting…',
+            'Live connection interrupted. Reconnecting…', 'Live updates unavailable. Reconnecting…', '']) {
+            liveWarning.value = message;
+            await settle();
+            expect(document.querySelector('header')).toBe(header);
+            expect(header.outerHTML).toBe(before);
+            expect(document.querySelector('a[href="/games/2"]')).toBe(tile);
+            expect(document.querySelector('[role="status"]')).toBeNull();
+            expect([...document.querySelectorAll('button')].some(button => button.textContent === 'Retry')).toBe(false);
+        }
     });
     it('does not let a slower initial range response overwrite newer pushed facts', async () => {
         let finish; fetch.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));

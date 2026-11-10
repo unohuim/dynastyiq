@@ -158,6 +158,7 @@ it('includes prior season form and the last ten cross-season meetings in API Mat
         ->assertJsonPath('matchup.through_date', '2026-11-04')->assertJsonPath('matchup.head_to_head_limit', 10)
         ->assertJsonPath('matchup.away.team_id', 1)->assertJsonPath('matchup.home.team_abbrev', 'COL')
         ->assertJsonPath('matchup.home.form.gp', 1)->assertJsonPath('matchup.home.form.wins', 1)
+        ->assertJsonPath('matchup.home.form.l5_gp', 1)->assertJsonPath('matchup.home.form.l5_wins', 1)
         ->assertJsonPath('matchup.home.form.h2h_gp', 10)->assertJsonPath('matchup.home.form.h2h_losses', 9)
         ->assertJsonPath('matchup.home.form.gf_gp', 4)->assertJsonPath('matchup.home.form.ga_gp', 2)
         ->assertJsonPath('matchup.home.form.pp_pct', 25)->assertJsonPath('matchup.home.form.pk_pct', 80)

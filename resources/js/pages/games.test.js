@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp, h, nextTick, reactive, ref } from 'vue';
 import * as inertia from '@inertiajs/vue3';
 import * as shellRealtime from '../layouts/shell-realtime';
+import * as liveFeed from '../layouts/live-game-feed';
 import AppLayout from '../layouts/AppLayout.vue';
 import ManualLineupModal from './Games/ManualLineupModal.vue';
 import ToggleSwitch from '../components/ToggleSwitch.vue';
@@ -645,6 +646,27 @@ describe('Vue game ordering', () => {
         expect(games.map((item) => item.nhl_game_id)).toEqual([1, 2, 3, 4, 5]);
     });
 
+    it('keeps the games list unchanged when background feed health changes', async () => {
+        const warning = ref('');
+        const spy = vi.spyOn(liveFeed, 'useLiveGameFeed').mockReturnValue({ warning });
+        try {
+            app = createApp(GamesIndex, { initialPayload: { games: [{ ...matchup(1, 'LIVE', '18'), live_mode: true }],
+                meta: { date: '2026-09-20' } }, payloadUrl: '/games/payload' });
+            app.mount('#sorted-games');
+            await nextTick();
+            const root = document.querySelector('#sorted-games');
+            const card = root.querySelector('article');
+            const before = root.innerHTML;
+            warning.value = 'Live updates delayed. Reconnecting…';
+            await nextTick();
+            expect(root.innerHTML).toBe(before);
+            expect(root.querySelector('article')).toBe(card);
+            expect(root.textContent).not.toContain('Reconnecting');
+        } finally {
+            spy.mockRestore();
+        }
+    });
+
     it('reorders updated game states after an AJAX date change', async () => {
         app = createApp(GamesIndex, { initialPayload: { games: [matchup(1, 'LIVE', '18'), matchup(2, 'FUT', '20')], meta: { date: '2026-09-20' } }, payloadUrl: '/games/payload' });
         app.mount('#sorted-games');
@@ -1098,15 +1120,35 @@ describe('public game preview and recap', () => {
     });
     it('includes expected goals special teams and the head to head record in Matchup', () => {
         mount({ mode: 'preview', away: { team_abbrev: 'BOS', form: { gp: 5, wins: 3, losses: 1, otl: 1,
-            h2h_gp: 2, h2h_wins: 1, h2h_losses: 1, h2h_otl: 0, gf_gp: 3.2, ga_gp: 2.4,
+            l5_gp: 5, l5_wins: 3, l5_losses: 1, l5_otl: 1, h2h_gp: 2, h2h_wins: 1, h2h_losses: 1, h2h_otl: 0, gf_gp: 3.2, ga_gp: 2.4,
             xgf_gp: 3.1, xga_gp: 2.8, pp_pct: 25, pk_pct: 80, pp_opps_gp: 3.5, pp_opps_allowed_gp: 4.2 } } });
         const text = document.querySelector('#matchup').textContent;
+        expect(text).toContain('Last 5 Games'); expect(text).not.toContain('Last 10 Games'); expect(text).toContain('3–1–1');
         expect(text).toContain('GF/GP'); expect(text).toContain('GA/GP'); expect(text).toContain('xGF/GP');
         expect(text).toContain('xGA/GP'); expect(text).toContain('25.00%'); expect(text).toContain('80.00%');
         expect(text).toContain('PP opportunities allowed/GP'); expect(text).toContain('4.20');
         expect(document.querySelectorAll('[data-matchup-comparison] tbody tr')[0].querySelectorAll('td')).toHaveLength(2);
         expect(text).toContain('PP opportunities/GP'); expect(text).toContain('3.50'); expect(text).toContain('1–1–0');
     });
+    it('shows saved recent form and PP drivers in Matchup without exposing equations', () => {
+        mount({ mode: 'preview', prediction_drivers: { revision_id: 42, teams: {
+            away: { abbrev: 'BOS', l5_wins: 3, l5_games: 5, ev_form_change_pct: 20, ev_goals_before_form: 2.48,
+                ev_goals: 2.98, pp_offense_l20: .7, pp_allowed_l5: .6, pp_source: 'TOR goals allowed · Last 5',
+                pp_goals: 1.08, sog: 35.2, total_goals: 4.06, schedule_applied: false },
+            home: { abbrev: 'TOR', l5_wins: 1, l5_games: 5, ev_form_change_pct: -20, schedule_applied: false },
+        } } });
+        const text = document.querySelector('[data-prediction-drivers]').textContent;
+        expect(text).toContain('Prediction #42'); expect(text).toContain('+20.0%'); expect(text).toContain('-20.0%');
+        expect(text).toContain('TOR goals allowed · Last 5'); expect(text).toContain('1.08');
+        expect(text).toContain('Projected EV goals'); expect(text).toContain('2.98');
+        expect(text).not.toContain('train_rate_weight'); expect(text).not.toContain('B2B');
+    });
+
+    it('does not invent prediction drivers when no saved explanation exists', () => {
+        mount({ mode: 'preview' });
+        expect(document.querySelector('[data-prediction-drivers]')).toBeNull();
+    });
+
     it('supports keyboard navigation between preview tabs without page navigation', async () => {
         mount({ mode: 'preview' });
         document.querySelector('[role=tablist]').dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
@@ -1200,15 +1242,14 @@ describe('public game preview and recap', () => {
         expect(panel.textContent).toContain('3.10');
         expect(inertia.router.reload).not.toHaveBeenCalled();
     });
-    it('pins deferred Factors to the displayed prediction revision', async () => {
+    it('pins deferred Matchup and Factors to the displayed prediction revision', async () => {
         vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
         mount({ mode: 'preview', prediction: { revision_id: 42 } }, { detailsUrl: '/games/2026020001/details' });
         await settle();
         await selectPreview('Factors');
         const matchup = fetch.mock.calls.find(([url]) => url.searchParams.get('section') === 'factors')[0];
         expect(matchup.searchParams.get('prediction_revision_id')).toBe('42');
-        expect(fetch.mock.calls.filter(([url]) => url.searchParams.get('section') !== 'factors')
-            .every(([url]) => !url.searchParams.has('prediction_revision_id'))).toBe(true);
+        expect(fetch.mock.calls.find(([url]) => url.searchParams.get('section') === 'matchup')[0].searchParams.get('prediction_revision_id')).toBe('42');
     });
     it('shows saved contributions and historical comparisons only in Factors', async () => {
         mount({ mode: 'preview', preview_analysis: { revision_id: 42, predicted_at: '2026-10-26 12:00:00',
@@ -1307,7 +1348,9 @@ describe('public game preview and recap', () => {
         expect(merged.home.predictions).toHaveLength(1);
     });
     it('keeps matchup fields separate from unrelated player and scoring sections', () => {
-        const merged = applyGamePanel({ home: {}, away: {} }, 'matchup', { home: { form: { gp: 10 }, predictions: [1] }, events: [1] });
+        const merged = applyGamePanel({ home: {}, away: {} }, 'matchup', { home: { form: { gp: 10 }, predictions: [1] }, events: [1], prediction_drivers: { revision_id: 42 } });
+        expect(merged.prediction_drivers).toEqual({ revision_id: 42 });
+        expect(applyGamePanel({ home: {}, away: {} }, 'lineups', { prediction_drivers: { revision_id: 42 } }).prediction_drivers).toBeUndefined();
         expect(merged.home.form.gp).toBe(10); expect(merged.home.predictions).toBeUndefined(); expect(merged.events).toBeUndefined();
     });
     it('merges curated analysis only through Factors without changing public odds', () => {
@@ -1478,20 +1521,30 @@ describe('public game preview and recap', () => {
         expect(details.textContent).toContain('Select a shot');
         expect(footer.children).toHaveLength(3);
     });
-    it('announces connection loss in an overlay and removes it on a fresh connected update', async () => {
+    it('recovers the live game silently while keeping its content and layout mounted', async () => {
         const live = { incoming: ref(null), connected: ref(true) };
+        vi.setSystemTime(new Date('2026-10-27T23:00:00Z'));
+        vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
         vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ snapshots: [] }) }));
         mount({ mode: 'live', game_state: 'LIVE' }, {}, live);
         await settle();
-        live.connected.value = false; await nextTick();
-        const message = [...document.querySelectorAll('[role=status]')].find(node => node.textContent.includes('Live connection interrupted'));
-        expect(message).toBeDefined();
-        expect(message.classList.contains('fixed')).toBe(true);
-        expect(message.classList.contains('pointer-events-none')).toBe(true);
+        const main = document.querySelector('main');
+        const header = document.querySelector('header');
+        const before = main.outerHTML;
+        live.connected.value = false; await settle();
+        expect(main.outerHTML).toBe(before);
+        fetch.mockRejectedValueOnce(new Error('Network unavailable'));
+        await vi.advanceTimersByTimeAsync(25000); await settle();
+        expect(main.outerHTML).toBe(before);
+        expect(document.querySelector('header')).toBe(header);
+        expect(fetch.mock.calls.length).toBeGreaterThan(1);
+        expect(main.textContent).not.toMatch(/Reconnecting|Live updates delayed|Live updates unavailable/);
         live.connected.value = true;
-        live.incoming.value = { sequence: 1, observed_at: '2026-10-27T23:00:00Z', game: { nhl_game_id: 2026020001, mode: 'live', game_state: 'LIVE' } };
+        live.incoming.value = { sequence: 1, observed_at: '2026-10-27T23:00:25Z', changed: false,
+            game: { nhl_game_id: 2026020001, mode: 'live', game_state: 'LIVE', away: { score: 1 }, home: { score: 3 } } };
         await settle();
-        expect(document.body.contains(message)).toBe(false);
+        expect(document.querySelector('header')).toBe(header);
+        expect(main.textContent).not.toContain('Reconnecting');
     });
 
 });

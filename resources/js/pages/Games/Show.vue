@@ -102,7 +102,7 @@ async function loadPanel(name, attempt = 0) {
   try {
     const url = new URL(props.detailsUrl, window.location.origin);
     url.searchParams.set('section', name);
-    if (name === 'factors' && game.value.prediction?.revision_id)
+    if (['matchup', 'factors'].includes(name) && game.value.prediction?.revision_id)
       url.searchParams.set('prediction_revision_id', game.value.prediction.revision_id);
     const response = await fetch(url, { headers: { Accept: 'application/json' }, cache: 'no-store', signal: controller.signal });
     if (disposed || generation !== panelGeneration || panelRequests.get(name) !== controller) return;
@@ -145,9 +145,22 @@ const probability = (side) => game.value.prediction?.probabilities?.[side] == nu
 const analysis = computed(() => game.value.preview_analysis ?? { teams: {}, insights: [] });
 const analysisTime = value => value ? new Date(/(?:Z|[+-]\d\d:\d\d)$/.test(value) ? value : `${value.replace(' ', 'T')}Z`).toLocaleString() : '—';
 const insightValue = (value, percentage) => value == null ? '—' : `${number(value)}${percentage ? '%' : ''}`;
-const matchupRows = [['record', 'Season record'], ['l10_record', 'Last 10 Games'], ['h2h_record', 'Head-to-head · Last 10'],
+const matchupRows = [['record', 'Season record'], ['l5_record', 'Last 5 Games'], ['h2h_record', 'Head-to-head · Last 10'],
   ['gf_gp', 'GF/GP'], ['ga_gp', 'GA/GP'], ['xgf_gp', 'xGF/GP'], ['xga_gp', 'xGA/GP'],
   ['pp_pct', 'PP%'], ['pk_pct', 'PK%'], ['pp_opps_gp', 'PP opportunities/GP'], ['pp_opps_allowed_gp', 'PP opportunities allowed/GP']];
+const drivers = computed(() => game.value.prediction_drivers);
+const driverRows = [
+  ['l5_used', 'Last 5 wins used'], ['ev_form_change_pct', 'EV attempts · Recent form'],
+  ['ev_goals_before_form', 'EV goals · Before recent form'], ['ev_goals', 'Projected EV goals'],
+  ['pp_offense_l20', 'Lineup PP goals/GP · Last 20'], ['pp_allowed_l5', 'PP goals allowed/GP · Last 5'],
+  ['pp_source', 'PP estimate based on'], ['pp_goals', 'Projected PP goals'],
+  ['sog', 'Projected SOG'], ['total_goals', 'Projected goals'],
+];
+const signedPercent = value => value == null ? '—' : `${Number(value) > 0 ? '+' : ''}${number(value, 1)}%`;
+const driverValue = (team, key) => key === 'l5_used'
+  ? team?.l5_wins != null && team?.l5_games > 0 ? `${team.l5_wins}/${team.l5_games}` : '—'
+  : key === 'pp_source' ? team?.pp_source ?? '—'
+    : key === 'ev_form_change_pct' ? signedPercent(team?.[key]) : number(team?.[key]);
 const matchupValue = (form, key) => key.endsWith('record') ? record(form, key === 'record' ? '' : key.replace('record', ''))
   : form?.[key] == null ? '—' : `${number(form[key])}${key.endsWith('_pct') ? '%' : ''}`;
 const record = (form, prefix = '') => form && Number(form[`${prefix}gp`]) > 0 ? `${form[`${prefix}wins`]}–${form[`${prefix}losses`]}–${form[`${prefix}otl`]}` : '—';
@@ -166,7 +179,7 @@ function refresh() {
     onFinish: () => { busy.value = false; request = null; loadPanels(); },
   });
 }
-const { warning: liveWarning } = useLiveGameFeed({
+useLiveGameFeed({
   gameId: () => Number(game.value.nhl_game_id), full: true, active: () => mode.value !== 'recap',
   update(snapshot, detail) {
     if (snapshot.game.mode === 'preview') {
@@ -201,7 +214,6 @@ onBeforeUnmount(() => { disposed = true; cancelPanels(); request?.cancel(); });
         <Link :href="game.game_date ? `/games?date=${game.game_date}` : '/games'" class="rounded text-[#91A8BA] transition-colors duration-150 hover:text-white focus-visible:ring-2 focus-visible:ring-sky-400 motion-reduce:transition-none">‹ All games</Link>
         <span role="status" class="text-[#91A8BA]">{{ busy ? 'Updating…' : dateTime }}</span>
       </div>
-      <p v-if="liveWarning && mode === 'live'" role="status" class="pointer-events-none fixed bottom-24 right-3 z-40 max-w-[calc(100vw-1.5rem)] rounded-md border border-amber-300/25 bg-[#172534] px-3 py-2 text-xs text-amber-300 shadow-lg md:bottom-3">{{ liveWarning }}</p>
       <p v-if="game.live_data_unavailable" role="status" class="rounded-xl border border-[#29404F] bg-[#0D1D29] p-6 text-sm text-[#B6C7D5]">Live NHL data is temporarily unavailable. This page will retry automatically.</p>
       <template v-else>
         <header class="shrink-0 overflow-hidden rounded-xl border border-[#29404F] bg-[#0D1D29]">
@@ -305,6 +317,17 @@ onBeforeUnmount(() => { disposed = true; cancelPanels(); request?.cancel(); });
               <thead><tr><th scope="col" class="w-[44%] py-2 text-left text-[#91A8BA]">Statistic</th><th v-for="side in sides" :key="side" scope="col" class="py-2 text-center text-sky-300">{{ game[side].team_abbrev }}</th></tr></thead>
               <tbody><tr v-for="[key, label] in matchupRows" :key="key" class="border-t border-[#29404F]/50"><th scope="row" class="py-2 text-left font-normal text-[#91A8BA]">{{ label }}</th><td v-for="side in sides" :key="side" class="py-2 text-center font-mono">{{ matchupValue(game[side].form, key) }}</td></tr></tbody>
             </table>
+            <div v-if="drivers?.revision_id" class="mx-auto mt-5 max-w-xl border-t border-[#29404F] pt-4" data-prediction-drivers>
+              <div class="flex flex-wrap items-baseline justify-between gap-2"><h3 class="text-xs font-semibold">What drives this prediction</h3><span class="text-[10px] text-[#91A8BA]">Prediction #{{ drivers.revision_id }}</span></div>
+              <p class="mt-1 text-[10px] text-[#91A8BA]">Saved inputs and scoring effects used for this forecast.</p>
+              <table class="mt-2 w-full table-fixed text-[11px]">
+                <thead><tr><th scope="col" class="w-[44%] py-2 text-left text-[#91A8BA]">Factor</th><th v-for="side in sides" :key="side" scope="col" class="py-2 text-center text-sky-300">{{ drivers.teams[side]?.abbrev }}</th></tr></thead>
+                <tbody><tr v-for="[key, label] in driverRows" :key="key" class="border-t border-[#29404F]/50"><th scope="row" class="py-2 text-left font-normal text-[#91A8BA]">{{ label }}</th><td v-for="side in sides" :key="side" class="break-words py-2 text-center" :class="key === 'pp_source' ? 'text-[10px]' : 'font-mono'">{{ driverValue(drivers.teams[side], key) }}</td></tr>
+                  <tr v-if="sides.some(side => drivers.teams[side]?.schedule_applied)" class="border-t border-[#29404F]/50"><th scope="row" class="py-2 text-left font-normal text-[#91A8BA]">B2B · Fourth game in 7</th><td v-for="side in sides" :key="side" class="py-2 text-center text-[10px]"><span v-if="drivers.teams[side]?.schedule_applied">EV/PP attempts: F {{ signedPercent(drivers.teams[side].forward_sat_change_pct) }} · D {{ signedPercent(drivers.teams[side].defense_sat_change_pct) }}</span><span v-else>—</span></td></tr>
+                </tbody>
+              </table>
+              <p v-if="drivers.home_probability_schedule_change_points != null && drivers.home_probability_schedule_change_points !== 0" class="mt-2 text-[10px] text-[#91A8BA]">Schedule adjustment to {{ game.home.team_abbrev }} win probability: {{ drivers.home_probability_schedule_change_points > 0 ? '+' : '' }}{{ number(drivers.home_probability_schedule_change_points, 2) }} percentage points.</p>
+            </div>
             <div class="mx-auto mt-4 grid max-w-xl grid-cols-2 gap-4 border-t border-[#29404F] pt-3">
               <div v-for="side in sides" :key="side" class="text-center"><p class="text-[10px] uppercase tracking-wider text-[#91A8BA]">{{ game[side].team_abbrev }} · Starting goalie</p><p class="mt-1 text-sm font-semibold">{{ game[side].starting_goalie?.name ?? 'Not reported' }}</p><p v-if="game[side].starting_goalie" class="mt-1 text-xs capitalize text-[#91A8BA]">{{ game[side].starting_goalie.status ?? 'Projected' }}</p></div>
             </div>

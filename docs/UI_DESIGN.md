@@ -2,11 +2,31 @@
 
 This document defines the **authoritative UI design rules** for this repository.
 
+## Silent background updates
+
+Automatic feed refreshes, polling, reconnections, retries and revalidation must
+run silently. Never add banners, dropdowns, toasts, spinners, status messages or
+screen-reader announcements merely to report that background work is updating,
+delayed, interrupted, reconnecting or recovering. This applies across desktop
+and mobile layouts and pages, including the shared scoreboard and game views.
+
+Keep already-rendered content mounted, preserve interaction state, focus and
+scroll position, and update data in its existing regions as new facts arrive.
+Background progress or failure must not blank content, replace it with a loading
+screen, add a row, move page controls, or alter container height. Keep connection
+health and freshness evidence internal; continue automatic recovery without
+asking viewers to retry it. Do not mark stale evidence as newly received.
+
+Initial loads with no content and explicit user actions may show scoped loading
+or failure feedback within their existing content region. Those cases must not
+turn routine background refreshes into visible notifications or global overlays.
+
+
 Game previews use Matchup, Lineups, Head-to-head and Factors tabs, defaulting to
 Matchup. Matchup uses a centered shared metric column and adjacent away/home
 value columns, including scoring, expected scoring, special teams, power-play
 opportunities for/allowed and the last ten head-to-head meetings across seasons.
-Factors contains Why this pick and Matchup insights. Match dark navy surfaces,
+Matchup shows Last 5 Games record and a compact What drives this prediction comparison using the displayed forecast's saved L5 form effects, PP histories, projected components and applied schedule effects. Keep descriptive statistics distinct from saved prediction inputs; show values/effects without equations or weights. Factors contains Why this pick and Matchup insights. Match dark navy surfaces,
 subtle borders, sky-blue team accents and compact typography. Team summaries
 appear before separate compact player rows. Include goal contributors and L10
 points-per-game leaders. Under Last 10 Games show EV SAT/60, EV SAT/GP, EV SH%
@@ -133,7 +153,7 @@ The default desktop dashboard overview should fit above the fold, with a compact
 performers/signings/injuries row. Shorter viewports may scroll panel contents;
 explicitly expanded content remains accessible through normal page scrolling.
 
-Public numeric live-game detail uses `docs/designs/live-nhl-game-dashboard.png` as its visual authority: compact full-width score header, large team logos, centered green clock, cyan active tabs, a large dark rink on the left and linescore/team stats on the right. Scoring summary and recent plays sit side by side below the rink; goalie SV, SA and SV% with rate bars occupy the lower right. Use legible team-colored accents (contrasting alternate accents when both match), outlined goal markers and thin split stat bars. Summary, Boxscore, Play-by-play, Shot map and Game flow tabs retain local state; Game flow shows cumulative recorded shot attempts. Desktop game detail fills the viewport space remaining below the shared navigation and scoreboard. Keep the score header and tabs compact; constrain the rink to its grid row and scroll long scoring, recent-play and goalie lists inside their cards. Mobile keeps normal vertical page scrolling without document overflow. The header scoreboard retains its selected-game blue underline. The rink footer reserves a fixed-height three-column row for legend, selected-shot details and shot metadata; selection never inserts another row. Truncate long selected-shot text with the complete description available as its title and live announcement. Connection/retry notices overlay the page or scoreboard rather than changing layout height. Preview behavior and the shared live-update pipeline remain unchanged.
+Public numeric live-game detail uses `docs/designs/live-nhl-game-dashboard.png` as its visual authority: compact full-width score header, large team logos, centered green clock, cyan active tabs, a large dark rink on the left and linescore/team stats on the right. Scoring summary and recent plays sit side by side below the rink; goalie SV, SA and SV% with rate bars occupy the lower right. Use legible team-colored accents (contrasting alternate accents when both match), outlined goal markers and thin split stat bars. Summary, Boxscore, Play-by-play, Shot map and Game flow tabs retain local state; Game flow shows cumulative recorded shot attempts. Desktop game detail fills the viewport space remaining below the shared navigation and scoreboard. Keep the score header and tabs compact; constrain the rink to its grid row and scroll long scoring, recent-play and goalie lists inside their cards. Mobile keeps normal vertical page scrolling without document overflow. The header scoreboard retains its selected-game blue underline. The rink footer reserves a fixed-height three-column row for legend, selected-shot details and shot metadata; selection never inserts another row. Truncate long selected-shot text with the complete description available as its title and live announcement. Background connection/retry health follows Silent background updates; no notice is rendered. Preview behavior and the shared live-update pipeline remain unchanged.
 
 Its purpose is to:
 

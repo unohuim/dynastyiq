@@ -18,7 +18,7 @@ describe('shared live game subscriptions', () => {
     update = vi.fn();
     app = createApp({ setup() {
       state = useLiveGameFeed({ update, ...options });
-      return () => h('p', state.warning.value);
+      return () => h('div', { 'data-live-content': '' }, 'Game content');
     } });
     app.provide('nhlLiveGame', incoming);
     app.provide('nhlLiveConnected', connected);
@@ -110,11 +110,15 @@ describe('shared live game subscriptions', () => {
     fetch.mockResolvedValue({ ok: true, json: async () => ({ snapshots: [snapshot(1, { stale: true })] }) });
     await mount(); expect(update).not.toHaveBeenCalled(); expect(state.warning.value).toContain('delayed');
   });
-  it('shows connection interruptions instead of silently claiming current data', async () => {
+  it('tracks connection interruptions internally while preserving visible content', async () => {
     await mount(); connected.value = false; await settle(); expect(state.warning.value).toContain('interrupted');
+    expect(document.querySelector('[data-live-content]').textContent).toBe('Game content');
+    expect(document.body.textContent).not.toContain('Reconnecting');
   });
-  it('shows snapshot errors and keeps the mounted consumer alive', async () => {
+  it('tracks snapshot errors internally and keeps the mounted consumer alive', async () => {
     fetch.mockRejectedValue(new Error('offline')); await mount(); expect(state.warning.value).toContain('unavailable');
+    expect(document.querySelector('[data-live-content]').textContent).toBe('Game content');
+    expect(document.body.textContent).not.toContain('Reconnecting');
   });
   it('never periodically fetches snapshots while a healthy stream is active', async () => {
     await mount(); incoming.value = snapshot(); await settle(); await vi.advanceTimersByTimeAsync(15000);

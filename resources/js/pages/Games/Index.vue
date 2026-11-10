@@ -74,7 +74,7 @@ async function changeDate(value, background = false) {
     if (version === requestVersion) { loading.value = false; payloadRequest = null; }
   }
 }
-const { warning: liveWarning } = useLiveGameFeed({
+useLiveGameFeed({
   full: true,
   accept: game => payload.value.games.some(row => Number(row.nhl_game_id) === Number(game.nhl_game_id)),
   update(snapshot, detail) {
@@ -137,7 +137,6 @@ onBeforeUnmount(() => {
         </button>
       </div>
     </div>
-    <p v-if="liveWarning && sortedGames.some(game => game.live_mode)" role="status" class="mb-3 text-xs text-amber-700">{{ liveWarning }}</p>
     <p v-if="loading" class="mb-4 text-sm text-gray-500">Loading games…</p>
     <div v-if="sortedGames.length" class="grid gap-5 lg:grid-cols-2"><GameCard v-for="game in sortedGames" :key="game.nhl_game_id" :game="game" :can-manage-lineups="canManageGameSync" @lineup-submitted="applyManualLineup" @goalie-selected="applyGoalie" /></div>
     <div v-else class="rounded-lg border border-gray-200 bg-white px-4 py-10 text-center text-sm text-gray-600">No NHL games are scheduled for this date.</div>
