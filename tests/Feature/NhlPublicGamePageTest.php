@@ -599,6 +599,72 @@ describe('Matchup season statistics', function (): void {
 });
 
 
+
+describe('recent Matchup special teams percentages', function (): void {
+    beforeEach(function (): void {
+        ($this->makeGame)(2026020001, ['game_state' => 'FUT', 'game_date' => '2026-10-27', 'start_time_utc' => '2026-10-27 23:00:00']);
+        $this->recentForm = fn () => app(NhlPublicGamePage::class)->matchup(NhlGame::findOrFail(2026020001));
+    });
+
+    it('pools goals and opportunities within distinct last five and last ten windows', function (): void {
+        foreach (range(1, 10) as $offset) {
+            ($this->makeGame)(2026020100 + $offset, ['game_date' => '2026-10-'.(27 - $offset),
+                'home_pp_goals' => $offset <= 5 ? 1 : 0, 'home_pp_opportunities' => $offset === 1 ? 6 : 1,
+                'away_pp_goals' => $offset <= 5 ? 0 : 1, 'away_pp_opportunities' => 2]);
+        }
+        // Target, future, unfinished and other game-type results must not enter the windows.
+        ($this->makeGame)(2026020200, ['game_date' => '2026-10-27', 'home_pp_goals' => 9, 'home_pp_opportunities' => 9]);
+        ($this->makeGame)(2026020201, ['game_date' => '2026-10-28', 'home_pp_goals' => 9, 'home_pp_opportunities' => 9]);
+        ($this->makeGame)(2026020202, ['game_date' => '2026-10-26', 'game_state' => 'LIVE']);
+        ($this->makeGame)(2026030203, ['game_date' => '2026-10-26', 'game_type' => 3]);
+        $form = ($this->recentForm)()['home']['form'];
+        expect($form['l5_pp_pct'])->toEqual(50)->and($form['l5_pk_pct'])->toEqual(100)
+            ->and($form['l10_pp_pct'])->toEqualWithDelta(100 * 5 / 15, 1e-9)
+            ->and($form['l10_pk_pct'])->toEqual(75);
+        // A mean of the five individual PP percentages would be 83.33, rather than pooled 50.
+        Http::assertNothingSent();
+    });
+
+    it('continues recent special teams into last season while keeping season rates and records separate', function (): void {
+        ($this->makeGame)(2026020002, ['home_pp_goals' => 0, 'home_pp_opportunities' => 2,
+            'away_pp_goals' => 1, 'away_pp_opportunities' => 4]);
+        ($this->makeGame)(2025020002, ['season_id' => '20252026', 'game_date' => '2026-04-15',
+            'home_pp_goals' => 2, 'home_pp_opportunities' => 2, 'away_pp_goals' => 1, 'away_pp_opportunities' => 4]);
+        $data = ($this->recentForm)();
+        expect($data['home']['form']['pp_pct'])->toEqual(0)->and($data['home']['form']['pk_pct'])->toEqual(75)
+            ->and($data['home']['form']['l5_gp'])->toBe(1)
+            ->and($data['home']['form']['l5_pp_pct'])->toEqual(50)
+            ->and($data['home']['form']['l10_pp_pct'])->toEqual(50)
+            ->and($data['home']['form']['l5_pk_pct'])->toEqual(75)
+            ->and($data['away']['form']['l5_pp_pct'])->toEqual(25)
+            ->and($data['away']['form']['l5_pk_pct'])->toEqual(50);
+    });
+
+    it('keeps a missing last ten source game inside the window without damaging an independently complete last five', function (): void {
+        foreach (range(1, 10) as $offset) {
+            ($this->makeGame)(2026020100 + $offset, ['game_date' => '2026-10-'.(27 - $offset),
+                'home_pp_goals' => $offset === 10 ? null : 1, 'home_pp_opportunities' => 4,
+                'away_pp_goals' => 0, 'away_pp_opportunities' => 2]);
+        }
+        $form = ($this->recentForm)()['home']['form'];
+        expect($form['l5_pp_pct'])->toEqual(25)->and($form['l10_pp_pct'])->toBeNull()
+            ->and($form['l5_pk_pct'])->toEqual(100)->and($form['l10_pk_pct'])->toEqual(100);
+    });
+
+    it('keeps empty histories zero opportunities and observed zero conversions distinct', function (): void {
+        $form = ($this->recentForm)()['home']['form'];
+        expect($form['l5_pp_pct'])->toBeNull()->and($form['l10_pk_pct'])->toBeNull();
+        ($this->makeGame)(2026020002, ['home_pp_goals' => 0, 'home_pp_opportunities' => 0,
+            'away_pp_goals' => 0, 'away_pp_opportunities' => 0]);
+        $form = ($this->recentForm)()['home']['form'];
+        expect($form['l5_pp_pct'])->toBeNull()->and($form['l5_pk_pct'])->toBeNull();
+        DB::table('nhl_games')->where('nhl_game_id', 2026020002)->update(['home_pp_opportunities' => 2, 'away_pp_opportunities' => 4]);
+        $form = ($this->recentForm)()['home']['form'];
+        expect($form['l5_pp_pct'])->toEqual(0)->and($form['l10_pp_pct'])->toEqual(0)
+            ->and($form['l5_pk_pct'])->toEqual(100)->and($form['l10_pk_pct'])->toEqual(100);
+    });
+});
+
 describe('prediction Matchup completion', function (): void {
     beforeEach(function (): void {
         ($this->makeGame)(2026020001, ['game_state' => 'FUT', 'game_date' => '2026-10-27', 'start_time_utc' => '2026-10-27 23:00:00']);
@@ -649,18 +715,18 @@ describe('prediction Matchup completion', function (): void {
         $pages->preparePredictionMatchup(2026020001, 'unrated');
         expect(fn () => $pages->predictionMatchup(2026020001, 'unrated'))
             ->toThrow(\Illuminate\Validation\ValidationException::class);
-        $prepared = Cache::get('nhl:prediction-matchup:v1:2026020001:unrated');
+        $prepared = Cache::get('nhl:prediction-matchup:v2:2026020001:unrated');
         expect($prepared)->not->toHaveKey('matchup')->and($prepared['error'])->toContain('xgf_gp', 'xga_gp', 'SAT scoring');
     });
 
     it('exposes exhausted Matchup preparation errors and leaves ordinary public refreshes unchanged', function (): void {
         $error = new RuntimeException('Expected statistics query timed out.');
         (new RefreshNhlPublicGamePageJob(2026020001))->failed($error);
-        expect(Cache::get('nhl:prediction-matchup:v1:2026020001:failed'))->toBeNull();
+        expect(Cache::get('nhl:prediction-matchup:v2:2026020001:failed'))->toBeNull();
         (new RefreshNhlPublicGamePageJob(2026020001, 'failed'))->failed($error);
         expect(fn () => app(NhlPublicGamePage::class)->predictionMatchup(2026020001, 'failed'))
             ->toThrow(\Illuminate\Validation\ValidationException::class);
-        expect(Cache::get('nhl:prediction-matchup:v1:2026020001:failed')['error'])->toContain('query timed out');
+        expect(Cache::get('nhl:prediction-matchup:v2:2026020001:failed')['error'])->toContain('query timed out');
     });
 });
 

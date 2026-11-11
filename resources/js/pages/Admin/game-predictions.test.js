@@ -8,7 +8,7 @@ describe('Operational Game Predictions', () => {
     let list;
     let fetcher;
     const revision = { id: 4, source: 'api', prediction_available: true, is_canonical: true, away_goals: 2.2,
-        home_goals: 3.1, total_goals: 5.3, winner: 'TOR', win_probability: .61, confidence: 67, qualified: true, predicted_at: '2026-10-22T15:00:00Z' };
+        home_goals: 3.1, total_goals: 5.3, winner: 'TOR', win_probability: .61, confidence: 67, public_confidence_score: 65.5, days_away: 0, qualified: true, predicted_at: '2026-10-22T15:00:00Z' };
     const settle = async () => { for (let i = 0; i < 15; i++) await Promise.resolve(); await nextTick(); };
     const button = text => [...document.querySelectorAll('button')].find(node => node.textContent.trim() === text);
     const mount = async () => {
@@ -80,10 +80,16 @@ describe('Operational Game Predictions', () => {
         await mount(); expect(document.querySelector('tbody').textContent).toContain('61.0%');
         expect(document.querySelector('tbody').textContent).toContain('67.00%');
     });
-    it('shows qualification independently of the predicted winner', async () => {
+    it('replaces qualification with separate public confidence and forecast horizon columns', async () => {
         list.games[0].revision.qualified = false; await mount();
+        const headers = [...document.querySelectorAll('thead th')].map(node => node.textContent);
+        expect(headers).toContain('Internal Conf');
+        expect(headers).toContain('Public Conf');
+        expect(headers).toContain('Days Away');
+        expect(headers).not.toContain('Qualified');
+        expect(document.querySelector('[data-public-confidence]').textContent).toBe('65.50%');
+        expect(document.querySelector('[data-days-away]').textContent).toBe('0');
         expect(document.querySelector('tbody').textContent).toContain('TOR');
-        expect(document.querySelector('tbody').textContent).toContain('No');
     });
     it('does not fabricate a score before any successful calculation', async () => {
         list.games[0].revision = null; await mount();
@@ -312,7 +318,34 @@ describe('Operational Game Predictions', () => {
     });
     it('keeps revision disclosure rows aligned under the timing column', async () => {
         await mount(); button('Revisions').click(); await settle();
-        expect(document.querySelector('tbody td[colspan]').getAttribute('colspan')).toBe('11');
+        expect(document.querySelector('tbody td[colspan]').getAttribute('colspan')).toBe('12');
+    });
+
+    it('shows missing historical public confidence and horizon without inventing values', async () => {
+        delete list.games[0].revision.public_confidence_score;
+        delete list.games[0].revision.days_away;
+        await mount();
+        expect(document.querySelector('[data-public-confidence]').textContent).toBe('—');
+        expect(document.querySelector('[data-days-away]').textContent).toBe('—');
+        expect(document.querySelector('tbody').textContent).toContain('67.00%');
+    });
+    it('shows future forecast horizons and both confidences in expanded history', async () => {
+        list.games[0].revision.days_away = 3;
+        await mount();
+        expect(document.querySelector('[data-days-away]').textContent).toBe('3');
+        button('Revisions').click(); await settle();
+        const history = document.querySelector('tbody td[colspan]');
+        expect(history.textContent).toContain('67.00% internal confidence');
+        expect(history.textContent).toContain('65.50% public confidence');
+        expect(history.textContent).toContain('0 days away');
+    });
+
+    it('preserves zero public confidence and zero days away as explicit values', async () => {
+        list.games[0].revision.public_confidence_score = 0;
+        list.games[0].revision.days_away = 0;
+        await mount();
+        expect(document.querySelector('[data-public-confidence]').textContent).toBe('0.00%');
+        expect(document.querySelector('[data-days-away]').textContent).toBe('0');
     });
 
 });

@@ -383,7 +383,7 @@ it('exposes new engine values through the real API without replacing saved model
     $service->shouldReceive('matchup')->once()->andReturn(['sides' => $sides]);
     app()->instance(\App\Services\NhlCustomGameForecast::class, $service);
     $this->mock(\App\Services\NhlStartingGoalieSelector::class)->shouldReceive('selectForPrediction')->andReturn(null);
-    \Illuminate\Support\Facades\Cache::put('nhl:prediction-matchup:v1:2026020990:service-fixture',
+    \Illuminate\Support\Facades\Cache::put('nhl:prediction-matchup:v2:2026020990:service-fixture',
         ['matchup' => ['expected_pending' => false, 'away' => ['form' => ['xgf_gp' => 1.1, 'xga_gp' => 2.2]],
             'home' => ['form' => ['xgf_gp' => 2.2, 'xga_gp' => 1.1]]]], 21600);
     $token = 'new-default-prediction-test';

@@ -17,10 +17,14 @@ is filled from the agreed personal/team Train and league references. Observed
 zeros remain zeros. Observed coverage is diagnostic and does not reject a game.
 Game state does not prevent an explicitly requested prediction.
 
-Successful current predictions and markets return a numeric internal input-confidence
-score from 1 to 100 using the restored existing formula. It is not win probability
-or completed-input coverage, and is not outcome-calibrated. Earlier revisions
-may retain null confidence. Moneyline probabilities
+Partner prediction responses expose public confidence in both
+`prediction.confidence_score` and `prediction.public_confidence_score`.
+Every market's `confidence_score` uses that same public rating. This rating is
+separate from win probability and is not outcome-calibrated. Internal game/team
+confidence breakdowns are omitted from the partner response; they remain stored
+for engine and super-admin diagnostics. Player/goalie evidence-quality fields
+retain their own documented meanings. Older revisions without a public score
+return null rather than substituting internal confidence. Moneyline probabilities
 come directly from the shared calculator, including its equal regulation-tie
 resolution and approved schedule adjustment. Scores are already final EV+PP
 team estimates; do not divide them by legacy offensive/defensive weights.
@@ -35,8 +39,8 @@ again. Exact rules remain in
 [NhlCustomGamePrediction.yaml](../architecture/stats/NhlCustomGamePrediction.yaml).
 
 Read `inputs.algorithm_version`, `inputs.sat_model_run_id`,
-`inputs.training_season_ids`, `inputs.algorithm_definition`, and
-`prediction.confidence_inputs`. Legacy engine/stack IDs may be null even for a
+`inputs.training_season_ids`, `inputs.algorithm_definition`,
+`prediction.public_confidence_score`, and `prediction.days_away`. Legacy engine/stack IDs may be null even for a
 successful qualified prediction. A non-tied available prediction is qualified
 without a confidence/probability cutoff; an exactly equal-probability result
 has no clear winner.
@@ -1067,8 +1071,14 @@ Successful game predictions additionally expose:
 | --- | --- |
 | `prediction.days_away` | Stored signed calendar-day difference between game date and calculation date in America/Toronto: today `0`, tomorrow `1`, next week `7`. Historical requests can be negative. A cached or archived revision keeps its original value; older revisions can be null. |
 | `prediction.public_confidence_score` | Public confidence rating: `50 + 1.1 × (P − 50) + 0.2 × (I − 55) − 2 × max(0, days_away)`, where P is the selected team’s win probability expressed from 0–100 and I is internal confidence. Rounded to two decimals, with no artificial ceiling or floor. Older revisions or missing required inputs may be null. |
-| `prediction.confidence_score` | Existing internal input confidence, unchanged and separate from public confidence and win probability. |
+| `prediction.confidence_score` | Public confidence, identical to `prediction.public_confidence_score` on the partner API. Internal confidence remains in stored revisions and admin views; it is not returned in this API field. |
 | `inputs.context.context_mode` | `exact_game` for today/past-date preparation; `latest_available` for future dates. |
+
+API serialization replaces only the outward game/market confidence values. It does
+not change calculations, cached revision contents, probabilities or qualification.
+`prediction.confidence_inputs`, `teams.*.input_confidence_score` and private
+confidence-component envelopes are omitted. Game-level public confidence is not
+a player or goalie evidence-quality score.
 
 For today, missing exact-game context follows the normal queued build. For tomorrow
 and later, predictions skip target-context building and reuse the latest committed
@@ -1173,6 +1183,8 @@ The HTTP 202 preparing response retains its existing shape.
         "gf_gp": 3.25, "ga_gp": 2.75,
         "xgf_gp": 3.14, "xga_gp": 2.78,
         "pp_pct": 25.0, "pk_pct": 80.0,
+        "l5_pp_pct": 30.0, "l5_pk_pct": 85.0,
+        "l10_pp_pct": 27.5, "l10_pk_pct": 82.5,
         "pp_opps_gp": 3.0, "pp_opps_allowed_gp": 3.25
       }
     },
@@ -1200,6 +1212,18 @@ REG/OT/SO ending; rule-enabled schedule flags do not classify overtime losses.
 - PP% divides summed PP goals by summed own opportunities. PK% is one minus
   summed opponent PP goals divided by summed opponent opportunities. PP opportunities
   for/allowed per game divide those respective opportunity totals by team GP.
+- `form.l5_pp_pct`, `l5_pk_pct`, `l10_pp_pct`, and `l10_pk_pct` add the team's
+  Last 5/Last 10 PP success and PK success percentages on the 0–100 scale. Sum PP
+  goals and own opportunities before dividing for PP%; PK% is 100 times one minus
+  summed opponent PP goals divided by opponent opportunities. These windows use
+  completed prior games of the same game type, continuing into the immediately
+  previous season when fewer than 5/10 current-season games exist. If fewer games
+  exist across those seasons, use the available sample. Missing required fields
+  anywhere in a window or zero total opportunities leave that percentage null;
+  retain observed zero PP success and 100% PK success. Existing season `pp_pct` and
+  `pk_pct`, current-season record windows and opportunity averages are unchanged.
+  New prediction revisions freeze these four fields in Matchup; older revisions
+  are not backfilled. API consumers obtain them on the next calculation.
 - `form.gf_gp`, `ga_gp`, `xgf_gp` and `xga_gp` retain their season scope for compatibility.
   The Matchup screen now reads `form.scoring_trend` for these four rows. It includes
   `games` (L5 sample size), `season_games`, `norm_period` (`season_to_date` at 10+
@@ -1304,7 +1328,7 @@ The `prediction` block contains the display headline:
 | `totals_normalization` | Configured offense/defense percentages and configured_divisor; away/home unrounded goals_per_game, effective divisor and bucket_divisors; a shared divisor only when both sides agree; and whether both normalized scores are available. |
 | `winner` | Side selected using the original weighted scores before final goal normalization. |
 | `goal_differential` | Home projected goals minus away projected goals. |
-| `confidence_score` | `1` to `100`, averaging the two teams' weighted skater/goalie input confidence; not goal margin or win probability. |
+| `confidence_score` | Public confidence rating using the approved probability/internal-confidence/horizon formula above; identical to `public_confidence_score`, with no artificial ceiling or floor. |
 | `goalie_edge` | Selected-starter goalie edge in goals saved per game. |
 
 Final goal normalization leaves winner, win probability, confidence and qualification unchanged. For example, 150% offense plus 50% defense divides a matching bucket by 2. If its defensive match is missing, only 150% offense participated, so that bucket is divided by 1.5. Over/under uses the unrounded normalized team goals without dividing again. Empty bucket evidence or zero participating weights makes that side’s normalized score and the combined total unavailable, and total markets are omitted. Existing saved revisions retain their original outputs.
@@ -1497,7 +1521,7 @@ used by the prediction. When the lineup source is `nhl_boxscore` or
 | `projected_sat` | number | Expected game shot attempts at the applied game TOI, including historical bucket fallbacks when available. |
 | `nhle_factor` | number/null | Applied versioned league factor; null when NHLe was not used. |
 | `confidence` | string/null | Human-readable projection confidence bucket. NHLe and replacement rows are `low`. |
-| `confidence_score` | number/null | Player input-evidence confidence on a 0–1 scale when available; this is distinct from the game-level 1–100 internal score. |
+| `confidence_score` | number/null | Player input-evidence confidence on a 0–1 scale when available; this is distinct from the game-level public confidence rating. |
 | `baseline_toi_seconds` | number | Existing season TOI projection before applying tonight's role. |
 | `game_projected_toi_seconds` | integer | Game-specific projected TOI used to scale the player's rates. |
 | `game_projected_toi` | string | Display form of game TOI in `M:SS` format. |
@@ -1688,7 +1712,7 @@ Common row shape:
 | `loss_probability` | Probability the selection loses. |
 | `fair_odds_american` | American fair odds derived from probability, or `null` when probability is exactly `0` or `1` because fair odds are infinite. |
 | `fair_odds_decimal` | Decimal fair odds derived from probability, or `null` when probability is exactly `0` or `1` because fair odds are infinite. |
-| `confidence_score` | Internal input confidence from `1` to `100` on current successful predictions; earlier/unavailable output may be null. It is distinct from win probability. |
+| `confidence_score` | The game’s public confidence rating, identical to `prediction.public_confidence_score`; null if unavailable. It is distinct from this market’s win probability and does not expose internal game confidence. |
 | `model.method` | Probability method. See method values below. |
 | `model.source` | `prediction.selection_score` for moneyline/puckline; `prediction.predicted_score` for totals. |
 | `model.includes_overtime` | Whether the probability includes overtime resolution in the score distribution. |

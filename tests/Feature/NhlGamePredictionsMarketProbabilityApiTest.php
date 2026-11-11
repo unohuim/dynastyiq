@@ -85,7 +85,7 @@ beforeEach(function (): void {
                 $matchup[$side] = ['team_id' => (int) $game->{$side.'_team_id'},
                     'team_abbrev' => $game->{$side.'_team_abbrev'}, 'form' => $values];
             }
-            Cache::put('nhl:prediction-matchup:v1:2026020001:api-fixture', ['matchup' => $matchup], 21600);
+            Cache::put('nhl:prediction-matchup:v2:2026020001:api-fixture', ['matchup' => $matchup], 21600);
         }
 
         return $this->withToken($this->token)->getJson(
@@ -219,9 +219,12 @@ it('completes missing observed player evidence instead of rejecting the game', f
         unset($player);
     }
     unset($side);
-    ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction_available', true)
-        ->assertJsonPath('prediction.confidence_inputs.input_completeness.EV', 0.0)
-        ->assertJsonPath('prediction.confidence_inputs.effective_input_completeness.EV', 1.0);
+    $response = ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction_available', true)
+        ->assertJsonMissingPath('prediction.confidence_inputs');
+    $saved = json_decode(DB::table('nhl_game_prediction_revisions')
+        ->where('id', $response->json('meta.prediction_revision_id'))->value('payload'), true);
+    expect(data_get($saved, 'prediction.confidence_inputs.input_completeness.EV'))->toEqual(0)
+        ->and(data_get($saved, 'prediction.confidence_inputs.effective_input_completeness.EV'))->toEqual(1);
 });
 
 it('preserves measured zero player usage while predicting the full game', function (): void {
@@ -245,12 +248,19 @@ it('does not dilute new goals using saved legacy engine percentages', function (
         ->assertJsonPath('pick_qualified', true);
 });
 
-it('returns internal input confidence separately from winning probability', function (): void {
-    ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction.confidence_score', 50)
-        ->assertJsonPath('market_probabilities.0.confidence_score', 50);
+it('returns public confidence in game and market fields separately from winning probability', function (): void {
+    $calculation = ($this->calculate)();
+    $expected = round(50 + 1.1 * (100 * max($calculation['home_win_probability'], $calculation['away_win_probability']) - 50)
+        + 0.2 * ($calculation['confidence_score'] - 55), 2);
+    ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction.confidence_score', $expected)
+        ->assertJsonPath('prediction.public_confidence_score', $expected)
+        ->assertJsonPath('market_probabilities.0.confidence_score', $expected)
+        ->assertJsonMissingPath('prediction.confidence_inputs')
+        ->assertJsonMissingPath('teams.away.input_confidence_score')
+        ->assertJsonMissingPath('teams.home.input_confidence_score');
 });
 
-it('publishes numeric internal confidence in the API and immutable revision without changing the pick', function (): void {
+it('publishes public confidence while retaining numeric internal confidence in the immutable revision', function (): void {
     $before = ($this->calculate)();
     foreach (['away', 'home'] as $venue) {
         foreach ($this->input['teams'][$venue]['players'] as &$player) {
@@ -259,13 +269,16 @@ it('publishes numeric internal confidence in the API and immutable revision with
         unset($player);
         $this->input['teams'][$venue]['goalie_confidence_buckets'] = ['B' => ['confidence_score' => 0.6, 'source_sat' => 100]];
     }
-    $response = ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction.confidence_score', 74)
-        ->assertJsonPath('market_probabilities.0.confidence_score', 74)
+    $expectedPublic = round(50 + 1.1 * (100 * max($before['home_win_probability'], $before['away_win_probability']) - 50)
+        + 0.2 * (74 - 55), 2);
+    $response = ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction.confidence_score', $expectedPublic)
+        ->assertJsonPath('market_probabilities.0.confidence_score', $expectedPublic)
         ->assertJsonPath('teams.away.roster.0.confidence_score', 0.8)
         ->assertJsonPath('prediction.home_win_probability', $before['home_win_probability'])
         ->assertJsonPath('prediction.predicted_total_goals', round($before['total_goals'], 2));
     $row = DB::table('nhl_game_prediction_revisions')->find($response->json('meta.prediction_revision_id'));
-    expect(json_decode($row->summary, true)['confidence'])->toBe(74)
+    expect(json_decode($row->payload, true)['prediction']['confidence_score'])->toBe(74)
+        ->and(json_decode($row->summary, true)['confidence'])->toBe(74)
         ->and(json_decode($row->evidence, true)['custom_prediction']['input']['teams']['away']['players'][100]['confidence_score'])
         ->toBe(0.8);
 });
@@ -671,7 +684,7 @@ it('stores calendar days away and calculated public confidence while retaining i
     $prediction = $response->json('prediction');
     $probability = $prediction[$prediction['winner']['side'].'_win_probability'];
     $expected = round(50 + 1.1 * (100 * $probability - 50)
-        + 0.2 * ($prediction['confidence_score'] - 55) - 2 * max(0, $days), 2);
+        + 0.2 * (($this->calculate)()['confidence_score'] - 55) - 2 * max(0, $days), 2);
     $response->assertJsonPath('prediction.public_confidence_score', $expected);
     $revision = DB::table('nhl_game_prediction_revisions')->find($response->json('meta.prediction_revision_id'));
     expect((int) $revision->days_away)->toBe($days)->and((float) $revision->public_confidence_score)->toBe($expected)
@@ -701,7 +714,7 @@ it('preserves the archived horizon when reading a revision on a later date', fun
     $payload = app(\App\Services\NhlGamePredictionHistory::class)->payload($revision);
     expect($payload['prediction']['days_away'])->toBe(1)
         ->and($payload['prediction']['public_confidence_score'])->toBe($response->json('prediction.public_confidence_score'))
-        ->and($payload['prediction']['confidence_score'])->toBe($response->json('prediction.confidence_score'));
+        ->and($payload['prediction']['confidence_score'])->toBe(($this->calculate)()['confidence_score']);
 });
 
 it('leaves historical revisions without horizon metadata explicitly unavailable', function (): void {
@@ -763,7 +776,7 @@ it('returns the frozen Matchup after preparation expiry and public page invalida
     $response = ($this->requestPrediction)()->assertOk();
     $id = $response->json('meta.prediction_revision_id');
     $this->matchupReady = false;
-    Cache::forget('nhl:prediction-matchup:v1:2026020001:api-fixture');
+    Cache::forget('nhl:prediction-matchup:v2:2026020001:api-fixture');
     app(\App\Services\NhlPublicGamePage::class)->forget(2026020001);
     $this->travel(6)->minutes();
     ($this->requestPrediction)()->assertOk()->assertJsonPath('meta.prediction_revision_id', $id)
@@ -804,9 +817,61 @@ it('publishes the worker-prepared expected values through revision storage and s
         ->assertJsonPath('matchup.home.form.scoring_trend.xga_gp.value', 2.1);
     $revision = DB::table('nhl_game_prediction_revisions')->find($response->json('meta.prediction_revision_id'));
     expect(json_decode($revision->payload, true)['matchup'])->toEqual($response->json('matchup'));
-    Cache::forget('nhl:prediction-matchup:v1:2026020001:api-fixture');
+    Cache::forget('nhl:prediction-matchup:v2:2026020001:api-fixture');
     app(\App\Services\NhlPublicGamePage::class)->forget(2026020001);
     ($this->requestPrediction)()->assertOk()->assertJsonPath('meta.prediction_revision_id', (int) $revision->id)
         ->assertJsonPath('matchup.expected_pending', false)->assertJsonPath('matchup.home.form.xga_gp', 2.1);
     Http::assertNothingSent();
+});
+
+
+it('returns public confidence for every market on fresh and stale API reads without rewriting internal evidence', function (): void {
+    $first = ($this->requestPrediction)(['markets' => ['moneyline', 'puckline', 'total']])->assertOk();
+    $public = $first->json('prediction.public_confidence_score');
+    foreach ($first->json('market_probabilities') as $market) {
+        expect($market['confidence_score'])->toEqual($public);
+    }
+    $id = $first->json('meta.prediction_revision_id');
+    $savedBefore = DB::table('nhl_game_prediction_revisions')->where('id', $id)->value('payload');
+    $this->travel(61)->seconds();
+    ($this->requestPrediction)(['markets' => ['moneyline', 'puckline', 'total']])->assertOk()
+        ->assertJsonPath('meta.prediction_revision_id', $id)->assertJsonPath('meta.cache', 'stale')
+        ->assertJsonPath('prediction.confidence_score', $public)->assertJsonMissingPath('prediction.confidence_inputs');
+    expect(DB::table('nhl_game_prediction_revisions')->where('id', $id)->value('payload'))->toBe($savedBefore);
+    $this->assertDatabaseCount('nhl_game_prediction_revisions', 1);
+});
+
+it('does not substitute internal confidence when an older cached public score is missing', function (): void {
+    $response = ($this->requestPrediction)()->assertOk();
+    $input = ['nhl_game_id' => '2026020001'];
+    $key = 'nhl:game-prediction:pregame-dependencies-v17:2026020001:'.hash('sha256', json_encode($input, JSON_THROW_ON_ERROR));
+    $cached = Cache::get($key);
+    expect($cached)->toBeArray();
+    $cached['payload']['prediction']['public_confidence_score'] = null;
+    Cache::put($key, $cached, 10800);
+    ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction.confidence_score', null)
+        ->assertJsonPath('market_probabilities.0.confidence_score', null)
+        ->assertJsonPath('meta.prediction_revision_id', $response->json('meta.prediction_revision_id'));
+});
+
+
+it('stores last five and last ten special teams percentages in the completed API Matchup snapshot', function (): void {
+    foreach (range(1, 10) as $offset) {
+        NhlGame::query()->create(['nhl_game_id' => 2026020300 + $offset, 'season_id' => '20262027', 'game_type' => 2,
+            'game_date' => '2026-10-'.(31 - $offset), 'game_dow' => 'Monday', 'game_month' => 'October',
+            'game_state' => 'OFF', 'home_team_id' => 2, 'away_team_id' => 1, 'home_team_score' => 3, 'away_team_score' => 2,
+            'home_pp_goals' => $offset <= 5 ? 1 : 0, 'home_pp_opportunities' => 2,
+            'away_pp_goals' => $offset <= 5 ? 0 : 1, 'away_pp_opportunities' => 2]);
+    }
+    $response = ($this->requestPrediction)()->assertOk()->assertJsonPath('matchup.home.form.l5_pp_pct', 50.0)
+        ->assertJsonPath('matchup.home.form.l10_pp_pct', 25.0)
+        ->assertJsonPath('matchup.home.form.l5_pk_pct', 100.0)->assertJsonPath('matchup.home.form.l10_pk_pct', 75.0)
+        ->assertJsonPath('matchup.away.form.l5_pp_pct', 0.0)->assertJsonPath('matchup.away.form.l10_pp_pct', 25.0)
+        ->assertJsonPath('matchup.away.form.l5_pk_pct', 50.0)->assertJsonPath('matchup.away.form.l10_pk_pct', 75.0);
+    $id = $response->json('meta.prediction_revision_id');
+    $saved = json_decode(DB::table('nhl_game_prediction_revisions')->where('id', $id)->value('payload'), true);
+    expect($saved['matchup']['home']['form']['l5_pp_pct'])->toEqual(50)
+        ->and($saved['matchup']['away']['form']['l10_pk_pct'])->toEqual(75);
+    ($this->requestPrediction)()->assertOk()->assertJsonPath('meta.prediction_revision_id', $id)
+        ->assertJsonPath('matchup.home.form.l5_pp_pct', 50.0)->assertJsonPath('matchup.home.form.l10_pp_pct', 25.0);
 });

@@ -53,6 +53,20 @@ class NhlGamePredictionsController extends Controller
             $prediction['matchup'] = $pages->matchup(NhlGame::query()->findOrFail((int) $input['nhl_game_id']));
         }
 
+        // Presentation-only copy: cached revisions and admin diagnostics keep their internal evidence.
+        if (is_array($prediction['prediction'] ?? null)) {
+            $publicConfidence = $prediction['prediction']['public_confidence_score'] ?? null;
+            $prediction['prediction']['confidence_score'] = $publicConfidence;
+            unset($prediction['prediction']['confidence_inputs']);
+            foreach (array_keys($prediction['market_probabilities'] ?? []) as $index) {
+                $prediction['market_probabilities'][$index]['confidence_score'] = $publicConfidence;
+            }
+        }
+        foreach (['away', 'home'] as $side) {
+            unset($prediction['teams'][$side]['input_confidence_score']);
+        }
+        unset($prediction['_internal_confidence'], $prediction['_confidence_components']);
+
         return response()->json($prediction, 200, [], JSON_PRESERVE_ZERO_FRACTION);
     }
 }

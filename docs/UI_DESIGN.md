@@ -22,6 +22,12 @@ or failure feedback within their existing content region. Those cases must not
 turn routine background refreshes into visible notifications or global overlays.
 
 
+The admin Game Predictions table shows Internal Conf, Public Conf and Days Away
+for the saved revision. Public Conf replaces the Qualified column. Confidence
+values are percentage ratings; Days Away is the stored integer horizon, including
+zero. Show an unavailable marker for missing historical values and keep revision
+history labels explicit about internal versus public confidence.
+
 Game previews use Matchup, Lineups, Head-to-head and Factors tabs, defaulting to
 Matchup. Matchup uses a centered shared metric column and adjacent away/home
 value columns, including scoring, expected scoring, special teams, power-play

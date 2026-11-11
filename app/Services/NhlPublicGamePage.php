@@ -228,7 +228,7 @@ final class NhlPublicGamePage
     /** Source-bound preparation is independent of public-page invalidation and its five-minute TTL. */
     private function predictionMatchupKey(int $gameId, string $sourceFingerprint): string
     {
-        return 'nhl:prediction-matchup:v1:'.$gameId.':'.$sourceFingerprint;
+        return 'nhl:prediction-matchup:v2:'.$gameId.':'.$sourceFingerprint;
     }
 
     /** Coalesce optional expected-stat preparation without calculating it in a public request. */
@@ -844,7 +844,8 @@ final class NhlPublicGamePage
         $oppsComplete = $records->isNotEmpty() && $records->every(fn (array $row): bool => $row['pp_opps'] !== null);
         $pkComplete = $records->isNotEmpty() && $records->every(fn (array $row): bool => $row['pk_ga'] !== null && $row['pk_opps'] !== null);
 
-        return ['scoring_trend' => $this->scoringTrend($game, $teamId, $rows), 'gp' => $records->count(), 'wins' => $wins, 'losses' => $records->count() - $wins - $otl, 'otl' => $otl,
+        return [...$this->recentSpecialTeams($game, $teamId, $rows),
+            'scoring_trend' => $this->scoringTrend($game, $teamId, $rows), 'gp' => $records->count(), 'wins' => $wins, 'losses' => $records->count() - $wins - $otl, 'otl' => $otl,
             'gf_gp' => $records->isEmpty() ? null : $records->sum('gf') / $records->count(),
             'ga_gp' => $records->isEmpty() ? null : $records->sum('ga') / $records->count(),
             'pp_pct' => $ppComplete && $records->sum('pp_opps') > 0 ? 100 * $records->sum('pp_goals') / $records->sum('pp_opps') : null,
@@ -858,6 +859,46 @@ final class NhlPublicGamePage
             'l5_losses' => $lastFive->where('win', false)->where('otl', false)->count(), 'l5_otl' => $lastFive->where('otl', true)->count(),
             'l10_gp' => $last->count(), 'l10_wins' => $last->where('win', true)->count(),
             'l10_losses' => $last->where('win', false)->where('otl', false)->count(), 'l10_otl' => $last->where('otl', true)->count()];
+    }
+
+    /** Pool special-team goals and opportunities over exact prior L5/L10 team games, crossing one season if needed.
+     * @return array<string,float|null>
+     */
+    private function recentSpecialTeams(NhlGame $game, int $teamId, Collection $season): array
+    {
+        $history = $season->take(10)->values();
+        if ($history->count() < 10) {
+            $previous = NhlGame::query()->where('season_id', (string) ((int) $game->season_id - 10001))
+                ->where('game_type', $game->game_type)->whereDate('game_date', '<', $game->game_date->toDateString())
+                ->whereIn('game_state', ['OFF', 'FINAL'])->whereNotNull('home_team_score')->whereNotNull('away_team_score')
+                ->where(fn ($query) => $query->where('home_team_id', $teamId)->orWhere('away_team_id', $teamId))
+                ->orderByDesc('game_date')->orderByDesc('nhl_game_id')->limit(10 - $history->count())
+                ->get(['nhl_game_id', 'home_team_id', 'home_pp_goals', 'away_pp_goals',
+                    'home_pp_opportunities', 'away_pp_opportunities']);
+            $history = $history->concat($previous)->values();
+        }
+        $rate = function (Collection $games, bool $penaltyKill) use ($teamId): ?float {
+            if ($games->isEmpty()) {
+                return null;
+            }
+            $goals = $opportunities = 0;
+            foreach ($games as $row) {
+                $side = (int) $row->home_team_id === $teamId ? 'home' : 'away';
+                if ($penaltyKill) {
+                    $side = $side === 'home' ? 'away' : 'home';
+                }
+                if ($row->{$side.'_pp_goals'} === null || $row->{$side.'_pp_opportunities'} === null) {
+                    return null;
+                }
+                $goals += $row->{$side.'_pp_goals'};
+                $opportunities += $row->{$side.'_pp_opportunities'};
+            }
+
+            return $opportunities > 0 ? 100 * ($penaltyKill ? 1 - $goals / $opportunities : $goals / $opportunities) : null;
+        };
+
+        return ['l5_pp_pct' => $rate($history->take(5), false), 'l5_pk_pct' => $rate($history->take(5), true),
+            'l10_pp_pct' => $rate($history, false), 'l10_pk_pct' => $rate($history, true)];
     }
 
     /** Keep L5 and its ten-game season/last-season norm on the same prior-date result boundary.

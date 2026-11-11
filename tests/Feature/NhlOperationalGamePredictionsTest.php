@@ -458,3 +458,16 @@ it('uses each selected runs admission time rather than a later run or worker sta
     $this->getJson(route('admin.game-predictions.index', ['start_date' => '2026-10-22', 'run_id' => $second]))
         ->assertOk()->assertJsonPath('games.0.engine_time_seconds', 12);
 });
+
+
+it('keeps internal and public confidence plus days away available to super admin game rows and history', function (): void {
+    $published = ($this->publish)(['prediction' => ['winner' => ['side' => 'home'],
+        'home_win_probability' => 0.61, 'away_win_probability' => 0.39]]);
+    $id = $published['meta']['prediction_revision_id'];
+    ($this->index)()->assertOk()->assertJsonPath('games.0.revision.confidence', 67)
+        ->assertJsonPath('games.0.revision.public_confidence_score', 64.5)
+        ->assertJsonPath('games.0.revision.days_away', 0);
+    $this->actingAs($this->admin)->getJson('/admin/game-predictions/games/2026020001/revisions')
+        ->assertOk()->assertJsonPath('revisions.0.id', $id)->assertJsonPath('revisions.0.confidence', 67)
+        ->assertJsonPath('revisions.0.public_confidence_score', 64.5)->assertJsonPath('revisions.0.days_away', 0);
+});

@@ -4330,6 +4330,9 @@ Upcoming lineups/opponents and schedule classifications remain target-specific.
 Operational revisions store Toronto-calendar `days_away` and a separately calculated
 `public_confidence_score` using probability, internal confidence and the forecast
 horizon; no artificial score cap applies. Internal confidence remains unchanged.
+Matchup form also includes pooled Last 5 and Last 10 PP/PK percentages, continuing
+into the previous season for short samples. Existing season special-team rates
+and current-season record windows remain unchanged; new revisions retain the fields.
 New completed predictions also freeze numeric season/L5 xGF/xGA for both teams
 in their saved Matchup payload. Source-bound background preparation must finish
 before revision publication; later API reads retain the saved values independently
@@ -4352,6 +4355,16 @@ expiring per-game summary digests reuse the existing cache. Actual corrections
 and completed derived-fact publication continue to invalidate affected evidence.
 Authority: `docs/architecture/stats/NhlCustomGamePrediction.yaml` and
 `docs/architecture/imports/NhlGameDataImportServices.yaml`.
+
+
+### Public confidence presentation
+
+Admin Game Predictions shows Internal Conf, Public Conf and the stored Days Away
+horizon, replacing the former Qualified display. Partner serialization maps game
+and market confidence_score to the saved public rating and omits internal game/team
+confidence breakdowns. Stored engine/admin evidence remains unchanged.
+Authority: `docs/architecture/stats/NhlGamePredictionHistory.yaml` and
+`docs/architecture/stats/NhlGamePredictionResponseCache.yaml`.
 
 
 ### Admin prediction elapsed time
