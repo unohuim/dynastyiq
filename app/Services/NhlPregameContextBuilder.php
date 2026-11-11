@@ -11,6 +11,7 @@ use App\Models\NhlPregameContextRun;
 use App\Models\NhlPregameContextRunGame;
 use Closure;
 use Carbon\CarbonInterface;
+use Carbon\CarbonImmutable;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
@@ -756,6 +757,39 @@ class NhlPregameContextBuilder
         [$metrics, $opponent, $schedule] = $this->teamResultEvidence($game, $cutoff, $side, $training, null);
 
         return ['metrics' => $metrics, 'opponent_metrics' => $opponent, 'schedule' => $schedule];
+    }
+
+    /** Classify an upcoming game from scheduled appearances, including intervening unplayed games.
+     * @return array<string,mixed>
+     */
+    public function predictionScheduleEvidence(object $game, int $teamId, int $opponentId, string $venue): array
+    {
+        $date = CarbonImmutable::parse($game->game_date, 'America/Toronto')->startOfDay();
+        $historyFor = fn (int $id): Collection => DB::table('nhl_games')->where('game_type', 2)
+            ->where('season_id', $game->season_id)->whereDate('game_date', '<', $game->game_date)
+            ->whereNotIn('game_state', ['PPD', 'CNCL'])->whereNotNull('start_time_utc')
+            ->where(fn ($query) => $query->where('home_team_id', $id)->orWhere('away_team_id', $id))
+            ->orderByDesc('start_time_utc')->orderByDesc('nhl_game_id')->get()
+            ->each(function (object $row) use ($id): void {
+                $row->is_home = (int) $row->home_team_id === $id;
+            });
+        $history = $historyFor($teamId);
+        $opponent = $historyFor($opponentId)->first();
+        $gap = fn (?object $last): ?int => $last === null ? null
+            : (int) CarbonImmutable::parse($last->game_date, 'America/Toronto')->startOfDay()->diffInDays($date);
+        $days = $gap($history->first());
+        $opponentDays = $gap($opponent);
+        $seven = $history->filter(fn (object $row): bool => (string) $row->game_date >= $date->subDays(6)->toDateString())->count();
+        $four = $history->filter(fn (object $row): bool => (string) $row->game_date >= $date->subDays(3)->toDateString())->count();
+
+        return ['days_rest' => $days === null ? null : max(0, $days - 1),
+            'opponent_days_rest' => $opponentDays === null ? null : max(0, $opponentDays - 1),
+            'back_to_back' => $days === 1, 'games_last_4_days' => $four, 'games_last_7_days' => $seven,
+            'three_in_four' => $four >= 2, 'games_including_target_last_7_days' => $seven + 1,
+            'third_in_seven' => $seven === 2, 'fourth_in_seven' => $seven === 3,
+            'back_to_back_fourth_in_seven' => $days === 1 && $seven === 3,
+            'days_on_road' => $this->daysOnRoad($venue, $game, $history),
+            ...$this->travelMetrics($teamId, $game, $history->first(), $history)];
     }
 
     /** Calculate team evidence from results and schedule references without saving context. */

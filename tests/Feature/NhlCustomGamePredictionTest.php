@@ -1413,3 +1413,146 @@ it('keeps the L5 layer independent of the schedule switch and preserves the sepa
     expect(abs($adjusted['home_win_probability'] - min(1.0, $probability['home']
         + $adjusted['home_probability_schedule_delta'])))->toBeLessThan(1.0e-12);
 })->with([true, false]);
+
+
+it('reuses committed context for future targets without building target context or reading target results', function (): void {
+    [$reader, $model, $lineups] = ($this->forecastFixture)('FUT', true);
+    // Today is Nov 5; the requested target is Nov 7. Preserve today's saved context identities.
+    $target = DB::table('nhl_games')->where('nhl_game_id', 2026020002)->first();
+    $source = (array) $target;
+    unset($source['id']);
+    $source['nhl_game_id'] = 2026020003;
+    DB::table('nhl_games')->insert($source);
+    foreach (DB::table('nhl_team_game_pregame_contexts')->get() as $team) {
+        $parent = (array) $team;
+        unset($parent['id']);
+        $parent['nhl_game_id'] = 2026020003;
+        $newId = DB::table('nhl_team_game_pregame_contexts')->insertGetId($parent);
+        DB::table('nhl_player_game_pregame_contexts')->where('team_context_id', $team->id)
+            ->update(['nhl_game_id' => 2026020003, 'team_context_id' => $newId]);
+    }
+    $run = DB::table('nhl_pregame_context_runs')->first();
+    DB::table('nhl_pregame_context_run_games')->insert(['run_id' => $run->id, 'nhl_game_id' => 2026020003,
+        'sequence' => 1, 'game_date' => '2026-11-05', 'state' => 'complete',
+        'comparisons_completed_at' => '2026-11-05 12:00:00']);
+    DB::table('nhl_games')->where('nhl_game_id', 2026020002)
+        ->update(['game_date' => '2026-11-07', 'start_time_utc' => '2026-11-07 23:00:00']);
+    app(NhlPregameContextBuilder::class)->shouldReceive('predictionScheduleEvidence')->twice()
+        ->andReturn(['back_to_back' => false, 'games_including_target_last_7_days' => 3]);
+    $reader->beginQueuedForecast($model, '2026-11-07', $lineups);
+    for ($page = 0; $page < 30; $page++) {
+        $step = $reader->advanceQueuedForecast();
+        if ($step['complete']) {
+            break;
+        }
+    }
+    expect($step['complete'])->toBeTrue()->and($step['errors'])->toBe([])
+        ->and($step['metadata']['context_mode'])->toBe('latest_available')
+        ->and($step['inputs'][2026020002]['teams']['away']['context_source'])->toBe('latest_available_model_snapshot')
+        ->and($step['inputs'][2026020002]['teams']['away']['context_provenance']['game_id'])->toBe(2026020003)
+        ->and($step['inputs'][2026020002]['teams']['away']['players'][100]['history']['EV']['last_20']['games'])->toBe(4);
+    Bus::assertNotDispatched(\App\Jobs\BuildNhlPregameContextDayJob::class);
+});
+
+it('uses prior player history when future context is absent without weakening same-day requirements', function (): void {
+    [$reader, $model, $lineups] = ($this->forecastFixture)('FUT', true);
+    DB::table('nhl_player_game_pregame_contexts')->delete();
+    DB::table('nhl_team_game_pregame_contexts')->delete();
+    DB::table('nhl_games')->where('nhl_game_id', 2026020002)
+        ->update(['game_date' => '2026-11-07', 'start_time_utc' => '2026-11-07 23:00:00']);
+    app(NhlPregameContextBuilder::class)->shouldReceive('predictionScheduleEvidence')->twice()
+        ->andReturn(['back_to_back' => false, 'games_including_target_last_7_days' => 2]);
+    $reader->beginQueuedForecast($model, '2026-11-07', $lineups);
+    for ($page = 0; $page < 30; $page++) {
+        $step = $reader->advanceQueuedForecast();
+        if ($step['complete']) {
+            break;
+        }
+    }
+    expect($step['errors'])->toBe([])
+        ->and($step['inputs'][2026020002]['teams']['away']['context_id'])->toBeNull()
+        ->and($step['inputs'][2026020002]['teams']['away']['players'][100]['context_provenance']['source'])->toBe('prior_results_fallback')
+        ->and($step['inputs'][2026020002]['teams']['away']['players'][100]['history']['EV']['last_20']['games'])->toBe(4);
+});
+
+it('derives future rest and density from intervening scheduled games instead of old context', function (): void {
+    [$reader] = ($this->forecastFixture)('FUT', true);
+    $target = DB::table('nhl_games')->where('nhl_game_id', 2026020002)->first();
+    $target->game_date = '2026-11-06';
+    $target->start_time_utc = '2026-11-06 23:00:00';
+    $schedule = (new NhlPregameContextBuilder())->predictionScheduleEvidence($target, 1, 2, 'away');
+    expect($schedule['back_to_back'])->toBeTrue()->and($schedule['days_rest'])->toBe(0)
+        ->and($schedule['opponent_days_rest'])->toBe(0)
+        ->and($schedule['games_including_target_last_7_days'])->toBe(3);
+});
+
+it('does not reuse uncommitted context rows for future forecasts', function (): void {
+    [$reader, $model] = ($this->forecastFixture)('FUT', true);
+    $identity = NhlCustomGamePredictionInputs::futureContextIdentity($model);
+    expect((int) $identity['commit']->games)->toBe(0);
+});
+
+
+it('skips the pregame dependency queue when preparing a future date through the shared forecast boundary', function (): void {
+    [$fixture, $model, $lineups] = ($this->forecastFixture)('FUT', true);
+    DB::table('nhl_games')->where('nhl_game_id', 2026020002)
+        ->update(['game_date' => '2026-11-07', 'start_time_utc' => '2026-11-07 23:00:00']);
+    $reader = Mockery::mock(NhlCustomGamePredictionInputs::class);
+    $reader->shouldReceive('anticipatedParticipants')->once()->andReturn($lineups[2026020002]);
+    $reader->shouldReceive('beginQueuedForecast')->once()->with($model, '2026-11-07', $lineups);
+    $reader->shouldReceive('advanceQueuedForecast')->once()->andReturn(['complete' => true,
+        'phase' => 'complete', 'cursor' => 1, 'inputs' => [2026020002 => ['game_id' => 2026020002]],
+        'errors' => [], 'metadata' => ['context_mode' => 'latest_available']]);
+    app()->instance(NhlCustomGamePredictionInputs::class, $reader);
+    $orchestrator = Mockery::mock(\App\Services\NhlPregameContextOrchestrator::class);
+    $orchestrator->shouldNotReceive('queuePredictionContexts');
+    app()->instance(\App\Services\NhlPregameContextOrchestrator::class, $orchestrator);
+    $forecast = new \App\Services\NhlCustomGameForecast();
+    expect($forecast->advancePreparation(2026020002, $model))->toBeFalse()
+        ->and($forecast->advancePreparation(2026020002, $model))->toBeTrue();
+    Bus::assertNothingDispatched();
+});
+
+
+it('aligns future personal bucket counts to the reused snapshot cutoff rather than newer results', function (): void {
+    [$reader, $model, $lineups] = ($this->forecastFixture)('FUT', true);
+    $run = DB::table('nhl_pregame_context_runs')->first();
+    $parent = (array) DB::table('nhl_team_game_pregame_contexts')->where('nhl_team_id', 1)->first();
+    unset($parent['id']);
+    $parent['nhl_game_id'] = 2026020001;
+    $parent['game_date'] = '2026-11-01';
+    $parent['source_cutoff_at'] = '2026-10-31 12:00:00';
+    $parentId = DB::table('nhl_team_game_pregame_contexts')->insertGetId($parent);
+    $player = DB::table('nhl_player_game_pregame_contexts')->where('nhl_player_id', 100)->first();
+    $metrics = json_decode($player->metrics, true, 512, JSON_THROW_ON_ERROR);
+    foreach (['EV' => [1500, 20, 8], 'PP' => [150, 4, 2]] as $lane => [$seconds, $sat, $sog]) {
+        foreach (['last_5', 'last_10', 'last_20', 'season_to_date'] as $window) {
+            $games = $window === 'season_to_date' ? 0 : 3;
+            $metrics['strength'][$lane][$window] = ['games' => $games, 'toi_seconds' => $games * $seconds,
+                'sat' => $games * $sat, 'sog' => $games * $sog, 'goals' => $games, 'individual_missing_games' => 0];
+        }
+    }
+    DB::table('nhl_player_game_pregame_contexts')->where('id', $player->id)->update([
+        'nhl_game_id' => 2026020001, 'team_context_id' => $parentId, 'game_date' => '2026-11-01',
+        'source_cutoff_at' => '2026-10-31 12:00:00', 'metrics' => json_encode($metrics, JSON_THROW_ON_ERROR)]);
+    DB::table('nhl_pregame_context_run_games')->insert(['run_id' => $run->id, 'nhl_game_id' => 2026020001,
+        'sequence' => 1, 'game_date' => '2026-11-01', 'state' => 'complete',
+        'comparisons_completed_at' => '2026-11-01 12:00:00']);
+    DB::table('nhl_games')->where('nhl_game_id', 2026020002)
+        ->update(['game_date' => '2026-11-07', 'start_time_utc' => '2026-11-07 23:00:00']);
+    app(NhlPregameContextBuilder::class)->shouldReceive('predictionScheduleEvidence')->twice()
+        ->andReturn(['back_to_back' => false, 'games_including_target_last_7_days' => 3]);
+    $reader->beginQueuedForecast($model, '2026-11-07', $lineups);
+    for ($page = 0; $page < 30; $page++) {
+        $step = $reader->advanceQueuedForecast();
+        if ($step['complete']) {
+            break;
+        }
+    }
+    expect($step['errors'])->toBe([]);
+    $prepared = $step['inputs'][2026020002]['teams']['away']['players'][100];
+    expect($prepared['history']['EV']['last_20']['games'])->toBe(3)
+        ->and($prepared['history']['EV']['last_20']['sat'])->toBe(60)
+        ->and($prepared['buckets']['EV']['B']['sat_per_60'])->toBe(48.0)
+        ->and($prepared['context_provenance']['game_id'])->toBe(2026020001);
+});

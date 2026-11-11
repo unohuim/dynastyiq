@@ -145,8 +145,12 @@ class NhlGamePredictionPayload
             'selection_score' => ['away' => $away, 'home' => $home],
             'predicted_total_goals' => round($custom['total_goals'], 2), 'goal_differential' => round($home - $away, 4),
             'confidence_score' => $custom['confidence_score'], 'confidence_inputs' => $custom['confidence_inputs'],
+            'days_away' => (int) \Carbon\CarbonImmutable::now('America/Toronto')->startOfDay()
+                ->diffInDays(\Carbon\CarbonImmutable::parse($game->game_date, 'America/Toronto')->startOfDay(), false),
+            'public_confidence_score' => null,
             'home_win_probability' => $custom['home_win_probability'], 'away_win_probability' => $custom['away_win_probability'],
             'goalie_edge' => $edge, 'algorithm_version' => config('nhl-custom-prediction.algorithm_version')];
+        $prediction['public_confidence_score'] = $this->publicConfidenceScore($prediction, $prediction['days_away']);
         $markets = $this->marketProbabilities($game->away_team_abbrev, $game->home_team_abbrev, $away, $home, $prediction, $overrides);
         foreach ($markets as &$market) {
             $market['confidence_score'] = $custom['confidence_score'];
@@ -173,7 +177,7 @@ class NhlGamePredictionPayload
                 'away_goalie_id' => $goalies['away']['nhl_player_id'] ?? null, 'home_goalie_id' => $goalies['home']['nhl_player_id'] ?? null,
                 'away_lineup_source' => $custom['teams']['away']['lineup_source'], 'home_lineup_source' => $custom['teams']['home']['lineup_source'],
                 'context' => array_intersect_key($forecast['metadata'], array_flip([
-                    'context_version', 'context_run_id', 'as_of', 'coefficient_reference_train_seasons', 'coefficients_transferred'])),
+                    'context_version', 'context_run_id', 'context_mode', 'as_of', 'coefficient_reference_train_seasons', 'coefficients_transferred'])),
                 'algorithm_definition' => app(NhlCustomGamePredictionEngine::class)->definition()],
             'prediction' => $prediction, 'market_probabilities' => $markets, 'goalies' => $goalies,
             'anticipated_lineups' => $lineups, 'teams' => $teams, 'reasons' => $reasons,
@@ -1328,6 +1332,29 @@ class NhlGamePredictionPayload
             'confidence_score' => $this->confidenceScore($awaySide, $homeSide, $awayGoalie, $homeGoalie),
             'goalie_edge' => $this->goalieEdge($awayTeam, $homeTeam, $awayGoalie, $homeGoalie),
         ];
+    }
+
+    /** Calculate the separately published confidence rating without changing outcome probabilities.
+     * @param array<string,mixed> $prediction
+     */
+    public function publicConfidenceScore(array $prediction, ?int $daysAway): ?float
+    {
+        $side = data_get($prediction, 'winner.side');
+        $probability = match ($side) {
+            'home' => $prediction['home_win_probability'] ?? null,
+            'away' => $prediction['away_win_probability'] ?? null,
+            'pickem' => 0.5,
+            default => null,
+        };
+        $internal = $prediction['confidence_score'] ?? null;
+        if ($daysAway === null || ! is_numeric($probability) || ! is_numeric($internal)
+            || ! is_finite((float) $probability) || ! is_finite((float) $internal)) {
+            return null;
+        }
+
+        // Historical negative horizons do not earn a timing bonus. No score ceiling or floor is applied.
+        return round(50 + 1.1 * (100 * (float) $probability - 50)
+            + 0.2 * ((float) $internal - 55) - 2 * max(0, $daysAway), 2);
     }
 
     /**

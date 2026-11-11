@@ -199,6 +199,7 @@ final class NhlGamePredictionResponseCache
 
         return ['request' => $input, 'game' => $game, 'stack' => null, 'models' => $models,
             'algorithm' => config('nhl-custom-prediction'), 'source' => $source,
+            'calculation_date' => now('America/Toronto')->toDateString(),
             'lineups' => $lineups, 'goalies' => $goalies];
     }
 
@@ -207,7 +208,7 @@ final class NhlGamePredictionResponseCache
     {
         ksort($input);
 
-        return 'nhl:game-prediction:pregame-dependencies-v13:' . $gameId . ':' . hash('sha256', json_encode($input, JSON_THROW_ON_ERROR));
+        return 'nhl:game-prediction:pregame-dependencies-v15:' . $gameId . ':' . hash('sha256', json_encode($input, JSON_THROW_ON_ERROR));
     }
 
     /** @param array<string,mixed> $input */

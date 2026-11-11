@@ -1061,6 +1061,25 @@ and returns HTTP `202` with `Retry-After: 15`:
 }
 ```
 
+Successful game predictions additionally expose:
+
+| Field | Meaning |
+| --- | --- |
+| `prediction.days_away` | Stored signed calendar-day difference between game date and calculation date in America/Toronto: today `0`, tomorrow `1`, next week `7`. Historical requests can be negative. A cached or archived revision keeps its original value; older revisions can be null. |
+| `prediction.public_confidence_score` | Public confidence rating: `50 + 1.1 × (P − 50) + 0.2 × (I − 55) − 2 × max(0, days_away)`, where P is the selected team’s win probability expressed from 0–100 and I is internal confidence. Rounded to two decimals, with no artificial ceiling or floor. Older revisions or missing required inputs may be null. |
+| `prediction.confidence_score` | Existing internal input confidence, unchanged and separate from public confidence and win probability. |
+| `inputs.context.context_mode` | `exact_game` for today/past-date preparation; `latest_available` for future dates. |
+
+For today, missing exact-game context follows the normal queued build. For tomorrow
+and later, predictions skip target-context building and reuse the latest committed
+context available now within the selected SAT model. The upcoming anticipated
+lineup, starters, opponent and scheduled rest/density remain game-specific. Missing
+personal snapshots retain the existing personal-history/Train/league fallback.
+Future prepared inputs refresh when committed context changes or the Toronto date
+changes. An explicit later recalculation appends a new revision; prior calculations
+and their stored horizons are preserved. This does not schedule automatic daily
+prediction recalculations. Public confidence deducts two points per day away; historical negative horizons receive no timing bonus. It is a presentation rating, separate from the probability of winning, and does not affect picks or scores.
+
 Prediction continues automatically after the dependencies finish. Poll the same
 endpoint after the indicated delay, using bounded retries. HTTP `202` is pending
 work, not an unqualified pick; it contains no new prediction revision. HTTP `200`

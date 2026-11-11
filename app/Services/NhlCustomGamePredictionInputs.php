@@ -46,9 +46,19 @@ class NhlCustomGamePredictionInputs
 
     private bool $useSavedPlayerAggregates = false;
 
+    /** Source cutoffs keep future fallback bucket counts aligned with saved totals. */
+    private array $forecastPlayerCutoffs = [];
+
+    /** Players lacking a same-season snapshot retain the existing chronological fallback ladder. */
+    private array $forecastRawPlayers = [];
+
+    /** Batched latest committed source rows for the requested future slate. */
+    private array $futureSnapshots = [];
+
     /** Resolve one model universe and freeze its Train bucket mapping before reading Test. */
     public function prepare(int $modelId, ?string $predictionSeason = null): array
     {
+        $this->forecastPlayerCutoffs = $this->forecastRawPlayers = [];
         $model = NhlModelRun::query()->findOrFail($modelId);
         $training = array_map('strval', (array) $model->train_season_ids);
         $season = $predictionSeason ?? $model->target_season_id;
@@ -170,6 +180,9 @@ class NhlCustomGamePredictionInputs
     public function beginQueuedForecast(int $modelId, string $date, array $lineups): void
     {
         $this->useSavedPlayerAggregates = true;
+        $this->forecastPlayerCutoffs = $this->forecastRawPlayers = [];
+        $future = $date > now('America/Toronto')->toDateString();
+        $asOf = CarbonImmutable::now('UTC');
         $targets = DB::table('nhl_games')->where('game_date', $date)->orderBy('start_time_utc')->orderBy('nhl_game_id')->get();
         if ($targets->isEmpty() || $targets->pluck('season_id')->unique()->count() !== 1) {
             throw new DomainException('A prediction date must identify games in one season.');
@@ -181,15 +194,21 @@ class NhlCustomGamePredictionInputs
         $this->forecastPlayerIds = [];
         $contexts = [];
         $errors = [];
+        if ($future) {
+            $this->loadFutureSnapshots($modelId, $targets->all(), $lineups, $asOf);
+        }
         foreach ($targets as $target) {
             $record = $lineups[$target->nhl_game_id] ?? ['players' => []];
             if (($record['players'] ?? []) === []) {
                 $errors[$target->nhl_game_id] = 'No skater lineup is available.';
                 continue;
             }
-            $contexts[$target->nhl_game_id] = $this->storedPredictionContexts($target, $record);
+            $target->future_context_fallback = $future;
+            $contexts[$target->nhl_game_id] = $future
+                ? $this->futurePredictionContexts($target, $record, $asOf)
+                : $this->storedPredictionContexts($target, $record);
             $parent = $contexts[$target->nhl_game_id]['teams'][$target->nhl_game_id][$target->away_team_id];
-            $target->prediction_cutoff_at = (string) $parent->source_cutoff_at;
+            $target->prediction_cutoff_at = $future ? $asOf->format('Y-m-d H:i:s') : (string) $parent->source_cutoff_at;
             foreach (array_keys($record['players']) as $id) {
                 $this->forecastPlayerIds[$id] = true;
             }
@@ -198,6 +217,7 @@ class NhlCustomGamePredictionInputs
             ->where('season_id', '>=', min($this->metadata['train_seasons']))
             ->where('season_id', '<=', (string) $targets->first()->season_id)
             ->where('game_date', '<', $date)->whereNotNull('start_time_utc')
+            ->when($future, fn ($query) => $query->where('start_time_utc', '<', $asOf))
             ->orderBy('start_time_utc')->orderBy('nhl_game_id')->get()->all();
         $defense = new NhlCustomGameDefense();
         $defense->beginFit();
@@ -210,14 +230,17 @@ class NhlCustomGamePredictionInputs
         foreach ($contexts as $context) {
             foreach ($context['teams'] as $teams) {
                 foreach ($teams as $team) {
-                    $runIds[(int) $team->run_id] = true;
+                    if ($team->run_id !== null) {
+                        $runIds[(int) $team->run_id] = true;
+                    }
                 }
             }
         }
         $this->metadata['context_run_ids'] = array_keys($runIds);
         $this->metadata['context_run_id'] = count($runIds) === 1 ? array_key_first($runIds) : null;
         $this->metadata['selected_games'] = $targets->count();
-        $this->metadata['as_of'] = now('UTC')->toIso8601String();
+        $this->metadata['as_of'] = $asOf->toIso8601String();
+        $this->metadata['context_mode'] = $future ? 'latest_available' : 'exact_game';
     }
 
     /** Advance Train collection, fitting, history or one target without a season-sized job. */
@@ -311,6 +334,105 @@ class NhlCustomGamePredictionInputs
         }
 
         return ['teams' => [$game->nhl_game_id => $teams], 'players' => [$game->nhl_game_id => $players]];
+    }
+
+    /** Limit reusable rows to committed, same-model evidence already available today.
+     * @return \Illuminate\Database\Query\Builder
+     */
+    private static function futureContextQuery(string $table, int $modelId, CarbonImmutable $asOf): \Illuminate\Database\Query\Builder
+    {
+        return DB::table($table)->where('model_run_id', $modelId)
+            ->where('context_version', NhlPregameContextBuilder::VERSION)
+            ->where('game_date', '<=', $asOf->setTimezone('America/Toronto')->toDateString())
+            ->where('source_cutoff_at', '<=', $asOf)
+            ->whereExists(fn ($query) => $query->selectRaw('1')->from('nhl_pregame_context_run_games as work')
+                ->whereColumn('work.run_id', $table.'.run_id')
+                ->whereColumn('work.nhl_game_id', $table.'.nhl_game_id')
+                ->where('work.state', 'complete')->whereNotNull('work.comparisons_completed_at'));
+    }
+
+    /** Invalidate future inputs from bounded commit markers rather than scanning every context metric row. */
+    public static function futureContextIdentity(int $modelId): array
+    {
+        $commit = DB::table('nhl_pregame_context_run_games as work')
+            ->join('nhl_pregame_context_runs as runs', 'runs.id', '=', 'work.run_id')
+            ->where('runs.model_run_id', $modelId)->where('work.state', 'complete')
+            ->whereNotNull('work.comparisons_completed_at')
+            ->whereDate('work.game_date', '<=', now('America/Toronto')->toDateString())
+            ->selectRaw('COUNT(*) AS games, MAX(work.id) AS latest_id, MAX(work.comparisons_completed_at) AS committed_at')->first();
+
+        return ['calculation_date' => now('America/Toronto')->toDateString(), 'commit' => $commit];
+    }
+
+    /** Select at most one row per slate entity in two batched queries, preserving original source identities. */
+    private function loadFutureSnapshots(int $modelId, array $targets, array $lineups, CarbonImmutable $asOf): void
+    {
+        $teamIds = $playerIds = [];
+        foreach ($targets as $target) {
+            $teamIds[] = (int) $target->away_team_id;
+            $teamIds[] = (int) $target->home_team_id;
+            foreach (array_keys($lineups[$target->nhl_game_id]['players'] ?? []) as $id) {
+                $playerIds[] = (int) $id;
+            }
+        }
+        foreach (['teams' => ['nhl_team_game_pregame_contexts', 'nhl_team_id', $teamIds],
+            'players' => ['nhl_player_game_pregame_contexts', 'nhl_player_id', $playerIds]] as $key => [$table, $entity, $ids]) {
+            $ranked = self::futureContextQuery($table, $modelId, $asOf)->whereIn($entity, array_unique($ids))
+                ->select($table.'.*')->selectRaw('ROW_NUMBER() OVER (PARTITION BY '.$entity
+                    .' ORDER BY source_cutoff_at DESC, id DESC) AS snapshot_order');
+            $this->futureSnapshots[$key] = DB::query()->fromSub($ranked, 'snapshots')->where('snapshot_order', 1)
+                ->get()->keyBy($entity)->all();
+        }
+        $this->futureSnapshots['seasons'] = DB::table('nhl_games')
+            ->whereIn('nhl_game_id', array_column($this->futureSnapshots['players'], 'nhl_game_id'))
+            ->pluck('season_id', 'nhl_game_id')->all();
+    }
+
+    /** Reuse personal/team history only; upcoming schedule and opponent bindings belong to this target. */
+    private function futurePredictionContexts(object $game, array $record, CarbonImmutable $asOf): array
+    {
+        $contexts = ['teams' => [$game->nhl_game_id => []], 'players' => [$game->nhl_game_id => []]];
+        foreach (['away' => $game->away_team_id, 'home' => $game->home_team_id] as $venue => $team) {
+            $opponent = $venue === 'away' ? $game->home_team_id : $game->away_team_id;
+            $context = isset($this->futureSnapshots['teams'][$team]) ? clone $this->futureSnapshots['teams'][$team] : null;
+            $context ??= (object) ['id' => null, 'run_id' => null, 'nhl_game_id' => null,
+                'game_date' => null, 'source_cutoff_at' => $asOf->format('Y-m-d H:i:s'), 'metrics' => '{}'];
+            $context->evidence_source = $context->id === null ? 'prior_results_fallback' : 'latest_available_model_snapshot';
+            // Never carry head-to-head samples, ranks or schedule evidence from another opponent/game.
+            $context->opponent_metrics = '{}';
+            $context->ranks = '{}';
+            $context->schedule_metrics = json_encode(app(NhlPregameContextBuilder::class)
+                ->predictionScheduleEvidence($game, (int) $team, (int) $opponent, $venue), JSON_THROW_ON_ERROR);
+            $contexts['teams'][$game->nhl_game_id][$team] = $context;
+        }
+        foreach ($record['players'] as $id => $player) {
+            $context = isset($this->futureSnapshots['players'][$id]) ? clone $this->futureSnapshots['players'][$id] : null;
+            $sourceSeason = $context === null ? null : ($this->futureSnapshots['seasons'][$context->nhl_game_id] ?? null);
+            if ($context === null || (string) $sourceSeason !== (string) $game->season_id) {
+                $this->forecastRawPlayers[$id] = true;
+            } else {
+                $this->forecastPlayerCutoffs[$id] = CarbonImmutable::parse($context->source_cutoff_at, 'UTC')->timestamp;
+            }
+            $context ??= (object) ['id' => null, 'team_context_id' => null, 'nhl_game_id' => null,
+                'source_cutoff_at' => $asOf->format('Y-m-d H:i:s'), 'metrics' => '{}'];
+            $context->opponent_metrics = '{}';
+            $context->ranks = '{}';
+            $metrics = json_decode($context->metrics, true, 512, JSON_THROW_ON_ERROR);
+            foreach (['all', 'EV', 'PP', 'PK'] as $lane) {
+                $windows = $lane === 'all' ? ($metrics['all'] ?? []) : ($metrics['strength'][$lane] ?? []);
+                $windows = array_filter($windows, fn (string $window): bool => ! str_starts_with($window, 'opponent_')
+                    && ! str_starts_with($window, 'venue_'), ARRAY_FILTER_USE_KEY);
+                if ($lane === 'all') {
+                    $metrics['all'] = $windows;
+                } elseif (isset($metrics['strength'][$lane])) {
+                    $metrics['strength'][$lane] = $windows;
+                }
+            }
+            $context->metrics = json_encode($metrics, JSON_THROW_ON_ERROR);
+            $contexts['players'][$game->nhl_game_id][$id] = $context;
+        }
+
+        return $contexts;
     }
 
     /** Keep only allowance references still used by the selected players' rolling windows. */
@@ -717,6 +839,8 @@ class NhlCustomGamePredictionInputs
                 'goalie_confidence_buckets' => isset($record['starters'][$team])
                     ? ($goalieConfidence[(int) $record['starters'][$team]] ?? []) : null,
                 'lineup_source' => $record['lineup_sources'][$team] ?? 'historical_participants', 'schedule' => $schedule,
+                'context_provenance' => ['game_id' => isset($context->nhl_game_id) ? (int) $context->nhl_game_id : null,
+                    'source_cutoff_at' => $context->source_cutoff_at],
                 'context_source' => $context->evidence_source ?? ($prospective ? 'transient_prior_results' : 'saved_model_snapshot'),
                 'team_metrics' => json_decode($context->metrics, true, 512, JSON_THROW_ON_ERROR),
                 'train_opportunity_share' => $teamTrain['own_opps'] / $shareDenominator,
@@ -731,10 +855,15 @@ class NhlCustomGamePredictionInputs
                 }
                 $playerContext = $contexts['players'][$game->nhl_game_id][$id] ?? null;
                 $this->assertCutoff($playerContext, $game);
-                if ((int) $playerContext->team_context_id !== (int) $context->id) {
+                if (! ($game->future_context_fallback ?? false) && (int) $playerContext->team_context_id !== (int) $context->id) {
                     throw new DomainException('Player context does not reference this team context.');
                 }
-                $prepared = ['name' => $player['name'], 'role' => $player['role'], 'context_id' => $playerContext->id === null ? null : (int) $playerContext->id,
+                $prepared = ['context_provenance' => ['game_id' => $playerContext->nhl_game_id ?? null,
+                    'source_cutoff_at' => $playerContext->source_cutoff_at,
+                    'team_context_id' => $playerContext->team_context_id,
+                    'source' => isset($this->forecastRawPlayers[$id]) ? 'prior_results_fallback'
+                        : (($game->future_context_fallback ?? false) ? 'latest_available_model_snapshot' : 'saved_model_snapshot')],
+                    'name' => $player['name'], 'role' => $player['role'], 'context_id' => $playerContext->id === null ? null : (int) $playerContext->id,
                     'confidence_score' => $skaterConfidence->get((int) $id),
                     'line_key' => $player['line_key'] ?? null,
                     'usage' => [], 'complete' => [], 'buckets' => [], 'history' => []];
@@ -818,6 +947,10 @@ class NhlCustomGamePredictionInputs
     private function assertCutoff(?object $context, object $game): void
     {
         $cutoff = $game->prediction_cutoff_at ?? $game->start_time_utc;
+        if (($game->future_context_fallback ?? false) && $context !== null && $context->source_cutoff_at
+            && CarbonImmutable::parse($context->source_cutoff_at, 'UTC')->lte(CarbonImmutable::parse($cutoff, 'UTC'))) {
+            return;
+        }
         if (! $context || ! $cutoff || ! $context->source_cutoff_at
             || CarbonImmutable::parse($context->source_cutoff_at, 'UTC')->timestamp
             !== CarbonImmutable::parse($cutoff, 'UTC')->timestamp) {
@@ -826,7 +959,7 @@ class NhlCustomGamePredictionInputs
     }
 
     /** Pool exposure before computing rates, retaining zero-strength appearances. */
-    private function pool(array $records, string $lane): ?array
+    private function pool(array $records, string $lane, bool $raw = false): ?array
     {
         if ($records === []) {
             return null;
@@ -836,7 +969,7 @@ class NhlCustomGamePredictionInputs
             if (! ($record['valid'][$lane] ?? false)) {
                 return null;
             }
-            $this->merge($out, $record, $lane, ! $this->useSavedPlayerAggregates);
+            $this->merge($out, $record, $lane, ! $this->useSavedPlayerAggregates || $raw);
         }
 
         return $out;
@@ -864,14 +997,14 @@ class NhlCustomGamePredictionInputs
         $current = $this->seasons[$season][$id][$lane] ?? null;
 
         $sources = ['train' => $this->train[$id][$lane] ?? null,
-            'last_game' => $this->pool(array_slice($this->recent[$id] ?? [], -1), $lane),
-            'last_5' => $this->pool(array_slice($this->recent[$id] ?? [], -5), $lane),
-            'last_10' => $this->pool(array_slice($this->recent[$id] ?? [], -10), $lane),
-            'last_20' => $this->pool(array_slice($this->recent[$id] ?? [], -20), $lane),
+            'last_game' => $this->pool(array_slice($this->recent[$id] ?? [], -1), $lane, isset($this->forecastRawPlayers[$id])),
+            'last_5' => $this->pool(array_slice($this->recent[$id] ?? [], -5), $lane, isset($this->forecastRawPlayers[$id])),
+            'last_10' => $this->pool(array_slice($this->recent[$id] ?? [], -10), $lane, isset($this->forecastRawPlayers[$id])),
+            'last_20' => $this->pool(array_slice($this->recent[$id] ?? [], -20), $lane, isset($this->forecastRawPlayers[$id])),
             'last_season' => ($previous['missing'] ?? true) ? null : $previous,
             'season_to_date' => ($current['missing'] ?? true) ? null : $current];
 
-        if (! $this->useSavedPlayerAggregates) {
+        if (! $this->useSavedPlayerAggregates || isset($this->forecastRawPlayers[$id])) {
             return $sources;
         }
 
@@ -1017,7 +1150,9 @@ class NhlCustomGamePredictionInputs
     private function advance(object $game, array $record, bool $isTrain): void
     {
         foreach ($record['players'] as $id => $player) {
-            $keepPersonal = $this->forecastPlayerIds === null || isset($this->forecastPlayerIds[$id]);
+            $keepPersonal = ($this->forecastPlayerIds === null || isset($this->forecastPlayerIds[$id]))
+                && (! isset($this->forecastPlayerCutoffs[$id])
+                    || CarbonImmutable::parse($game->start_time_utc, 'UTC')->timestamp < $this->forecastPlayerCutoffs[$id]);
             $opponent = $player['team'] === (int) $game->home_team_id ? (int) $game->away_team_id : (int) $game->home_team_id;
             $current = [...$player, 'game_id' => $game->nhl_game_id, 'opponent' => $opponent, 'valid' => []];
             foreach (['EV', 'PP'] as $lane) {
@@ -1034,10 +1169,10 @@ class NhlCustomGamePredictionInputs
                 $target ??= ['games' => 0, 'seconds' => 0.0, 'buckets' => [], 'missing' => false];
                 $target['missing'] = $target['missing'] || ! $current['valid'][$lane];
                 if ($current['valid'][$lane]) {
-                    $this->merge($target, $current, $lane, ! $this->useSavedPlayerAggregates);
+                    $this->merge($target, $current, $lane, ! $this->useSavedPlayerAggregates || isset($this->forecastRawPlayers[$id]));
                     if ($isTrain) {
                         $this->train[$id][$lane] ??= ['games' => 0, 'seconds' => 0.0, 'buckets' => []];
-                        $this->merge($this->train[$id][$lane], $current, $lane, ! $this->useSavedPlayerAggregates);
+                        $this->merge($this->train[$id][$lane], $current, $lane, ! $this->useSavedPlayerAggregates || isset($this->forecastRawPlayers[$id]));
                         $this->trainOpponents[$id][$lane][$opponent]
                             = ($this->trainOpponents[$id][$lane][$opponent] ?? 0) + ($player['seconds'][$lane] ?? 0);
                     }

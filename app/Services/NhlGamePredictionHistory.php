@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 
 /** Append immutable default-path calculations and expose compact admin comparison rows. */
@@ -29,10 +30,20 @@ final class NhlGamePredictionHistory
         // Market selection changes pricing output, not the core matchup. Explicit roster/model overrides remain separate variants.
         $canonical = array_diff(array_keys($input), ['nhl_game_id', 'markets', 'puckline', 'puckline_spreads', 'total', 'total_lines']) === [];
         $at = now();
+        $date = DB::table('nhl_games')->where('nhl_game_id', $gameId)->value('game_date');
+        $daysAway = $date === null ? null : (int) CarbonImmutable::instance($at)->setTimezone('America/Toronto')
+            ->startOfDay()->diffInDays(CarbonImmutable::parse($date, 'America/Toronto')->startOfDay(), false);
+        $publicConfidence = null;
+        if (is_array($payload['prediction'] ?? null)) {
+            $publicConfidence = app(NhlGamePredictionPayload::class)->publicConfidenceScore($payload['prediction'], $daysAway);
+            $payload['prediction']['days_away'] = $daysAway;
+            $payload['prediction']['public_confidence_score'] = $publicConfidence;
+        }
         $id = DB::table('nhl_game_prediction_revisions')->insertGetId([
             'nhl_game_id' => $gameId, 'run_id' => $runId, 'source' => $runId === null ? 'api' : 'admin',
             'fingerprint' => $fingerprint, 'is_canonical' => $canonical,
             'prediction_available' => ($payload['prediction_available'] ?? false) === true,
+            'days_away' => $daysAway, 'public_confidence_score' => $publicConfidence,
             'request_inputs' => json_encode($input, JSON_THROW_ON_ERROR),
             'evidence' => json_encode($evidence, JSON_THROW_ON_ERROR),
             'payload' => json_encode($payload, JSON_THROW_ON_ERROR),
@@ -53,6 +64,11 @@ final class NhlGamePredictionHistory
     public function payload(object $revision): array
     {
         $payload = json_decode($revision->payload, true, 512, JSON_THROW_ON_ERROR);
+        if (is_array($payload['prediction'] ?? null)) {
+            $payload['prediction']['days_away'] = isset($revision->days_away) ? (int) $revision->days_away : null;
+            $payload['prediction']['public_confidence_score'] = isset($revision->public_confidence_score)
+                ? (float) $revision->public_confidence_score : null;
+        }
         $payload['meta']['prediction_revision_id'] = (int) $revision->id;
         $payload['meta']['predicted_at'] = \Illuminate\Support\Carbon::parse($revision->predicted_at)->toIso8601String();
 
@@ -89,6 +105,8 @@ final class NhlGamePredictionHistory
             'totals_normalization' => data_get($payload, 'prediction.totals_normalization'),
             'winner' => $winner, 'win_probability' => $moneyline['probability'] ?? null,
             'confidence' => data_get($payload, 'prediction.confidence_score'),
+            'days_away' => data_get($payload, 'prediction.days_away'),
+            'public_confidence_score' => data_get($payload, 'prediction.public_confidence_score'),
             'qualified' => $payload['pick_qualified'] ?? null,
             'algorithm_version' => data_get($payload, 'inputs.algorithm_version'),
             'engine_id' => data_get($payload, 'inputs.engine_id'), 'stack_id' => data_get($payload, 'inputs.stack_id'),

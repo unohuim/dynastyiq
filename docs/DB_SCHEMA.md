@@ -8,6 +8,13 @@ Migration `2026_10_22_000001_create_nhl_game_prediction_history_tables.php` defi
 - `nhl_game_prediction_run_games`: one game per run, status, error and completed revision reference.
 - `nhl_game_prediction_revisions`: append-only calculation time, game/run/source, canonical/available flags, fingerprint, request inputs, frozen evidence, full response and compact summary. Nullable run/game uniqueness makes manual retries idempotent while allowing repeated API revisions.
 
+Migration `2026_11_11_000001_add_forecast_horizon_to_nhl_game_prediction_revisions.php`
+adds nullable signed integer `days_away` and nullable decimal(5,2)
+`public_confidence_score` to `nhl_game_prediction_revisions`. Days away is frozen
+at calculation publication using Toronto calendar dates. Public confidence is
+calculated using the approved probability/internal-confidence/horizon rating and
+frozen per revision; existing internal confidence remains in the payload/summary. No historical backfill is performed.
+
 These global operational records are separate from custom-engine forecasts and private admin workspace saves. Latest successful canonical revisions use the indexed game/flags/id lookup. Migration definitions remain authoritative.
 
 ## Scheduled processes

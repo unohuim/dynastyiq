@@ -103,7 +103,8 @@ class NhlCustomGameForecast
             }
             $work = Cache::get($key.':work');
             if (! is_array($work) || ($work['fingerprint'] ?? null) !== $fingerprint) {
-                $work = ['fingerprint' => $fingerprint, 'phase' => 'context', 'lineups' => [], 'evidence' => [], 'errors' => []];
+                $work = ['fingerprint' => $fingerprint, 'phase' => 'context',
+                    'future' => (string) $game->game_date > now('America/Toronto')->toDateString(), 'lineups' => [], 'evidence' => [], 'errors' => []];
                 $asOf = CarbonImmutable::now('UTC');
                 $reader = app(NhlCustomGamePredictionInputs::class);
                 foreach (DB::table('nhl_games')->where('game_date', $game->game_date)->get() as $target) {
@@ -112,7 +113,9 @@ class NhlCustomGameForecast
                         $record = $reader->anticipatedParticipants($target, $storedBoxscore || $finished,
                             ! $finished && (int) $target->nhl_game_id === $gameId ? $rosterOverrides : []);
                         $work['lineups'][$target->nhl_game_id] = $record;
-                        $work['evidence'][$target->nhl_game_id] = $this->contextEvidence($model, $target, $record, $asOf);
+                        if (! $work['future']) {
+                            $work['evidence'][$target->nhl_game_id] = $this->contextEvidence($model, $target, $record, $asOf);
+                        }
                     } catch (DomainException $error) {
                         $work['errors'][$target->nhl_game_id] = $error->getMessage();
                     }
@@ -309,6 +312,9 @@ class NhlCustomGameForecast
      */
     public function resultEvidence(NhlModelRun $model, object $game, ?CarbonImmutable $cutoff = null): array
     {
+        if ((string) $game->game_date > now('America/Toronto')->toDateString()) {
+            $cutoff ??= CarbonImmutable::now('UTC');
+        }
         $games = DB::table('nhl_games')->where('game_type', 2)->whereIn('game_state', ['OFF', 'FINAL'])
             ->where('season_id', '>=', min($model->train_season_ids))->where('season_id', '<=', $game->season_id)
             ->whereDate('game_date', '<=', $game->game_date)
@@ -331,7 +337,9 @@ class NhlCustomGameForecast
         return ['version' => 'result_values_v1',
             'games' => hash('sha256', json_encode($games, JSON_THROW_ON_ERROR)),
             'summaries' => $summaries, 'imports' => $imports,
-            'processed_pbp' => hash('sha256', json_encode($processed, JSON_THROW_ON_ERROR))];
+            'processed_pbp' => hash('sha256', json_encode($processed, JSON_THROW_ON_ERROR)),
+            'future_context' => (string) $game->game_date > now('America/Toronto')->toDateString()
+                ? NhlCustomGamePredictionInputs::futureContextIdentity((int) $model->id) : null];
     }
 
     /** Rehash only touched games, retaining a content digest rather than their touch timestamps.
@@ -401,10 +409,11 @@ class NhlCustomGameForecast
             ->unique(fn (object $row): string => implode('|', [(string) $row->nhl_game_id, $row->team_abbrev,
                 (string) $row->nhl_player_id, $row->provider, $row->status]))->values();
         $identity = ['model' => [$model->id, $model->updated_at, $model->train_season_ids], 'definition' => config('nhl-custom-prediction'),
-            'date' => $date, 'schedule' => $schedule, 'results' => $results,
+            'date' => $date, 'calculation_date' => now('America/Toronto')->toDateString(),
+            'schedule' => $schedule, 'results' => $results,
             'lineups' => $lineups, 'goalies' => $goalies, 'stored_boxscore' => $storedBoxscore,
             'roster_overrides' => $rosterOverrides, 'override_game' => $rosterOverrides === [] ? null : $game->nhl_game_id];
-        $key = 'nhl:custom-inputs:queued-v3:'.$model->id.':'.$date.':'.(int) $storedBoxscore.':'
+        $key = 'nhl:custom-inputs:queued-v4:'.$model->id.':'.$date.':'.(int) $storedBoxscore.':'
             .hash('sha256', json_encode([$rosterOverrides, $rosterOverrides === [] ? null : $game->nhl_game_id], JSON_THROW_ON_ERROR));
 
         return [$key, hash('sha256', json_encode($identity, JSON_THROW_ON_ERROR))];

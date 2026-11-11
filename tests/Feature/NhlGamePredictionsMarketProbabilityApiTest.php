@@ -640,3 +640,84 @@ it('retains a published revision after timestamp only syncs and rebuilds after a
     expect($second)->not->toBe($first);
     $this->assertDatabaseCount('nhl_game_prediction_revisions', 2);
 });
+
+
+it('stores calendar days away and calculated public confidence while retaining internal confidence', function (string $date, int $days): void {
+    $this->game->update(['game_date' => $date]);
+    $response = ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction.days_away', $days);
+    $prediction = $response->json('prediction');
+    $probability = $prediction[$prediction['winner']['side'].'_win_probability'];
+    $expected = round(50 + 1.1 * (100 * $probability - 50)
+        + 0.2 * ($prediction['confidence_score'] - 55) - 2 * max(0, $days), 2);
+    $response->assertJsonPath('prediction.public_confidence_score', $expected);
+    $revision = DB::table('nhl_game_prediction_revisions')->find($response->json('meta.prediction_revision_id'));
+    expect((int) $revision->days_away)->toBe($days)->and((float) $revision->public_confidence_score)->toBe($expected)
+        ->and($response->json('prediction.confidence_score'))->toBeNumeric();
+    ($this->requestPrediction)()->assertOk()->assertJsonPath('meta.prediction_revision_id', (int) $revision->id)
+        ->assertJsonPath('prediction.days_away', $days)
+        ->assertJsonPath('prediction.public_confidence_score', $expected);
+})->with([['2026-11-05', 0], ['2026-11-06', 1], ['2026-11-12', 7], ['2026-11-04', -1]]);
+
+it('uses Toronto dates before UTC midnight rollover for forecast horizon', function (): void {
+    $this->travelTo(\Carbon\CarbonImmutable::parse('2026-11-06 02:00:00 UTC'));
+    $this->game->update(['game_date' => '2026-11-06']);
+    ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction.days_away', 1);
+});
+
+it('counts calendar days rather than elapsed hours across daylight saving', function (): void {
+    $this->travelTo(\Carbon\CarbonImmutable::parse('2026-10-31 16:00:00 UTC'));
+    $this->game->update(['game_date' => '2026-11-02']);
+    ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction.days_away', 2);
+});
+
+it('preserves the archived horizon when reading a revision on a later date', function (): void {
+    $this->game->update(['game_date' => '2026-11-06']);
+    $response = ($this->requestPrediction)()->assertOk();
+    $revision = DB::table('nhl_game_prediction_revisions')->find($response->json('meta.prediction_revision_id'));
+    $this->travelTo(\Carbon\CarbonImmutable::parse('2026-11-06 12:00:00 UTC'));
+    $payload = app(\App\Services\NhlGamePredictionHistory::class)->payload($revision);
+    expect($payload['prediction']['days_away'])->toBe(1)
+        ->and($payload['prediction']['public_confidence_score'])->toBe($response->json('prediction.public_confidence_score'))
+        ->and($payload['prediction']['confidence_score'])->toBe($response->json('prediction.confidence_score'));
+});
+
+it('leaves historical revisions without horizon metadata explicitly unavailable', function (): void {
+    $response = ($this->requestPrediction)()->assertOk();
+    $id = $response->json('meta.prediction_revision_id');
+    DB::table('nhl_game_prediction_revisions')->where('id', $id)->update(['days_away' => null]);
+    $revision = DB::table('nhl_game_prediction_revisions')->find($id);
+    expect(app(\App\Services\NhlGamePredictionHistory::class)->payload($revision)['prediction']['days_away'])->toBeNull();
+});
+
+
+it('calculates the adopted public confidence examples without a manufactured ceiling', function (float $probability, int $internal, int $days, float $expected): void {
+    $prediction = ['winner' => ['side' => 'away'], 'away_win_probability' => $probability,
+        'home_win_probability' => 1 - $probability, 'confidence_score' => $internal];
+    $original = $prediction;
+    expect(app(NhlGamePredictionPayload::class)->publicConfidenceScore($prediction, $days))->toBe($expected)
+        ->and($prediction)->toBe($original);
+})->with([
+    'TBL' => [0.5293840005631733, 81, 0, 58.43],
+    'PHI' => [0.5157545418858766, 76, 0, 55.93],
+    'NSH' => [0.6673752601873431, 67, 0, 70.81],
+    'above eighty' => [0.8, 90, 0, 90.0],
+    'next day' => [0.8, 90, 1, 88.0],
+    'next week' => [0.8, 90, 7, 76.0],
+    'past dates receive no bonus' => [0.8, 90, -1, 90.0],
+    'weak inputs reduce score' => [0.51, 45, 0, 49.1],
+]);
+
+it('uses the home selected probability and preserves public confidence for an even matchup', function (): void {
+    $service = app(NhlGamePredictionPayload::class);
+    expect($service->publicConfidenceScore(['winner' => ['side' => 'home'], 'home_win_probability' => 0.7,
+        'away_win_probability' => 0.3, 'confidence_score' => 90], 0))->toBe(79.0)
+        ->and($service->publicConfidenceScore(['winner' => ['side' => 'pickem'], 'confidence_score' => 75], 0))->toBe(54.0);
+});
+
+it('leaves public confidence unavailable when required confidence evidence or horizon is missing', function (): void {
+    $service = app(NhlGamePredictionPayload::class);
+    $prediction = ['winner' => ['side' => 'away'], 'away_win_probability' => 0.6, 'confidence_score' => 80];
+    expect($service->publicConfidenceScore($prediction, null))->toBeNull();
+    unset($prediction['confidence_score']);
+    expect($service->publicConfidenceScore($prediction, 0))->toBeNull();
+});

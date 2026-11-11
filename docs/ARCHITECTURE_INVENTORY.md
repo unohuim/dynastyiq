@@ -4324,6 +4324,12 @@ players and starters. Missing evidence queues the existing pregame orchestrator;
 `PrepareNhlGamePredictionJob` checkpoints date inputs on projections. API clients
 receive HTTP 202 preparing, and prediction continuation automatically publishes
 an immutable revision when ready. No new table or scoring equation is introduced.
+Tomorrow-and-later requests skip target-context work and reuse the latest committed
+same-model context available now, retaining source cutoffs and personal bucket alignment.
+Upcoming lineups/opponents and schedule classifications remain target-specific.
+Operational revisions store Toronto-calendar `days_away` and a separately calculated
+`public_confidence_score` using probability, internal confidence and the forecast
+horizon; no artificial score cap applies. Internal confidence remains unchanged.
 Operational player game counts, exposure and overall shot/goal totals come from
 saved strength-window context. Additional bucket/defensive and unavailable team
 special-teams references still use bounded historical preparation; this change
