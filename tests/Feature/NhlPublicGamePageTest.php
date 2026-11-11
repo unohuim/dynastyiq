@@ -715,19 +715,76 @@ describe('prediction Matchup completion', function (): void {
         $pages->preparePredictionMatchup(2026020001, 'unrated');
         expect(fn () => $pages->predictionMatchup(2026020001, 'unrated'))
             ->toThrow(\Illuminate\Validation\ValidationException::class);
-        $prepared = Cache::get('nhl:prediction-matchup:v2:2026020001:unrated');
+        $prepared = Cache::get('nhl:prediction-matchup:v3:2026020001:unrated');
         expect($prepared)->not->toHaveKey('matchup')->and($prepared['error'])->toContain('xgf_gp', 'xga_gp', 'SAT scoring');
     });
 
     it('exposes exhausted Matchup preparation errors and leaves ordinary public refreshes unchanged', function (): void {
         $error = new RuntimeException('Expected statistics query timed out.');
         (new RefreshNhlPublicGamePageJob(2026020001))->failed($error);
-        expect(Cache::get('nhl:prediction-matchup:v2:2026020001:failed'))->toBeNull();
+        expect(Cache::get('nhl:prediction-matchup:v3:2026020001:failed'))->toBeNull();
         (new RefreshNhlPublicGamePageJob(2026020001, 'failed'))->failed($error);
         expect(fn () => app(NhlPublicGamePage::class)->predictionMatchup(2026020001, 'failed'))
             ->toThrow(\Illuminate\Validation\ValidationException::class);
-        expect(Cache::get('nhl:prediction-matchup:v2:2026020001:failed')['error'])->toContain('query timed out');
+        expect(Cache::get('nhl:prediction-matchup:v3:2026020001:failed')['error'])->toContain('query timed out');
     });
+});
+
+describe('venue specific matchup records', function (): void {
+    beforeEach(function (): void {
+        ($this->makeGame)(2026020001, ['game_state' => 'FUT', 'game_date' => '2026-10-27', 'start_time_utc' => '2026-10-27 23:00:00']);
+        foreach (['W', 'W', 'W', 'REG', 'OT', 'W', 'REG', 'SO', 'W', 'REG', 'W', 'REG', 'SO'] as $index => $ending) {
+            $date = \Carbon\CarbonImmutable::parse('2026-10-26')->subDays(2 * $index)->toDateString();
+            ($this->makeGame)(2026021000 + $index, ['game_date' => $date, 'start_time_utc' => $date.' 23:00:00',
+                'home_team_score' => $ending === 'W' ? 4 : 2, 'away_team_score' => $ending === 'W' ? 2 : 3,
+                'game_outcome' => ['lastPeriodType' => $ending === 'W' ? 'REG' : $ending]]);
+        }
+        foreach (range(0, 11) as $index) {
+            $date = \Carbon\CarbonImmutable::parse('2026-10-25')->subDays(2 * $index)->toDateString();
+            ($this->makeGame)(2026022000 + $index, ['game_date' => $date, 'start_time_utc' => $date.' 23:00:00',
+                'home_team_id' => 6, 'away_team_id' => 10, 'home_team_abbrev' => 'BOS', 'away_team_abbrev' => 'TOR',
+                'home_team_score' => 1, 'away_team_score' => 6, 'game_outcome' => ['lastPeriodType' => 'REG']]);
+        }
+    });
+
+    it('shows the hosts home record and the visitors away record alongside overall records', function (): void {
+        $this->getJson('/games/2026020001/details?section=matchup')->assertOk()
+            ->assertJsonPath('data.home.form.gp', 25)->assertJsonPath('data.home.form.l5_wins', 5)
+            ->assertJsonPath('data.home.form.venue_records.venue', 'home')
+            ->assertJsonPath('data.home.form.venue_records.season_to_date', ['gp' => 13, 'wins' => 6, 'losses' => 4, 'otl' => 3])
+            ->assertJsonPath('data.away.form.venue_records.venue', 'away')
+            ->assertJsonPath('data.away.form.venue_records.season_to_date', ['gp' => 13, 'wins' => 7, 'losses' => 6, 'otl' => 0]);
+    });
+
+    it('selects the last ten and five matching venue games before limiting the windows', function (): void {
+        $this->getJson('/games/2026020001/details?section=matchup')->assertOk()
+            ->assertJsonPath('data.home.form.venue_records.last_10', ['gp' => 10, 'wins' => 5, 'losses' => 3, 'otl' => 2])
+            ->assertJsonPath('data.home.form.venue_records.last_5', ['gp' => 5, 'wins' => 3, 'losses' => 1, 'otl' => 1])
+            ->assertJsonPath('data.away.form.venue_records.last_10', ['gp' => 10, 'wins' => 5, 'losses' => 5, 'otl' => 0])
+            ->assertJsonPath('data.away.form.venue_records.last_5', ['gp' => 5, 'wins' => 2, 'losses' => 3, 'otl' => 0]);
+    });
+
+    it('excludes other seasons same day future unfinished and mismatched game types from venue records', function (): void {
+        foreach ([['season_id' => '20252026', 'game_date' => '2026-04-01'],
+            ['game_date' => '2026-10-27'], ['game_date' => '2026-10-28'],
+            ['game_state' => 'LIVE'], ['game_type' => 3], ['home_team_score' => null]] as $index => $overrides) {
+            ($this->makeGame)(2026020900 + $index, ['game_date' => '2026-10-01', ...$overrides]);
+        }
+        $this->getJson('/games/2026020001/details?section=matchup')->assertOk()
+            ->assertJsonPath('data.home.form.venue_records.season_to_date.gp', 13)
+            ->assertJsonPath('data.away.form.venue_records.season_to_date.gp', 13);
+    });
+
+    it('keeps short and empty venue histories explicit without borrowing other seasons', function (int $games): void {
+        DB::table('nhl_games')->whereBetween('nhl_game_id', [2026021000, 2026022011])->delete();
+        if ($games === 1) {
+            ($this->makeGame)(2026020990, ['game_outcome' => ['lastPeriodType' => 'SO'], 'home_team_score' => 2, 'away_team_score' => 3]);
+        }
+        $form = $this->getJson('/games/2026020001/details?section=matchup')->assertOk()->json('data.home.form.venue_records');
+        foreach (['season_to_date', 'last_10', 'last_5'] as $window) {
+            expect($form[$window])->toBe(['gp' => $games, 'wins' => 0, 'losses' => 0, 'otl' => $games]);
+        }
+    })->with([0, 1]);
 });
 
 describe('recorded ending display classification', function (): void {

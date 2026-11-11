@@ -13,6 +13,14 @@
 
 - Public Matchup `form.l5_pp_pct`, `l5_pk_pct`, `l10_pp_pct` and `l10_pk_pct` are nullable 0–100 percentages over prior completed same-game-type windows, continuing into the immediately previous season. They are distinct from season `pp_pct`/`pk_pct` and current-season L5/L10 record fields.
 
+- Public and newly frozen prediction Matchup `form.venue_records` contains `venue`
+  (`home` or `away`, matching that team's scheduled role), `season_to_date`,
+  `last_10`, and `last_5`. Each window contains integer `gp`, `wins`, `losses`
+  (regulation/standard losses), and `otl` (recorded OT/SO losses). Select current-season
+  prior completed games of the same game type and matching home/away role before
+  limiting the window. Empty windows contain zeros with `gp=0`; browser records
+  display unavailable. These additive fields do not replace overall or head-to-head records.
+
 - Public game details `section`: `matchup`, `lineups`, `meetings`, `factors`, `summary`, `goals`, `boxscore`. Browser section `status`: `loading`, `ready`, `error`; a pending preparation response uses HTTP 202 with `status=preparing`.
 - Public game detail `section`: `matchup`, `lineups`, `meetings`, `factors`, `summary`, `goals`, `boxscore`, `play_by_play`. These identify allowlisted deferred sections; `play_by_play` carries public plays and rink shot locations.
 - Public game local tab: `summary`, `boxscore`, `play_by_play`, `shot_map`, `game_flow`. Shot map and game flow reuse the play-by-play detail; they are not new HTTP sections.

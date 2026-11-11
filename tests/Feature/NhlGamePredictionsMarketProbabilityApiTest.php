@@ -85,7 +85,7 @@ beforeEach(function (): void {
                 $matchup[$side] = ['team_id' => (int) $game->{$side.'_team_id'},
                     'team_abbrev' => $game->{$side.'_team_abbrev'}, 'form' => $values];
             }
-            Cache::put('nhl:prediction-matchup:v2:2026020001:api-fixture', ['matchup' => $matchup], 21600);
+            Cache::put('nhl:prediction-matchup:v3:2026020001:api-fixture', ['matchup' => $matchup], 21600);
         }
 
         return $this->withToken($this->token)->getJson(
@@ -156,6 +156,31 @@ it('predicts every requested game state without using target scores', function (
     ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction_available', true)
         ->assertJsonPath('prediction.winner.team_abbrev', 'COL');
 })->with(['FUT', 'LIVE', 'FINAL', 'OFF', 'PPD', 'CNCL']);
+
+it('freezes scenario records in new prediction Matchup payloads and retains them on cached reads', function (): void {
+    foreach ([['nhl_game_id' => 2026020991, 'game_date' => '2026-11-04', 'home_team_id' => 2, 'away_team_id' => 1,
+        'home_team_score' => 3, 'away_team_score' => 1],
+        ['nhl_game_id' => 2026020992, 'game_date' => '2026-11-03', 'home_team_id' => 1, 'away_team_id' => 2,
+            'home_team_score' => 5, 'away_team_score' => 2]] as $row) {
+        NhlGame::create(['season_id' => '20262027', 'game_type' => 2, 'game_state' => 'OFF',
+            'game_dow' => 'Tuesday', 'game_month' => 'November', 'start_time_utc' => $row['game_date'].' 23:00:00',
+            'game_outcome' => ['lastPeriodType' => 'REG'], ...$row]);
+    }
+    $first = ($this->requestPrediction)()->assertOk()
+        ->assertJsonPath('matchup.home.form.gp', 2)->assertJsonPath('matchup.away.form.gp', 2)
+        ->assertJsonPath('matchup.home.form.venue_records.venue', 'home')
+        ->assertJsonPath('matchup.home.form.venue_records.season_to_date', ['gp' => 1, 'wins' => 1, 'losses' => 0, 'otl' => 0])
+        ->assertJsonPath('matchup.away.form.venue_records.venue', 'away')
+        ->assertJsonPath('matchup.away.form.venue_records.last_5', ['gp' => 1, 'wins' => 0, 'losses' => 1, 'otl' => 0]);
+    $id = $first->json('meta.prediction_revision_id');
+    $payload = json_decode(DB::table('nhl_game_prediction_revisions')->where('id', $id)->value('payload'), true);
+    expect($payload['matchup']['home']['form']['venue_records'])->toEqual($first->json('matchup.home.form.venue_records'));
+    ($this->requestPrediction)()->assertOk()->assertJsonPath('meta.prediction_revision_id', $id)
+        ->assertJsonPath('matchup.home.form.venue_records.last_10.wins', 1)
+        ->assertJsonPath('matchup.away.form.venue_records.last_5.losses', 1);
+    $this->assertDatabaseCount('nhl_game_prediction_revisions', 1);
+    Http::assertNothingSent();
+});
 
 it('includes prior season form and the last ten cross-season meetings in API Matchup', function (): void {
     $games = [];
@@ -805,7 +830,7 @@ it('returns the frozen Matchup after preparation expiry and public page invalida
     $response = ($this->requestPrediction)()->assertOk();
     $id = $response->json('meta.prediction_revision_id');
     $this->matchupReady = false;
-    Cache::forget('nhl:prediction-matchup:v2:2026020001:api-fixture');
+    Cache::forget('nhl:prediction-matchup:v3:2026020001:api-fixture');
     app(\App\Services\NhlPublicGamePage::class)->forget(2026020001);
     $this->travel(6)->minutes();
     ($this->requestPrediction)()->assertOk()->assertJsonPath('meta.prediction_revision_id', $id)
@@ -846,7 +871,7 @@ it('publishes the worker-prepared expected values through revision storage and s
         ->assertJsonPath('matchup.home.form.scoring_trend.xga_gp.value', 2.1);
     $revision = DB::table('nhl_game_prediction_revisions')->find($response->json('meta.prediction_revision_id'));
     expect(json_decode($revision->payload, true)['matchup'])->toEqual($response->json('matchup'));
-    Cache::forget('nhl:prediction-matchup:v2:2026020001:api-fixture');
+    Cache::forget('nhl:prediction-matchup:v3:2026020001:api-fixture');
     app(\App\Services\NhlPublicGamePage::class)->forget(2026020001);
     ($this->requestPrediction)()->assertOk()->assertJsonPath('meta.prediction_revision_id', (int) $revision->id)
         ->assertJsonPath('matchup.expected_pending', false)->assertJsonPath('matchup.home.form.xga_gp', 2.1);
@@ -873,7 +898,7 @@ it('returns public confidence for every market on fresh and stale API reads with
 it('does not substitute internal confidence when an older cached public score is missing', function (): void {
     $response = ($this->requestPrediction)()->assertOk();
     $input = ['nhl_game_id' => '2026020001'];
-    $key = 'nhl:game-prediction:pregame-dependencies-v17:2026020001:'.hash('sha256', json_encode($input, JSON_THROW_ON_ERROR));
+    $key = 'nhl:game-prediction:pregame-dependencies-v18:2026020001:'.hash('sha256', json_encode($input, JSON_THROW_ON_ERROR));
     $cached = Cache::get($key);
     expect($cached)->toBeArray();
     $cached['payload']['prediction']['public_confidence_score'] = null;

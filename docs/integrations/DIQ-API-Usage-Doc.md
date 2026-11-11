@@ -58,6 +58,24 @@ privately and are not exposed in the API response. Earlier revisions retain
 their original algorithms and confidence semantics. Older numeric examples
 below illustrate payload shape, not a current calculation or measured accuracy.
 
+### Matchup home/away scenario records
+
+New predictions include `matchup.away.form.venue_records` and
+`matchup.home.form.venue_records`, shared with the browser Matchup comparison.
+`venue` is `away` for the visiting team and `home` for the host. The nested
+`season_to_date`, `last_10` and `last_5` objects each contain `gp`, `wins`,
+`losses` and `otl`, displayed as W–L–OTL. Losses exclude recorded OT/SO losses.
+
+These windows use only this season's completed games before the matchup date,
+at the matching home/away role. For Buffalo hosting Tampa, Buffalo's `last_5`
+means its last five home games, and Tampa's means its last five away games.
+Other opponents and arenas are included. Filter by role before taking five or
+ten; do not interpret these as home/away subsets of the overall recent windows.
+Short histories retain their actual GP; empty histories have GP and counts zero.
+Existing overall records, scoring rates, head-to-head records and prediction
+calculations retain their existing meanings. Older immutable revisions may lack
+`venue_records`; consumers must treat an absent object as unavailable.
+
 ## Prediction roster player identifiers
 
 Every row in `teams.away.roster`, `teams.home.roster`, and both `dressed_roster`

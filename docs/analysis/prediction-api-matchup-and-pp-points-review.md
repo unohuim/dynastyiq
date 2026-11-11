@@ -1,5 +1,82 @@
 # Prediction API Matchup and player PP points
 
+## Home/away scenario records — November 11, 2026
+
+Approved scope: add current-season home records for the scheduled host and away
+records for the visitor, for the season, last ten and last five matching-role
+games. Keep existing overall records. The venue filter precedes each window
+limit. Recorded OT/SO endings determine OTL. Target-day, future, incomplete,
+unfinished, other-season and other-game-type games are excluded by the existing
+form reader. No new tables, queries, providers or scoring adjustments are added.
+
+Changed files for this addition:
+
+- `app/Services/NhlPublicGamePage.php`
+- `app/Services/NhlGamePredictionResponseCache.php`
+- `resources/js/pages/Games/Show.vue`
+- `tests/Feature/NhlPublicGamePageTest.php`
+- `tests/Feature/NhlGamePredictionsMarketProbabilityApiTest.php`
+- `tests/Feature/NhlSatPredictionServicesTest.php` (prepared-cache fixture namespace)
+- `resources/js/pages/games.test.js`
+- `docs/architecture/ui/NhlPublicGamePage.yaml`
+- `docs/architecture/stats/NhlGamePredictionResponseCache.yaml`
+- `docs/ENUMS.md`
+- `docs/integrations/DIQ-API-Usage-Doc.md`
+- This review document.
+
+The shared form adds `venue_records` under the canonical ENUMS contract.
+Browser records add three rows and explicit Away/Home column labels. Empty or
+missing samples display an em dash. Prepared public payloads use
+`nhl:public-game:v4`, source-bound prediction Matchup uses
+`nhl:prediction-matchup:v3`, and API response identity uses
+`pregame-dependencies-v18`. Prior cached shapes cannot satisfy the new preparation;
+earlier saved revisions are not rewritten. A new prediction may need the
+existing one-game Matchup preparation after deployment. No migration or import
+is required, and Build Pregame is unchanged.
+
+| Minimum coverage | Status | Test |
+| --- | --- | --- |
+| Host home / visitor away, overall preserved | AUTHORED | `shows the hosts home record and the visitors away record alongside overall records` |
+| Venue filter before L10/L5 limits; recorded OT/SO | AUTHORED | `selects the last ten and five matching venue games before limiting the windows` |
+| Temporal, season, game-type and source exclusions | AUTHORED | `excludes other seasons same day future unfinished and mismatched game types from venue records` |
+| Short/empty samples | AUTHORED | `keeps short and empty venue histories explicit without borrowing other seasons` |
+| API request → saved revision → cached GET | AUTHORED | `freezes scenario records in new prediction Matchup payloads and retains them on cached reads` |
+| Visible venue labels, separate windows, missing display | AUTHORED | `shows home and away scenario records separately from overall records`; `shows unavailable venue records without inventing zero win loss records` |
+
+Requirements: 1. Correct scheduled role; 2. Current-season matching-role windows;
+3. Separate overall records; 4. Recorded W–L–OTL; 5. Additive shared payload and
+cache-shape versioning; 6. Unavailable rendering for empty/missing history.
+All have implementation and regression assertions; execution is outstanding.
+
+| Endpoint / verb | Existing auth/scope test |
+| --- | --- |
+| GET `/games/{id}/details?section=matchup`, guest allowed | `shows the hosts home record and the visitors away record alongside overall records` |
+| GET `/api/nhl-game-predictions`, guest denied | `requires API authentication for new engine predictions` |
+| Same API, missing scope denied | `requires the NHL statistics scope for new engine predictions` |
+| Same API, scoped token allowed | `freezes scenario records in new prediction Matchup payloads and retains them on cached reads` |
+| Organization/owner scope | N/A; unchanged global NHL reads |
+
+Frontend contract: deterministic existing Vue mount tests assert both ordered
+team columns, each new record window, preserved overall records and missing
+placeholders. No interaction, timer, global-state or animation behavior changes.
+
+Pest/Vitest declaration counts (excluding dataset expansion):
+`NhlPublicGamePageTest.php` **113**, `NhlGamePredictionsMarketProbabilityApiTest.php`
+**76**, `NhlSatPredictionServicesTest.php` **63**, and `games.test.js` **130**.
+All exceed twenty. Tests and browser checks have not been run under repository
+execution policy; human execution and review are outstanding.
+
+Suggested human checks:
+
+```sh
+php artisan test tests/Feature/NhlPublicGamePageTest.php
+php artisan test tests/Feature/NhlGamePredictionsMarketProbabilityApiTest.php
+php artisan test tests/Feature/NhlSatPredictionServicesTest.php
+npx vitest run resources/js/pages/games.test.js
+```
+
+## Earlier PP-points review (historical)
+
 Subsequent approved rollback restores PP G/GP and removes the added builder points
 field. The API Matchup addition remains. The implementation and counts below
 describe the earlier PP-points change, not the current Factors metric.

@@ -1130,6 +1130,31 @@ describe('public game preview and recap', () => {
         expect(document.querySelectorAll('[data-matchup-comparison] tbody tr')[0].querySelectorAll('td')).toHaveLength(2);
         expect(text).toContain('PP opportunities/GP'); expect(text).toContain('3.50'); expect(text).toContain('1–1–0');
     });
+    it('shows home and away scenario records separately from overall records', () => {
+        mount({ mode: 'preview', away: { team_abbrev: 'TBL', form: { gp: 20, wins: 10, losses: 8, otl: 2,
+            venue_records: { venue: 'away', season_to_date: { gp: 12, wins: 5, losses: 6, otl: 1 },
+                last_10: { gp: 10, wins: 4, losses: 5, otl: 1 }, last_5: { gp: 5, wins: 1, losses: 3, otl: 1 } } } },
+            home: { team_abbrev: 'BUF', form: { gp: 20, wins: 12, losses: 6, otl: 2,
+                venue_records: { venue: 'home', season_to_date: { gp: 12, wins: 9, losses: 2, otl: 1 },
+                    last_10: { gp: 10, wins: 7, losses: 2, otl: 1 }, last_5: { gp: 5, wins: 4, losses: 0, otl: 1 } } } } });
+        const rows = [...document.querySelectorAll('[data-matchup-comparison] tbody tr')];
+        const values = label => [...rows.find(row => row.querySelector('th').textContent === label).querySelectorAll('td')].map(cell => cell.textContent);
+        expect(values('Season record')).toEqual(['10–8–2', '12–6–2']);
+        expect(values('Home/Away · Season')).toEqual(['5–6–1', '9–2–1']);
+        expect(values('Home/Away · Last 10')).toEqual(['4–5–1', '7–2–1']);
+        expect(values('Home/Away · Last 5')).toEqual(['1–3–1', '4–0–1']);
+        expect(document.querySelector('[data-matchup-comparison] thead').textContent).toContain('TBL');
+        expect(document.querySelector('[data-matchup-comparison] thead').textContent).toContain('Away');
+        expect(document.querySelector('[data-matchup-comparison] thead').textContent).toContain('Home');
+    });
+    it('shows unavailable venue records without inventing zero win loss records', () => {
+        mount({ mode: 'preview', away: { team_abbrev: 'TBL', form: {} }, home: { team_abbrev: 'BUF', form: {
+            venue_records: { venue: 'home', season_to_date: { gp: 0, wins: 0, losses: 0, otl: 0 },
+                last_10: { gp: 0, wins: 0, losses: 0, otl: 0 }, last_5: { gp: 0, wins: 0, losses: 0, otl: 0 } } } } });
+        const rows = [...document.querySelectorAll('[data-matchup-comparison] tbody tr')].filter(row => row.querySelector('th').textContent.startsWith('Home/Away'));
+        expect(rows).toHaveLength(3);
+        for (const row of rows) expect([...row.querySelectorAll('td')].map(cell => cell.textContent)).toEqual(['—', '—']);
+    });
     it('shows L5 scoring values and changes against each teams own norm period', () => {
         mount({ mode: 'preview', away: { team_abbrev: 'BOS', form: { gf_gp: 9.99,
             scoring_trend: { norm_period: 'season_to_date', norm_games: 18,

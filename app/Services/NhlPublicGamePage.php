@@ -228,7 +228,7 @@ final class NhlPublicGamePage
     /** Source-bound preparation is independent of public-page invalidation and its five-minute TTL. */
     private function predictionMatchupKey(int $gameId, string $sourceFingerprint): string
     {
-        return 'nhl:prediction-matchup:v2:'.$gameId.':'.$sourceFingerprint;
+        return 'nhl:prediction-matchup:v3:'.$gameId.':'.$sourceFingerprint;
     }
 
     /** Coalesce optional expected-stat preparation without calculating it in a public request. */
@@ -325,7 +325,7 @@ final class NhlPublicGamePage
     {
         $version = Cache::get('nhl:public-game:version:'.$game->nhl_game_id, 'initial');
 
-        return 'nhl:public-game:v3:'.$game->nhl_game_id.':'.sha1($game->game_state.':'.(string) $game->updated_at.':'.$version);
+        return 'nhl:public-game:v4:'.$game->nhl_game_id.':'.sha1($game->game_state.':'.(string) $game->updated_at.':'.$version);
     }
 
     /** Read the actual ending, not schedule flags describing which rules are enabled. */
@@ -817,7 +817,7 @@ final class NhlPublicGamePage
             $side = $home ? 'home' : 'away';
             $other = $home ? 'away' : 'home';
 
-            return ['gf' => $gf, 'ga' => $ga, 'win' => $gf > $ga, 'otl' => $gf < $ga && in_array($this->finalPeriodType($row), ['OT', 'SO'], true),
+            return ['venue' => $side, 'gf' => $gf, 'ga' => $ga, 'win' => $gf > $ga, 'otl' => $gf < $ga && in_array($this->finalPeriodType($row), ['OT', 'SO'], true),
                 'pp_goals' => $row->{$side.'_pp_goals'}, 'pp_opps' => $row->{$side.'_pp_opportunities'},
                 'pk_ga' => $row->{$other.'_pp_goals'}, 'pk_opps' => $row->{$other.'_pp_opportunities'},
                 'against_matchup' => ((int) $row->home_team_id === (int) $game->home_team_id
@@ -828,6 +828,13 @@ final class NhlPublicGamePage
         $otl = $records->where('otl', true)->count();
         $last = $records->take(10);
         $lastFive = $records->take(5);
+        $venue = (int) $game->home_team_id === $teamId ? 'home' : 'away';
+        $venueHistory = $records->where('venue', $venue)->values();
+        $venueRecord = static fn (Collection $window): array => [
+            'gp' => $window->count(), 'wins' => $window->where('win', true)->count(),
+            'losses' => $window->where('win', false)->where('otl', false)->count(),
+            'otl' => $window->where('otl', true)->count(),
+        ];
         $h2h = NhlGame::query()->where('game_type', $game->game_type)
             ->where('game_date', '<', $game->game_date->toDateString())->whereIn('game_state', ['OFF', 'FINAL'])
             ->whereNotNull('home_team_score')->whereNotNull('away_team_score')
@@ -845,6 +852,8 @@ final class NhlPublicGamePage
         $pkComplete = $records->isNotEmpty() && $records->every(fn (array $row): bool => $row['pk_ga'] !== null && $row['pk_opps'] !== null);
 
         return [...$this->recentSpecialTeams($game, $teamId, $rows),
+            'venue_records' => ['venue' => $venue, 'season_to_date' => $venueRecord($venueHistory),
+                'last_10' => $venueRecord($venueHistory->take(10)), 'last_5' => $venueRecord($venueHistory->take(5))],
             'scoring_trend' => $this->scoringTrend($game, $teamId, $rows), 'gp' => $records->count(), 'wins' => $wins, 'losses' => $records->count() - $wins - $otl, 'otl' => $otl,
             'gf_gp' => $records->isEmpty() ? null : $records->sum('gf') / $records->count(),
             'ga_gp' => $records->isEmpty() ? null : $records->sum('ga') / $records->count(),

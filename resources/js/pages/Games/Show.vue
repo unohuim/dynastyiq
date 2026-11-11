@@ -145,7 +145,9 @@ const probability = (side) => game.value.prediction?.probabilities?.[side] == nu
 const analysis = computed(() => game.value.preview_analysis ?? { teams: {}, insights: [] });
 const analysisTime = value => value ? new Date(/(?:Z|[+-]\d\d:\d\d)$/.test(value) ? value : `${value.replace(' ', 'T')}Z`).toLocaleString() : '—';
 const insightValue = (value, percentage) => value == null ? '—' : `${number(value)}${percentage ? '%' : ''}`;
-const matchupRows = [['record', 'Season record'], ['l5_record', 'Last 5 Games'], ['h2h_record', 'Head-to-head · Last 10'],
+const matchupRows = [['record', 'Season record'], ['l5_record', 'Last 5 Games'],
+  ['venue_season_record', 'Home/Away · Season'], ['venue_l10_record', 'Home/Away · Last 10'], ['venue_l5_record', 'Home/Away · Last 5'],
+  ['h2h_record', 'Head-to-head · Last 10'],
   ['gf_gp', 'GF/GP'], ['ga_gp', 'GA/GP'], ['xgf_gp', 'xGF/GP'], ['xga_gp', 'xGA/GP'],
   ['pp_pct', 'PP%'], ['pk_pct', 'PK%'], ['pp_opps_gp', 'PP opportunities/GP'], ['pp_opps_allowed_gp', 'PP opportunities allowed/GP']];
 const drivers = computed(() => game.value.prediction_drivers);
@@ -164,7 +166,10 @@ const driverValue = (team, key) => key === 'l5_used'
 const scoringKeys = ['gf_gp', 'ga_gp', 'xgf_gp', 'xga_gp'];
 const normLabel = trend => trend?.norm_period === 'season_to_date' ? 'This season' : 'Last season';
 const scoringChange = (form, key) => scoringKeys.includes(key) ? form?.scoring_trend?.[key]?.change_pct : null;
-const matchupValue = (form, key) => scoringKeys.includes(key) && form?.scoring_trend
+const venueRecordWindows = { venue_season_record: 'season_to_date', venue_l10_record: 'last_10', venue_l5_record: 'last_5' };
+const matchupValue = (form, key) => venueRecordWindows[key]
+  ? record(form?.venue_records?.[venueRecordWindows[key]])
+  : scoringKeys.includes(key) && form?.scoring_trend
   ? number(form.scoring_trend[key]?.value)
   : key.endsWith('record') ? record(form, key === 'record' ? '' : key.replace('record', ''))
   : form?.[key] == null ? '—' : `${number(form[key])}${key.endsWith('_pct') ? '%' : ''}`;
@@ -316,10 +321,10 @@ onBeforeUnmount(() => { disposed = true; cancelPanels(); request?.cancel(); });
           <GameSectionState name="matchup" title="The matchup" :state="panelState('matchup')" @retry="loadPanel('matchup')" />
           <section v-if="panelReady('matchup')" id="matchup" class="rounded-xl border border-[#29404F] bg-[#0D1D29] p-4 sm:p-6">
             <h2 class="text-sm font-semibold">The matchup</h2>
-            <p class="mt-1 text-[11px] text-[#91A8BA]">GF, GA, xGF and xGA: Last 5 Games, with change versus each team’s norm. Other averages: season to date. Head-to-head: last 10 meetings.</p>
+            <p class="mt-1 text-[11px] text-[#91A8BA]">GF, GA, xGF and xGA: Last 5 Games, with change versus each team’s norm. Other averages: season to date. Head-to-head: last 10 meetings. Home/Away records: this season’s home games for the host and away games for the visitor.</p>
             <p v-if="game.matchup_expected_pending" role="status" class="mt-1 text-[10px] text-[#91A8BA]">Preparing expected-goal statistics…</p>
             <table class="mx-auto mt-4 w-full max-w-xl table-fixed text-xs" data-matchup-comparison>
-              <thead><tr><th scope="col" class="w-[44%] py-2 text-left text-[#91A8BA]">Statistic</th><th v-for="side in sides" :key="side" scope="col" class="py-2 text-center text-sky-300">{{ game[side].team_abbrev }}<span v-if="game[side].form?.scoring_trend" class="mt-1 block text-[9px] font-normal text-[#91A8BA]">Norm: {{ normLabel(game[side].form.scoring_trend) }} · {{ game[side].form.scoring_trend.norm_games }} GP</span></th></tr></thead>
+              <thead><tr><th scope="col" class="w-[44%] py-2 text-left text-[#91A8BA]">Statistic</th><th v-for="side in sides" :key="side" scope="col" class="py-2 text-center text-sky-300">{{ game[side].team_abbrev }}<span class="ml-1 text-[9px] font-normal text-[#91A8BA]">{{ side === 'home' ? 'Home' : 'Away' }}</span><span v-if="game[side].form?.scoring_trend" class="mt-1 block text-[9px] font-normal text-[#91A8BA]">Norm: {{ normLabel(game[side].form.scoring_trend) }} · {{ game[side].form.scoring_trend.norm_games }} GP</span></th></tr></thead>
               <tbody><tr v-for="[key, label] in matchupRows" :key="key" class="border-t border-[#29404F]/50"><th scope="row" class="py-2 text-left font-normal text-[#91A8BA]">{{ label }}</th><td v-for="side in sides" :key="side" class="py-2 text-center font-mono">{{ matchupValue(game[side].form, key) }}<span v-if="scoringChange(game[side].form, key) != null" class="ml-1 whitespace-nowrap text-[10px] text-[#91A8BA]" :aria-label="`${scoringChange(game[side].form, key) > 0 ? 'Up' : scoringChange(game[side].form, key) < 0 ? 'Down' : 'Unchanged'} ${number(Math.abs(scoringChange(game[side].form, key)), 1)}% versus ${normLabel(game[side].form.scoring_trend)}`">({{ scoringChange(game[side].form, key) > 0 ? '↑' : scoringChange(game[side].form, key) < 0 ? '↓' : '' }}{{ number(Math.abs(scoringChange(game[side].form, key)), 1) }}%)</span></td></tr></tbody>
             </table>
             <div v-if="drivers?.revision_id" class="mx-auto mt-5 max-w-xl border-t border-[#29404F] pt-4" data-prediction-drivers>
