@@ -76,7 +76,7 @@ class NhlCustomGameForecast
         }
 
         return ['game' => $game, 'model' => $model, 'input' => $input,
-            'metadata' => $cached['metadata'],
+            'metadata' => $cached['metadata'], 'source_fingerprint' => $fingerprint,
             'prediction' => app(NhlCustomGamePredictionEngine::class)->predict($input)];
     }
 

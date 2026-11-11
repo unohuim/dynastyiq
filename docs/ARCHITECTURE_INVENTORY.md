@@ -4330,6 +4330,10 @@ Upcoming lineups/opponents and schedule classifications remain target-specific.
 Operational revisions store Toronto-calendar `days_away` and a separately calculated
 `public_confidence_score` using probability, internal confidence and the forecast
 horizon; no artificial score cap applies. Internal confidence remains unchanged.
+New completed predictions also freeze numeric season/L5 xGF/xGA for both teams
+in their saved Matchup payload. Source-bound background preparation must finish
+before revision publication; later API reads retain the saved values independently
+of public-page cache invalidation. Entirely unrated required windows report an error.
 Operational player game counts, exposure and overall shot/goal totals come from
 saved strength-window context. Additional bucket/defensive and unavailable team
 special-teams references still use bounded historical preparation; this change

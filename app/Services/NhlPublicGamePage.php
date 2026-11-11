@@ -120,9 +120,9 @@ final class NhlPublicGamePage
     /** Share strictly prior-date Matchup statistics with the partner API in every game state.
      * @return array<string,mixed>
      */
-    public function matchup(NhlGame $game): array
+    public function matchup(NhlGame $game, ?array $preparedExpected = null): array
     {
-        $expected = Cache::get($this->cacheKey($game).':matchup-expectations:v2');
+        $expected = $preparedExpected ?? Cache::get($this->cacheKey($game).':matchup-expectations:v2');
         $pending = ! is_array($expected) && in_array(strtoupper((string) $game->game_state), ['', 'FUT', 'PRE', 'PPD', 'CNCL'], true);
         if ($pending) {
             $this->queueMatchupExpectationPreparation($game);
@@ -146,6 +146,89 @@ final class NhlPublicGamePage
         }
 
         return $result;
+    }
+
+    /** Require a ready, source-bound Matchup snapshot before publishing an operational prediction.
+     * @return array<string,mixed>
+     */
+    public function predictionMatchup(int $gameId, string $sourceFingerprint): array
+    {
+        $key = $this->predictionMatchupKey($gameId, $sourceFingerprint);
+        $prepared = Cache::get($key);
+        if (is_array($prepared['matchup'] ?? null)) {
+            return $prepared['matchup'];
+        }
+        if (is_string($prepared['error'] ?? null)) {
+            throw \Illuminate\Validation\ValidationException::withMessages(['matchup' => $prepared['error']]);
+        }
+        if (Cache::add($key.':queued', true, 90)) {
+            try {
+                \App\Jobs\RefreshNhlPublicGamePageJob::dispatch($gameId, $sourceFingerprint)->afterCommit();
+            } catch (\Throwable $error) {
+                Cache::forget($key.':queued');
+                throw $error;
+            }
+        }
+
+        throw new \App\Exceptions\NhlGamePredictionPreparing($gameId);
+    }
+
+    /** Calculate historical xG in a worker and freeze the completed descriptive Matchup snapshot. */
+    public function preparePredictionMatchup(int $gameId, string $sourceFingerprint): void
+    {
+        $key = $this->predictionMatchupKey($gameId, $sourceFingerprint);
+        $lock = Cache::lock($key.':lock', 65);
+        if (! $lock->get()) {
+            return;
+        }
+        try {
+            if (is_array(Cache::get($key)['matchup'] ?? null)) {
+                return;
+            }
+            $game = NhlGame::query()->findOrFail($gameId);
+            $matchup = $this->matchup($game, $this->prepareMatchupExpectations($game));
+            $missing = [];
+            foreach (['away', 'home'] as $side) {
+                foreach (['xgf_gp', 'xga_gp'] as $metric) {
+                    foreach (['season' => $matchup[$side]['form'][$metric],
+                        'last five' => $matchup[$side]['form']['scoring_trend'][$metric]['value']] as $period => $value) {
+                        if (! is_numeric($value) || ! is_finite((float) $value)) {
+                            $missing[] = $matchup[$side]['team_abbrev'].' '.$period.' '.$metric;
+                        }
+                    }
+                }
+            }
+            if ($missing !== []) {
+                $this->predictionMatchupFailed($gameId, $sourceFingerprint,
+                    'Matchup expected goals are unavailable for '.implode(', ', $missing)
+                    .'. Complete the historical shot import and SAT scoring, then retry the prediction.');
+
+                return;
+            }
+            $matchup['expected_pending'] = false;
+            if (! Cache::put($key, ['matchup' => $matchup], 21600)) {
+                throw new \RuntimeException('Unable to publish prepared prediction Matchup.');
+            }
+        } finally {
+            Cache::forget($key.':queued');
+            $lock->release();
+        }
+    }
+
+    /** Expose exhausted preparation failures without publishing an incomplete prediction. */
+    public function predictionMatchupFailed(int $gameId, string $sourceFingerprint, string $error): void
+    {
+        $key = $this->predictionMatchupKey($gameId, $sourceFingerprint);
+        Cache::forget($key.':queued');
+        if (! is_array(Cache::get($key)['matchup'] ?? null)) {
+            Cache::put($key, ['error' => $error], 300);
+        }
+    }
+
+    /** Source-bound preparation is independent of public-page invalidation and its five-minute TTL. */
+    private function predictionMatchupKey(int $gameId, string $sourceFingerprint): string
+    {
+        return 'nhl:prediction-matchup:v1:'.$gameId.':'.$sourceFingerprint;
     }
 
     /** Coalesce optional expected-stat preparation without calculating it in a public request. */
@@ -846,8 +929,10 @@ final class NhlPublicGamePage
         return $value !== null && $norm !== null && $norm > 0 ? 100 * ($value - $norm) / $norm : null;
     }
 
-    /** Cache per-game xG once per season, then aggregate exact L5/norm memberships without public shot scans. */
-    private function prepareMatchupExpectations(NhlGame $game): void
+    /** Cache per-game xG once per season, then aggregate exact L5/norm memberships without public shot scans.
+     * @return array<string,array<string,mixed>>
+     */
+    private function prepareMatchupExpectations(NhlGame $game): array
     {
         $sources = [];
         foreach (['away', 'home'] as $side) {
@@ -883,6 +968,8 @@ final class NhlPublicGamePage
             $result[$side]['scoring_trend'] = $trend;
         }
         Cache::put($this->cacheKey($game).':matchup-expectations:v2', $result, 300);
+
+        return $result;
     }
 
     /** Read the five previous completed meetings without leaking the selected result.

@@ -598,6 +598,72 @@ describe('Matchup season statistics', function (): void {
     });
 });
 
+
+describe('prediction Matchup completion', function (): void {
+    beforeEach(function (): void {
+        ($this->makeGame)(2026020001, ['game_state' => 'FUT', 'game_date' => '2026-10-27', 'start_time_utc' => '2026-10-27 23:00:00']);
+        ($this->makeGame)(2026020002);
+    });
+
+    it('coalesces source-bound expected-stat work separately from public refreshes', function (): void {
+        $pages = app(NhlPublicGamePage::class);
+        foreach (range(1, 2) as $attempt) {
+            expect(fn () => $pages->predictionMatchup(2026020001, 'source-one'))
+                ->toThrow(\App\Exceptions\NhlGamePredictionPreparing::class);
+        }
+        Bus::assertDispatchedTimes(RefreshNhlPublicGamePageJob::class, 1);
+        $pending = new RefreshNhlPublicGamePageJob(2026020001, 'source-one');
+        expect($pending->queue)->toBe('default')->and($pending->uniqueId())
+            ->not->toBe((new RefreshNhlPublicGamePageJob(2026020001))->uniqueId());
+    });
+
+    it('prepares complete expected statistics independently of game state and public cache version', function (string $state, float $goals): void {
+        DB::table('nhl_games')->where('nhl_game_id', 2026020001)->update(['game_state' => $state]);
+        $ids = DB::table('nhl_games')->where('nhl_game_id', 2026020001)->first(['home_team_id', 'away_team_id']);
+        $totals = collect();
+        foreach ([$ids->away_team_id, $ids->home_team_id] as $team) {
+            $totals->put('2026020002:'.$team, (object) ['scored' => 3, 'attempts' => 4, 'xg' => $goals]);
+        }
+        $reader = Mockery::mock(\App\Services\NhlStatsDashboardPayload::class);
+        $reader->shouldReceive('teamExpectationsForGames')->once()->andReturn([$totals, $totals]);
+        app()->instance(\App\Services\NhlStatsDashboardPayload::class, $reader);
+        $pages = app(NhlPublicGamePage::class);
+        (new RefreshNhlPublicGamePageJob(2026020001, 'source-two'))->handle($pages);
+        $pages->forget(2026020001);
+        $this->travel(6)->minutes();
+        $matchup = $pages->predictionMatchup(2026020001, 'source-two');
+        expect($matchup['expected_pending'])->toBeFalse()
+            ->and($matchup['away']['form']['xgf_gp'])->toEqual($goals)
+            ->and($matchup['home']['form']['xga_gp'])->toEqual($goals)
+            ->and($matchup['home']['form']['scoring_trend']['xgf_gp']['value'])->toEqual($goals);
+        expect(fn () => $pages->predictionMatchup(2026020001, 'new-source'))
+            ->toThrow(\App\Exceptions\NhlGamePredictionPreparing::class);
+        Http::assertNothingSent();
+    })->with([['FUT', 2.5], ['LIVE', 2.5], ['FINAL', 2.5], ['FUT', 0.0]]);
+
+    it('reports entirely unrated windows without manufacturing expected goals', function (): void {
+        $reader = Mockery::mock(\App\Services\NhlStatsDashboardPayload::class);
+        $reader->shouldReceive('teamExpectationsForGames')->once()->andReturn([collect(), collect()]);
+        app()->instance(\App\Services\NhlStatsDashboardPayload::class, $reader);
+        $pages = app(NhlPublicGamePage::class);
+        $pages->preparePredictionMatchup(2026020001, 'unrated');
+        expect(fn () => $pages->predictionMatchup(2026020001, 'unrated'))
+            ->toThrow(\Illuminate\Validation\ValidationException::class);
+        $prepared = Cache::get('nhl:prediction-matchup:v1:2026020001:unrated');
+        expect($prepared)->not->toHaveKey('matchup')->and($prepared['error'])->toContain('xgf_gp', 'xga_gp', 'SAT scoring');
+    });
+
+    it('exposes exhausted Matchup preparation errors and leaves ordinary public refreshes unchanged', function (): void {
+        $error = new RuntimeException('Expected statistics query timed out.');
+        (new RefreshNhlPublicGamePageJob(2026020001))->failed($error);
+        expect(Cache::get('nhl:prediction-matchup:v1:2026020001:failed'))->toBeNull();
+        (new RefreshNhlPublicGamePageJob(2026020001, 'failed'))->failed($error);
+        expect(fn () => app(NhlPublicGamePage::class)->predictionMatchup(2026020001, 'failed'))
+            ->toThrow(\Illuminate\Validation\ValidationException::class);
+        expect(Cache::get('nhl:prediction-matchup:v1:2026020001:failed')['error'])->toContain('query timed out');
+    });
+});
+
 describe('recorded ending display classification', function (): void {
     beforeEach(function (): void {
         ($this->makeGame)(2026020001, ['game_state' => 'FUT', 'game_date' => '2026-10-27', 'start_time_utc' => '2026-10-27 23:00:00']);

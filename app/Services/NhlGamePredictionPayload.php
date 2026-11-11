@@ -104,6 +104,7 @@ class NhlGamePredictionPayload
         $forecast = $service->predict($gameId, isset($overrides['sat_model_run_id']) ? (int) $overrides['sat_model_run_id'] : null,
             (bool) ($overrides['use_stored_boxscore'] ?? false));
         $game = $forecast['game'];
+        $pregameMatchup = app(NhlPublicGamePage::class)->predictionMatchup($gameId, $forecast['source_fingerprint']);
         $custom = $forecast['prediction'];
         $model = $forecast['model'];
         $matchup = $service->matchup($forecast);
@@ -167,6 +168,7 @@ class NhlGamePredictionPayload
         unset($market);
 
         return ['prediction_available' => true, 'pick_qualified' => $winnerSide !== 'pickem',
+            'matchup' => $pregameMatchup,
             'game' => $this->gamePayload($game), 'inputs' => [
                 'engine_id' => null, 'stack_id' => null, 'sat_model_run_id' => $model->id,
                 'engine_name' => 'Pregame EV/PP', 'legacy_engine_settings_applied' => false,

@@ -1161,7 +1161,7 @@ The HTTP 202 preparing response retains its existing shape.
   "matchup": {
     "through_date": "2026-11-04",
     "head_to_head_limit": 10,
-    "expected_pending": true,
+    "expected_pending": false,
     "away": {
       "team_id": 1,
       "team_abbrev": "BUF",
@@ -1171,7 +1171,7 @@ The HTTP 202 preparing response retains its existing shape.
         "l10_gp": 10, "l10_wins": 6, "l10_losses": 3, "l10_otl": 1,
         "h2h_gp": 10, "h2h_wins": 4, "h2h_losses": 5, "h2h_otl": 1,
         "gf_gp": 3.25, "ga_gp": 2.75,
-        "xgf_gp": null, "xga_gp": null,
+        "xgf_gp": 3.14, "xga_gp": 2.78,
         "pp_pct": 25.0, "pk_pct": 80.0,
         "pp_opps_gp": 3.0, "pp_opps_allowed_gp": 3.25
       }
@@ -1211,15 +1211,23 @@ REG/OT/SO ending; rule-enabled schedule flags do not classify overtime losses.
 - xGF/GP and xGA/GP read prepared statistics only. Matchup sums available scored xG
   and divides by the full window GP, ignoring missing ratings rather than hiding
   a partially rated average. This can understate xG; entirely unrated windows
-  remain unavailable. Existing statistics dashboard coverage policies are unchanged. A cold upcoming-game read queues
-  shared background preparation and returns `expected_pending: true`; poll normally
-  to obtain the prepared values. No shot aggregation or provider call runs in this
-  Matchup reader. Live/final requests still return strictly pregame form; absent
-  prepared historical expected values remain null without queuing live/recap work.
+  remain unavailable. Existing statistics dashboard coverage policies are unchanged.
+  New completed predictions require numeric season and L5 xGF/xGA for both teams.
+  When historical expected values need preparation, the prediction endpoint returns
+  HTTP `202` preparing and publishes no revision until its existing background worker
+  finishes. This requirement applies to requested predictions in every game state;
+  it does not fetch live target statistics or use target outcomes. Entirely unrated
+  required windows return HTTP `422` with an actionable `errors.matchup` explanation,
+  rather than a completed prediction with blanks. Public browser Matchup requests
+  retain their independent bounded background-preparation behavior.
 
-Matchup data is descriptive at response time, bounded by `through_date`; the saved
-prediction's original identity and calculation time remain in `meta`. Its current
-statistics are not an additional immutable prediction revision.
+For new completed predictions, `matchup.expected_pending` is `false`. Matchup is
+frozen with the prediction in the revision's existing payload and bounded by
+`through_date`. Cache hits and later API reads return that same snapshot, even
+after public-page cache expiry or invalidation. A new calculation refreshes both
+prediction and Matchup together; earlier revisions are never rewritten. The
+prediction's identity and calculation time remain in `meta`. Evidence-only
+responses may still include current descriptive Matchup with unavailable values.
 
 ### Query Parameters
 

@@ -376,13 +376,16 @@ it('exposes new engine values through the real API without replacing saved model
     $service = Mockery::mock(\App\Services\NhlCustomGameForecast::class)->makePartial();
     $service->shouldReceive('predict')->once()->andReturn([
         'game' => DB::table('nhl_games')->where('nhl_game_id', 2026020990)->first(),
-        'model' => $this->run, 'input' => [], 'metadata' => [],
+        'model' => $this->run, 'input' => [], 'metadata' => [], 'source_fingerprint' => 'service-fixture',
         'prediction' => ['teams' => $teams, 'total_goals' => 3.3, 'recommendation' => 'BBB',
             'confidence_score' => null, 'confidence_inputs' => [], 'home_win_probability' => 0.6, 'away_win_probability' => 0.4],
     ]);
     $service->shouldReceive('matchup')->once()->andReturn(['sides' => $sides]);
     app()->instance(\App\Services\NhlCustomGameForecast::class, $service);
     $this->mock(\App\Services\NhlStartingGoalieSelector::class)->shouldReceive('selectForPrediction')->andReturn(null);
+    \Illuminate\Support\Facades\Cache::put('nhl:prediction-matchup:v1:2026020990:service-fixture',
+        ['matchup' => ['expected_pending' => false, 'away' => ['form' => ['xgf_gp' => 1.1, 'xga_gp' => 2.2]],
+            'home' => ['form' => ['xgf_gp' => 2.2, 'xga_gp' => 1.1]]]], 21600);
     $token = 'new-default-prediction-test';
     \App\Models\ApiClient::query()->create(['name' => 'Prediction test', 'slug' => 'paired-prediction',
         'token_hash' => \App\Models\ApiClient::hashToken($token), 'scopes' => ['nhl-stats:read']]);

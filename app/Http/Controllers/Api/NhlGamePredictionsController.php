@@ -17,7 +17,7 @@ use Illuminate\Http\Request;
  */
 class NhlGamePredictionsController extends Controller
 {
-    /** Attach descriptive prior-game Matchup statistics without rewriting cached forecasts. */
+    /** Return completed predictions with their frozen Matchup; evidence-only responses retain descriptive form. */
     public function __invoke(
         Request $request,
         NhlGamePredictionPayload $payload,
@@ -49,7 +49,9 @@ class NhlGamePredictionsController extends Controller
 
         $prediction = $cache->respond((int) $input['nhl_game_id'], $input,
             fn (): array => $payload->build((int) $input['nhl_game_id'], $input), $forceRefresh);
-        $prediction['matchup'] = $pages->matchup(NhlGame::query()->findOrFail((int) $input['nhl_game_id']));
+        if (! ($prediction['prediction_available'] ?? false)) {
+            $prediction['matchup'] = $pages->matchup(NhlGame::query()->findOrFail((int) $input['nhl_game_id']));
+        }
 
         return response()->json($prediction, 200, [], JSON_PRESERVE_ZERO_FRACTION);
     }
