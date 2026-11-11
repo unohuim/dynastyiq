@@ -25,8 +25,14 @@ Changed files for this addition:
 - This review document.
 
 The shared form adds `venue_records` under the canonical ENUMS contract.
-Browser records add three rows and explicit Away/Home column labels. Empty or
-missing samples display an em dash. Prepared public payloads use
+The approved compact follow-up displays overall Season, Last 10 and Last 5
+records as primary values, with a smaller `Home {record}` or `Away {record}`
+line beneath each. Dedicated venue rows are removed; head-to-head has no
+venue sublabel. Matchup up-arrow percentages are green, down-arrow percentages
+red, and zero changes muted; numeric values and accessible descriptions are
+unchanged. Empty or missing samples display an em dash. These layout/color
+changes do not change the backend windows, API shape or prediction calculations.
+Prepared public payloads use
 `nhl:public-game:v4`, source-bound prediction Matchup uses
 `nhl:prediction-matchup:v3`, and API response identity uses
 `pregame-dependencies-v18`. Prior cached shapes cannot satisfy the new preparation;
@@ -41,11 +47,13 @@ is required, and Build Pregame is unchanged.
 | Temporal, season, game-type and source exclusions | AUTHORED | `excludes other seasons same day future unfinished and mismatched game types from venue records` |
 | Short/empty samples | AUTHORED | `keeps short and empty venue histories explicit without borrowing other seasons` |
 | API request → saved revision → cached GET | AUTHORED | `freezes scenario records in new prediction Matchup payloads and retains them on cached reads` |
-| Visible venue labels, separate windows, missing display | AUTHORED | `shows home and away scenario records separately from overall records`; `shows unavailable venue records without inventing zero win loss records` |
+| Inline venue labels, separate windows, missing display | AUTHORED | `nests home and away scenario records beneath corresponding overall records`; `shows unavailable venue records without inventing zero win loss records` |
+| Direction colors and accessible percentages | AUTHORED | `colors percentage increases green decreases red and zero changes neutral` |
 
 Requirements: 1. Correct scheduled role; 2. Current-season matching-role windows;
-3. Separate overall records; 4. Recorded W–L–OTL; 5. Additive shared payload and
-cache-shape versioning; 6. Unavailable rendering for empty/missing history.
+3. Primary overall records with inline venue sublabels; 4. Recorded W–L–OTL;
+5. Additive shared payload and cache-shape versioning; 6. Unavailable rendering
+for empty/missing history; 7. Green up/red down and neutral zero percentages.
 All have implementation and regression assertions; execution is outstanding.
 
 | Endpoint / verb | Existing auth/scope test |
@@ -57,12 +65,14 @@ All have implementation and regression assertions; execution is outstanding.
 | Organization/owner scope | N/A; unchanged global NHL reads |
 
 Frontend contract: deterministic existing Vue mount tests assert both ordered
-team columns, each new record window, preserved overall records and missing
-placeholders. No interaction, timer, global-state or animation behavior changes.
+team columns, all three primary/secondary record pairs, smaller block sublabels,
+absence of dedicated venue rows and head-to-head sublabels, missing placeholders,
+and directional colors with preserved accessible percentage descriptions. No
+interaction, timer, global-state or animation behavior changes.
 
 Pest/Vitest declaration counts (excluding dataset expansion):
 `NhlPublicGamePageTest.php` **113**, `NhlGamePredictionsMarketProbabilityApiTest.php`
-**76**, `NhlSatPredictionServicesTest.php` **63**, and `games.test.js` **130**.
+**76**, `NhlSatPredictionServicesTest.php` **63**, and `games.test.js` **131**.
 All exceed twenty. Tests and browser checks have not been run under repository
 execution policy; human execution and review are outstanding.
 

@@ -1123,26 +1123,38 @@ describe('public game preview and recap', () => {
             l5_gp: 5, l5_wins: 3, l5_losses: 1, l5_otl: 1, h2h_gp: 2, h2h_wins: 1, h2h_losses: 1, h2h_otl: 0, gf_gp: 3.2, ga_gp: 2.4,
             xgf_gp: 3.1, xga_gp: 2.8, pp_pct: 25, pk_pct: 80, pp_opps_gp: 3.5, pp_opps_allowed_gp: 4.2 } } });
         const text = document.querySelector('#matchup').textContent;
-        expect(text).toContain('Last 5 Games'); expect(text).not.toContain('Last 10 Games'); expect(text).toContain('3–1–1');
+        expect(text).toContain('Last 5 Games'); expect(text).toContain('Last 10 Games'); expect(text).toContain('3–1–1');
         expect(text).toContain('GF/GP'); expect(text).toContain('GA/GP'); expect(text).toContain('xGF/GP');
         expect(text).toContain('xGA/GP'); expect(text).toContain('25.00%'); expect(text).toContain('80.00%');
         expect(text).toContain('PP opportunities allowed/GP'); expect(text).toContain('4.20');
         expect(document.querySelectorAll('[data-matchup-comparison] tbody tr')[0].querySelectorAll('td')).toHaveLength(2);
         expect(text).toContain('PP opportunities/GP'); expect(text).toContain('3.50'); expect(text).toContain('1–1–0');
     });
-    it('shows home and away scenario records separately from overall records', () => {
+    it('nests home and away scenario records beneath corresponding overall records', () => {
         mount({ mode: 'preview', away: { team_abbrev: 'TBL', form: { gp: 20, wins: 10, losses: 8, otl: 2,
+            l10_gp: 10, l10_wins: 6, l10_losses: 3, l10_otl: 1, l5_gp: 5, l5_wins: 3, l5_losses: 2, l5_otl: 0,
             venue_records: { venue: 'away', season_to_date: { gp: 12, wins: 5, losses: 6, otl: 1 },
                 last_10: { gp: 10, wins: 4, losses: 5, otl: 1 }, last_5: { gp: 5, wins: 1, losses: 3, otl: 1 } } } },
             home: { team_abbrev: 'BUF', form: { gp: 20, wins: 12, losses: 6, otl: 2,
+                l10_gp: 10, l10_wins: 8, l10_losses: 1, l10_otl: 1, l5_gp: 5, l5_wins: 4, l5_losses: 1, l5_otl: 0,
                 venue_records: { venue: 'home', season_to_date: { gp: 12, wins: 9, losses: 2, otl: 1 },
                     last_10: { gp: 10, wins: 7, losses: 2, otl: 1 }, last_5: { gp: 5, wins: 4, losses: 0, otl: 1 } } } } });
         const rows = [...document.querySelectorAll('[data-matchup-comparison] tbody tr')];
-        const values = label => [...rows.find(row => row.querySelector('th').textContent === label).querySelectorAll('td')].map(cell => cell.textContent);
+        const cells = label => [...rows.find(row => row.querySelector('th').textContent === label).querySelectorAll('td')];
+        const values = label => cells(label).map(cell => cell.querySelector('[data-matchup-value]').textContent);
+        const venueValues = label => cells(label).map(cell => cell.querySelector('[data-venue-record]').textContent);
         expect(values('Season record')).toEqual(['10–8–2', '12–6–2']);
-        expect(values('Home/Away · Season')).toEqual(['5–6–1', '9–2–1']);
-        expect(values('Home/Away · Last 10')).toEqual(['4–5–1', '7–2–1']);
-        expect(values('Home/Away · Last 5')).toEqual(['1–3–1', '4–0–1']);
+        expect(values('Last 10 Games')).toEqual(['6–3–1', '8–1–1']);
+        expect(values('Last 5 Games')).toEqual(['3–2–0', '4–1–0']);
+        expect(venueValues('Season record')).toEqual(['Away 5–6–1', 'Home 9–2–1']);
+        expect(venueValues('Last 10 Games')).toEqual(['Away 4–5–1', 'Home 7–2–1']);
+        expect(venueValues('Last 5 Games')).toEqual(['Away 1–3–1', 'Home 4–0–1']);
+        expect(rows.some(row => row.querySelector('th').textContent.startsWith('Home/Away'))).toBe(false);
+        expect(cells('Head-to-head · Last 10')[0].querySelector('[data-venue-record]')).toBeNull();
+        for (const label of document.querySelectorAll('[data-venue-record]')) {
+            expect(label.classList.contains('text-[9px]')).toBe(true);
+            expect(label.classList.contains('block')).toBe(true);
+        }
         expect(document.querySelector('[data-matchup-comparison] thead').textContent).toContain('TBL');
         expect(document.querySelector('[data-matchup-comparison] thead').textContent).toContain('Away');
         expect(document.querySelector('[data-matchup-comparison] thead').textContent).toContain('Home');
@@ -1151,9 +1163,25 @@ describe('public game preview and recap', () => {
         mount({ mode: 'preview', away: { team_abbrev: 'TBL', form: {} }, home: { team_abbrev: 'BUF', form: {
             venue_records: { venue: 'home', season_to_date: { gp: 0, wins: 0, losses: 0, otl: 0 },
                 last_10: { gp: 0, wins: 0, losses: 0, otl: 0 }, last_5: { gp: 0, wins: 0, losses: 0, otl: 0 } } } } });
-        const rows = [...document.querySelectorAll('[data-matchup-comparison] tbody tr')].filter(row => row.querySelector('th').textContent.startsWith('Home/Away'));
+        const rows = [...document.querySelectorAll('[data-matchup-comparison] tbody tr')].filter(row => row.querySelector('[data-venue-record]'));
         expect(rows).toHaveLength(3);
-        for (const row of rows) expect([...row.querySelectorAll('td')].map(cell => cell.textContent)).toEqual(['—', '—']);
+        for (const row of rows) {
+            expect([...row.querySelectorAll('[data-venue-record]')].map(label => label.textContent)).toEqual(['Away —', 'Home —']);
+            expect(row.textContent).not.toContain('0–0–0');
+        }
+    });
+    it('colors percentage increases green decreases red and zero changes neutral', () => {
+        mount({ mode: 'preview', away: { team_abbrev: 'TBL', form: {
+            scoring_trend: { norm_period: 'season_to_date', norm_games: 20,
+                gf_gp: { value: 3.3, norm: 3, change_pct: 10 }, ga_gp: { value: 2.7, norm: 3, change_pct: -10 },
+                xgf_gp: { value: 3, norm: 3, change_pct: 0 } } } } });
+        const table = document.querySelector('[data-matchup-comparison]');
+        const up = table.querySelector('[aria-label="Up 10.0% versus This season"]');
+        const down = table.querySelector('[aria-label="Down 10.0% versus This season"]');
+        const zero = table.querySelector('[aria-label="Unchanged 0.0% versus This season"]');
+        expect(up.textContent).toBe('(↑10.0%)'); expect(up.classList.contains('text-emerald-400')).toBe(true);
+        expect(down.textContent).toBe('(↓10.0%)'); expect(down.classList.contains('text-red-400')).toBe(true);
+        expect(zero.textContent).toBe('(0.0%)'); expect(zero.classList.contains('text-[#91A8BA]')).toBe(true);
     });
     it('shows L5 scoring values and changes against each teams own norm period', () => {
         mount({ mode: 'preview', away: { team_abbrev: 'BOS', form: { gf_gp: 9.99,
