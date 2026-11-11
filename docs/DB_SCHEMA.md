@@ -1,5 +1,31 @@
 # Database Schema Inventory (DB_SCHEMA)
 
+## NHL game import cleanup reference indexes
+
+Migration `2026_10_27_000001_add_nhl_import_cleanup_reference_indexes.php` adds
+non-unique lookup indexes on the previously uncovered referencing columns:
+
+- `event_unit_shifts.unit_shift_id`
+- `nhl_faceoff_facts.next_play_by_play_id`
+- `nhl_pbp_source_mismatches.play_by_play_id`
+- `nhl_shot_attempt_model_scores.play_by_play_id`
+- `nhl_shot_attempt_predictions.play_by_play_id`
+- `nhl_shot_attempts_facts.previous_play_by_play_id`
+- `nhl_shot_attempts_facts.rush_sequence_origin_play_by_play_id`
+
+PostgreSQL builds these concurrently, outside a migration transaction, and retries
+interrupted invalid builds. Foreign keys, row identities and source data remain
+unchanged. These indexes support game-scoped deletions and foreign-key actions.
+
+The production catalog audit on 2026-11-11 found no valid leading-column coverage
+for these seven references. The existing event/unit unique index starts with
+`event_id`, so it does not replace the new `unit_shift_id` lookup. The migration
+was already recorded locally and is preserved unchanged; production had not yet
+applied it. Its retry checks use the dedicated names above. Recheck for manually
+added equivalent indexes before deployment; the audit is not a runtime
+any-name equivalent-index detection feature. Query-plan and verification notes
+are in `docs/analysis/nhl-import-cleanup-index-review.md`.
+
 ## Operational game prediction runs and revisions
 
 Migration `2026_10_22_000001_create_nhl_game_prediction_history_tables.php` defines:

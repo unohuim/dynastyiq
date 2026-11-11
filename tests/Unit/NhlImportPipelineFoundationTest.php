@@ -149,6 +149,136 @@ it('defines no dependencies for the first PBP stage', function (): void {
     expect(NhlImportStages::dependenciesFor(NhlImportStages::PBP))->toBe([]);
 });
 
+it('indexes every previously unindexed reference used during game cleanup', function (string $table, string $column, string $index): void {
+    expect(\Illuminate\Support\Facades\Schema::hasIndex($table, $index))->toBeTrue();
+    if (DB::getDriverName() === 'pgsql') {
+        $definition = DB::selectOne('SELECT i.indisvalid, i.indisready, i.indpred IS NULL AS unfiltered,
+            a.attname AS first_column FROM pg_index i JOIN pg_attribute a
+                ON a.attrelid = i.indrelid AND a.attnum = i.indkey[0]
+            WHERE i.indexrelid = to_regclass(?) AND i.indrelid = to_regclass(?)', [$index, $table]);
+        expect($definition)->not->toBeNull()->and($definition->first_column)->toBe($column)
+            ->and($definition->indisvalid)->toBeTrue()->and($definition->indisready)->toBeTrue()
+            ->and($definition->unfiltered)->toBeTrue();
+    }
+})->with([
+    ['event_unit_shifts', 'unit_shift_id', 'ix_event_unit_shifts_unit_shift'],
+    ['nhl_faceoff_facts', 'next_play_by_play_id', 'ix_nhl_faceoff_facts_next_pbp'],
+    ['nhl_pbp_source_mismatches', 'play_by_play_id', 'ix_nhl_pbp_mismatches_pbp'],
+    ['nhl_shot_attempt_model_scores', 'play_by_play_id', 'ix_nhl_sat_model_scores_pbp'],
+    ['nhl_shot_attempt_predictions', 'play_by_play_id', 'ix_nhl_sat_predictions_pbp'],
+    ['nhl_shot_attempts_facts', 'previous_play_by_play_id', 'ix_nhl_saf_previous_pbp'],
+    ['nhl_shot_attempts_facts', 'rush_sequence_origin_play_by_play_id', 'ix_nhl_saf_rush_origin_pbp'],
+]);
+
+describe('cleanup reference index migration safety', function (): void {
+    beforeEach(function (): void {
+        $this->cleanupIndexMigration = fn () => require database_path('migrations/2026_10_27_000001_add_nhl_import_cleanup_reference_indexes.php');
+        // Exercise PostgreSQL concurrent-DDL behavior without escaping RefreshDatabase's rollback boundary.
+        $this->cleanupIndexDdl = function (string $operation, array $catalog = [], ?string $interruptAt = null): array {
+            $manager = DB::getFacadeRoot();
+            $statements = [];
+            $failure = null;
+            try {
+                DB::shouldReceive('getDriverName')->andReturn('pgsql');
+                DB::shouldReceive('selectOne')->andReturnUsing(function (string $query, array $bindings) use (&$catalog): ?object {
+                    $name = $bindings[0];
+
+                    return array_key_exists($name, $catalog) ? (object) ['indisvalid' => $catalog[$name]] : null;
+                });
+                DB::shouldReceive('statement')->andReturnUsing(function (string $sql) use (&$catalog, &$statements, $interruptAt): bool {
+                    $statements[] = $sql;
+                    if (preg_match('/^CREATE INDEX CONCURRENTLY IF NOT EXISTS ([a-z_]+) ON ([a-z_]+) \(([a-z_]+)\)$/', $sql, $match)) {
+                        $name = $match[1];
+                        if ($name === $interruptAt) {
+                            $catalog[$name] = false;
+                            throw new RuntimeException('Simulated interrupted concurrent index build.');
+                        }
+                        $catalog[$name] ??= true;
+
+                        return true;
+                    }
+                    if (preg_match('/^DROP INDEX CONCURRENTLY IF EXISTS ([a-z_]+)$/', $sql, $match)) {
+                        unset($catalog[$match[1]]);
+
+                        return true;
+                    }
+                    throw new LogicException('Cleanup indexing attempted unexpected SQL: '.$sql);
+                });
+                ($this->cleanupIndexMigration)()->{$operation}();
+            } catch (RuntimeException $error) {
+                $failure = $error->getMessage();
+            } finally {
+                DB::swap($manager);
+            }
+
+            return ['catalog' => $catalog, 'statements' => $statements, 'failure' => $failure];
+        };
+    });
+
+    it('keeps concurrent cleanup index builds outside a migration transaction', function (): void {
+        expect(($this->cleanupIndexMigration)()->withinTransaction)->toBeFalse();
+    });
+
+    it('adds only nonunique concurrent lookup indexes while preserving game facts and completed checkpoints', function (): void {
+        ($this->insertGame)(2026020001, ['home_team_score' => 4, 'away_team_score' => 2]);
+        ($this->insertProgress)(2026020001, NhlImportStages::PBP, 'completed', ['items_count' => 400]);
+        $game = DB::table('nhl_games')->where('nhl_game_id', 2026020001)->first();
+        $progress = DB::table('nhl_import_progress')->where('game_id', '2026020001')->first();
+        $result = ($this->cleanupIndexDdl)('up');
+        expect($result['failure'])->toBeNull()->and($result['catalog'])->toHaveCount(7)
+            ->and(array_unique(array_values($result['catalog'])))->toBe([true]);
+        foreach ($result['statements'] as $sql) {
+            expect($sql)->toStartWith('CREATE INDEX CONCURRENTLY IF NOT EXISTS ');
+        }
+        expect(DB::table('nhl_games')->where('nhl_game_id', 2026020001)->first())->toEqual($game)
+            ->and(DB::table('nhl_import_progress')->where('game_id', '2026020001')->first())->toEqual($progress);
+    });
+
+    it('retains completed indexes when a successful cleanup index migration is retried', function (): void {
+        $first = ($this->cleanupIndexDdl)('up');
+        $again = ($this->cleanupIndexDdl)('up', $first['catalog']);
+        expect($again['failure'])->toBeNull()->and($again['catalog'])->toBe($first['catalog']);
+        foreach ($again['statements'] as $sql) {
+            expect($sql)->not->toStartWith('DROP INDEX');
+        }
+    });
+
+    it('replaces only the invalid named leftover while keeping other completed indexes', function (): void {
+        $initial = ($this->cleanupIndexDdl)('up')['catalog'];
+        $initial['ix_event_unit_shifts_unit_shift'] = false;
+        $recovered = ($this->cleanupIndexDdl)('up', $initial);
+        $drops = array_values(array_filter($recovered['statements'], fn (string $sql): bool => str_starts_with($sql, 'DROP')));
+        expect($recovered['failure'])->toBeNull()->and($recovered['catalog']['ix_event_unit_shifts_unit_shift'])->toBeTrue()
+            ->and($drops)->toBe(['DROP INDEX CONCURRENTLY IF EXISTS ix_event_unit_shifts_unit_shift']);
+    });
+
+    it('resumes a partially installed index migration after an interrupted concurrent build', function (): void {
+        $partial = ($this->cleanupIndexDdl)('up', [], 'ix_nhl_pbp_mismatches_pbp');
+        expect($partial['failure'])->toContain('interrupted')
+            ->and($partial['catalog']['ix_event_unit_shifts_unit_shift'])->toBeTrue()
+            ->and($partial['catalog']['ix_nhl_faceoff_facts_next_pbp'])->toBeTrue()
+            ->and($partial['catalog']['ix_nhl_pbp_mismatches_pbp'])->toBeFalse();
+        $recovered = ($this->cleanupIndexDdl)('up', $partial['catalog']);
+        expect($recovered['failure'])->toBeNull()->and($recovered['catalog'])->toHaveCount(7)
+            ->and(array_unique(array_values($recovered['catalog'])))->toBe([true]);
+        $drops = array_values(array_filter($recovered['statements'], fn (string $sql): bool => str_starts_with($sql, 'DROP')));
+        expect($drops)->toBe(['DROP INDEX CONCURRENTLY IF EXISTS ix_nhl_pbp_mismatches_pbp']);
+    });
+
+    it('rolls back only the dedicated lookup indexes and preserves unrelated indexes and completed progress', function (): void {
+        ($this->insertProgress)(2026020001, NhlImportStages::PBP, 'completed');
+        $progress = DB::table('nhl_import_progress')->where('game_id', '2026020001')->first();
+        $catalog = ($this->cleanupIndexDdl)('up')['catalog'];
+        $catalog['unrelated_game_index'] = true;
+        $result = ($this->cleanupIndexDdl)('down', $catalog);
+        expect($result['failure'])->toBeNull()->and($result['catalog'])->toBe(['unrelated_game_index' => true]);
+        foreach ($result['statements'] as $sql) {
+            expect($sql)->toStartWith('DROP INDEX CONCURRENTLY IF EXISTS ');
+        }
+        expect(DB::table('nhl_import_progress')->where('game_id', '2026020001')->first())->toEqual($progress);
+    });
+});
+
 it('defines PBP as the summary dependency', function (): void {
     expect(NhlImportStages::dependenciesFor(NhlImportStages::SUMMARY))->toBe([
         NhlImportStages::PBP,
