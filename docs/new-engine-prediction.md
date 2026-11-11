@@ -4,7 +4,7 @@ Started November 2, 2026.
 
 This working guide records the ordered stages of the custom engine and the
 accuracy evidence available for them. The shared default calculator is
-`custom_ev_pp_v3`, used by API, admin, previews, evaluations, the matchup simulator
+`custom_ev_pp_v4`, used by API, admin, previews, evaluations, the matchup simulator
 and `nhl:custom-predict`. Earlier measured research cohorts below remain historical
 evidence; they are not measurements of this rollout.
 
@@ -46,7 +46,10 @@ Canonical rules and evidence remain in:
    bucket separately before summing team totals.
 10. **Convert SAT into SOG and baseline goals.** Use player-specific bucket
     SOG/SAT from **L20 at EV** and **L5 at PP**. Convert resulting SOG using
-    player-bucket **LSeason SH% at EV** and **season-to-date SH% at PP**.
+    **Train bucket reliability SH% at EV** and player-bucket
+    **season-to-date SH% at PP**. At EV, 12+ personal Train SAT uses personal
+    Train goals/SOG; below 12, blend 47% player, 11% team and 42% league Train
+    goals/SOG for the matching bucket.
     Preserve separate EV and PP scoring components. PK is a team clock, not
     a short-handed scoring forecast.
 11. **Retain the player-bucket goals at the goalie stage.** The goalie multiplier
@@ -91,6 +94,122 @@ alternative did not add winners later and is not the adopted rule.
 
 Full evidence, quarter breakdown and next-factor status:
 [pregame-factor-win-impact.md](analysis/pregame-factor-win-impact.md).
+
+## Adopted EV bucket-volume reliability — November 11, 2026
+
+The adopted rule uses the player's **Train SAT count in each retained EV
+bucket**, not SOG volume, overall player SAT, LSeason SAT or a Test result:
+
+- **12+ Train SAT:** 100% of that player's Train bucket goals/SOG.
+- **0–11 Train SAT:** 47% player + 11% upcoming team + 42% league Train
+  bucket goals/SOG.
+
+Pool goals and SOG before division for each component. Personal history follows
+the player across teams; team history belongs to the upcoming team and includes
+all its eligible Train skaters, not only the anticipated lineup. All components
+use the same model-owned Train seasons, retained bucket and EV strength. A
+missing personal or team SOG denominator uses the matching league bucket rate
+for that component. Missing league bucket SOG uses the existing retained EV
+strength fallback. A measured zero with positive SOG remains zero.
+
+The shared input builder collects team bucket counts during its existing Train
+history advancement, using the same player/lane validity as the league pool.
+There is no extra historical scan or per-game query. Counts are independent of
+selected-player history pruning, retained across queued preparation checkpoints,
+and reset with each new build. Private EV bucket `goal_conversion` evidence
+records Train SAT, threshold, component probabilities and applied weights.
+
+This replaces the former EV LSeason SH% source. SAT, SOG/SAT, TOI, defense,
+L5 form and schedule effects retain their calculations. PP season-to-date
+bucket conversion and final conditional 75/25 team/game allocation are unchanged.
+The winner experiment therefore identifies an **EV** finishing rule; it does
+not establish a PP conversion threshold.
+
+### Winner-accuracy evidence
+
+Read-only production-data analysis used Sep2026 Train 2022–23 through 2024–25
+and every 2025–26 Test regular-season game. The same 22 incomplete
+fact/clock/shooter games were excluded, leaving **1,290 comparable games**.
+Every forecast used only prior history. SAT/SOG forecasts and PP team goals
+were fixed. Winners were compared with official final results including OT/SO,
+without a qualification cutoff.
+
+The control used personal **Train** bucket SH%, with league fallback for missing
+denominators. It was not the former EV LSeason-source control; both happened
+to record 697 correct winners, while selecting different teams in 72 games.
+
+| Train SAT cutoff | Best below-cutoff mix: player / team / league | Correct winners | Win% |
+| --- | --- | ---: | ---: |
+| Personal Train control | 100 / 0 / 0 | 697 / 1,290 | 54.03% |
+| 5 | 47 / 11 / 42 | 700 / 1,290 | 54.26% |
+| **12 — adopted** | **47 / 11 / 42** | **702 / 1,290** | **54.42%** |
+| 15 | 54 / 4 / 42 | 701 / 1,290 | 54.34% |
+| 20 | 53 / 7 / 40 | 700 / 1,290 | 54.26% |
+
+All components above each cutoff use 100% personal Train bucket SH%. The search
+covered every integer cutoff **0–138** (maximum observed personal Train EV
+bucket SAT was 137), **710,839** settings at 1-percentage-point weight steps,
+then **119,489** local refinements at 0.1-percentage-point steps around the best
+coarse setting for each cutoff. Several refined mixes tied at 12 SAT;
+47/11/42 retains the simpler whole-percent setting. It fixed 20 control losses
+and spoiled 15 control wins: **five additional winners**, or **+0.3876 points**.
+
+This is a Test-selected best fit, not a universal statistical reliability
+threshold. Selection on the first half preferred 19 SAT and 57/7/36 below it:
+336 versus 333 correct first-half picks, but 363 versus 364 in the second half.
+The adopted 12-SAT setting had 333/645 first-half and 369/645 second-half wins.
+These measurements preceded the repository implementation; they are not a fresh
+execution of the edited application or evidence of a 56–58% baseline.
+
+The implementation is versioned `custom_ev_pp_v4` with preparation
+`saved_pregame_checkpointed_v9`; existing source/configuration fingerprints
+separate older prepared inputs and immutable revisions. No migration, new
+table or Build Pregame rerun is required. Existing saved predictions retain
+their original algorithm; subsequent newly calculated revisions use this rule.
+
+### Regression coverage and human checks
+
+| Coverage | Status | Regression |
+| --- | --- | --- |
+| Bucket count and exact 12-SAT boundary | AUTHORED | `uses actual Train bucket SAT to select EV conversion across the twelve attempt boundary` |
+| Standalone/queued inputs and single-shot regression | AUTHORED | `uses the same Train reliability rule in the standalone forecast pathway` |
+| SAT, SOG, minutes and PP preservation | AUTHORED | `leaves SOG conversion and final team PP allocation unchanged by EV reliability weights` |
+| Complete team history | AUTHORED | `keeps nonselected skaters in the frozen team Train bucket average` |
+| Zeros and component/strength fallbacks | AUTHORED | `uses league fallbacks only for missing EV component denominators and preserves measured zeros` |
+| Checkpointed Train-only counts | AUTHORED | `retains frozen team Train bucket evidence across serialized preparation checkpoints` |
+| Invalid configuration | AUTHORED | `rejects an invalid EV conversion blend instead of silently changing the rule` |
+| API → immutable revision → cached read | AUTHORED | `publishes reliability converted goals as a new revision without exposing private bucket evidence` |
+
+Requirements: (1) Train-only bucket gating, (2) adopted component weights,
+(3) matching league fallbacks with measured zeros, (4) all-team checkpointed
+history, (5) unchanged upstream/PP stages and (6) versioned input/provenance
+are implemented with authored regression assertions. They have **not been
+executed**. Endpoint/verb/auth/scope and frontend contracts are unchanged;
+the existing API auth regressions remain `requires API authentication for new
+engine predictions` and `requires the NHL statistics scope for new engine
+predictions`. No frontend component changed.
+
+| Existing endpoint / verb | Auth/scope regression | Coverage |
+| --- | --- | --- |
+| GET `/api/nhl-game-predictions`, guest | `requires API authentication for new engine predictions` | AUTHORED, unchanged |
+| GET `/api/nhl-game-predictions`, token without scope | `requires the NHL statistics scope for new engine predictions` | AUTHORED, unchanged |
+| GET `/api/nhl-game-predictions`, authorized token | `publishes reliability converted goals as a new revision without exposing private bucket evidence` | AUTHORED |
+| Organization / owner restrictions | Not applicable to this global NHL calculation; unchanged | N/A |
+| Frontend state / DOM | No frontend changes | N/A |
+
+Per-file Pest `it(...)` declaration counts after the change (dataset expansions
+not included): `NhlCustomGamePredictionTest.php` **122**,
+`NhlGamePredictionsMarketProbabilityApiTest.php` **75**,
+`NhlSatPredictionServicesTest.php` **63**. Each exceeds the existing-suite
+20-test minimum. Execution and human review remain outstanding.
+
+Human verification commands:
+
+```sh
+php artisan test tests/Feature/NhlCustomGamePredictionTest.php
+php artisan test tests/Feature/NhlGamePredictionsMarketProbabilityApiTest.php
+php artisan test tests/Feature/NhlSatPredictionServicesTest.php
+```
 
 ## Executable custom replay runner
 
@@ -1014,6 +1133,9 @@ coupled-window and Train-SOG isolation tables retain their original scope.
 
 ## Adopted SH% sources and updated goal baseline — November 5, 2026
 
+The EV source in this historical comparison was superseded by the adopted
+November 11 Train bucket reliability rule above. PP retains its source.
+
 The human adopted **player-bucket LSeason goals/SOG at EV** and **player-bucket
 season-to-date goals/SOG at PP**, following the production comparison below.
 These operate after the adopted EV L20 / PP L5 SOG/SAT conversion. They are the
@@ -1133,8 +1255,8 @@ additional engine adjustments beyond the two adopted source choices.
 
 ## Adopted goalie-stage decision — November 5, 2026
 
-Retain the player-bucket goal baseline: EV uses each player's LSeason bucket
-goals/SOG; PP uses their current-season-to-date bucket goals/SOG. Multiply each
+Retain the player-bucket goal baseline: EV now uses the adopted November 11
+Train bucket reliability rule; PP uses current-season-to-date bucket goals/SOG. Multiply each
 player's predicted bucket SOG by that probability, sum buckets and players into
 each team, then combine the teams. Retain the existing missing-history fallback
 order. The goalie multiplier is **1.0**; no direct SV%, GSAx, recent-possession

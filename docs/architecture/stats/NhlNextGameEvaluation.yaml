@@ -26,7 +26,7 @@ when_not_to_use:
   - Predicting roster participation, production ice time, game winners, or goalie performance.
   - Applying context effects to production predictions or tuning formulas on test outcomes.
 rules:
-  - Current default game-prediction rollout is owned by NhlCustomGamePrediction.yaml. All requested scheduled games use custom_ev_pp_v3 with one hundred percent effective inputs after fallback; observed ninety-percent research cohorts below are historical measurements, not runtime admission gates. Earlier isolated research and live-path separation statements describe those experiments only. No historical win percentage is assigned to the new rollout.
+  - Current default game-prediction rollout is owned by NhlCustomGamePrediction.yaml. All requested scheduled games use custom_ev_pp_v4 with one hundred percent effective inputs after fallback; observed ninety-percent research cohorts below are historical measurements, not runtime admission gates. Earlier isolated research and live-path separation statements describe those experiments only. No historical win percentage is assigned to an unmeasured rollout.
   - Game Evaluation skater shot evidence ALWAYS retains only this evaluation model's level-one SAT buckets with pre-determined Train confidence >= 0.50, including exactly 0.50. Freeze the feature mapping, retained keys, model identity and Train seasons once per saved game in existing lineup JSON. The source SAT model must match the evaluation's frozen Train seasons. Missing model evidence fails visibly; it never falls back to all attempts or Test confidence. Exclude shootouts and empty-net attempts; unmatched or low-confidence buckets never merge into Other or a league fallback.
   - Apply the identical frozen bucket set to Train, Train H/A, L5/L10/L20, LSeason, LSeason H/A, opponent L10, Previous, Current quarter and Actual, separately by selected strength. Derived SAT/GP, quarter blends, team sums, league rows and errors inherit those counts. Keep appearance selection and full matching-strength ice-time denominators; excluded attempts do not remove appearances, and measured zero-attempt appearances remain zero. Missing facts/exposure and unclassified strength remain unavailable. TOI/GP and TOI Share are not bucket-filtered. Model-owned pregame snapshots and goalie calculations are unchanged by this evaluation correction.
   - Context version 6 upgrades measured evidence without rewriting saved game projection values, original prediction windows/Previous, or initial outlooks. Filtered Previous lives in context.previous. Recalculate context and then comparison in the existing one-player-per-job chain; replace only older comparison evidence, and mark the game current only after every player finishes. Old shot windows/actuals are withheld from tables until upgraded; raw inputs remain available for audit but are not sent to the browser. Opening a stale saved forecast requests the existing authorized context POST once; GET remains read-only. No migration or model/projection rebuild is required.
@@ -380,7 +380,9 @@ rules:
     or a newly measured winner improvement. Legacy engines, saved evaluations
     and production/API predictions remain isolated from this research rule.
   - >-
-    Custom prediction engine — shooting-percentage sources. Adopted November 5:
+    Historical shooting-percentage sources, adopted November 5. The EV source
+    is superseded by the November 11 Train bucket reliability rule below;
+    PP retains the source in this paragraph:
     after the adopted EV L20 / PP L5 player-bucket SOG conversion, use each
     player's LSeason bucket goals/SOG for EV and current-season-to-date bucket
     goals/SOG for PP. LSeason is the season immediately preceding the target
@@ -444,7 +446,7 @@ rules:
   - >-
     Custom prediction engine — neutral goalie stage. Adopted November 5, 2026:
     retain each player's predicted bucket SOG times their adopted bucket SH%
-    (EV LSeason, PP current-season-to-date), with the documented league fallback
+    (EV Train bucket reliability under the November 11 rule, PP current-season-to-date), with the documented league fallback
     chain. Sum buckets and players into teams, then teams into game goals. The
     goalie multiplier is 1.0. This supersedes the former LSeason faced-goalie
     square-root multiplier. Do not replace the player-bucket baseline with
@@ -454,6 +456,40 @@ rules:
     separately governed final PP-goal allocation. This custom-engine definition
     does not implement the full predictor or change legacy engines, saved
     evaluations or production/API predictions.
+  - >-
+    EV Train bucket reliability, adopted November 11, 2026, supersedes the
+    former EV LSeason shooting-percentage source in the shared calculator.
+    Count personal Train SAT in the same retained EV bucket. With at least
+    twelve SAT use one hundred percent personal Train goals/SOG. Below twelve
+    use forty-seven percent personal Train goals/SOG, eleven percent own-team
+    Train goals/SOG and forty-two percent league Train goals/SOG for that bucket.
+    Each rate pools counts before division. Missing personal/team SOG uses the
+    matching Train league bucket rate for that component; missing league bucket
+    SOG uses the documented retained EV strength reference. Positive SOG with
+    zero goals is an observed zero. Train remains model-owned and frozen;
+    opponent, Test and target-game results never enter these three Train pools.
+    Use the upcoming team's own Train bucket history for a traded player while
+    preserving that player's personal Train across teams. The rule changes EV
+    SOG-to-goal conversion only, preserving SAT, SOG, player usage, defensive
+    factors, schedule effects and the separately resolved PP team goals.
+  - >-
+    November 11 Sep2026 production-data search: Train 2022-23 through 2024-25,
+    Test 2025-26, all 1312 regular-season games requested. The same 22
+    source-fact/clock/shooter-integrity exclusions left 1290 comparable games.
+    Chronological frozen inputs included only retained confidence-at-least-one-half
+    buckets with the existing empty-net/shootout exclusions. Official final
+    winners include OT/SO; no qualification cutoff was applied. The one-hundred-percent
+    personal Train control picked 697 winners, or 54.0310077519 percent. Searching
+    integer thresholds zero through 138 with three-way weights in one-percentage-point
+    steps covered 710839 settings; local one-tenth-percentage-point refinement
+    covered another 119489 settings. The adopted twelve-SAT 47/11/42 blend
+    picked 702 winners, or 54.4186046512 percent, fixing twenty picks and losing
+    fifteen against that control. Several refined weights tied at twelve SAT.
+    Selecting settings using only the first half instead chose nineteen SAT
+    with 57/7/36 below it, improving first-half wins from 333 to 336 but reducing
+    second-half wins from 364 to 363. This is Test-selected exploratory evidence,
+    not a demonstrated universal reliability threshold or a fresh execution of
+    the subsequently edited application. The human adopted the twelve-SAT rule.
   - >-
     Neutral-goalie evidence uses Sep2026 model 1, Train 2022-23 through 2024-25,
     Test 2025-26 and the same frozen 93 Train-confidence >= 0.50 buckets. In the

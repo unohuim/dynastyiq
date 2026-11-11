@@ -2934,7 +2934,8 @@ These values select the test-page data source only; they do not add canonical li
 the first executable isolated EV/PP replay. `custom_ev_pp_v2` identifies the
 shared default calculator with fallback-filled inputs for all requested games.
 `custom_ev_pp_v3` adds the all-quarter L5 team-win-percentage EV production
-adjustment at weight 0.50. Earlier revisions retain their original algorithm.
+adjustment at weight 0.50. `custom_ev_pp_v4` adds the adopted EV Train
+bucket-volume reliability conversion. Earlier revisions retain their original algorithm.
 The frozen run definition records
 its schedule mode and coefficient horizon; changing those inputs creates a new
 run rather than rewriting earlier predictions.
@@ -3056,8 +3057,16 @@ identifies a completed empty missing-work selection. Updates keep the existing
 
 ## Operational prediction preparation
 
-- `nhl-custom-prediction.input_pipeline_version`: `saved_pregame_checkpointed_v8`
-  identifies saved-context preparation reusing player strength-window aggregates, lineup-independent committed context history, active-prediction lineup-write exclusion, bounded cache checkpoints, actual participant selection for finished games, statistical-content freshness, recency-first starter selection and stored internal-confidence inputs. The scoring algorithm is independently versioned; the current version is `custom_ev_pp_v3`.
+- `nhl-custom-prediction.input_pipeline_version`: `saved_pregame_checkpointed_v9`
+  identifies saved-context preparation reusing player strength-window aggregates, lineup-independent committed context history, active-prediction lineup-write exclusion, bounded cache checkpoints, actual participant selection for finished games, statistical-content freshness, recency-first starter selection, stored internal-confidence inputs and frozen team Train EV bucket counts. It supersedes `saved_pregame_checkpointed_v8`; earlier prepared checkpoints are not reused for the new conversion. The scoring algorithm is independently versioned; the current version is `custom_ev_pp_v4`.
+- Calculator `goal_sources.EV`: `train_bucket_reliability`; PP remains `season_to_date`.
+  Prepared bucket `goal_source` adds `train_player_bucket` and
+  `train_player_team_league_blend`, with existing `train_league_bucket` and
+  `train_league_strength` values retained for fallback. Private EV bucket
+  `goal_conversion` records `train_sat`, `minimum_train_sat`, `weights` and
+  `probabilities`; component keys are `player`, `team`, `league`. Existing
+  `personal_goal_sample` is the selected goal source's SOG denominator, now
+  personal Train for EV. These are audit inputs, not public confidence fields.
 - `nhl_pregame_context_runs.options.trigger`: `prediction` identifies an explicit
   prediction dependency. Existing `manual_update` and `auto_sync` keep their meaning.
 - Prediction run options `game_ids`, `prediction_evidence` and

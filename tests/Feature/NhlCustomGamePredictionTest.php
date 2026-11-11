@@ -36,7 +36,7 @@ beforeEach(function (): void {
 
         return $defense;
     };
-    $this->forecastFixture = function (string $state = 'FUT', bool $saved = false, bool $outsideRoster = false): array {
+    $this->forecastFixture = function (string $state = 'FUT', bool $saved = false, bool $outsideRoster = false, ?\Closure $transformHistory = null): array {
         $model = NhlModelRun::query()->create(['run_key' => 'future-custom', 'name' => 'SAT_V2 fixture',
             'model_family' => 'sat', 'workflow_stage' => 'training', 'model_version' => 'fixture', 'status' => 'complete',
             'train_season_ids' => ['20232024', '20242025', '20252026'], 'target_season_id' => null]);
@@ -88,6 +88,9 @@ beforeEach(function (): void {
                     'counts' => ['EV' => [], 'PP' => []]];
             }
             $records[$id] = $record;
+        }
+        if ($transformHistory !== null) {
+            $records = $transformHistory($records);
         }
         $reader = new class($records) extends NhlCustomGamePredictionInputs
         {
@@ -156,6 +159,23 @@ beforeEach(function (): void {
         }
 
         throw new \RuntimeException('Fixture preparation did not reach its bounded terminal step.');
+    };
+    $this->bucketReliabilityHistory = fn (int $sat, int $sog, int $goals): \Closure => function (array $records) use ($sat, $sog, $goals): array {
+        foreach ($records as $gameId => &$record) {
+            if ($gameId >= 2026020000) {
+                continue;
+            }
+            $record['players'][100]['counts']['EV']['B'] = $gameId === 2023020001
+                ? compact('sat', 'sog', 'goals') : ['sat' => 0, 'sog' => 0, 'goals' => 0];
+            foreach (['sat', 'sog', 'goals'] as $metric) {
+                $record['counts'][1]['EV']['B'][$metric]
+                    = $record['players'][100]['counts']['EV']['B'][$metric]
+                        + $record['players'][101]['counts']['EV']['B'][$metric];
+            }
+        }
+        unset($record);
+
+        return $records;
     };
     $this->input = ['game_id' => 2025020001, 'source_cutoff_at' => '2025-11-01 23:00:00',
         'retained_bucket_keys' => ['B'], 'league_usage_seconds' => ['EV' => 600.0, 'PP' => 60.0],
@@ -1555,4 +1575,127 @@ it('aligns future personal bucket counts to the reused snapshot cutoff rather th
         ->and($prepared['history']['EV']['last_20']['sat'])->toBe(60)
         ->and($prepared['buckets']['EV']['B']['sat_per_60'])->toBe(48.0)
         ->and($prepared['context_provenance']['game_id'])->toBe(2026020001);
+});
+
+it('uses actual Train bucket SAT to select EV conversion across the twelve attempt boundary', function (int $sat, int $sog, int $goals): void {
+    [$reader, $model, $lineups] = ($this->forecastFixture)('FUT', true, false,
+        ($this->bucketReliabilityHistory)($sat, $sog, $goals));
+    $step = ($this->finishQueuedForecast)($reader, $model, $lineups);
+    expect($step['errors'])->toBe([]);
+    $bucket = $step['inputs'][2026020002]['teams']['away']['players'][100]['buckets']['EV']['B'];
+    $league = ($goals + 9) / ($sog + 72);
+    $personal = $sog > 0 ? $goals / $sog : $league;
+    $team = ($goals + 3) / ($sog + 24);
+    $expected = $sat >= 12 ? $personal : 0.47 * $personal + 0.11 * $team + 0.42 * $league;
+    expect(abs($bucket['goal_probability'] - $expected))->toBeLessThan(1e-12)
+        ->and($bucket['goal_conversion']['train_sat'])->toBe($sat)
+        ->and($bucket['personal_goal_sample'])->toBe($sog)
+        ->and($bucket['goal_conversion']['weights'])->toBe($sat >= 12
+            ? ['player' => 1.0, 'team' => 0.0, 'league' => 0.0]
+            : ['player' => 0.47, 'team' => 0.11, 'league' => 0.42]);
+})->with([[1, 1, 1], [11, 1, 1], [12, 1, 1], [15, 1, 1], [12, 3, 0], [15, 0, 0]]);
+
+it('uses the same Train reliability rule in the standalone forecast pathway', function (): void {
+    [$reader, $model, $lineups] = ($this->forecastFixture)('FUT', false, false,
+        ($this->bucketReliabilityHistory)(1, 1, 1));
+    $events = iterator_to_array($reader->forecasts($model, '2026-11-05', $lineups), false);
+    expect($events[0]['error'])->toBeNull();
+    $bucket = $events[0]['input']['teams']['away']['players'][100]['buckets']['EV']['B'];
+    $expected = 0.47 + 0.11 * (4 / 25) + 0.42 * (10 / 73);
+    expect(abs($bucket['goal_probability'] - $expected))->toBeLessThan(1e-12)
+        ->and($bucket['goal_probability'])->toBeLessThan(1)
+        ->and($bucket['goal_source'])->toBe('train_player_team_league_blend');
+});
+
+it('leaves SOG conversion and final team PP allocation unchanged by EV reliability weights', function (): void {
+    [$reader, $model, $lineups] = ($this->forecastFixture)('FUT', true, false,
+        ($this->bucketReliabilityHistory)(1, 1, 1));
+    $step = ($this->finishQueuedForecast)($reader, $model, $lineups);
+    expect($step['errors'])->toBe([]);
+    $input = $step['inputs'][2026020002];
+    $player = $input['teams']['away']['players'][100];
+    // L20 still pools the three Train appearances and the one prior target-season appearance.
+    expect(abs($player['buckets']['EV']['B']['sog_probability'] - 9 / 21))->toBeLessThan(1e-12)
+        ->and($player['buckets']['PP']['B']['goal_probability'])->toBe(0.5)
+        ->and($player['buckets']['PP']['B'])->not->toHaveKey('goal_conversion');
+    $actual = $this->engine->predict($input);
+    foreach ($input['teams'] as &$team) {
+        foreach ($team['players'] as &$skater) {
+            foreach ($skater['buckets']['EV'] ?? [] as &$bucket) {
+                $bucket['goal_probability'] = 0.5;
+            }
+            unset($bucket);
+        }
+        unset($skater);
+    }
+    unset($team);
+    $comparison = $this->engine->predict($input);
+    foreach (['away', 'home'] as $venue) {
+        expect($actual['teams'][$venue]['sat'])->toBe($comparison['teams'][$venue]['sat'])
+            ->and($actual['teams'][$venue]['sog'])->toBe($comparison['teams'][$venue]['sog'])
+            ->and($actual['teams'][$venue]['time'])->toBe($comparison['teams'][$venue]['time'])
+            ->and($actual['teams'][$venue]['strengths']['PP']['goals'])
+                ->toBe($comparison['teams'][$venue]['strengths']['PP']['goals']);
+    }
+});
+
+it('keeps nonselected skaters in the frozen team Train bucket average', function (): void {
+    $transform = function (array $records): array {
+        foreach ($records as $id => &$record) {
+            if ($id < 2026020000) {
+                $record['players'][999]['counts']['EV']['B'] = ['sat' => 3, 'sog' => 3, 'goals' => 3];
+            }
+        }
+        unset($record);
+
+        return $records;
+    };
+    [$reader, $model, $lineups] = ($this->forecastFixture)('FUT', true, true, $transform);
+    $step = ($this->finishQueuedForecast)($reader, $model, $lineups);
+    expect($step['errors'])->toBe([]);
+    $away = $step['inputs'][2026020002]['teams']['away'];
+    expect($away['players'])->not->toHaveKey(999)
+        ->and(abs($away['players'][100]['buckets']['EV']['B']['goal_conversion']['probabilities']['team'] - 15 / 57))
+            ->toBeLessThan(1e-12);
+});
+
+it('uses league fallbacks only for missing EV component denominators and preserves measured zeros', function (): void {
+    $method = new \ReflectionMethod(NhlCustomGamePredictionInputs::class, 'evGoalConversion');
+    $reader = new NhlCustomGamePredictionInputs();
+    $league = ['buckets' => ['B' => ['sat' => 100, 'sog' => 20, 'goals' => 2],
+        'Other' => ['sat' => 100, 'sog' => 20, 'goals' => 18]]];
+    $missing = $method->invoke($reader, null, [], $league, 'B');
+    expect(abs($missing['probability'] - 0.1))->toBeLessThan(1e-12);
+    $zero = $method->invoke($reader, ['buckets' => ['B' => ['sat' => 1, 'sog' => 1, 'goals' => 0]]],
+        ['buckets' => ['B' => ['sat' => 30, 'sog' => 10, 'goals' => 2]]], $league, 'B');
+    expect(abs($zero['probability'] - 0.064))->toBeLessThan(1e-12)
+        ->and($zero['evidence']['probabilities']['player'])->toBe(0.0);
+    $strengthFallback = $method->invoke($reader, null, [],
+        ['buckets' => ['B' => ['sat' => 2, 'sog' => 0, 'goals' => 0],
+            'Other' => ['sat' => 100, 'sog' => 20, 'goals' => 2]]], 'B');
+    expect(abs($strengthFallback['probability'] - 0.1))->toBeLessThan(1e-12);
+});
+
+it('retains frozen team Train bucket evidence across serialized preparation checkpoints', function (): void {
+    [$fixture, $model] = ($this->forecastFixture)('FUT', true, false, ($this->bucketReliabilityHistory)(1, 1, 1));
+    $fixture->prepare($model, '20262027');
+    $records = (new \ReflectionProperty($fixture, 'fixtures'))->getValue($fixture);
+    $advance = new \ReflectionMethod(NhlCustomGamePredictionInputs::class, 'advance');
+    $reader = new NhlCustomGamePredictionInputs();
+    foreach ($records as $id => $record) {
+        $game = DB::table('nhl_games')->where('nhl_game_id', $id)->first();
+        $advance->invoke($reader, $game, $record, $id < 2026020000);
+        $reader = unserialize(serialize($reader));
+    }
+    $teams = (new \ReflectionProperty(NhlCustomGamePredictionInputs::class, 'teamTrainBuckets'))->getValue($reader);
+    expect($teams[1]['buckets']['B'])->toBe(['sat' => 61, 'sog' => 25, 'goals' => 4])
+        ->and($teams[2]['buckets']['B'])->toBe(['sat' => 120, 'sog' => 48, 'goals' => 6]);
+});
+
+it('rejects an invalid EV conversion blend instead of silently changing the rule', function (): void {
+    config(['nhl-custom-prediction.ev_goal_conversion.low_volume_weights' => ['player' => 0.9, 'team' => 0.2, 'league' => 0.4]]);
+    $method = new \ReflectionMethod(NhlCustomGamePredictionInputs::class, 'evGoalConversion');
+    expect(fn () => $method->invoke(new NhlCustomGamePredictionInputs(), null, [],
+        ['buckets' => ['B' => ['sat' => 100, 'sog' => 20, 'goals' => 2]]], 'B'))
+        ->toThrow(\DomainException::class, 'sum to one');
 });

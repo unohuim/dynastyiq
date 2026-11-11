@@ -28,6 +28,9 @@ class NhlCustomGamePredictionInputs
 
     private array $teamTrain = [];
 
+    /** Retained EV Train counts for every team's skaters, independent of the selected lineup. */
+    private array $teamTrainBuckets = [];
+
     private array $teamSeason = [];
 
     private array $teamRecent = [];
@@ -121,7 +124,7 @@ class NhlCustomGamePredictionInputs
         }
         $this->prepare($modelId, (string) $targets->first()->season_id);
         $this->train = $this->seasons = $this->recent = $this->league = [];
-        $this->teamTrain = $this->teamSeason = $this->teamRecent = [];
+        $this->teamTrainBuckets = $this->teamTrain = $this->teamSeason = $this->teamRecent = [];
         $this->trainOpponents = $this->pastAllowances = $this->allowanceSources = [];
         $asOf = CarbonImmutable::now('UTC');
         $cutoff = fn (object $g): CarbonImmutable => $g->start_time_utc
@@ -189,7 +192,7 @@ class NhlCustomGamePredictionInputs
         }
         $this->prepare($modelId, (string) $targets->first()->season_id);
         $this->train = $this->seasons = $this->recent = $this->league = [];
-        $this->teamTrain = $this->teamSeason = $this->teamRecent = [];
+        $this->teamTrainBuckets = $this->teamTrain = $this->teamSeason = $this->teamRecent = [];
         $this->trainOpponents = $this->pastAllowances = $this->allowanceSources = [];
         $this->forecastPlayerIds = [];
         $contexts = [];
@@ -543,7 +546,7 @@ class NhlCustomGamePredictionInputs
             throw new DomainException('Prepare the model before requesting game inputs.');
         }
         $this->train = $this->seasons = $this->recent = $this->league = [];
-        $this->teamTrain = $this->teamSeason = $this->teamRecent = [];
+        $this->teamTrainBuckets = $this->teamTrain = $this->teamSeason = $this->teamRecent = [];
         $this->trainOpponents = $this->pastAllowances = $this->allowanceSources = [];
         $query = DB::table('nhl_games')->whereIn('season_id', [...$this->metadata['train_seasons'], $this->metadata['test_season']])
             ->where('game_type', 2)->whereIn('game_state', ['OFF', 'FINAL'])->whereNotNull('start_time_utc');
@@ -899,21 +902,30 @@ class NhlCustomGamePredictionInputs
                             throw new DomainException('A required defensive allowance/reference is unavailable.');
                         }
                         $sogSource = $sources[$lane === 'EV' ? 'last_20' : 'last_5'];
-                        $goalSource = $sources[$lane === 'EV' ? 'last_season' : 'season_to_date'];
+                        $goalSource = $lane === 'EV' ? ($this->train[$id]['EV'] ?? null) : $sources['season_to_date'];
+                        $evGoal = $lane === 'EV' ? $this->evGoalConversion(
+                            $goalSource,
+                            $this->teamTrainBuckets[$team] ?? [],
+                            $league,
+                            $key,
+                        ) : null;
                         $prepared['buckets'][$lane][$key] = ['sat_per_60' => $rate,
                             'defense_allowance' => $allowance, 'defense_reference' => $reference['value'],
                             'defense_allowance_source' => $this->allowanceSources[$game->nhl_game_id][$opponent][$lane][$key],
                             'defense_reference_sources' => $reference['sources'],
                             'sog_probability' => $this->conversion($sogSource, $league, $key, 'sog', 'sat'),
-                            'goal_probability' => $this->conversion($goalSource, $league, $key, 'goals', 'sog'),
+                            'goal_probability' => $evGoal['probability'] ?? $this->conversion($goalSource, $league, $key, 'goals', 'sog'),
                             'sog_source' => ($sogSource['buckets'][$key]['sat'] ?? 0) > 0
                                 ? ($lane === 'EV' ? 'last_20' : 'last_5') : 'train_league_bucket',
-                            'goal_source' => ($goalSource['buckets'][$key]['sog'] ?? 0) > 0
-                                ? ($lane === 'EV' ? 'last_season' : 'season_to_date')
-                                : ((($league['buckets'][$key]['sog'] ?? 0) > 0) ? 'train_league_bucket' : 'train_league_strength'),
+                            'goal_source' => $evGoal['source'] ?? (($goalSource['buckets'][$key]['sog'] ?? 0) > 0
+                                ? 'season_to_date'
+                                : ((($league['buckets'][$key]['sog'] ?? 0) > 0) ? 'train_league_bucket' : 'train_league_strength')),
                             'personal_sog_sample' => $sogSource['buckets'][$key]['sat'] ?? null,
                             'personal_goal_sample' => $goalSource['buckets'][$key]['sog'] ?? null,
                             'source' => $validRate ? 'train_l10' : 'train_league_fallback'];
+                        if ($evGoal !== null) {
+                            $prepared['buckets'][$lane][$key]['goal_conversion'] = $evGoal['evidence'];
+                        }
                     }
                 }
                 $twenty = $sources['last_20'];
@@ -1048,6 +1060,52 @@ class NhlCustomGamePredictionInputs
             'buckets' => $source['buckets']];
     }
 
+    /**
+     * Use retained Train SAT, not SOG or saved overall totals, to weight EV bucket conversion.
+     *
+     * @param array<string, mixed>|null $personal Raw personal Train buckets, independent of saved aggregate exposure.
+     * @param array<string, mixed> $team All eligible skaters' Train buckets for the upcoming team.
+     * @param array<string, mixed> $league Frozen retained EV Train reference.
+     * @return array{probability: float, source: string, evidence: array<string, mixed>}
+     */
+    private function evGoalConversion(?array $personal, array $team, array $league, string $key): array
+    {
+        $rule = config('nhl-custom-prediction.ev_goal_conversion');
+        $minimum = $rule['minimum_train_sat'] ?? null;
+        $blend = $rule['low_volume_weights'] ?? [];
+        if (! is_int($minimum) || $minimum < 1 || ! is_array($blend) || count($blend) !== 3
+            || array_diff(['player', 'team', 'league'], array_keys($blend)) !== []) {
+            throw new DomainException('Configure the EV Train bucket reliability rule before predicting.');
+        }
+        foreach ($blend as $weight) {
+            if (! is_numeric($weight) || ! is_finite((float) $weight) || $weight < 0 || $weight > 1) {
+                throw new DomainException('EV bucket reliability weights must be finite probabilities.');
+            }
+        }
+        if (abs(array_sum($blend) - 1.0) > 0.000000001) {
+            throw new DomainException('EV bucket reliability weights must sum to one.');
+        }
+
+        $sat = (int) ($personal['buckets'][$key]['sat'] ?? 0);
+        $rates = [
+            'player' => $this->conversion($personal, $league, $key, 'goals', 'sog'),
+            'team' => $this->conversion($team, $league, $key, 'goals', 'sog'),
+            'league' => $this->conversion(null, $league, $key, 'goals', 'sog'),
+        ];
+        $weights = $sat >= $minimum ? ['player' => 1.0, 'team' => 0.0, 'league' => 0.0] : $blend;
+        $probability = 0.0;
+        foreach ($weights as $component => $weight) {
+            $probability += $weight * $rates[$component];
+        }
+        $source = $sat < $minimum ? 'train_player_team_league_blend'
+            : ((($personal['buckets'][$key]['sog'] ?? 0) > 0) ? 'train_player_bucket'
+                : ((($league['buckets'][$key]['sog'] ?? 0) > 0) ? 'train_league_bucket' : 'train_league_strength'));
+
+        return ['probability' => $probability, 'source' => $source,
+            'evidence' => ['train_sat' => $sat, 'minimum_train_sat' => $minimum,
+                'weights' => $weights, 'probabilities' => $rates]];
+    }
+
     /** Personal observed zeros are supported; only missing denominators reach league fallback. */
     private function conversion(?array $source, array $league, string $key, string $numerator, string $denominator): float
     {
@@ -1161,6 +1219,10 @@ class NhlCustomGamePredictionInputs
                 if ($isTrain && $current['valid'][$lane]) {
                     $this->league[$lane] ??= ['games' => 0, 'seconds' => 0.0, 'buckets' => []];
                     $this->merge($this->league[$lane], $current, $lane);
+                    if ($lane === 'EV') {
+                        $this->teamTrainBuckets[$player['team']] ??= ['buckets' => []];
+                        $this->merge($this->teamTrainBuckets[$player['team']], $current, $lane, false);
+                    }
                 }
                 if (! $keepPersonal) {
                     continue;

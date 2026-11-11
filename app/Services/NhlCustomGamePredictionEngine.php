@@ -21,7 +21,7 @@ class NhlCustomGamePredictionEngine
             ...$settings,
             'strengths' => ['EV', 'PP'],
             'sog_sources' => ['EV' => 'last_20', 'PP' => 'last_5'],
-            'goal_sources' => ['EV' => 'last_season', 'PP' => 'season_to_date'],
+            'goal_sources' => ['EV' => 'train_bucket_reliability', 'PP' => 'season_to_date'],
             'goalie_multiplier' => 1.0,
             'player_usage' => 'last_10_normalized_over_full_lineup',
             'sat_fallback' => 'frozen_retained_train_league_by_strength',

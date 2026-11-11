@@ -38,6 +38,14 @@ returned scores and probabilities directly rather than applying this factor
 again. Exact rules remain in
 [NhlCustomGamePrediction.yaml](../architecture/stats/NhlCustomGamePrediction.yaml).
 
+The current `custom_ev_pp_v4` version also applies the adopted EV Train
+bucket-volume conversion rule. Its settings are recorded under
+`inputs.algorithm_definition.ev_goal_conversion`. SOG and PP team-goal
+allocation retain their existing calculations; consumers should use the returned
+scores/probabilities without adding the conversion again. Per-player bucket
+component rates, sample counts and weights remain private revision evidence.
+Earlier revisions retain their original algorithm and are not rewritten.
+
 Read `inputs.algorithm_version`, `inputs.sat_model_run_id`,
 `inputs.training_season_ids`, `inputs.algorithm_definition`,
 `prediction.public_confidence_score`, and `prediction.days_away`. Legacy engine/stack IDs may be null even for a
