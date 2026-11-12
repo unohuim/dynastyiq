@@ -27,6 +27,24 @@ class NhlCustomGameDefense
 
     private int $fitCursor = 0;
 
+    /** Export fit state without serializing a large enclosing prediction reader.
+     * @return array<string,mixed>
+     */
+    public function checkpointState(): array
+    {
+        return array_intersect_key(get_object_vars($this), get_class_vars(self::class));
+    }
+
+    /** Restore only this class's existing fit fields; no fitting or equations run here.
+     * @param array<string,mixed> $state
+     */
+    public function restoreCheckpointState(array $state): void
+    {
+        foreach (array_intersect_key($state, get_class_vars(self::class)) as $field => $value) {
+            $this->{$field} = $value;
+        }
+    }
+
     /** Fit the same Train equation synchronously for explicit standalone replay callers. */
     public function fit(iterable $records): void
     {

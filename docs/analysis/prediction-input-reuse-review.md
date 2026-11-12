@@ -75,3 +75,115 @@ After review, the human may run:
 ```sh
 php artisan test tests/Feature/NhlCustomGamePredictionTest.php
 ```
+
+
+## Partitioned preparation checkpoints — November 12, 2026
+
+Approved follow-up: replace the oversized single Redis reader checkpoint with
+bounded parts while retaining the exact calculation and existing in-flight
+preparation identity. Production diagnosis found repeated PHP 512 MB exhaustion
+while handling a roughly 98 MB serialized checkpoint. The existing shared Redis
+retry_after is 3,900 seconds; it is unchanged by this work.
+
+### Files changed
+
+- `app/Services/NhlCustomGameForecast.php`: bounded framed/checksummed cache parts,
+  optional compression, commit-last progress manifest, legacy conversion,
+  phase-specific target context loading, expiration/cleanup and small diagnostics.
+- `app/Services/NhlCustomGamePredictionInputs.php`: explicit state export/restore
+  without changing bucket accumulation or equations.
+- `app/Services/NhlCustomGameDefense.php`: explicit fit state export/restore.
+- `tests/Feature/NhlCustomGamePredictionTest.php`: deterministic regression cases
+  plus partial-mock compatibility for the existing continuation test.
+- `docs/architecture/stats/NhlCustomGamePrediction.yaml`: canonical checkpoint rules.
+- `docs/ENUMS.md`: internal storage format discriminator, distinct from algorithm version.
+- `docs/ARCHITECTURE_INVENTORY.md`: derived summary.
+- This review document.
+
+### Behavior and limits
+
+No migration, dependency change, queue configuration change, worker restart or
+production recovery operation. Keep both `custom_ev_pp_v4` and the existing input
+pipeline version unchanged: this storage change must not invalidate valid pending
+progress. A matching legacy reader is converted before advancing history; a
+changed statistical/lineup/model fingerprint retains the existing clean-rebuild
+behavior. Conversion preserves available progress, not obsolete or expired state.
+
+Parts are at most 512 KiB before compression. The encoder bounds subtree inspection
+before serialization, partitions large strings, preserves numeric types and array
+ordering, and validates each part by length/hash before reading its records. Reader
+and fit fields are exported explicitly, avoiding one giant object serialization.
+Only the current target's saved context is hydrated during target processing;
+other contexts remain in immutable parts, renewed with progress. History still
+loads its required accumulated bucket/defense state; this is not a change to the
+historical calculations or a move of those metrics into pregame tables.
+
+New generations publish parts before the progress manifest. Partial writes leave
+the preceding committed generation intact. Old parts are removed only after the
+replacement manifest commits. Abandoned unpublished parts expire. Successful input
+publication and invalid-source completion discard the owned preparation parts.
+Diagnostics expose stage, cursor, part count, maximum/total part bytes, save time
+and process peak memory internally. Actual production peak-memory and elapsed-time
+improvement has not been measured. No tests or operational commands were run.
+
+### Finalized minimum coverage matrix
+
+COVERED means assertions authored, not tests executed/passed.
+
+| Area | Status | Named test |
+| --- | --- | --- |
+| State/type/count restoration and bounded part size | COVERED | round trips a preparation reader through bounded parts without changing counts or types |
+| Large nested buckets/strings and compact manifest | COVERED | splits large strings and nested bucket arrays without a monolithic cached value |
+| Legacy cursor/count preservation | COVERED | restores a legacy checkpoint at its cursor before converting it without replay |
+| Operational conversion before another historical page | COVERED | converts matching operational legacy preparation before advancing another historical page |
+| Fitted defensive values | COVERED | retains fit accumulators and fitted allowance values through partitioned restoration |
+| Full phase traversal and identical final inputs/picks/goals/probabilities | COVERED | produces identical game inputs and engine outcomes across partitioned page boundaries |
+| Deferred context retention, per-target loading and required-context integrity | COVERED | loads only the selected targets saved context while retaining the other targets parts; does not hydrate deferred contexts that are not needed for the current history page; requires an intact saved context when its target phase is reached |
+| Missing/corrupt data | COVERED | rejects missing or corrupt checkpoint parts without publishing guessed state (dataset) |
+| Failed part/manifest write cannot advance cursor | COVERED | keeps the preceding committed cursor when a part or manifest write fails (dataset) |
+| Replacement cleanup and TTL | COVERED | expires abandoned checkpoint parts without evicting a live committed generation |
+| Stale source requires clean rebuild, without decoding stale data | COVERED | does not decode stale checkpoint parts when source evidence requires a clean rebuild |
+| Diagnostic presence, internal-only data | COVERED | records bounded preparation diagnostics without exposing bucket state |
+| Queue routing/release, source cutoffs and preparation dependency handling | COVERED | existing builds queued inputs from saved contexts in bounded pages without reading target outcomes; releases preparation work immediately after progress and polls pending context gently; skips the pregame dependency queue when preparing a future date through the shared forecast boundary |
+
+### Requirements checklist
+
+1. SATISFIED in code/assertions: bounded independent serialized parts replace a monolithic reader.
+2. SATISFIED in code/assertions: deferred target contexts hydrate only when required.
+3. SATISFIED in code/assertions: manifest commits last and interrupted writes preserve progress.
+4. SATISFIED in code/assertions: matching legacy checkpoints retain cursor/counts before resuming.
+5. SATISFIED in code/assertions: numerical inputs and calculated outcomes remain identical.
+6. SATISFIED in code/assertions: integrity, lifetime and source-fingerprint rules are retained.
+7. SATISFIED in code/assertions: internal stage/cursor/size/peak-memory diagnostics are recorded.
+8. SATISFIED in scope: no migrations, production recovery or worker/configuration changes performed.
+
+### Endpoint × verb authorization/scope matrix
+
+No endpoint, auth or request-validation logic changes. Existing mapped coverage:
+
+| Endpoint / verb | Case | Existing named test |
+| --- | --- | --- |
+| GET `/api/nhl-game-predictions` | Guest denied | requires API authentication for new engine predictions |
+| Same | Missing NHL scope denied | requires the NHL statistics scope for new engine predictions |
+| Same | Scoped cold request → queued continuation → saved revision → HTTP read | automatically saves and publishes the prediction when queued dependencies become ready |
+| Admin operational endpoints, GET/POST | Guest denied | blocks guests on every operational endpoint |
+| Same | Ordinary user denied | blocks ordinary users on every operational endpoint |
+| POST manual runs | Super-admin allowed | admits one date and persists the requesting admin and stack |
+| Organization/owner scope | Not applicable | Shared NHL facts with existing permissions; no tenant changes |
+
+Frontend component checklist: N/A; no frontend files changed.
+Per-file report: `tests/Feature/NhlCustomGamePredictionTest.php` contains **128**
+`it(...)` declarations (114 existing, 14 added; dataset expansion excluded).
+Tests remain unrun under repository policy. Suggested human verification:
+
+```sh
+php artisan test tests/Feature/NhlCustomGamePredictionTest.php
+php artisan test tests/Feature/NhlGamePredictionsMarketProbabilityApiTest.php
+php artisan test tests/Feature/NhlOperationalGamePredictionsTest.php
+```
+
+After human review and deployment, verify a matching legacy checkpoint converts
+at its existing cursor, then advances with diagnostics comfortably below PHP's
+512 MB limit. Any recovery of reserved jobs, exhausted deadlines or worker
+restarts is a separate explicitly approved operational action. Existing saved
+predictions, pregame context and algorithm configuration must remain unchanged.

@@ -18,6 +18,10 @@ class NhlCustomGameForecast
 {
     private int $nextPreparationDelay = 15;
 
+    private const CHECKPOINT_FORMAT = 1;
+    private const CHECKPOINT_PART_BYTES = 524288;
+    private const CHECKPOINT_VALUE_BYTES = 32768;
+
     /** Resolve the selected complete model, defaulting explicitly to SAT_V2. */
     public function model(?int $id = null, ?string $season = null): NhlModelRun
     {
@@ -101,7 +105,7 @@ class NhlCustomGameForecast
 
                 return true;
             }
-            $work = Cache::get($key.':work');
+            $work = $this->readPreparationCheckpoint($key, $fingerprint);
             if (! is_array($work) || ($work['fingerprint'] ?? null) !== $fingerprint) {
                 $work = ['fingerprint' => $fingerprint, 'phase' => 'context',
                     'future' => (string) $game->game_date > now('America/Toronto')->toDateString(), 'lineups' => [], 'evidence' => [], 'errors' => []];
@@ -120,6 +124,14 @@ class NhlCustomGameForecast
                         $work['errors'][$target->nhl_game_id] = $error->getMessage();
                     }
                 }
+            }
+            // Convert a matching legacy object before doing more work: do not hold old/new pages together.
+            if (($work['_checkpoint_legacy'] ?? false) === true) {
+                $this->writePreparationCheckpoint($key, $work);
+                Cache::put($key.':queued', true, $this->preparationLifetime());
+                $this->nextPreparationDelay = 0;
+
+                return false;
             }
             if (isset($work['context_run_id'])) {
                 $dependency = DB::table('nhl_pregame_context_runs')->find($work['context_run_id']);
@@ -160,7 +172,7 @@ class NhlCustomGameForecast
                 if ($step['complete']) {
                     [, $currentFingerprint] = $this->preparationIdentity($game, $model, $storedBoxscore, $rosterOverrides);
                     if ($currentFingerprint !== $fingerprint) {
-                        Cache::forget($key.':work');
+                        $this->forgetPreparationCheckpoint($key);
 
                         return false;
                     }
@@ -174,22 +186,260 @@ class NhlCustomGameForecast
                     if (! Cache::put($key, $manifest, $this->preparationLifetime())) {
                         throw new \RuntimeException('Unable to publish prepared prediction inputs.');
                     }
-                    Cache::forget($key.':work');
+                    $this->forgetPreparationCheckpoint($key);
                     Cache::forget($key.':queued');
                     Cache::forget($key.':error');
 
                     return true;
                 }
             }
-            if (! Cache::put($key.':work', $work, $this->preparationLifetime())) {
-                throw new \RuntimeException('Unable to save the prediction preparation checkpoint.');
-            }
+            $this->writePreparationCheckpoint($key, $work);
             Cache::put($key.':queued', true, $this->preparationLifetime());
 
             return false;
         } finally {
             $lock->release();
         }
+    }
+
+    /** Restore bounded parts, deferring all other targets' saved context until their target phase.
+     * @return array<string,mixed>|null
+     */
+    private function readPreparationCheckpoint(string $key, ?string $fingerprint = null): ?array
+    {
+        $manifest = Cache::get($key.':work');
+        if (! is_array($manifest)) {
+            return null;
+        }
+        if ($fingerprint !== null && ($manifest['fingerprint'] ?? null) !== $fingerprint) {
+            return null;
+        }
+        if (! isset($manifest['checkpoint_format'])) {
+            return [...$manifest, '_checkpoint_legacy' => true];
+        }
+        if ($manifest['checkpoint_format'] !== self::CHECKPOINT_FORMAT) {
+            throw new DomainException('Unsupported prediction preparation checkpoint format.');
+        }
+        $state = $this->readCheckpointParts($manifest['groups']['core'] ?? []);
+        $contexts = $manifest['groups']['contexts'] ?? [];
+        $target = $manifest['target_game_id'] ?? null;
+        if ($target !== null && isset($contexts[$target])) {
+            $state['reader']['forecastWork']['contexts'][$target] = $this->readCheckpointParts($contexts[$target]);
+        }
+        $work = $state['work'];
+        if (isset($state['reader'])) {
+            $reader = app(NhlCustomGamePredictionInputs::class);
+            $reader->restoreCheckpointState($state['reader']);
+            $work['reader'] = $reader;
+        }
+        $work['_checkpoint_manifest'] = $manifest;
+
+        return $work;
+    }
+
+    /** Commit new parts first and the small progress manifest last; failed writes retain prior progress.
+     * @param array<string,mixed> $work
+     */
+    private function writePreparationCheckpoint(string $key, array $work): void
+    {
+        $started = hrtime(true);
+        $previous = $work['_checkpoint_manifest'] ?? null;
+        unset($work['_checkpoint_manifest'], $work['_checkpoint_legacy']);
+        $reader = isset($work['reader']) ? $work['reader']->checkpointState() : null;
+        unset($work['reader']);
+        $contexts = $reader['forecastWork']['contexts'] ?? [];
+        unset($reader['forecastWork']['contexts']);
+        $generation = $key.':parts:'.\Illuminate\Support\Str::uuid();
+        $groups = ['core' => $this->writeCheckpointParts($generation.':core', ['work' => $work, 'reader' => $reader]),
+            'contexts' => $previous['groups']['contexts'] ?? []];
+        foreach ($contexts as $id => $context) {
+            $groups['contexts'][$id] = $this->writeCheckpointParts($generation.':context:'.$id, $context);
+        }
+        // Deferred contexts are immutable. Renew their parts without decoding them into the reader.
+        foreach ($groups['contexts'] as $id => $parts) {
+            if (array_key_exists($id, $contexts)) {
+                continue;
+            }
+            foreach ($parts as $part) {
+                $stored = Cache::get($part['key']);
+                if ($stored === null || ! Cache::put($part['key'], $stored, $this->preparationLifetime())) {
+                    throw new \RuntimeException('Unable to retain deferred prediction context checkpoint.');
+                }
+            }
+        }
+        $phase = $reader['forecastWork']['phase'] ?? $work['phase'];
+        $cursor = $reader['forecastWork']['cursor'] ?? 0;
+        $target = $phase === 'targets' ? ($reader['forecastWork']['targets'][$cursor]->nhl_game_id ?? null) : null;
+        $parts = array_merge($groups['core'], ...array_values($groups['contexts']));
+        $diagnostics = ['phase' => $phase, 'cursor' => $cursor,
+            'part_count' => count($parts), 'max_part_bytes' => max(array_column($parts, 'bytes')),
+            'total_part_bytes' => array_sum(array_column($parts, 'bytes')),
+            'peak_memory_bytes' => memory_get_peak_usage(true),
+            'checkpoint_write_ms' => round((hrtime(true) - $started) / 1000000, 2),
+            'saved_at' => now()->toIso8601String()];
+        $manifest = ['checkpoint_format' => self::CHECKPOINT_FORMAT, 'fingerprint' => $work['fingerprint'],
+            'phase' => $work['phase'], 'checkpoint' => ['phase' => $phase, 'cursor' => $cursor],
+            'target_game_id' => $target, 'groups' => $groups, 'diagnostics' => $diagnostics];
+        if (! Cache::put($key.':work', $manifest, $this->preparationLifetime())) {
+            throw new \RuntimeException('Unable to commit prediction preparation checkpoint.');
+        }
+        \Illuminate\Support\Facades\Log::info('Prediction preparation checkpoint saved', [
+            'checkpoint_key' => $key, ...$diagnostics]);
+        // No reader can hold this checkpoint lock concurrently; obsolete parts can now be removed.
+        if (is_array($previous)) {
+            $retained = array_fill_keys(array_column($parts, 'key'), true);
+            foreach (array_merge($previous['groups']['core'], ...array_values($previous['groups']['contexts'])) as $part) {
+                if (! isset($retained[$part['key']])) {
+                    Cache::forget($part['key']);
+                }
+            }
+        }
+    }
+
+    /** Encode a stream of small framed values; never serialize the full accumulated reader.
+     * @return list<array{key:string,bytes:int,hash:string,compressed:bool}>
+     */
+    private function writeCheckpointParts(string $key, mixed $value): array
+    {
+        $parts = [];
+        $buffer = '';
+        foreach ($this->checkpointValues($value) as $record) {
+            $encoded = serialize($record);
+            $frame = pack('N', strlen($encoded)).$encoded;
+            if (strlen($buffer) + strlen($frame) > self::CHECKPOINT_PART_BYTES && $buffer !== '') {
+                $parts[] = $this->storeCheckpointPart($key.':'.count($parts), $buffer);
+                $buffer = '';
+            }
+            $buffer .= $frame;
+        }
+        if ($buffer !== '') {
+            $parts[] = $this->storeCheckpointPart($key.':'.count($parts), $buffer);
+        }
+
+        return $parts;
+    }
+
+    /** Partition arrays/objects recursively, keeping large strings out of any single serialization.
+     * @param list<int|string> $path
+     * @return \Generator<int,array{0:array,1:string,2:mixed}>
+     */
+    private function checkpointValues(mixed $value, array $path = []): \Generator
+    {
+        $budget = 256;
+        $bytes = self::CHECKPOINT_VALUE_BYTES;
+        if ($this->smallCheckpointValue($value, $budget, $bytes)) {
+            yield [$path, 'value', $value];
+        } elseif (is_array($value) || $value instanceof \stdClass) {
+            yield [$path, is_array($value) ? 'array' : 'object', null];
+            foreach ($value as $index => $child) {
+                yield from $this->checkpointValues($child, [...$path, $index]);
+            }
+        } elseif (is_string($value)) {
+            for ($offset = 0, $length = strlen($value); $offset < $length; $offset += self::CHECKPOINT_VALUE_BYTES) {
+                yield [$path, $offset === 0 ? 'value' : 'append', substr($value, $offset, self::CHECKPOINT_VALUE_BYTES)];
+            }
+        } else {
+            throw new DomainException('Unsupported value in prediction preparation checkpoint.');
+        }
+    }
+
+    /** Bound inspection before serializing a subtree, rather than first allocating an oversized string. */
+    private function smallCheckpointValue(mixed $value, int &$budget, int &$bytes): bool
+    {
+        if (--$budget < 0) {
+            return false;
+        }
+        if (is_array($value) || $value instanceof \stdClass) {
+            foreach ($value as $child) {
+                if (! $this->smallCheckpointValue($child, $budget, $bytes)) {
+                    return false;
+                }
+            }
+        } elseif (is_string($value)) {
+            $bytes -= strlen($value);
+        } elseif (is_object($value) || is_resource($value)) {
+            return false;
+        }
+
+        return $bytes >= 0;
+    }
+
+    /** Store one bounded value with a checksum; compression is optional and changes no numeric data.
+     * @return array{key:string,bytes:int,hash:string,compressed:bool}
+     */
+    private function storeCheckpointPart(string $key, string $body): array
+    {
+        if (strlen($body) > self::CHECKPOINT_PART_BYTES) {
+            throw new DomainException('Prediction preparation checkpoint part exceeds its size limit.');
+        }
+        $compressed = function_exists('gzdeflate');
+        $stored = $compressed ? gzdeflate($body, 1) : $body;
+        if (! is_string($stored) || ! Cache::put($key, $stored, $this->preparationLifetime())) {
+            throw new \RuntimeException('Unable to save prediction preparation checkpoint part.');
+        }
+
+        return ['key' => $key, 'bytes' => strlen($body), 'hash' => hash('sha256', $body), 'compressed' => $compressed];
+    }
+
+    /** Read one part at a time and reject missing/corrupt data before using any accumulated counts.
+     * @param list<array{key:string,bytes:int,hash:string,compressed:bool}> $parts
+     */
+    private function readCheckpointParts(array $parts): mixed
+    {
+        if ($parts === []) {
+            throw new DomainException('Prediction preparation checkpoint parts are missing.');
+        }
+        $state = null;
+        foreach ($parts as $part) {
+            $stored = Cache::get($part['key']);
+            $body = is_string($stored) ? ($part['compressed'] ? @gzinflate($stored, self::CHECKPOINT_PART_BYTES) : $stored) : false;
+            if (! is_string($body) || strlen($body) !== $part['bytes'] || ! hash_equals($part['hash'], hash('sha256', $body))) {
+                throw new DomainException('Prediction preparation checkpoint part is missing or corrupt.');
+            }
+            for ($offset = 0, $length = strlen($body); $offset < $length;) {
+                if ($length - $offset < 4) {
+                    throw new DomainException('Invalid prediction preparation checkpoint frame.');
+                }
+                $size = unpack('N', substr($body, $offset, 4))[1];
+                $offset += 4;
+                if ($size > $length - $offset) {
+                    throw new DomainException('Incomplete prediction preparation checkpoint frame.');
+                }
+                [$path, $kind, $value] = unserialize(substr($body, $offset, $size), ['allowed_classes' => [\stdClass::class]]);
+                $offset += $size;
+                $cursor = &$state;
+                foreach ($path as $index) {
+                    if ($cursor instanceof \stdClass) {
+                        $cursor = &$cursor->{$index};
+                    } else {
+                        $cursor = &$cursor[$index];
+                    }
+                }
+                if ($kind === 'append') {
+                    $cursor .= $value;
+                } else {
+                    $cursor = match ($kind) {
+                        'array' => [], 'object' => new \stdClass(), 'value' => $value,
+                        default => throw new DomainException('Invalid prediction preparation checkpoint value.'),
+                    };
+                }
+                unset($cursor);
+            }
+        }
+
+        return $state;
+    }
+
+    /** Clear only this preparation's published parts; incomplete generations expire naturally. */
+    private function forgetPreparationCheckpoint(string $key): void
+    {
+        $manifest = Cache::get($key.':work');
+        if (is_array($manifest) && ($manifest['checkpoint_format'] ?? null) === self::CHECKPOINT_FORMAT) {
+            foreach (array_merge($manifest['groups']['core'], ...array_values($manifest['groups']['contexts'])) as $part) {
+                Cache::forget($part['key']);
+            }
+        }
+        Cache::forget($key.':work');
     }
 
     /** Yield immediately after progress; poll pending context or another owner less frequently. */

@@ -4386,3 +4386,10 @@ requests without saved success enter preparation; past dates without success
 return unavailable. Independent prediction runs remain separate. Authority:
 `docs/architecture/stats/NhlGamePredictionResponseCache.yaml` and
 `docs/architecture/stats/NhlGamePredictionHistory.yaml`.
+
+Prediction preparation retains its existing model/date/variant key and equations,
+but stores bounded checksummed cache parts with a commit-last progress manifest.
+Matching legacy state converts without replaying completed history. Only the
+current target's saved context is loaded at target time. Stage/cursor/size/peak
+memory diagnostics remain internal. No migration or queue recovery change.
+Authority: `docs/architecture/stats/NhlCustomGamePrediction.yaml`.

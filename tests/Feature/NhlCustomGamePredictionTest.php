@@ -23,6 +23,13 @@ beforeEach(function (): void {
     Cache::flush();
     config(['nhl-custom-prediction' => require base_path('config/nhl-custom-prediction.php')]);
     $this->engine = new NhlCustomGamePredictionEngine();
+    $this->checkpointWrite = fn (string $key, array $work) =>
+        (new ReflectionMethod(\App\Services\NhlCustomGameForecast::class, 'writePreparationCheckpoint'))
+            ->invoke(new \App\Services\NhlCustomGameForecast(), $key, $work);
+    $this->checkpointRead = fn (string $key) =>
+        (new ReflectionMethod(\App\Services\NhlCustomGameForecast::class, 'readPreparationCheckpoint'))
+            ->invoke(new \App\Services\NhlCustomGameForecast(), $key);
+
     $this->defenseFixture = function (): NhlCustomGameDefense {
         $records = [];
         foreach (['EV', 'PP'] as $lane) {
@@ -894,7 +901,7 @@ it('queues a cold date once and shares completed prepared inputs across its game
             'away_team_id' => 1, 'home_team_id' => 2, 'away_team_abbrev' => 'BUF', 'home_team_abbrev' => 'COL']);
         $inputs[$id] = [...$this->input, 'game_id' => $id];
     }
-    $reader = Mockery::mock(NhlCustomGamePredictionInputs::class);
+    $reader = Mockery::mock(NhlCustomGamePredictionInputs::class)->makePartial();
     $reader->shouldReceive('anticipatedParticipants')->twice()->andReturn(['players' => [], 'starters' => []]);
     $reader->shouldReceive('beginQueuedForecast')->once();
     $reader->shouldReceive('advanceQueuedForecast')->once()->andReturn(['complete' => true,
@@ -1517,7 +1524,7 @@ it('skips the pregame dependency queue when preparing a future date through the 
     [$fixture, $model, $lineups] = ($this->forecastFixture)('FUT', true);
     DB::table('nhl_games')->where('nhl_game_id', 2026020002)
         ->update(['game_date' => '2026-11-07', 'start_time_utc' => '2026-11-07 23:00:00']);
-    $reader = Mockery::mock(NhlCustomGamePredictionInputs::class);
+    $reader = Mockery::mock(NhlCustomGamePredictionInputs::class)->makePartial();
     $reader->shouldReceive('anticipatedParticipants')->once()->andReturn($lineups[2026020002]);
     $reader->shouldReceive('beginQueuedForecast')->once()->with($model, '2026-11-07', $lineups);
     $reader->shouldReceive('advanceQueuedForecast')->once()->andReturn(['complete' => true,
@@ -1698,4 +1705,224 @@ it('rejects an invalid EV conversion blend instead of silently changing the rule
     expect(fn () => $method->invoke(new NhlCustomGamePredictionInputs(), null, [],
         ['buckets' => ['B' => ['sat' => 100, 'sog' => 20, 'goals' => 2]]], 'B'))
         ->toThrow(\DomainException::class, 'sum to one');
+});
+
+
+it('round trips a preparation reader through bounded parts without changing counts or types', function (): void {
+    $reader = new NhlCustomGamePredictionInputs();
+    $state = $reader->checkpointState();
+    $state['train'] = [12 => ['EV' => ['buckets' => ['B' => ['sat' => 12, 'sog' => 5, 'goals' => 0]]]]];
+    $state['metadata'] = ['zero' => 0.0, 'unknown' => null, 'empty' => [], 'measured' => false];
+    $reader->restoreCheckpointState($state);
+    ($this->checkpointWrite)('parts-test', ['fingerprint' => 'fixture', 'phase' => 'inputs', 'reader' => $reader]);
+    $manifest = Cache::get('parts-test:work');
+    $restored = ($this->checkpointRead)('parts-test');
+    expect($manifest['checkpoint_format'])->toBe(1)->and($manifest)->not->toHaveKey('reader')
+        ->and($restored['reader']->checkpointState())->toBe($state);
+    foreach ($manifest['groups']['core'] as $part) {
+        expect($part['bytes'])->toBeLessThanOrEqual(524288);
+    }
+});
+
+it('splits large strings and nested bucket arrays without a monolithic cached value', function (): void {
+    $buckets = [];
+    foreach (range(1, 3000) as $id) {
+        $buckets[$id] = ['sat' => $id, 'sog' => $id / 2, 'goals' => 0, 'label' => str_repeat('bucket', 50)];
+    }
+    $work = ['fingerprint' => 'large', 'phase' => 'context',
+        'buckets' => $buckets, 'large_string' => str_repeat('history', 150000),
+        'nested' => (object) ['nullable' => null, 'empty' => (object) [], 'value' => 0.0]];
+    ($this->checkpointWrite)('large-parts', $work);
+    $manifest = Cache::get('large-parts:work');
+    $read = ($this->checkpointRead)('large-parts');
+    unset($read['_checkpoint_manifest']);
+    expect($read)->toEqual($work)->and(count($manifest['groups']['core']))->toBeGreaterThan(2)
+        ->and($manifest['diagnostics']['max_part_bytes'])->toBeLessThanOrEqual(524288)
+        ->and(strlen(serialize($manifest)))->toBeLessThan(32768);
+});
+
+it('restores a legacy checkpoint at its cursor before converting it without replay', function (): void {
+    $reader = new NhlCustomGamePredictionInputs();
+    $state = $reader->checkpointState();
+    $state['forecastWork'] = ['phase' => 'history', 'cursor' => 3275, 'contexts' => [],
+        'history' => [(object) ['nhl_game_id' => 9]], 'defense' => []];
+    $state['teamTrainBuckets'] = [1 => ['buckets' => ['B' => ['sat' => 12, 'sog' => 5, 'goals' => 1]]]];
+    $reader->restoreCheckpointState($state);
+    Cache::put('legacy-parts:work', ['fingerprint' => 'same', 'phase' => 'inputs', 'reader' => $reader], 21600);
+    $old = ($this->checkpointRead)('legacy-parts');
+    expect($old['_checkpoint_legacy'])->toBeTrue();
+    ($this->checkpointWrite)('legacy-parts', $old);
+    $read = ($this->checkpointRead)('legacy-parts');
+    expect($read['reader']->checkpointState())->toEqual($reader->checkpointState())
+        ->and($read['reader']->checkpointState()['forecastWork']['cursor'])->toBe(3275)
+        ->and($read)->not->toHaveKey('_checkpoint_legacy');
+});
+
+it('retains fit accumulators and fitted allowance values through partitioned restoration', function (): void {
+    $defense = ($this->defenseFixture)();
+    $copy = new NhlCustomGameDefense();
+    $copy->restoreCheckpointState($defense->checkpointState());
+    expect($copy->checkpointState())->toBe($defense->checkpointState())
+        ->and($copy->snapshot())->toBe($defense->snapshot())
+        ->and($copy->resolveAllowance(2, 'EV', 'B'))->toBe($defense->resolveAllowance(2, 'EV', 'B'));
+});
+
+it('produces identical game inputs and engine outcomes across partitioned page boundaries', function (): void {
+    [$reader, $model, $lineups] = ($this->forecastFixture)('FUT', true);
+    config(['nhl-custom-prediction.batch_games' => 1, 'nhl-custom-prediction.fit_bucket_batch' => 1]);
+    $reader->beginQueuedForecast($model, '2026-11-05', $lineups);
+    $baseline = clone $reader;
+    $baseline->restoreCheckpointState($reader->checkpointState());
+    do {
+        $expected = $baseline->advanceQueuedForecast();
+    } while (! $expected['complete']);
+    app()->instance(NhlCustomGamePredictionInputs::class, $reader);
+    $work = ['fingerprint' => 'fixed', 'phase' => 'inputs', 'reader' => $reader];
+    $phases = [];
+    for ($page = 0; $page < 30; $page++) {
+        ($this->checkpointWrite)('equivalent', $work);
+        $work = ($this->checkpointRead)('equivalent');
+        $actual = $work['reader']->advanceQueuedForecast();
+        $phases[] = $actual['phase'];
+        if ($actual['complete']) {
+            break;
+        }
+    }
+    expect($phases)->toContain('collect', 'fit', 'history', 'targets', 'complete')
+        ->and($actual['complete'])->toBeTrue()->and($actual['inputs'])->toBe($expected['inputs'])
+        ->and($this->engine->predict($actual['inputs'][2026020002]))
+        ->toBe($this->engine->predict($expected['inputs'][2026020002]));
+});
+
+it('loads only the selected targets saved context while retaining the other targets parts', function (): void {
+    $reader = new NhlCustomGamePredictionInputs();
+    $state = $reader->checkpointState();
+    $state['forecastWork'] = ['phase' => 'history', 'cursor' => 10,
+        'targets' => [(object) ['nhl_game_id' => 11], (object) ['nhl_game_id' => 22]],
+        'contexts' => [11 => ['players' => [1 => 'first']], 22 => ['players' => [2 => 'second']]]];
+    $reader->restoreCheckpointState($state);
+    ($this->checkpointWrite)('lazy-contexts', ['fingerprint' => 'fixed', 'phase' => 'inputs', 'reader' => $reader]);
+    $work = ($this->checkpointRead)('lazy-contexts');
+    $state = $work['reader']->checkpointState();
+    expect($state['forecastWork']['contexts'])->toBe([]);
+    $state['forecastWork']['phase'] = 'targets';
+    $state['forecastWork']['cursor'] = 1;
+    $work['reader']->restoreCheckpointState($state);
+    ($this->checkpointWrite)('lazy-contexts', $work);
+    $read = ($this->checkpointRead)('lazy-contexts');
+    expect($read['reader']->checkpointState()['forecastWork']['contexts'])->toBe([22 => ['players' => [2 => 'second']]])
+        ->and(array_keys(Cache::get('lazy-contexts:work')['groups']['contexts']))->toBe([11, 22]);
+});
+
+it('does not hydrate deferred contexts that are not needed for the current history page', function (): void {
+    $reader = new NhlCustomGamePredictionInputs();
+    $state = $reader->checkpointState();
+    $state['forecastWork'] = ['phase' => 'history', 'cursor' => 4, 'contexts' => [22 => ['players' => [2 => 'deferred']]]];
+    $reader->restoreCheckpointState($state);
+    ($this->checkpointWrite)('not-needed', ['fingerprint' => 'fixed', 'phase' => 'inputs', 'reader' => $reader]);
+    $part = Cache::get('not-needed:work')['groups']['contexts'][22][0];
+    Cache::forget($part['key']);
+    expect(($this->checkpointRead)('not-needed')['reader']->checkpointState()['forecastWork']['cursor'])->toBe(4);
+    expect(fn () => ($this->checkpointWrite)('not-needed', ($this->checkpointRead)('not-needed')))
+        ->toThrow(\RuntimeException::class, 'retain deferred');
+});
+
+it('rejects missing or corrupt checkpoint parts without publishing guessed state', function (string $failure): void {
+    ($this->checkpointWrite)('broken-part', ['fingerprint' => 'same', 'phase' => 'context', 'errors' => []]);
+    $part = Cache::get('broken-part:work')['groups']['core'][0];
+    if ($failure === 'missing') {
+        Cache::forget($part['key']);
+    } else {
+        Cache::put($part['key'], 'invalid data', 21600);
+    }
+    expect(fn () => ($this->checkpointRead)('broken-part'))->toThrow(\DomainException::class, 'missing or corrupt');
+})->with(['missing', 'corrupt']);
+
+it('keeps the preceding committed cursor when a part or manifest write fails', function (string $failure): void {
+    ($this->checkpointWrite)('atomic-parts', ['fingerprint' => 'same', 'phase' => 'context', 'cursor' => 5]);
+    $old = Cache::get('atomic-parts:work');
+    $work = ($this->checkpointRead)('atomic-parts');
+    $work['cursor'] = 6;
+    $repository = Cache::store();
+    $proxy = Mockery::mock($repository);
+    $proxy->shouldReceive('put')->andReturnUsing(function ($key, $value, $ttl) use ($repository, $failure): bool {
+        if (($failure === 'manifest' && $key === 'atomic-parts:work')
+            || ($failure === 'part' && str_contains($key, ':parts:'))) {
+            return false;
+        }
+
+        return $repository->put($key, $value, $ttl);
+    });
+    Cache::swap($proxy);
+    try {
+        expect(fn () => ($this->checkpointWrite)('atomic-parts', $work))->toThrow(\RuntimeException::class);
+    } finally {
+        Cache::swap($repository);
+    }
+    expect(Cache::get('atomic-parts:work'))->toBe($old)
+        ->and(($this->checkpointRead)('atomic-parts')['cursor'])->toBe(5);
+})->with(['part', 'manifest']);
+
+it('expires abandoned checkpoint parts without evicting a live committed generation', function (): void {
+    ($this->checkpointWrite)('retained-parts', ['fingerprint' => 'same', 'phase' => 'context', 'cursor' => 1]);
+    $work = ($this->checkpointRead)('retained-parts');
+    $oldParts = Cache::get('retained-parts:work')['groups']['core'];
+    ($this->checkpointWrite)('retained-parts', [...$work, 'cursor' => 2]);
+    foreach ($oldParts as $part) {
+        expect(Cache::get($part['key']))->toBeNull();
+    }
+    expect(($this->checkpointRead)('retained-parts')['cursor'])->toBe(2);
+    $this->travel(21601)->seconds();
+    expect(($this->checkpointRead)('retained-parts'))->toBeNull();
+});
+
+it('records bounded preparation diagnostics without exposing bucket state', function (): void {
+    ($this->checkpointWrite)('diagnostic-parts', ['fingerprint' => 'same', 'phase' => 'context']);
+    $manifest = Cache::get('diagnostic-parts:work');
+    expect($manifest['diagnostics'])->toHaveKeys(['phase', 'cursor', 'part_count', 'max_part_bytes',
+        'total_part_bytes', 'peak_memory_bytes', 'checkpoint_write_ms', 'saved_at'])
+        ->and($manifest['diagnostics']['phase'])->toBe('context')
+        ->and($manifest['diagnostics']['max_part_bytes'])->toBeLessThanOrEqual(524288)
+        ->and($manifest['diagnostics'])->not->toHaveKey('reader');
+});
+
+
+it('converts matching operational legacy preparation before advancing another historical page', function (): void {
+    [$reader, $model, $lineups] = ($this->forecastFixture)('FUT', true);
+    $reader->beginQueuedForecast($model, '2026-11-05', $lineups);
+    $state = $reader->checkpointState();
+    $state['forecastWork']['phase'] = 'history';
+    $state['forecastWork']['cursor'] = 2;
+    $reader->restoreCheckpointState($state);
+    $forecast = new \App\Services\NhlCustomGameForecast();
+    [$key, $fingerprint] = (new ReflectionMethod($forecast, 'preparationIdentity'))->invoke($forecast,
+        DB::table('nhl_games')->where('nhl_game_id', 2026020002)->first(), NhlModelRun::findOrFail($model), false, []);
+    Cache::put($key.':work', ['fingerprint' => $fingerprint, 'phase' => 'inputs', 'reader' => $reader], 21600);
+    expect($forecast->advancePreparation(2026020002, $model))->toBeFalse()
+        ->and($forecast->preparationDelay())->toBe(0)
+        ->and(Cache::get($key.':work')['checkpoint'])->toBe(['phase' => 'history', 'cursor' => 2])
+        ->and(($this->checkpointRead)($key)['reader']->checkpointState())->toEqual($reader->checkpointState());
+    Bus::assertNothingDispatched();
+});
+
+it('does not decode stale checkpoint parts when source evidence requires a clean rebuild', function (): void {
+    ($this->checkpointWrite)('stale-parts', ['fingerprint' => 'old', 'phase' => 'context']);
+    $manifest = Cache::get('stale-parts:work');
+    Cache::forget($manifest['groups']['core'][0]['key']);
+    $forecast = new \App\Services\NhlCustomGameForecast();
+    $method = new ReflectionMethod($forecast, 'readPreparationCheckpoint');
+    expect($method->invoke($forecast, 'stale-parts', 'new'))->toBeNull()
+        ->and(Cache::get('stale-parts:work'))->toBe($manifest);
+});
+
+it('requires an intact saved context when its target phase is reached', function (): void {
+    $reader = new NhlCustomGamePredictionInputs();
+    $state = $reader->checkpointState();
+    $state['forecastWork'] = ['phase' => 'targets', 'cursor' => 0,
+        'targets' => [(object) ['nhl_game_id' => 22]], 'contexts' => [22 => ['players' => []]]];
+    $reader->restoreCheckpointState($state);
+    ($this->checkpointWrite)('required-context', ['fingerprint' => 'same', 'phase' => 'inputs', 'reader' => $reader]);
+    $part = Cache::get('required-context:work')['groups']['contexts'][22][0];
+    Cache::forget($part['key']);
+    expect(fn () => ($this->checkpointRead)('required-context'))->toThrow(\DomainException::class, 'missing or corrupt');
 });

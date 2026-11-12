@@ -58,6 +58,37 @@ class NhlCustomGamePredictionInputs
     /** Batched latest committed source rows for the requested future slate. */
     private array $futureSnapshots = [];
 
+    /** Export existing accumulators as partitionable data, never one serialized reader object.
+     * @return array<string,mixed>
+     */
+    public function checkpointState(): array
+    {
+        $state = array_intersect_key(get_object_vars($this), get_class_vars(self::class));
+        if (($state['forecastWork']['defense'] ?? null) instanceof NhlCustomGameDefense) {
+            $state['forecastWork']['defense'] = $state['forecastWork']['defense']->checkpointState();
+        }
+
+        return $state;
+    }
+
+    /** Restore accumulated counts/cursors without replaying completed history.
+     * @param array<string,mixed> $state
+     */
+    public function restoreCheckpointState(array $state): void
+    {
+        if (is_array($state['forecastWork']['defense'] ?? null)) {
+            $defense = new NhlCustomGameDefense();
+            $defense->restoreCheckpointState($state['forecastWork']['defense']);
+            $state['forecastWork']['defense'] = $defense;
+        }
+        if (($state['forecastWork'] ?? []) !== []) {
+            $state['forecastWork']['contexts'] ??= [];
+        }
+        foreach (array_intersect_key($state, get_class_vars(self::class)) as $field => $value) {
+            $this->{$field} = $value;
+        }
+    }
+
     /** Resolve one model universe and freeze its Train bucket mapping before reading Test. */
     public function prepare(int $modelId, ?string $predictionSeason = null): array
     {

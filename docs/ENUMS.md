@@ -3067,6 +3067,7 @@ identifies a completed empty missing-work selection. Updates keep the existing
 
 ## Operational prediction preparation
 
+- Internal prediction preparation `checkpoint_format`: `1` denotes partitioned, checksummed cache state with a commit-last progress manifest. An absent field denotes the legacy reader-object format, converted at its current cursor when the source fingerprint matches. Other format values fail explicitly. This storage format does not change the algorithm or `input_pipeline_version` and is not a public API field.
 - `nhl-custom-prediction.input_pipeline_version`: `saved_pregame_checkpointed_v9`
   identifies saved-context preparation reusing player strength-window aggregates, lineup-independent committed context history, active-prediction lineup-write exclusion, bounded cache checkpoints, actual participant selection for finished games, statistical-content freshness, recency-first starter selection, stored internal-confidence inputs and frozen team Train EV bucket counts. It supersedes `saved_pregame_checkpointed_v8`; earlier prepared checkpoints are not reused for the new conversion. The scoring algorithm is independently versioned; the current version is `custom_ev_pp_v4`.
 - Calculator `goal_sources.EV`: `train_bucket_reliability`; PP remains `season_to_date`.
