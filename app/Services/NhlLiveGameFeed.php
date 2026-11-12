@@ -127,8 +127,9 @@ final class NhlLiveGameFeed
             return null;
         }
         $state = \Illuminate\Support\Facades\DB::table('nhl_pbp_processing_states')->where('nhl_game_id', $gameId)->first();
-        if ($state?->metrics !== null) {
-            $metrics = json_decode($state->metrics, true, 512, JSON_THROW_ON_ERROR);
+        if ($state !== null) {
+            $metrics = $state->metrics === null ? ['available' => false, 'model_ids' => [], 'teams' => [], 'goalies' => []]
+                : json_decode($state->metrics, true, 512, JSON_THROW_ON_ERROR);
             $snapshot['game']['advanced_stats'] = [...$metrics, 'version' => $state->processed_version,
                 'pending' => $state->pending_version > $state->processed_version, 'processed_at' => $state->processed_at];
             foreach (['away', 'home'] as $side) {

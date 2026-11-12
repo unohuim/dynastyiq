@@ -1,6 +1,8 @@
 name: NHL Shared Live Game Feed
 type: Single Producer And Public Reverb Stream
 location:
+  - app/Http/Controllers/Api/NhlGameLiveController.php
+  - routes/api.php
   - app/Services/NhlLiveGameFeed.php
   - app/Jobs/PollNhlLiveGameJob.php
   - app/Events/NhlLiveGameUpdated.php
@@ -25,6 +27,8 @@ rules:
   - The latest received snapshot is retained for initial loads and reconnects without a cache-expiry refresh delay. Freshness is explicit; live evidence older than twenty seconds is marked stale. Heartbeats maintain freshness even without score changes. This shared state is separate from preview/recap caches.
   - A terminal provider result is persisted and published, then leaves the polling set and queues public recap preparation. A schedule or import marking a recent game final cannot retire polling before that terminal snapshot exists. Both dispatch and execution check terminal evidence; failed recovery remains eligible on the next tick, while stale nonterminal provider evidence must never downgrade a stored final. Final provider details remain available while historical player imports are incomplete.
   - GET /games/live reads only shared public snapshots and returns no-store responses. Its optional game_id selects full public detail; otherwise return recent compact snapshots. It accepts guests and authenticated users equally and never exposes credentials or private channels.
+  - GET /api/nhl-game-live requires the existing partner nhl-stats read scope and one positive nhl_game_id. It curates the existing shared snapshot into team SOG/SAT/hits/blocks/PIM/xG, participating goalies with identities/SV/SA/SV-percent/GSAx, game score/clock/state and observation/advanced-processing provenance. Percent units and field names follow the partner API usage document. It does not contact providers, score events, calculate predictions or dispatch jobs. Unknown games return not found; known games without snapshots return an unavailable envelope with null facts. Preserve true zeros, negative GSAx, missing values and retained final snapshots; exclude unused bench goalies. Keep authenticated reads no-store and omit raw source blobs, full player tables and prediction evidence.
+  - Shared advanced metadata exposes processing version and pending status even before first metrics publication. Basic feed freshness remains separate from the advanced processed timestamp and pinned model IDs; pending work retains previous committed values without implying a new calculation. No public stream payload or polling cadence changes.
   - The mounted Inertia layout owns one Echo connection and provides component-local live refs to descendants. Public guests subscribe to the NHL channel; existing private user/organization channel authorization remains unchanged. Components must dispose listeners, timers and requests.
   - Scoreboard updates apply directly. Detail consumers apply clock/score immediately, then read full public detail from the shared endpoint. Reject out-of-order sequences, accept newer corrections, resync on connection recovery or foreground return, and track interrupted/stale states internally. Automatic update/recovery presentation follows the Silent background updates rule in docs/UI_DESIGN.md; keep existing content while recovery runs. Recovery requests read shared state only and never poll NHL.
 public_interface:
@@ -32,6 +36,7 @@ public_interface:
   - NhlLiveGameFeed::poll
   - NhlLiveGameFeed::snapshot
   - GET /games/live
+  - GET /api/nhl-game-live
   - NhlLiveGameUpdated
 example_usage: |
   The scheduler queues one PollNhlLiveGameJob per eligible game.

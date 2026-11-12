@@ -4393,3 +4393,10 @@ Matching legacy state converts without replaying completed history. Only the
 current target's saved context is loaded at target time. Stage/cursor/size/peak
 memory diagnostics remain internal. No migration or queue recovery change.
 Authority: `docs/architecture/stats/NhlCustomGamePrediction.yaml`.
+
+Partner live statistics: authenticated `GET /api/nhl-game-live?nhl_game_id=...`
+curates the existing shared game snapshot into team SOG/SAT/hits/blocks/PIM/xG
+and participating-goalie SV/SA/SV%/GSAx, with independent observation/advanced
+processing timestamps and availability. No request-triggered provider fetch,
+scoring or prediction work. Authority: `imports/NhlLiveGameFeed.yaml`; partner
+contract: `docs/integrations/DIQ-API-Usage-Doc.md`.

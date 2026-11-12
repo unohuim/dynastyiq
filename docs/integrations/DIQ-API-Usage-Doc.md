@@ -136,6 +136,7 @@ Endpoint scopes:
 | `GET /api/nhl/lineups` | `nhl-stats:read` |
 | `GET /api/nhl/lineups/{nhl_game_id}` | `nhl-stats:read` |
 | `GET /api/nhl-game-predictions` | `nhl-stats:read` |
+| `GET /api/nhl-game-live` | `nhl-stats:read` |
 | `POST /api/nhl-lineups` | `nhl-lineups:write` |
 
 Most partner applications need a token with both `nhl-reference:read` and
@@ -1883,6 +1884,104 @@ Example:
 }
 ```
 
+
+## Live team and goalie statistics endpoint
+
+```http
+GET /api/nhl-game-live?nhl_game_id=2026020001
+Accept: application/json
+Authorization: Bearer <DYNASTYIQ_API_TOKEN>
+```
+
+Requires `nhl-stats:read`. `nhl_game_id` is required and must be a positive integer.
+Missing/invalid input returns 422; an unknown stored game returns 404. Missing
+credentials return 401, and invalid/revoked/wrong-scope tokens return 403.
+
+This endpoint returns compact **observed game statistics**, independently of
+prediction endpoints. It reads the same shared live snapshot used by the game
+page and the latest committed live-statistics result. It never contacts NHL,
+starts polling, imports play-by-play, scores shots, calculates predictions or
+queues preparation during a request. Existing shared polling remains every five
+seconds, independently of viewer/API-client count. Responses use `Cache-Control:
+no-store`; that prevents response reuse, not reuse of the shared producer's data.
+
+Example (illustrative values):
+
+```json
+{
+  "nhl_game_id": 2026020001,
+  "available": true,
+  "game": {
+    "game_date": "2026-10-27",
+    "game_state": "LIVE",
+    "mode": "live",
+    "status": "Live",
+    "period_number": 2,
+    "period_type": "REG",
+    "time_remaining": "12:34",
+    "in_intermission": false
+  },
+  "teams": {
+    "away": {"nhl_team_id": 6, "team_abbrev": "BOS", "score": 2, "sog": 25, "sat": 44, "hits": 15, "blocks": 8, "pim": 4, "xg": 2.75},
+    "home": {"nhl_team_id": 10, "team_abbrev": "TOR", "score": 1, "sog": 20, "sat": 39, "hits": 11, "blocks": 10, "pim": 6, "xg": 1.25}
+  },
+  "goalies": [
+    {"nhl_player_id": 100, "name": "Example away goalie", "nhl_team_id": 6, "team_abbrev": "BOS", "side": "away", "saves": 19, "shots_against": 20, "save_pct": 95.0, "gsax": 0.25},
+    {"nhl_player_id": 200, "name": "Example home goalie", "nhl_team_id": 10, "team_abbrev": "TOR", "side": "home", "saves": 23, "shots_against": 25, "save_pct": 92.0, "gsax": 0.75}
+  ],
+  "meta": {
+    "sequence": 100,
+    "observed_at": "2026-10-27T23:00:00+00:00",
+    "stale": false,
+    "advanced_stats": {
+      "available": true,
+      "pending": false,
+      "version": 7,
+      "processed_at": "2026-10-27T22:59:58+00:00",
+      "model_ids": {"goal": 11, "shot_on_goal": 12}
+    }
+  }
+}
+```
+
+| Field | Meaning / units |
+| --- | --- |
+| `teams.away/home.sog` | Actual shots on goal, including goals. |
+| `teams.away/home.sat` | Actual shot attempts: SOG plus misses and blocked attempts; excludes shootouts. |
+| `teams.away/home.hits`, `blocks` | Recorded hit and defensive blocked-shot counts. |
+| `teams.away/home.pim` | Penalty minutes, not penalty count or elapsed shorthanded time. |
+| `teams.away/home.xg` | Current model-scored expected goals for that team; null without a usable committed result. |
+| `goalies[].saves`, `shots_against` | Recorded saves (SV) and shots faced (SA). |
+| `goalies[].save_pct` | `100 × saves / shots_against`, rounded to two decimals: `95.0` means 95%. Null for zero/missing SA, missing saves or saves exceeding SA. |
+| `goalies[].gsax` | Model-scored goals saved above expected. Positive and negative values are retained; null when unavailable. |
+| `meta.observed_at` | Provider snapshot observation time, not the request time. |
+| `meta.stale` | Live snapshot older than twenty seconds; final recap snapshots are terminal and not stale. Null without a snapshot. |
+| `meta.advanced_stats.processed_at` | Independent timestamp for the committed xG/GSAx calculation, in ISO 8601 UTC. |
+| `meta.advanced_stats.version`, `pending` | Published processing version and whether newer event processing is pending. Pending can be true before the first result; version zero and null expectations remain explicit. Pending is null when no processing evidence exists. |
+| `meta.advanced_stats.model_ids` | Existing pinned model IDs supplying expectations. Missing provenance is an empty array. |
+
+`game` also retains the shared snapshot's `start_time_utc` when present.
+All counts are for this game, not per-game or per-60 rates. Missing values stay
+null; measured zeros remain zero. Goalies includes every identifiable goalie who
+played, including replacements; unused bench goalies and skaters are excluded.
+Zero-shots goalies with recorded ice time remain listed with null SV%.
+
+Basic statistics and advanced expectations have separate processing timestamps.
+While newer advanced processing is pending, retain the previous committed values
+with `pending: true`; these are not advertised as freshly recalculated against
+newer live counts. Missing or partially unscored expectations stay null. Expectations retain the
+existing live scorer's exclusion of empty-net attempts and its trained target
+semantics; this endpoint does not recalculate or redefine xG/GSAx.
+
+For a known game without a usable shared snapshot, HTTP 200 returns
+`available: false`, `game: null`, `teams: null`, `goalies: []` and null observation/
+sequence/stale metadata. `meta.advanced_stats.available` is false. No missing-data
+preparation is started. Retained final snapshots can be read through this endpoint;
+it does not reconstruct expired historical snapshots from stored results.
+
+Poll this endpoint at the desired cadence or use the existing public Reverb event
+below as a signal to fetch it. Reverb's compact event is unchanged and does not
+contain all of these statistics. No webhook is added.
 
 ## Public live game updates
 
