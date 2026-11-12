@@ -1052,6 +1052,25 @@ nhl-stats:read
 Every successful prediction payload includes `prediction_available`. Consumers
 must check this field before reading prediction or market output.
 
+**Past games are read-only.** When the stored game date is earlier than today
+in `America/Toronto`, the API returns the latest successful saved prediction for
+that game (highest revision ID), whether published by the API or an admin run.
+It does not rebuild predictions, inputs, pregame context, Matchup statistics or
+markets, consult the response cache, or queue refresh work. `force_refresh` and
+model, goalie or market parameters cannot trigger a historical recalculation or
+replace the saved output. There is no `is_override` bypass. Saved timestamps,
+probabilities, scores, Matchup, `days_away` and public confidence remain frozen;
+the usual public-confidence response mapping still applies. Prior failed or
+unavailable attempts do not hide the latest successful prediction.
+
+If no successful revision exists, HTTP 200 returns
+`prediction_available: false`, `reason: historical_prediction_not_found`,
+`prediction: null`, and empty `market_probabilities` and `reasons`; no preparation
+or continuation is started. Existing authentication and input validation apply.
+Today and future dates retain the cache/preparation behavior described below,
+regardless of the game's live/final state. Manual admin historical runs remain
+available separately.
+
 New calculations are durably archived before publication. `meta.prediction_revision_id` identifies the saved calculation and `meta.predicted_at` is its calculation timestamp. Fresh and stale cache reads retain that identity; a successful recalculation receives a new revision. These additive fields do not change prediction or qualification math. Manual admin default-engine runs also publish through this pathway.
 
 `meta.cache` is `fresh` for a current cached or synchronous response and `stale`
@@ -1064,7 +1083,7 @@ completed derived-fact import publications do. This does not change the HTTP
 200/202 contract. Responses remain fresh for one minute and eligible for stale
 reuse with a queued refresh for up to three hours.
 
-To request a new prediction immediately, send `force_refresh=1`:
+For today or a future game, request a new prediction immediately with `force_refresh=1`:
 
 ```text
 GET /api/nhl-game-predictions?nhl_game_id=2026020001&force_refresh=1

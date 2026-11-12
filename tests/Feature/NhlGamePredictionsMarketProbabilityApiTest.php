@@ -746,7 +746,7 @@ it('stores calendar days away and calculated public confidence while retaining i
     ($this->requestPrediction)()->assertOk()->assertJsonPath('meta.prediction_revision_id', (int) $revision->id)
         ->assertJsonPath('prediction.days_away', $days)
         ->assertJsonPath('prediction.public_confidence_score', $expected);
-})->with([['2026-11-05', 0], ['2026-11-06', 1], ['2026-11-12', 7], ['2026-11-04', -1]]);
+})->with([['2026-11-05', 0], ['2026-11-06', 1], ['2026-11-12', 7]]);
 
 it('uses Toronto dates before UTC midnight rollover for forecast horizon', function (): void {
     $this->travelTo(\Carbon\CarbonImmutable::parse('2026-11-06 02:00:00 UTC'));
@@ -928,4 +928,86 @@ it('stores last five and last ten special teams percentages in the completed API
         ->and($saved['matchup']['away']['form']['l10_pk_pct'])->toEqual(75);
     ($this->requestPrediction)()->assertOk()->assertJsonPath('meta.prediction_revision_id', $id)
         ->assertJsonPath('matchup.home.form.l5_pp_pct', 50.0)->assertJsonPath('matchup.home.form.l10_pp_pct', 25.0);
+});
+
+it('returns the latest saved past prediction without preparing or refreshing anything', function (): void {
+    $first = ($this->requestPrediction)()->assertOk()->json('meta.prediction_revision_id');
+    $latest = ($this->requestPrediction)(['force_refresh' => true, 'home_goalie_id' => 123])
+        ->assertOk()->json('meta.prediction_revision_id');
+    expect($latest)->not->toBe($first);
+    $before = DB::table('nhl_game_prediction_revisions')->orderBy('id')->get()->toJson();
+    $saved = app(\App\Services\NhlGamePredictionHistory::class)->payload(
+        DB::table('nhl_game_prediction_revisions')->find($latest));
+    $this->travelTo(\Carbon\CarbonImmutable::parse('2026-11-06 12:00:00 UTC'));
+    Cache::flush();
+    Bus::fake();
+    $this->mock(NhlGamePredictionPayload::class)->shouldNotReceive('build');
+    // Direct HTTP read avoids the test helper's intentional Matchup preparation fixture.
+    $this->withToken($this->token)->getJson('/api/nhl-game-predictions?nhl_game_id=2026020001&force_refresh=1&home_goalie_id=456&total=9')
+        ->assertOk()->assertJsonPath('meta.prediction_revision_id', $latest)
+        ->assertJsonPath('meta.predicted_at', $saved['meta']['predicted_at'])
+        ->assertJsonPath('prediction.predicted_score', $saved['prediction']['predicted_score'])
+        ->assertJsonPath('prediction.home_win_probability', $saved['prediction']['home_win_probability'])
+        ->assertJsonPath('prediction.days_away', 0)
+        ->assertJsonPath('prediction.confidence_score', $saved['prediction']['public_confidence_score'])
+        ->assertJsonPath('matchup', $saved['matchup'])
+        ->assertJsonPath('market_probabilities.0.confidence_score', $saved['prediction']['public_confidence_score'])
+        ->assertJsonMissingPath('prediction.confidence_inputs')
+        ->assertJsonMissingPath('teams.home.input_confidence_score');
+    expect(DB::table('nhl_game_prediction_revisions')->orderBy('id')->get()->toJson())->toBe($before);
+    Bus::assertNothingDispatched();
+});
+
+it('returns unavailable for an unsaved past game without creating dependencies', function (string $state): void {
+    $this->game->update(['game_date' => '2026-11-04', 'game_state' => $state]);
+    $this->mock(NhlGamePredictionPayload::class)->shouldNotReceive('build');
+    $this->withToken($this->token)->getJson('/api/nhl-game-predictions?nhl_game_id=2026020001&force_refresh=1&is_override=1')
+        ->assertOk()->assertJsonPath('prediction_available', false)
+        ->assertJsonPath('reason', 'historical_prediction_not_found')
+        ->assertJsonPath('prediction', null)->assertJsonPath('market_probabilities', [])
+        ->assertJsonMissingPath('matchup')->assertJsonMissingPath('status');
+    $this->assertDatabaseCount('nhl_game_prediction_revisions', 0);
+    Bus::assertNothingDispatched();
+})->with(['FUT', 'LIVE', 'FINAL', 'OFF']);
+
+it('keeps historical selection within the requested game and skips later unavailable attempts', function (): void {
+    $id = ($this->requestPrediction)()->assertOk()->json('meta.prediction_revision_id');
+    $revision = (array) DB::table('nhl_game_prediction_revisions')->find($id);
+    unset($revision['id']);
+    DB::table('nhl_game_prediction_revisions')->insert([
+        ...$revision, 'prediction_available' => false, 'payload' => json_encode(['prediction_available' => false]),
+    ]);
+    DB::table('nhl_game_prediction_revisions')->insert([...$revision, 'nhl_game_id' => 2026020999]);
+    $this->travelTo(\Carbon\CarbonImmutable::parse('2026-11-06 12:00:00 UTC'));
+    $this->withToken($this->token)->getJson('/api/nhl-game-predictions?nhl_game_id=2026020001')
+        ->assertOk()->assertJsonPath('meta.prediction_revision_id', $id);
+    $this->assertDatabaseCount('nhl_game_prediction_revisions', 3);
+});
+
+it('switches to saved history at Toronto midnight rather than UTC midnight', function (): void {
+    $this->travelTo(\Carbon\CarbonImmutable::parse('2026-11-06 04:59:00 UTC'));
+    $id = ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction.days_away', 0)
+        ->json('meta.prediction_revision_id');
+    $this->travelTo(\Carbon\CarbonImmutable::parse('2026-11-06 05:00:00 UTC'));
+    Cache::flush();
+    Bus::fake();
+    $this->mock(NhlGamePredictionPayload::class)->shouldNotReceive('build');
+    $this->withToken($this->token)->getJson('/api/nhl-game-predictions?nhl_game_id=2026020001&force_refresh=1')
+        ->assertOk()->assertJsonPath('meta.prediction_revision_id', $id)
+        ->assertJsonPath('prediction.days_away', 0);
+    Bus::assertNothingDispatched();
+});
+
+it('retains authentication and scope restrictions for saved past predictions', function (): void {
+    $this->game->update(['game_date' => '2026-11-04']);
+    $this->getJson('/api/nhl-game-predictions?nhl_game_id=2026020001')->assertUnauthorized();
+    $this->client->update(['scopes' => ['nhl-reference:read']]);
+    $this->withToken($this->token)->getJson('/api/nhl-game-predictions?nhl_game_id=2026020001')->assertForbidden();
+    $this->assertDatabaseCount('nhl_game_prediction_revisions', 0);
+    Bus::assertNothingDispatched();
+});
+
+it('returns not found for an unknown game without prediction work', function (): void {
+    $this->withToken($this->token)->getJson('/api/nhl-game-predictions?nhl_game_id=9999999999')->assertNotFound();
+    Bus::assertNothingDispatched();
 });

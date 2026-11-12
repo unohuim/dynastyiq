@@ -4378,3 +4378,9 @@ retry waits are included. The admin response derives seconds from existing run
 and work timestamps; the Vue table formats seconds/minutes and reuses its polling.
 First worker starts survive retries. Missing timing remains unavailable.
 Authority: `docs/architecture/stats/NhlGamePredictionHistory.yaml`.
+
+Past-date partner prediction reads return the latest successful stored revision
+without rebuilding context, Matchup, market output or forecasts, including forced
+requests. Today/future requests retain the existing pipeline. Authority:
+`docs/architecture/stats/NhlGamePredictionResponseCache.yaml` and
+`docs/architecture/stats/NhlGamePredictionHistory.yaml`.

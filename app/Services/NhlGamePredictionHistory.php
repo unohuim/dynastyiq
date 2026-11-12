@@ -10,6 +10,18 @@ use Illuminate\Support\Facades\DB;
 /** Append immutable default-path calculations and expose compact admin comparison rows. */
 final class NhlGamePredictionHistory
 {
+    /** Read the latest published prediction for one game without refreshing any dependencies.
+     * @return array<string,mixed>|null
+     */
+    public function latestSaved(int $gameId): ?array
+    {
+        $revision = DB::table('nhl_game_prediction_revisions')
+            ->where('nhl_game_id', $gameId)->where('prediction_available', true)
+            ->orderByDesc('id')->first();
+
+        return $revision === null ? null : $this->payload($revision);
+    }
+
     /** Persist once per manual run/game; independent API recalculations always append.
      * @param array<string,mixed> $input
      * @param array<string,mixed> $evidence

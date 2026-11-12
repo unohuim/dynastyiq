@@ -263,9 +263,11 @@ Horizon retains the existing queue allocations and adds four to eight dedicated 
 **Allowed values currently emitted:**
 
 - `preseason_lineup_unresolved`
+- `historical_prediction_not_found`
 
 **Semantic meaning:**
 
+- `historical_prediction_not_found`: A past-date API read has no successful saved prediction; return unavailable without preparing or calculating anything.
 - `preseason_lineup_unresolved`: DynastyIQ intentionally withheld a preseason prediction because at least one team lacked a complete official or canonically resolved reported lineup.
 
 ### API Client Scopes

@@ -1,5 +1,74 @@
 # Prediction API Matchup and player PP points
 
+## Read-only past-date API requests — November 12, 2026
+
+Approved change: past-date partner requests return the latest successful stored
+prediction for the game without refreshing anything. No override bypass is added.
+Date means the stored game date compared with today in America/Toronto, independent
+of game state. Today/future requests and explicit manual admin runs retain their
+existing behavior. Historical request variants return the latest published output,
+not newly calculated goalie, model or market variants. Failed/unavailable later
+attempts do not obscure a successful prediction. No success returns HTTP 200
+unavailable with the reason documented in ENUMS. No migration is required.
+
+Files changed for this addition:
+
+- `app/Http/Controllers/Api/NhlGamePredictionsController.php`
+- `app/Services/NhlGamePredictionHistory.php`
+- `tests/Feature/NhlGamePredictionsMarketProbabilityApiTest.php`
+- `docs/integrations/DIQ-API-Usage-Doc.md`
+- `docs/architecture/stats/NhlGamePredictionResponseCache.yaml`
+- `docs/architecture/stats/NhlGamePredictionHistory.yaml`
+- `docs/ENUMS.md`
+- `docs/ARCHITECTURE_INVENTORY.md`
+- This review document.
+
+Coverage matrix (COVERED means authored assertions, not executed tests):
+
+| Contract | Status | Named test |
+| --- | --- | --- |
+| Request → published revisions → later historical HTTP read, latest identity, unchanged rows and frozen values | COVERED | returns the latest saved past prediction without preparing or refreshing anything |
+| Force-refresh/variant inputs cannot rebuild; public confidence mapping retained; no jobs | COVERED | returns the latest saved past prediction without preparing or refreshing anything |
+| No stored success, all game states, ignored is_override, no Matchup or preparing response | COVERED | returns unavailable for an unsaved past game without creating dependencies |
+| Per-game isolation and unsuccessful later attempts | COVERED | keeps historical selection within the requested game and skips later unavailable attempts |
+| Toronto date boundary, same-day before midnight and historical after midnight | COVERED | switches to saved history at Toronto midnight rather than UTC midnight |
+| Today/future engine and horizon behavior | COVERED | uses the new shared engine and SAT_V2 for an ordinary API request; stores calendar days away and calculated public confidence while retaining internal confidence |
+| Unknown game and unchanged validation | COVERED | returns not found for an unknown game without prediction work; rejects nonnumeric game identifiers; rejects unsupported market keys |
+
+Requirements checklist:
+
+1. SATISFIED in implementation/assertions: historical API requests only read saved success.
+2. SATISFIED in implementation/assertions: no success returns unavailable without work.
+3. SATISFIED in implementation/assertions: force refresh and request variants cannot bypass.
+4. SATISFIED in implementation/assertions: saved confidence/horizon/scores/Matchup remain frozen.
+5. SATISFIED in implementation/assertions: today/future behavior uses the existing pipeline.
+6. SATISFIED in implementation/assertions: authentication, validation and game isolation retained.
+7. SATISFIED in documentation: partner contract, availability reason and canonical rules updated.
+
+Endpoint × verb authorization/scope matrix:
+
+| Endpoint / verb | Case | Named test |
+| --- | --- | --- |
+| GET `/api/nhl-game-predictions` | Guest denied 401; wrong scope denied 403 for past dates | retains authentication and scope restrictions for saved past predictions |
+| Same | Scoped token allowed 200 for a saved past date | returns the latest saved past prediction without preparing or refreshing anything |
+| Same | Scoped token allowed 200 unavailable without stored success | returns unavailable for an unsaved past game without creating dependencies |
+| Same | Today/future guest and wrong scope denied | requires API authentication for new engine predictions; requires the NHL statistics scope for new engine predictions |
+| Organization/owner scope | Not applicable | Existing global NHL read scope; no tenant data or new permissions |
+
+Frontend component checklist: not applicable; no UI files changed.
+Per-file test count: `tests/Feature/NhlGamePredictionsMarketProbabilityApiTest.php`
+has **82** `it(...)` declarations, excluding dataset expansion. The previous past-date
+API creation case is removed from the horizon dataset because API creation is now
+prohibited for past dates; the public-score formula's negative-horizon unit case
+remains. No tests were run under the repository execution policy. Human command:
+
+```sh
+php artisan test tests/Feature/NhlGamePredictionsMarketProbabilityApiTest.php
+```
+
+Static review: `git diff --check` only. No production or queue operations performed.
+
+
 ## Home/away scenario records — November 11, 2026
 
 Approved scope: add current-season home records for the scheduled host and away
