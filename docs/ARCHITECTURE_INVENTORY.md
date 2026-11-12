@@ -4379,8 +4379,10 @@ and work timestamps; the Vue table formats seconds/minutes and reuses its pollin
 First worker starts survive retries. Missing timing remains unavailable.
 Authority: `docs/architecture/stats/NhlGamePredictionHistory.yaml`.
 
-Past-date partner prediction reads return the latest successful stored revision
-without rebuilding context, Matchup, market output or forecasts, including forced
-requests. Today/future requests retain the existing pipeline. Authority:
+Partner prediction reads for every date return the latest successful stored
+revision immediately with its original calculation timestamp and revision ID,
+without rebuilding context, Matchup, markets or forecasts. Only today/future
+requests without saved success enter preparation; past dates without success
+return unavailable. Independent prediction runs remain separate. Authority:
 `docs/architecture/stats/NhlGamePredictionResponseCache.yaml` and
 `docs/architecture/stats/NhlGamePredictionHistory.yaml`.

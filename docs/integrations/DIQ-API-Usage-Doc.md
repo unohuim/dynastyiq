@@ -1052,51 +1052,49 @@ nhl-stats:read
 Every successful prediction payload includes `prediction_available`. Consumers
 must check this field before reading prediction or market output.
 
-**Past games are read-only.** When the stored game date is earlier than today
-in `America/Toronto`, the API returns the latest successful saved prediction for
-that game (highest revision ID), whether published by the API or an admin run.
-It does not rebuild predictions, inputs, pregame context, Matchup statistics or
-markets, consult the response cache, or queue refresh work. `force_refresh` and
-model, goalie or market parameters cannot trigger a historical recalculation or
-replace the saved output. There is no `is_override` bypass. Saved timestamps,
-probabilities, scores, Matchup, `days_away` and public confidence remain frozen;
-the usual public-confidence response mapping still applies. Prior failed or
-unavailable attempts do not hide the latest successful prediction.
+**Saved predictions are returned first for every game date.** The API reads the
+latest successful saved prediction for that game (highest revision ID), whether
+published by the API or an admin run, and returns it immediately with HTTP 200.
+`meta.predicted_at` is the saved calculation timestamp in ISO 8601 format, not the
+request time. `meta.prediction_revision_id` identifies that calculation. Consumers
+can use this timestamp to decide when to request the payload again; a later request
+returns a newer revision if a separate prediction run has published one.
 
-If no successful revision exists, HTTP 200 returns
-`prediction_available: false`, `reason: historical_prediction_not_found`,
-`prediction: null`, and empty `market_probabilities` and `reasons`; no preparation
-or continuation is started. Existing authentication and input validation apply.
-Today and future dates retain the cache/preparation behavior described below,
-regardless of the game's live/final state. Manual admin historical runs remain
-available separately.
+This saved read does not consult response-cache freshness, prepare dependencies,
+rebuild Matchup or market statistics, recalculate the forecast, or queue refresh
+work. Changed model/lineup evidence and `force_refresh=1` do not delay or replace
+the saved response. Model, goalie and market parameters do not reprice saved
+predictions: the published output is returned as it was calculated. Prior failed
+or unavailable attempts do not hide the latest successful revision. Saved scores,
+probabilities, Matchup, `days_away` and public confidence remain frozen; the usual
+public-confidence response mapping still applies. No `is_override` bypass exists.
 
-New calculations are durably archived before publication. `meta.prediction_revision_id` identifies the saved calculation and `meta.predicted_at` is its calculation timestamp. Fresh and stale cache reads retain that identity; a successful recalculation receives a new revision. These additive fields do not change prediction or qualification math. Manual admin default-engine runs also publish through this pathway.
+**When no saved prediction exists:** today/future games retain the existing
+calculation/preparation process below. For dates before today in
+`America/Toronto`, HTTP 200 returns `prediction_available: false`,
+`reason: historical_prediction_not_found`, `prediction: null`, and empty
+`market_probabilities` and `reasons`, with no preparation or continuation.
+Authentication and request validation still apply. Independent admin/worker
+prediction runs remain available and publish new immutable revisions; these runs
+do not block API reads of an already saved prediction.
 
+New calculations are durably archived before publication. Each gets a new revision
+ID and calculation timestamp. Saved reads retain both. No migration is required.
+
+For the calculation path used only when no successful saved prediction exists,
 `meta.cache` is `fresh` for a current cached or synchronous response and `stale`
-only when DynastyIQ has queued a rebuild of a response no more than three hours old
-whose input fingerprint still matches. Algorithm configuration, selected-model, source-result and lineup/starter changes invalidate previous responses;
-an outdated fingerprint is never served as stale.
-Routine sync timestamps and unchanged lineup observations do not invalidate a
-prediction. Actual prior-result changes, selected lineup/starter changes and
-completed derived-fact import publications do. This does not change the HTTP
-200/202 contract. Responses remain fresh for one minute and eligible for stale
-reuse with a queued refresh for up to three hours.
+for an eligible response with a queued refresh. This cache field is not supplied
+by the saved-revision read; use `meta.predicted_at` to assess the saved output's age.
+The underlying shared calculation cache retains its one-minute fresh and
+three-hour stale windows, source fingerprints and independent worker behavior.
 
-For today or a future game, request a new prediction immediately with `force_refresh=1`:
-
-```text
-GET /api/nhl-game-predictions?nhl_game_id=2026020001&force_refresh=1
-```
-
-This optional boolean accepts `1`/`0` query values, defaults to false, and uses
-the existing bearer-token authentication and `nhl-stats:read` scope. It bypasses
-the prediction response cache, not underlying provider/source-data caches, and
-does not alter engine qualification. Use it after prediction-code changes as well
-as for manual refreshes. Successful refreshes update the normal cache entry.
+`force_refresh` remains an optional validated boolean (`1`/`0`, default false).
+It bypasses response-cache reuse only when the API has no saved prediction and
+is eligible to calculate. It never forces replacement of an existing saved
+prediction. Request a separate prediction run to publish newer results.
 
 Only one build per game runs under the shared 600-second build-lock lease.
-When pregame context or prepared inputs are missing, another build owns the lock,
+When no saved prediction exists and pregame context or prepared inputs are missing, another build owns the lock,
 or source inputs change during calculation, DynastyIQ queues the required work
 and returns HTTP `202` with `Retry-After: 15`:
 
@@ -1140,7 +1138,7 @@ endpoint after the indicated delay, using bounded retries. HTTP `202` is pending
 work, not an unqualified pick; it contains no new prediction revision. HTTP `200`
 with `prediction_available: true` contains the published prediction and revision.
 `force_refresh=1` uses this same preparation flow when dependencies are missing.
-An existing saved prediction does not substitute for missing current inputs.
+An existing successful saved prediction is returned immediately, even if current inputs would need preparation for a separate recalculation.
 Queue admission failures remain service errors. This does not create a G8 UI
 control automatically.
 

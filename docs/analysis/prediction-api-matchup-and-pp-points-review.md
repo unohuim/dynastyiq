@@ -1,5 +1,60 @@
 # Prediction API Matchup and player PP points
 
+## Saved-first API responses for all dates — November 12, 2026
+
+This approved follow-up supersedes the date-limited read behavior below. All
+partner prediction requests return the latest successful saved game revision
+immediately, including today and future dates. The stored `meta.predicted_at`
+and revision ID identify when that forecast was calculated. Changed inputs,
+cache age, requested variants and force_refresh cannot hold up the saved response.
+The read starts no refresh work; independent manual/worker recalculations remain
+available and subsequent reads pick up their published revisions. With no saved
+success, today/future requests retain preparation; past requests remain unavailable.
+No migration, queue routing change or scoring change is introduced.
+
+Files changed: `app/Http/Controllers/Api/NhlGamePredictionsController.php`,
+`tests/Feature/NhlGamePredictionsMarketProbabilityApiTest.php`,
+`docs/integrations/DIQ-API-Usage-Doc.md`,
+`docs/architecture/stats/NhlGamePredictionResponseCache.yaml`,
+`docs/architecture/stats/NhlGamePredictionHistory.yaml`,
+`docs/ARCHITECTURE_INVENTORY.md`, and this review document.
+
+| Minimum coverage | Status | Named test |
+| --- | --- | --- |
+| Initial request → stored revision → saved HTTP read with frozen timestamp, scores and public confidence, despite changed algorithm/force/variant/cache flush | COVERED (authored) | immediately returns saved predictions despite new inputs or forced refresh for any game date (today/tomorrow/next-week dataset) |
+| Expired cache cannot cause waiting, revision creation or refresh jobs | COVERED (authored) | returns saved predictions beyond cache expiry without starting refresh work |
+| Independent explicit publication remains possible and API returns new revision | COVERED (authored) | appends a fresh immutable revision through a separate explicit calculation; invalidates earlier algorithm cache entries while retaining the previous immutable revision |
+| Missing current/future prediction retains preparation/continuation | COVERED (authored) | returns an explicit preparing response and queues automatic prediction continuation; automatically saves and publishes the prediction when queued dependencies become ready |
+| Past-date read and absence retain resource guard | COVERED (authored) | returns the latest saved past prediction without preparing or refreshing anything; returns unavailable for an unsaved past game without creating dependencies |
+| Public confidence mapping and missing-score behavior | COVERED (authored) | returns public confidence for every market on initial and saved API reads without rewriting internal evidence; does not substitute internal confidence when a saved public score is missing |
+
+Requirements checklist:
+1. SATISFIED in code/assertions: saved predictions return first for every date.
+2. SATISFIED in code/assertions: original timestamp and revision ID returned unchanged.
+3. SATISFIED in code/assertions: API saved reads are independent of refresh work.
+4. SATISFIED in code/assertions: absence retains existing date-appropriate behavior.
+5. SATISFIED in docs: API usage and canonical architecture describe precedence.
+
+| Endpoint × verb | Auth/scope case | Named test |
+| --- | --- | --- |
+| GET `/api/nhl-game-predictions` | Guest 401 | requires API authentication for new engine predictions |
+| Same | Wrong scope 403 | requires the NHL statistics scope for new engine predictions |
+| Same | Scoped read 200, initial and saved | immediately returns saved predictions despite new inputs or forced refresh for any game date |
+| Same | Past-date guest and wrong scope denied | retains authentication and scope restrictions for saved past predictions |
+| Organization/ownership | N/A | Existing global NHL read scope; no scope changes |
+
+Frontend checklist: N/A; no frontend files changed.
+Per-file count: `tests/Feature/NhlGamePredictionsMarketProbabilityApiTest.php`
+contains **83** test declarations, above the twenty-test minimum. Existing tests
+that exercise algorithm/configuration invalidation now explicitly invoke the shared
+calculation boundary before reading the newly published revision over HTTP; they
+no longer rely on GET to force recalculation. Test execution is outstanding under
+repository policy. `git diff --check` passes. Human verification command remains:
+
+```sh
+php artisan test tests/Feature/NhlGamePredictionsMarketProbabilityApiTest.php
+```
+
 ## Read-only past-date API requests — November 12, 2026
 
 Approved change: past-date partner requests return the latest successful stored

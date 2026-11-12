@@ -50,22 +50,25 @@ class NhlGamePredictionsController extends Controller
         unset($input['force_refresh']);
 
         $game = NhlGame::query()->findOrFail((int) $input['nhl_game_id']);
-        if ($game->game_date->toDateString() < now('America/Toronto')->toDateString()) {
-            // Historical API reads never admit prediction work, even with refresh or override inputs.
-            $prediction = $history->latestSaved((int) $input['nhl_game_id']) ?? [
-                'prediction_available' => false,
-                'pick_qualified' => false,
-                'reason' => 'historical_prediction_not_found',
-                'game' => ['nhl_game_id' => (int) $input['nhl_game_id']],
-                'prediction' => null,
-                'market_probabilities' => [],
-                'reasons' => [],
-            ];
-        } else {
-            $prediction = $cache->respond((int) $input['nhl_game_id'], $input,
-                fn (): array => $payload->build((int) $input['nhl_game_id'], $input), $forceRefresh);
-            if (! ($prediction['prediction_available'] ?? false)) {
-                $prediction['matchup'] = $pages->matchup($game);
+        $prediction = $history->latestSaved((int) $input['nhl_game_id']);
+        // Return saved publication before consulting cache age, changed inputs or refresh requests.
+        if ($prediction === null) {
+            if ($game->game_date->toDateString() < now('America/Toronto')->toDateString()) {
+                $prediction = [
+                    'prediction_available' => false,
+                    'pick_qualified' => false,
+                    'reason' => 'historical_prediction_not_found',
+                    'game' => ['nhl_game_id' => (int) $input['nhl_game_id']],
+                    'prediction' => null,
+                    'market_probabilities' => [],
+                    'reasons' => [],
+                ];
+            } else {
+                $prediction = $cache->respond((int) $input['nhl_game_id'], $input,
+                    fn (): array => $payload->build((int) $input['nhl_game_id'], $input), $forceRefresh);
+                if (! ($prediction['prediction_available'] ?? false)) {
+                    $prediction['matchup'] = $pages->matchup($game);
+                }
             }
         }
 

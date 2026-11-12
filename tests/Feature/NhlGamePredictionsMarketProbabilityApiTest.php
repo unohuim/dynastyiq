@@ -92,6 +92,13 @@ beforeEach(function (): void {
             '/api/nhl-game-predictions?'.http_build_query(['nhl_game_id' => 2026020001, ...$query])
         );
     };
+    // Explicit calculation represents an independent admin/worker action, never an API read.
+    $this->publishPrediction = function (array $query = []): array {
+        $input = ['nhl_game_id' => '2026020001', ...$query];
+
+        return app(\App\Services\NhlGamePredictionResponseCache::class)->respond(2026020001, $input,
+            fn (): array => app(NhlGamePredictionPayload::class)->build(2026020001, $input), true);
+    };
     $this->predictionRequest = function (array $query = [], float $awayGoals = 2.4, float $homeGoals = 3.2) {
         $current = ($this->calculate)();
         foreach (['away' => $awayGoals, 'home' => $homeGoals] as $venue => $goals) {
@@ -370,22 +377,23 @@ it('reuses a fresh response without appending another revision', function (): vo
     expect(DB::table('nhl_game_prediction_revisions')->count())->toBe(1);
 });
 
-it('appends a fresh immutable revision when explicitly refreshed', function (): void {
+it('appends a fresh immutable revision through a separate explicit calculation', function (): void {
     $first = ($this->requestPrediction)()->assertOk()->json('meta.prediction_revision_id');
-    $next = ($this->requestPrediction)(['force_refresh' => true])->assertOk()->json('meta.prediction_revision_id');
+    $next = ($this->publishPrediction)()['meta']['prediction_revision_id'];
     expect($next)->toBeGreaterThan($first)->and(DB::table('nhl_game_prediction_revisions')->count())->toBe(2);
 });
 
 it('invalidates cached responses when the new algorithm configuration changes', function (): void {
     $first = ($this->requestPrediction)()->assertOk()->json('meta.prediction_revision_id');
     config(['nhl-custom-prediction.opponent_opportunity_weight' => 0.5]);
+    ($this->publishPrediction)();
     $next = ($this->requestPrediction)()->assertOk()->json('meta.prediction_revision_id');
     expect($next)->toBeGreaterThan($first);
 });
 
 it('retains explicit goalie request variants separately from canonical results', function (): void {
     ($this->requestPrediction)()->assertOk();
-    ($this->requestPrediction)(['home_goalie_id' => 999])->assertOk();
+    ($this->publishPrediction)(['home_goalie_id' => 999]);
     expect(DB::table('nhl_game_prediction_revisions')->where('is_canonical', true)->count())->toBe(1)
         ->and(DB::table('nhl_game_prediction_revisions')->where('is_canonical', false)->count())->toBe(1);
 });
@@ -416,18 +424,18 @@ it('returns current algorithm provenance in saved revision summaries', function 
     expect(json_decode($row->summary, true)['algorithm_version'])->toBe('custom_ev_pp_v4');
 });
 
-it('reuses a two hour old API revision with a queued refresh and replaces it after three hours', function (): void {
-    $first = ($this->requestPrediction)()->assertOk()->json('meta.prediction_revision_id');
-    $this->travel(7200)->seconds();
-    ($this->requestPrediction)()->assertOk()->assertJsonPath('meta.cache', 'stale')
-        ->assertJsonPath('meta.prediction_revision_id', $first);
+it('returns saved predictions beyond cache expiry without starting refresh work', function (): void {
+    $response = ($this->requestPrediction)()->assertOk();
+    $id = $response->json('meta.prediction_revision_id');
+    $at = $response->json('meta.predicted_at');
+    Bus::fake();
+    foreach ([7200, 3601] as $seconds) {
+        $this->travel($seconds)->seconds();
+        ($this->requestPrediction)()->assertOk()->assertJsonPath('meta.prediction_revision_id', $id)
+            ->assertJsonPath('meta.predicted_at', $at)->assertJsonMissingPath('status');
+    }
     $this->assertDatabaseCount('nhl_game_prediction_revisions', 1);
-    Bus::assertDispatchedTimes(\App\Jobs\RefreshNhlGamePredictionJob::class, 1);
-    $this->travel(3601)->seconds();
-    $second = ($this->requestPrediction)()->assertOk()->assertJsonPath('meta.cache', 'fresh')
-        ->json('meta.prediction_revision_id');
-    expect($second)->not->toBe($first);
-    $this->assertDatabaseCount('nhl_game_prediction_revisions', 2);
+    Bus::assertNothingDispatched();
 });
 
 it('publishes L5 adjusted scores and probabilities while archiving its source evidence privately', function (): void {
@@ -455,6 +463,7 @@ it('invalidates earlier algorithm cache entries while retaining the previous imm
     $original = DB::table('nhl_game_prediction_revisions')->find($first);
     config(['nhl-custom-prediction.algorithm_version' => 'custom_ev_pp_v4',
         'nhl-custom-prediction.team_l5_win_pct_weight' => 0.50]);
+    ($this->publishPrediction)();
     $second = ($this->requestPrediction)()->assertOk()
         ->assertJsonPath('inputs.algorithm_version', 'custom_ev_pp_v4')->json('meta.prediction_revision_id');
     expect($second)->not->toBe($first)
@@ -478,6 +487,7 @@ it('publishes reliability converted goals as a new revision without exposing pri
     $this->input['teams']['away']['players'][100]['buckets']['EV']['B']['goal_source'] = $conversion['source'];
     $this->input['teams']['away']['players'][100]['buckets']['EV']['B']['goal_conversion'] = $conversion['evidence'];
     $expected = ($this->calculate)();
+    ($this->publishPrediction)();
     $response = ($this->requestPrediction)()->assertOk()
         ->assertJsonPath('inputs.algorithm_version', 'custom_ev_pp_v4')
         ->assertJsonPath('prediction.predicted_score.away', round($expected['teams']['away']['goals'], 2))
@@ -726,6 +736,7 @@ it('retains a published revision after timestamp only syncs and rebuilds after a
     $this->assertDatabaseCount('nhl_game_prediction_revisions', 1);
     $this->travel(1)->seconds();
     DB::table('nhl_game_summaries')->where('nhl_game_id', 2025020001)->update(['g' => 2, 'updated_at' => now()]);
+    ($this->publishPrediction)();
     $second = ($this->requestPrediction)()->assertOk()->json('meta.prediction_revision_id');
     expect($second)->not->toBe($first);
     $this->assertDatabaseCount('nhl_game_prediction_revisions', 2);
@@ -879,7 +890,7 @@ it('publishes the worker-prepared expected values through revision storage and s
 });
 
 
-it('returns public confidence for every market on fresh and stale API reads without rewriting internal evidence', function (): void {
+it('returns public confidence for every market on initial and saved API reads without rewriting internal evidence', function (): void {
     $first = ($this->requestPrediction)(['markets' => ['moneyline', 'puckline', 'total']])->assertOk();
     $public = $first->json('prediction.public_confidence_score');
     foreach ($first->json('market_probabilities') as $market) {
@@ -889,20 +900,16 @@ it('returns public confidence for every market on fresh and stale API reads with
     $savedBefore = DB::table('nhl_game_prediction_revisions')->where('id', $id)->value('payload');
     $this->travel(61)->seconds();
     ($this->requestPrediction)(['markets' => ['moneyline', 'puckline', 'total']])->assertOk()
-        ->assertJsonPath('meta.prediction_revision_id', $id)->assertJsonPath('meta.cache', 'stale')
+        ->assertJsonPath('meta.prediction_revision_id', $id)
         ->assertJsonPath('prediction.confidence_score', $public)->assertJsonMissingPath('prediction.confidence_inputs');
     expect(DB::table('nhl_game_prediction_revisions')->where('id', $id)->value('payload'))->toBe($savedBefore);
     $this->assertDatabaseCount('nhl_game_prediction_revisions', 1);
 });
 
-it('does not substitute internal confidence when an older cached public score is missing', function (): void {
+it('does not substitute internal confidence when a saved public score is missing', function (): void {
     $response = ($this->requestPrediction)()->assertOk();
-    $input = ['nhl_game_id' => '2026020001'];
-    $key = 'nhl:game-prediction:pregame-dependencies-v18:2026020001:'.hash('sha256', json_encode($input, JSON_THROW_ON_ERROR));
-    $cached = Cache::get($key);
-    expect($cached)->toBeArray();
-    $cached['payload']['prediction']['public_confidence_score'] = null;
-    Cache::put($key, $cached, 10800);
+    DB::table('nhl_game_prediction_revisions')->where('id', $response->json('meta.prediction_revision_id'))
+        ->update(['public_confidence_score' => null]);
     ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction.confidence_score', null)
         ->assertJsonPath('market_probabilities.0.confidence_score', null)
         ->assertJsonPath('meta.prediction_revision_id', $response->json('meta.prediction_revision_id'));
@@ -932,8 +939,7 @@ it('stores last five and last ten special teams percentages in the completed API
 
 it('returns the latest saved past prediction without preparing or refreshing anything', function (): void {
     $first = ($this->requestPrediction)()->assertOk()->json('meta.prediction_revision_id');
-    $latest = ($this->requestPrediction)(['force_refresh' => true, 'home_goalie_id' => 123])
-        ->assertOk()->json('meta.prediction_revision_id');
+    $latest = ($this->publishPrediction)(['home_goalie_id' => 123])['meta']['prediction_revision_id'];
     expect($latest)->not->toBe($first);
     $before = DB::table('nhl_game_prediction_revisions')->orderBy('id')->get()->toJson();
     $saved = app(\App\Services\NhlGamePredictionHistory::class)->payload(
@@ -1011,3 +1017,24 @@ it('returns not found for an unknown game without prediction work', function ():
     $this->withToken($this->token)->getJson('/api/nhl-game-predictions?nhl_game_id=9999999999')->assertNotFound();
     Bus::assertNothingDispatched();
 });
+
+
+it('immediately returns saved predictions despite new inputs or forced refresh for any game date', function (string $date): void {
+    $this->game->update(['game_date' => $date]);
+    $first = ($this->requestPrediction)()->assertOk();
+    $id = $first->json('meta.prediction_revision_id');
+    $row = DB::table('nhl_game_prediction_revisions')->find($id);
+    Cache::flush();
+    Bus::fake();
+    config(['nhl-custom-prediction.algorithm_version' => 'different-algorithm']);
+    $this->mock(NhlGamePredictionPayload::class)->shouldNotReceive('build');
+    $this->withToken($this->token)->getJson('/api/nhl-game-predictions?nhl_game_id=2026020001&force_refresh=1&home_goalie_id=999&total=10')
+        ->assertOk()->assertJsonPath('meta.prediction_revision_id', $id)
+        ->assertJsonPath('meta.predicted_at', $first->json('meta.predicted_at'))
+        ->assertJsonPath('prediction', $first->json('prediction'))
+        ->assertJsonPath('matchup', $first->json('matchup'))
+        ->assertJsonPath('market_probabilities', $first->json('market_probabilities'));
+    expect(DB::table('nhl_game_prediction_revisions')->find($id))->toEqual($row);
+    $this->assertDatabaseCount('nhl_game_prediction_revisions', 1);
+    Bus::assertNothingDispatched();
+})->with(['today' => '2026-11-05', 'tomorrow' => '2026-11-06', 'next week' => '2026-11-12']);
