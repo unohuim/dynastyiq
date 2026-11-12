@@ -187,3 +187,34 @@ at its existing cursor, then advances with diagnostics comfortably below PHP's
 512 MB limit. Any recovery of reserved jobs, exhausted deadlines or worker
 restarts is a separate explicitly approved operational action. Existing saved
 predictions, pregame context and algorithm configuration must remain unchanged.
+
+
+### Timestamp compatibility correction — November 12, 2026
+
+Production legacy context evidence contains an Illuminate Support Carbon object
+at `evidence.{game}.history_identity.model.1`. The first partition encoder rejected
+this model update timestamp; the preceding legacy checkpoint remained intact.
+The approved correction encodes known native/Carbon date types as scalar records
+and restores their original class, instant, microseconds and named timezone.
+General object deserialization remains restricted to stdClass. Unsupported values
+now identify their path/type; arbitrary date classes remain rejected. Prediction
+math, source JSON fingerprints, cursor, queue settings and schema stay unchanged.
+No production jobs are recovered or rerun by this correction.
+
+Changed files: `app/Services/NhlCustomGameForecast.php`,
+`tests/Feature/NhlCustomGamePredictionTest.php`,
+`docs/architecture/stats/NhlCustomGamePrediction.yaml`, and this review document.
+
+| Minimum coverage | Status | Named test |
+| --- | --- | --- |
+| Five supported date types, microseconds, named zone and DST offset; JSON evidence unchanged | COVERED (authored) | preserves supported timestamp classes precision and DST timezone through checkpoint parts (five-case dataset) |
+| Actual legacy evidence structure and 3,275 cursor survive conversion | COVERED (authored) | converts the production legacy evidence timestamp while preserving its history cursor and fingerprint |
+| Arbitrary object/date rejection and actionable path/type | COVERED (authored) | rejects arbitrary checkpoint objects and date classes with an identifiable error |
+
+Requirements: 1. SATISFIED in code/assertions: accept the actual Carbon model
+timestamp. 2. SATISFIED: preserve class, date values, timezone, precision and JSON
+fingerprint. 3. SATISFIED: keep prior cursor and restrict reconstructed types.
+Endpoint/auth/scope matrix above remains applicable; no HTTP or authorization
+change. Frontend checklist: N/A. The touched Pest file now has **131** declarations;
+all exceed the twenty-test minimum. Tests were not run under repository policy.
+No migration required. Deployment and production recovery remain separate.

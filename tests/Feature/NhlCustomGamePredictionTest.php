@@ -1926,3 +1926,45 @@ it('requires an intact saved context when its target phase is reached', function
     Cache::forget($part['key']);
     expect(fn () => ($this->checkpointRead)('required-context'))->toThrow(\DomainException::class, 'missing or corrupt');
 });
+
+
+it('preserves supported timestamp classes precision and DST timezone through checkpoint parts', function (string $class): void {
+    $at = (new $class('2026-11-01 01:30:45.123456-05:00'))->setTimezone(new \DateTimeZone('America/Toronto'));
+    $work = ['fingerprint' => 'time', 'phase' => 'context',
+        'evidence' => [2026020309 => ['history_identity' => ['model' => [2, $at, ['20232024', '20242025', '20252026']]]]]];
+    $before = json_encode($work['evidence'], JSON_THROW_ON_ERROR);
+    ($this->checkpointWrite)('date-parts', $work);
+    $restored = ($this->checkpointRead)('date-parts');
+    $actual = $restored['evidence'][2026020309]['history_identity']['model'][1];
+    expect($actual::class)->toBe($class)->and($actual->format('Y-m-d H:i:s.uP'))->toBe($at->format('Y-m-d H:i:s.uP'))
+        ->and($actual->getTimezone()->getName())->toBe('America/Toronto')
+        ->and(json_encode($restored['evidence'], JSON_THROW_ON_ERROR))->toBe($before);
+})->with([\DateTime::class, \DateTimeImmutable::class, \Carbon\Carbon::class,
+    \Carbon\CarbonImmutable::class, \Illuminate\Support\Carbon::class]);
+
+it('converts the production legacy evidence timestamp while preserving its history cursor and fingerprint', function (): void {
+    $reader = new NhlCustomGamePredictionInputs();
+    $state = $reader->checkpointState();
+    $state['forecastWork'] = ['phase' => 'history', 'cursor' => 3275, 'contexts' => []];
+    $reader->restoreCheckpointState($state);
+    $evidence = [2026020309 => ['history_identity' => ['model' => [2,
+        \Illuminate\Support\Carbon::parse('2026-10-08 20:09:19.000000', 'UTC'), ['20232024', '20242025', '20252026']]]]];
+    Cache::put('date-legacy:work', ['fingerprint' => 'unchanged', 'phase' => 'inputs',
+        'evidence' => $evidence, 'reader' => $reader], 21600);
+    ($this->checkpointWrite)('date-legacy', ($this->checkpointRead)('date-legacy'));
+    $restored = ($this->checkpointRead)('date-legacy');
+    expect($restored['reader']->checkpointState()['forecastWork']['cursor'])->toBe(3275)
+        ->and($restored['fingerprint'])->toBe('unchanged')
+        ->and(json_encode($restored['evidence'], JSON_THROW_ON_ERROR))->toBe(json_encode($evidence, JSON_THROW_ON_ERROR))
+        ->and(Cache::get('date-legacy:work')['checkpoint_format'])->toBe(1);
+});
+
+it('rejects arbitrary checkpoint objects and date classes with an identifiable error', function (): void {
+    expect(fn () => ($this->checkpointWrite)('unsupported-object', ['fingerprint' => 'same',
+        'phase' => 'context', 'evidence' => ['unexpected' => new \DateTimeZone('UTC')]]))
+        ->toThrow(\DomainException::class, 'work.evidence.unexpected (DateTimeZone)');
+    $forecast = new \App\Services\NhlCustomGameForecast();
+    expect(fn () => (new ReflectionMethod($forecast, 'restoreCheckpointDate'))
+        ->invoke($forecast, ['class' => \stdClass::class, 'time' => '2026-11-05', 'timezone' => 'UTC']))
+        ->toThrow(\DomainException::class, 'Unsupported date class');
+});

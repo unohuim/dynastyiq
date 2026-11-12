@@ -21,6 +21,13 @@ class NhlCustomGameForecast
     private const CHECKPOINT_FORMAT = 1;
     private const CHECKPOINT_PART_BYTES = 524288;
     private const CHECKPOINT_VALUE_BYTES = 32768;
+    private const CHECKPOINT_DATE_CLASSES = [
+        \DateTime::class,
+        \DateTimeImmutable::class,
+        \Carbon\Carbon::class,
+        \Carbon\CarbonImmutable::class,
+        \Illuminate\Support\Carbon::class,
+    ];
 
     /** Resolve the selected complete model, defaulting explicitly to SAT_V2. */
     public function model(?int $id = null, ?string $season = null): NhlModelRun
@@ -325,6 +332,12 @@ class NhlCustomGameForecast
      */
     private function checkpointValues(mixed $value, array $path = []): \Generator
     {
+        if ($value instanceof \DateTimeInterface && in_array($value::class, self::CHECKPOINT_DATE_CLASSES, true)) {
+            yield [$path, 'datetime', ['class' => $value::class, 'time' => $value->format('Y-m-d H:i:s.uP'),
+                'timezone' => $value->getTimezone()->getName()]];
+
+            return;
+        }
         $budget = 256;
         $bytes = self::CHECKPOINT_VALUE_BYTES;
         if ($this->smallCheckpointValue($value, $budget, $bytes)) {
@@ -339,7 +352,8 @@ class NhlCustomGameForecast
                 yield [$path, $offset === 0 ? 'value' : 'append', substr($value, $offset, self::CHECKPOINT_VALUE_BYTES)];
             }
         } else {
-            throw new DomainException('Unsupported value in prediction preparation checkpoint.');
+            throw new DomainException('Unsupported value in prediction preparation checkpoint at '
+                .implode('.', $path).' ('.get_debug_type($value).').');
         }
     }
 
@@ -420,6 +434,7 @@ class NhlCustomGameForecast
                 } else {
                     $cursor = match ($kind) {
                         'array' => [], 'object' => new \stdClass(), 'value' => $value,
+                        'datetime' => $this->restoreCheckpointDate($value),
                         default => throw new DomainException('Invalid prediction preparation checkpoint value.'),
                     };
                 }
@@ -428,6 +443,19 @@ class NhlCustomGameForecast
         }
 
         return $state;
+    }
+
+    /** Restore only known date classes, preserving the instant, microseconds, timezone and mutability.
+     * @param array{class:string,time:string,timezone:string} $value
+     */
+    private function restoreCheckpointDate(array $value): \DateTimeInterface
+    {
+        $class = $value['class'] ?? null;
+        if (! in_array($class, self::CHECKPOINT_DATE_CLASSES, true)) {
+            throw new DomainException('Unsupported date class in prediction preparation checkpoint.');
+        }
+
+        return (new $class($value['time']))->setTimezone(new \DateTimeZone($value['timezone']));
     }
 
     /** Clear only this preparation's published parts; incomplete generations expire naturally. */
