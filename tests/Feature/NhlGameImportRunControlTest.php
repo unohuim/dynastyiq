@@ -525,3 +525,85 @@ describe('scoped on-ice rebuilds', function (): void {
         expect($run['progress']['completed_stage_rows'])->toBe(0)->and($run['facts'])->toBe([]);
     });
 });
+
+
+it('admits a discovery without borrowing historical stale errors and returns its own status over HTTP', function (): void {
+    $legacy = ($this->progress)('error');
+    DB::table('nhl_import_progress')->where('id', $legacy)->update([
+        'run_id' => null, 'game_date' => '2026-10-20', 'last_error' => 'stale',
+    ]);
+    $before = DB::table('nhl_import_progress')->find($legacy);
+    $response = $this->actingAs($this->admin)->postJson(route('admin.nhl-game-imports.discover'), ['date' => '2026-10-20'])
+        ->assertAccepted()->assertJsonPath('run.status', 'queued')
+        ->assertJsonPath('run.progress.last_error', null)->assertJsonPath('run.progress.total_stage_rows', 0);
+    $id = $response->json('run.id');
+    $this->assertDatabaseHas('nhl_game_import_runs', ['id' => $id, 'action' => 'discover', 'status' => 'queued', 'last_error' => null]);
+    $read = $this->getJson(route('admin.nhl-game-imports.status'))->assertOk();
+    $run = collect($read->json('runs'))->firstWhere('id', $id);
+    expect($run['status'])->toBe('queued')->and($run['progress']['failed_stage_rows'])->toBe(0)
+        ->and($run['progress']['last_error'])->toBeNull()
+        ->and(DB::table('nhl_import_progress')->find($legacy))->toEqual($before);
+    Bus::assertDispatched(NhlDiscoveryJob::class, fn ($job): bool => $job->runId === $id);
+    Bus::assertNotDispatched(NhlOrchestratorJob::class);
+});
+
+it('retains a discovery lifecycle before its first stage despite other errors in the date range', function (string $status): void {
+    $legacy = ($this->progress)('error');
+    DB::table('nhl_import_progress')->where('id', $legacy)->update(['run_id' => null, 'last_error' => 'stale']);
+    $this->run->update(['status' => $status, 'last_error' => $status === 'failed' ? 'Discovery request failed.' : null]);
+    $response = $this->actingAs($this->admin)->getJson(route('admin.nhl-game-imports.status'))->assertOk();
+    $run = collect($response->json('runs'))->firstWhere('id', $this->run->id);
+    expect($run['status'])->toBe($status)->and($run['progress']['total_stage_rows'])->toBe(0)
+        ->and($run['progress']['failed_stage_rows'])->toBe(0)
+        ->and($run['progress']['last_error'])->toBe($status === 'failed' ? 'Discovery request failed.' : null);
+})->with(['queued', 'running', 'completed', 'failed']);
+
+it('excludes overlapping runs and unowned stages once discovery seeds its first own stage', function (): void {
+    $other = NhlGameImportRun::create(['action' => 'discover', 'mode' => 'date', 'status' => 'failed',
+        'start_date' => '2026-10-22', 'end_date' => '2026-10-22']);
+    $foreign = ($this->progress)('error');
+    DB::table('nhl_import_progress')->where('id', $foreign)->update(['run_id' => $other->id, 'last_error' => 'Foreign failure.']);
+    $legacy = ($this->progress)('error', 2026020002);
+    DB::table('nhl_import_progress')->where('id', $legacy)->update(['run_id' => null, 'last_error' => 'stale']);
+    ($this->progress)('scheduled', 2026020003);
+    $response = $this->actingAs($this->admin)->getJson(route('admin.nhl-game-imports.status'))->assertOk();
+    $run = collect($response->json('runs'))->firstWhere('id', $this->run->id);
+    expect($run['status'])->toBe('running')->and($run['progress']['total_stage_rows'])->toBe(1)
+        ->and($run['progress']['scheduled_stage_rows'])->toBe(1)
+        ->and($run['progress']['failed_stage_rows'])->toBe(0)->and($run['progress']['last_error'])->toBeNull();
+});
+
+it('keeps genuine current run processing failures visible instead of showing historical errors', function (): void {
+    $legacy = ($this->progress)('error');
+    DB::table('nhl_import_progress')->where('id', $legacy)->update(['run_id' => null, 'last_error' => 'stale']);
+    $this->run->update(['payload' => ['processing_started_at' => now()->toIso8601String()]]);
+    $own = ($this->progress)('error');
+    DB::table('nhl_import_progress')->where('id', $own)->update(['last_error' => 'Current PBP failure.']);
+    $response = $this->actingAs($this->admin)->getJson(route('admin.nhl-game-imports.status'))->assertOk();
+    $run = collect($response->json('runs'))->firstWhere('id', $this->run->id);
+    expect($run['status'])->toBe('failed')->and($run['progress']['total_stage_rows'])->toBe(1)
+        ->and($run['progress']['last_error'])->toBe('Current PBP failure.');
+});
+
+it('does not borrow old stage rows when a processed discovery no longer owns progress', function (): void {
+    $legacy = ($this->progress)('error');
+    DB::table('nhl_import_progress')->where('id', $legacy)->update(['run_id' => null, 'last_error' => 'stale']);
+    $this->run->update(['payload' => ['processing_started_at' => now()->toIso8601String()]]);
+    $response = $this->actingAs($this->admin)->getJson(route('admin.nhl-game-imports.status'))->assertOk();
+    $run = collect($response->json('runs'))->firstWhere('id', $this->run->id);
+    expect($run['status'])->toBe('running')->and($run['progress']['total_stage_rows'])->toBe(0)
+        ->and($run['progress']['last_error'])->toBeNull();
+});
+
+it('protects discovery status reads from guests and non-admin users', function (): void {
+    $this->getJson(route('admin.nhl-game-imports.status'))->assertUnauthorized();
+    $this->actingAs(User::factory()->create())->getJson(route('admin.nhl-game-imports.status'))->assertForbidden();
+});
+
+
+it('protects discovery admission from guests and non-admin users', function (): void {
+    $this->postJson(route('admin.nhl-game-imports.discover'), ['date' => '2026-10-20'])->assertUnauthorized();
+    $this->actingAs(User::factory()->create())->postJson(route('admin.nhl-game-imports.discover'), ['date' => '2026-10-20'])
+        ->assertForbidden();
+    Bus::assertNothingDispatched();
+});

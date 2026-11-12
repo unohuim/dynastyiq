@@ -2144,24 +2144,18 @@ class NhlGameImportController extends Controller
         ];
     }
 
+    /** Keep discovery progress owned by its run, including before the first stage is seeded. */
     private function progressQueryForRun(NhlGameImportRun $run, ?string $alias = null)
     {
         $table = $alias ? "nhl_import_progress as {$alias}" : 'nhl_import_progress';
         $query = DB::table($table);
         $prefix = $alias ? "{$alias}." : '';
 
-        if ($this->hasRunScopedProgress($run)) {
+        if ($run->action === NhlGameImportRun::ACTION_DISCOVER || $this->hasRunScopedProgress($run)) {
             return $query->where("{$prefix}run_id", $run->id);
         }
 
         if ($run->action === NhlGameImportRun::ACTION_REPAIR) {
-            return $query->whereRaw('1 = 0');
-        }
-
-        if (
-            $run->action === NhlGameImportRun::ACTION_DISCOVER
-            && (bool) (($run->payload ?? [])['processing_started_at'] ?? false)
-        ) {
             return $query->whereRaw('1 = 0');
         }
 

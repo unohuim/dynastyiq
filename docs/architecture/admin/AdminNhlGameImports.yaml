@@ -41,6 +41,7 @@ rules:
   - Processing requests must ask the NHL import orchestrator to fill active game slots and must not directly call import services.
   - NhlGameImportRun records describe admin requests, not individual NHL stage rows.
   - The admin status payload must derive pipeline progress from nhl_import_progress.
+  - Discovery cards read stage counts, stage errors and game-row progress only from their own nhl_import_progress.run_id, including before any stages have been seeded and after processing rows are reassigned. Never borrow date-range legacy or another run's stage rows to populate a discovery. A discovery with no owned rows retains its lifecycle and own run-level error; historical errors remain intact on their owning records.
   - Discovery rows should present known discovery facts until processing starts, but discovery status must come from the discovery run lifecycle instead of treating newly seeded stage rows as proof that discovery is complete.
   - Discovery day jobs must mark their date resolved on the run payload so range discovery remains running until every queued discovery date has resolved.
   - Processing should be launched from a discovery run row so the selected date range is explicit.
