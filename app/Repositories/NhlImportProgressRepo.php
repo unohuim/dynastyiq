@@ -6,10 +6,102 @@ namespace App\Repositories;
 
 use App\Events\NhlGameImportStatusUpdated;
 use App\Models\NhlGameImportRun;
+use App\Models\NhlGameValidation;
 use Illuminate\Support\Facades\DB;
 
 class NhlImportProgressRepo
 {
+    /** Publish the committed read projection independently of broadcast-provider availability. */
+    private function notifyProgress(NhlGameImportStatusUpdated $event): void
+    {
+        DB::afterCommit(fn () => app(\App\Listeners\RefreshNhlImportProgressSummary::class)->handle($event));
+        broadcast($event);
+    }
+
+    /**
+     * Read the saved projection, initializing an older run once from its source rows.
+     *
+     * @return array<string,mixed>
+     */
+    public function summaryForRun(NhlGameImportRun $run): array
+    {
+        $summary = data_get($run->payload, 'progress_summary');
+
+        return is_array($summary) && ($summary['version'] ?? null) === 1
+            ? $summary : $this->refreshRunSummary((int) $run->id);
+    }
+
+    /**
+     * Publish committed source progress without changing run controls or lifecycle timestamps.
+     *
+     * Lock only the parent projection while reading committed stage rows. Source
+     * mutations remain owned by the existing repository and run cancellation fence.
+     *
+     * @return array<string,mixed>
+     */
+    public function refreshRunSummary(int $runId): array
+    {
+        return DB::transaction(function () use ($runId): array {
+            $run = NhlGameImportRun::query()->lock(DB::getDriverName() === 'pgsql' ? 'for no key update' : true)->find($runId);
+            if ($run === null) {
+                return [];
+            }
+            $owned = DB::table('nhl_import_progress')->where('run_id', $runId)->exists();
+            $query = DB::table('nhl_import_progress');
+            if ($run->action === NhlGameImportRun::ACTION_DISCOVER || $owned) {
+                $query->where('run_id', $runId);
+            } elseif ($run->action === NhlGameImportRun::ACTION_REPAIR || $run->start_date === null || $run->end_date === null) {
+                $query->whereRaw('1 = 0');
+            } else {
+                $dates = [$run->start_date->toDateString(), $run->end_date->toDateString()];
+                sort($dates);
+                $query->whereBetween('game_date', $dates);
+            }
+            $rows = (clone $query)->selectRaw('game_id, game_date, status, COUNT(*) as aggregate')
+                ->groupBy('game_id', 'game_date', 'status')->get();
+            $counts = $rows->groupBy('status')->map(fn ($group): int => (int) $group->sum('aggregate'))->all();
+            $games = ['active_game_count' => 0, 'skipped_game_count' => 0, 'failed_game_count' => 0];
+            foreach ($rows->groupBy('game_id') as $gameRows) {
+                if ($gameRows->contains('status', 'error')) {
+                    $games['failed_game_count']++;
+                } elseif ($gameRows->contains('status', 'skipped')) {
+                    $games['skipped_game_count']++;
+                } elseif ($gameRows->contains(fn ($row): bool => $row->status !== 'completed')) {
+                    $games['active_game_count']++;
+                }
+            }
+            $error = (clone $query)->where('status', 'error')->whereNotNull('last_error')
+                ->orderByDesc('updated_at')->orderByDesc('id')
+                ->first(['last_error', 'sentry_event_id', 'failure_category', 'retryable']);
+            $failed = $rows->where('status', 'error')->pluck('game_id');
+            if ($run->action !== NhlGameImportRun::ACTION_SEASON_SYNC && $run->start_date !== null && $run->end_date !== null) {
+                $dates = [$run->start_date->toDateString(), $run->end_date->toDateString()];
+                sort($dates);
+                $failed = $failed->merge(DB::table('nhl_game_validations as validations')
+                    ->join('nhl_games as games', 'games.nhl_game_id', '=', 'validations.nhl_game_id')
+                    ->whereBetween('games.game_date', $dates)
+                    ->whereIn('validations.status', [NhlGameValidation::STATUS_FAILED,
+                        NhlGameValidation::STATUS_INCOMPLETE, NhlGameValidation::STATUS_INVALIDATED])
+                    ->distinct()->pluck('validations.nhl_game_id'));
+            }
+            $summary = ['version' => 1, 'captured_at' => now()->toIso8601String(),
+                'owned_stage_rows' => $owned ? array_sum($counts) : 0,
+                'counts' => $counts, 'latest_error' => $error === null ? null : (array) $error,
+                'facts' => [...$games, 'discovered_game_date_count' => $rows->pluck('game_date')->unique()->count(),
+                    'discovered_game_count' => $rows->pluck('game_id')->unique()->count(),
+                    'failed_rerun_game_count' => $failed->unique()->count(),
+                    'scheduled_stage_rows' => $counts['scheduled'] ?? 0,
+                    'skipped_stage_rows' => $counts['skipped'] ?? 0,
+                    'total_stage_rows' => array_sum($counts)]];
+            $payload = $run->payload ?? [];
+            $payload['progress_summary'] = $summary;
+            // Query-builder update preserves updated_at and avoids recursive model events.
+            DB::table('nhl_game_import_runs')->where('id', $runId)->update(['payload' => json_encode($payload, JSON_THROW_ON_ERROR)]);
+
+            return $summary;
+        }, 3);
+    }
+
     /** Insert-if-missing tracker rows in chunks (idempotent). */
     public function insertScheduledRows(array $rows, int $chunk = 1000): void
     {
@@ -46,7 +138,12 @@ class NhlImportProgressRepo
         }
 
         if ($inserted > 0) {
-            broadcast(new NhlGameImportStatusUpdated('progress-seeded'));
+            foreach (collect($rows)->pluck('run_id')->filter()->unique() as $id) {
+                $this->notifyProgress(new NhlGameImportStatusUpdated('progress-seeded', (int) $id));
+            }
+            foreach (collect($rows)->filter(fn (array $row): bool => ! isset($row['run_id']))->pluck('game_id')->unique() as $id) {
+                $this->notifyProgress(new NhlGameImportStatusUpdated('progress-seeded', gameId: (int) $id));
+            }
         }
     }
 
@@ -63,6 +160,7 @@ class NhlImportProgressRepo
                         ->where('status', 'scheduled')->update(['status' => 'skipped',
                             'last_error' => 'Handled by active full import run #'.$owner.'.', 'updated_at' => now()]);
                     $this->recordOverlap($runId, $gameId, $owner);
+                    DB::afterCommit(fn () => $this->notifyProgress(new NhlGameImportStatusUpdated('stage-skipped', $runId, $gameId)));
                 }
 
                 return false;
@@ -85,7 +183,7 @@ class NhlImportProgressRepo
         }, 1);
 
         if ($claimed) {
-            broadcast(new NhlGameImportStatusUpdated('stage-running', gameId: $gameId, stage: $type));
+            $this->notifyProgress(new NhlGameImportStatusUpdated('stage-running', runId: $runId, gameId: $gameId, stage: $type));
         }
 
         return $claimed;
@@ -261,7 +359,7 @@ class NhlImportProgressRepo
         ]);
 
         if ($updated > 0) {
-            broadcast(new NhlGameImportStatusUpdated('stage-completed', gameId: $gameId, stage: $type));
+            $this->notifyProgress(new NhlGameImportStatusUpdated('stage-completed', runId: $runId, gameId: $gameId, stage: $type));
         }
     }
 
@@ -282,7 +380,7 @@ class NhlImportProgressRepo
             ]);
 
         if ($updated > 0) {
-            broadcast(new NhlGameImportStatusUpdated('stage-rescheduled', gameId: $gameId, stage: $type));
+            $this->notifyProgress(new NhlGameImportStatusUpdated('stage-rescheduled', gameId: $gameId, stage: $type));
         }
     }
 
@@ -313,7 +411,7 @@ class NhlImportProgressRepo
             ]);
 
         if ($updated > 0) {
-            broadcast(new NhlGameImportStatusUpdated('stage-rescheduled'));
+            $this->notifyProgress(new NhlGameImportStatusUpdated('stage-rescheduled', $runId));
         }
 
         return $updated;
@@ -376,7 +474,7 @@ class NhlImportProgressRepo
         $inserted = DB::table('nhl_import_progress')->insertOrIgnore($rows);
 
         if ($inserted > 0) {
-            broadcast(new NhlGameImportStatusUpdated('stage-rescheduled'));
+            $this->notifyProgress(new NhlGameImportStatusUpdated('stage-rescheduled', $runId));
         }
 
         return $inserted;
@@ -416,7 +514,7 @@ class NhlImportProgressRepo
         ]);
 
         if ($updated > 0) {
-            broadcast(new NhlGameImportStatusUpdated('stage-error', gameId: $gameId, stage: $type));
+            $this->notifyProgress(new NhlGameImportStatusUpdated('stage-error', runId: $runId, gameId: $gameId, stage: $type));
         }
     }
 
@@ -453,7 +551,7 @@ class NhlImportProgressRepo
         ]);
 
         if ($updated > 0) {
-            broadcast(new NhlGameImportStatusUpdated('game-error', gameId: $gameId));
+            $this->notifyProgress(new NhlGameImportStatusUpdated('game-error', runId: $runId, gameId: $gameId));
         }
     }
 
@@ -492,7 +590,7 @@ class NhlImportProgressRepo
         ]);
 
         if ($updated > 0) {
-            broadcast(new NhlGameImportStatusUpdated('stage-skipped', gameId: $gameId));
+            $this->notifyProgress(new NhlGameImportStatusUpdated('stage-skipped', runId: $runId, gameId: $gameId));
         }
     }
 
@@ -533,18 +631,25 @@ class NhlImportProgressRepo
     /** Mark stale running rows as error for a given type before cutoff. */
     public function markStaleRunningToError(string $type, \DateTimeInterface $cutoff): void
     {
-        $updated = DB::table('nhl_import_progress')
+        $query = DB::table('nhl_import_progress')
             ->where('import_type', $type)
             ->where('status', 'running')
-            ->where('updated_at', '<', $cutoff)
-            ->update([
+            ->where('updated_at', '<', $cutoff);
+        $runIds = (clone $query)->whereNotNull('run_id')->distinct()->pluck('run_id');
+        $legacyGameIds = (clone $query)->whereNull('run_id')->distinct()->pluck('game_id');
+        $updated = $query->update([
                 'status'     => 'error',
                 'last_error' => 'stale',
                 'updated_at' => now(),
             ]);
 
         if ($updated > 0) {
-            broadcast(new NhlGameImportStatusUpdated('stale-stage-error', stage: $type));
+            foreach ($runIds as $id) {
+                $this->notifyProgress(new NhlGameImportStatusUpdated('stale-stage-error', (int) $id, stage: $type));
+            }
+            foreach ($legacyGameIds as $id) {
+                $this->notifyProgress(new NhlGameImportStatusUpdated('stale-stage-error', gameId: (int) $id, stage: $type));
+            }
         }
     }
 

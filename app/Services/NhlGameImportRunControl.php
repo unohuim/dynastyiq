@@ -274,7 +274,7 @@ class NhlGameImportRunControl
                 unset($payload[$key]);
             }
         }
-        unset($payload['completed_at'], $payload['overlap_excluded_games']);
+        unset($payload['completed_at'], $payload['overlap_excluded_games'], $payload['progress_summary']);
         $payload['run_control'] = ['generation' => (string) Str::uuid()];
         return $payload;
     }

@@ -132,6 +132,10 @@ export default function adminHub(options = {}) {
             runs: [],
             seasons: [],
             expandedRuns: {},
+            runDetails: {},
+            statusBusy: false,
+            statusPage: null,
+            queuedStatusPage: null,
             processMenuRunId: null,
             rerunMenuRunId: null,
             rerunningRuns: {},
@@ -971,6 +975,14 @@ export default function adminHub(options = {}) {
         async loadGameImports(options = {}) {
             const background = Boolean(options.background);
             const page = Number(options.page ?? this.gameImports.pagination.currentPage) || 1;
+            if (this.gameImports.statusBusy) {
+                if (page !== this.gameImports.statusPage || !background || this.gameImports.queuedStatusPage === null) {
+                    this.gameImports.queuedStatusPage = page;
+                }
+                return;
+            }
+            this.gameImports.statusBusy = true;
+            this.gameImports.statusPage = page;
 
             if (!background) {
                 this.gameImports.loading = true;
@@ -989,6 +1001,9 @@ export default function adminHub(options = {}) {
                 }
 
                 this.gameImports.runs = payload.runs ?? [];
+                for (const run of this.gameImports.runs) {
+                    if (this.isGameImportRunExpanded(run)) this.loadGameImportGames(run);
+                }
                 this.syncCompletedGameFadeState();
                 this.gameImports.seasons = payload.seasons ?? [];
                 this.gameImports.processableDateCount = Number(payload.processable?.date_count) || 0;
@@ -1007,9 +1022,13 @@ export default function adminHub(options = {}) {
             } catch (error) {
                 this.gameImports.error = error.message ?? 'Unable to load game imports';
             } finally {
+                this.gameImports.statusBusy = false;
                 if (!background) {
                     this.gameImports.loading = false;
                 }
+                const queuedPage = this.gameImports.queuedStatusPage;
+                this.gameImports.queuedStatusPage = null;
+                if (queuedPage !== null) return this.loadGameImports({ background: true, page: queuedPage });
             }
         },
 
@@ -2169,6 +2188,8 @@ export default function adminHub(options = {}) {
         isGameImportRunCompacted(run) {
             return run?.status === 'completed'
                 && run?.processing_started === true
+                && !['failed_stage_rows', 'skipped_stage_rows', 'running_stage_rows', 'scheduled_stage_rows']
+                    .some((key) => Number(run?.progress?.[key]) > 0)
                 && this.gameImportGames(run).length === 0;
         },
 
@@ -2193,15 +2214,15 @@ export default function adminHub(options = {}) {
             const games = Array.isArray(run?.games) ? run.games : [];
             const facts = run?.facts ?? {};
             const total = Number(facts.discovered_game_count) || games.length || 0;
-            const failed = games.filter((game) => Number(game?.failed_stage_rows) > 0).length;
-            const skipped = games.filter((game) =>
+            const failed = Number(facts.failed_game_count ?? games.filter((game) => Number(game?.failed_stage_rows) > 0).length);
+            const skipped = Number(facts.skipped_game_count ?? games.filter((game) =>
                 Number(game?.skipped_stage_rows) > 0 && Number(game?.failed_stage_rows) === 0
-            ).length;
-            const active = games.filter((game) =>
+            ).length);
+            const active = Number(facts.active_game_count ?? games.filter((game) =>
                 this.gameImportGameProgressPercentage(game) < 100
                 && Number(game?.failed_stage_rows) === 0
                 && Number(game?.skipped_stage_rows) === 0
-            ).length;
+            ).length);
 
             return [
                 `${this.formatNumber(total)} games`,
@@ -2325,6 +2346,24 @@ export default function adminHub(options = {}) {
                 ...this.gameImports.expandedRuns,
                 [run.id]: !this.isGameImportRunExpanded(run),
             };
+            if (this.isGameImportRunExpanded(run)) return this.loadGameImportGames(run);
+        },
+
+        async loadGameImportGames(run) {
+            const previous = this.gameImports.runDetails[run.id];
+            if (previous?.loading || !run.games_url) return;
+            this.gameImports.runDetails[run.id] = { ...previous, loading: true, error: '', games: previous?.games ?? [] };
+            try {
+                const response = await fetch(run.games_url, { headers: { Accept: 'application/json' } });
+                const payload = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(payload.message ?? 'Unable to load games');
+                if (String(payload.run_id) !== String(run.id)) throw new Error('Unexpected game import response');
+                this.gameImports.runDetails[run.id].games = payload.games ?? [];
+            } catch (error) {
+                this.gameImports.runDetails[run.id].error = error.message ?? 'Unable to load games';
+            } finally {
+                this.gameImports.runDetails[run.id].loading = false;
+            }
         },
 
         sourceGapsAccordionId() {
@@ -2356,7 +2395,7 @@ export default function adminHub(options = {}) {
         },
 
         gameImportGames(run) {
-            return Array.isArray(run.games) ? run.games : [];
+            return this.gameImports.runDetails[run.id]?.games ?? (Array.isArray(run.games) ? run.games : []);
         },
 
         syncCompletedGameFadeState() {

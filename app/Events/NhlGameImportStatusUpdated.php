@@ -19,6 +19,9 @@ class NhlGameImportStatusUpdated implements ShouldBroadcastNow
     use InteractsWithSockets;
     use SerializesModels;
 
+    /** Internal dispatch guard; broadcastWith() never exposes projection bookkeeping. */
+    public bool $progressSummaryPrepared = false;
+
     public function __construct(
         public string $reason,
         public ?int $runId = null,

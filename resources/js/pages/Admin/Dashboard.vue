@@ -1240,8 +1240,12 @@ export default {
                                             </div>
 
                                             <template v-if="gameImportGames(run).length === 0">
-                                                <div class="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-500">
-                                                    No game-level rows require attention.
+                                                <div
+                                                    class="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-500"
+                                                    role="status"
+                                                    :aria-busy="gameImports.runDetails[run.id]?.loading ? 'true' : 'false'"
+                                                >
+                                                    {{ gameImports.runDetails[run.id]?.error || (gameImports.runDetails[run.id]?.loading ? 'Loading games…' : 'No game-level rows require attention.') }}
                                                 </div>
                                             </template>
 

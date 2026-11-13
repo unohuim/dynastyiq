@@ -101,6 +101,115 @@ const loadAdminHub = async () => {
     return (await import('./admin-hub.js')).default;
 };
 
+describe('saved import summaries and lazy games', () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.stubGlobal('fetch', vi.fn());
+    });
+    afterEach(() => {
+        vi.clearAllTimers();
+        vi.useRealTimers();
+        vi.unstubAllGlobals();
+    });
+
+    it('loads only summaries while run accordions are collapsed', async () => {
+        fetch.mockResolvedValue({ ok: true, json: async () => ({ runs: [{ id: 7, games_url: '/run/7/games', games: [] }] }) });
+        const hub = (await loadAdminHub())();
+        await hub.loadGameImports();
+        expect(fetch).toHaveBeenCalledTimes(1);
+        expect(hub.gameImports.runDetails).toEqual({});
+    });
+
+    it('loads one run on expansion and retains its rows after closing', async () => {
+        fetch.mockResolvedValue({ ok: true, json: async () => ({ run_id: 7, games: [{ game_id: 123 }] }) });
+        const hub = (await loadAdminHub())();
+        const run = { id: 7, games_url: '/run/7/games' };
+        await hub.toggleGameImportRun(run);
+        expect(fetch).toHaveBeenCalledWith('/run/7/games', { headers: { Accept: 'application/json' } });
+        expect(hub.gameImportGames(run)).toEqual([{ game_id: 123 }]);
+        hub.toggleGameImportRun(run);
+        expect(hub.isGameImportRunExpanded(run)).toBe(false);
+        expect(hub.gameImportGames(run)).toEqual([{ game_id: 123 }]);
+        expect(fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps a per-run initial loading state and retries failures on reopen', async () => {
+        fetch.mockResolvedValueOnce({ ok: false, json: async () => ({ message: 'Temporarily unavailable' }) })
+            .mockResolvedValueOnce({ ok: true, json: async () => ({ run_id: 7, games: [] }) });
+        const hub = (await loadAdminHub())();
+        const run = { id: 7, games_url: '/run/7/games' };
+        await hub.toggleGameImportRun(run);
+        expect(hub.gameImports.runDetails[7].error).toBe('Temporarily unavailable');
+        expect(hub.gameImports.runDetails[7].loading).toBe(false);
+        hub.toggleGameImportRun(run);
+        await hub.toggleGameImportRun(run);
+        expect(hub.gameImports.runDetails[7].error).toBe('');
+    });
+
+    it('rejects another runs detail payload without replacing retained rows', async () => {
+        fetch.mockResolvedValue({ ok: true, json: async () => ({ run_id: 8, games: [{ game_id: 999 }] }) });
+        const hub = (await loadAdminHub())();
+        hub.gameImports.runDetails[7] = { games: [{ game_id: 123 }] };
+        await hub.loadGameImportGames({ id: 7, games_url: '/run/7/games' });
+        expect(hub.gameImportGames({ id: 7 })).toEqual([{ game_id: 123 }]);
+        expect(hub.gameImports.runDetails[7].error).toBe('Unexpected game import response');
+    });
+
+    it('coalesces overlapping status polls into a single active request', async () => {
+        let release;
+        fetch.mockReturnValueOnce(new Promise((resolve) => { release = resolve; }))
+            .mockResolvedValue({ ok: true, json: async () => ({ runs: [] }) });
+        const hub = (await loadAdminHub())();
+        const first = hub.loadGameImports({ background: true });
+        await hub.loadGameImports({ background: true });
+        expect(fetch).toHaveBeenCalledTimes(1);
+        release({ ok: true, json: async () => ({ runs: [] }) });
+        await first;
+        expect(fetch).toHaveBeenCalledTimes(2);
+        expect(hub.gameImports.statusBusy).toBe(false);
+    });
+
+    it('retains the latest selected page while an earlier status request is active', async () => {
+        let release;
+        fetch.mockReturnValueOnce(new Promise((resolve) => { release = resolve; }))
+            .mockResolvedValue({ ok: true, json: async () => ({ runs: [] }) });
+        const hub = (await loadAdminHub())();
+        const first = hub.loadGameImports({ page: 1 });
+        await hub.loadGameImports({ page: 2 });
+        await hub.loadGameImports({ page: 3 });
+        expect(fetch).toHaveBeenCalledTimes(1);
+        release({ ok: true, json: async () => ({ runs: [] }) });
+        await first;
+        expect(fetch).toHaveBeenCalledTimes(2);
+        expect(fetch.mock.calls[1][0]).toContain('page=3');
+    });
+
+    it('uses saved game category counts even when no game rows have loaded', async () => {
+        const hub = (await loadAdminHub())();
+        const text = hub.gameImportCompactSummaryText({ action: 'process', games: [],
+            facts: { discovered_game_count: 12, active_game_count: 3, skipped_game_count: 2, failed_game_count: 1 } });
+        expect(text).toBe('12 games - 3 active - 2 skipped - 1 failed');
+    });
+
+    it('keeps completed runs with actionable skipped stages expandable before details load', async () => {
+        const hub = (await loadAdminHub())();
+        expect(hub.isGameImportRunCompacted({ status: 'completed', processing_started: true, games: [],
+            progress: { skipped_stage_rows: 1 } })).toBe(false);
+        expect(hub.isGameImportRunCompacted({ status: 'completed', processing_started: true, games: [],
+            progress: { skipped_stage_rows: 0 } })).toBe(true);
+    });
+
+    it('keeps disclosure loading feedback in the existing empty-row space', () => {
+        const source = readFileSync(new URL('../pages/Admin/Dashboard.vue', import.meta.url), 'utf8');
+        const { descriptor } = parse(source);
+        const template = descriptor.template.content;
+        expect(template).toContain('v-if="gameImportGames(run).length === 0"');
+        expect(template).toContain("gameImports.runDetails[run.id]?.loading ? 'true' : 'false'");
+        expect(template).toContain('Loading games…');
+        expect(template).toContain('motion-reduce:transition-none');
+    });
+});
+
 describe('game import run controls', () => {
     beforeEach(() => { vi.restoreAllMocks(); global.window = {}; });
 

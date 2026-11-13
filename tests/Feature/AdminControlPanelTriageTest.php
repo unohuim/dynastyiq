@@ -175,12 +175,12 @@ it('shows Yahoo connected in the authenticated account drawer', function () {
 });
 
 it('blocks guests from the NHL game import status endpoint', function () {
-    $this->getJson(route('admin.nhl-game-imports.status'))->assertUnauthorized();
+    $this->getJson(route('admin.nhl-game-imports.status', ['include_games' => 1]))->assertUnauthorized();
 });
 
 it('blocks authenticated non-admin users from the NHL game import status endpoint', function () {
     $this->actingAs(User::factory()->create())
-        ->getJson(route('admin.nhl-game-imports.status'))
+        ->getJson(route('admin.nhl-game-imports.status', ['include_games' => 1]))
         ->assertForbidden();
 });
 
@@ -2778,7 +2778,7 @@ it('allows super admins to queue shot fact processing for a game import run rang
             && $jobs->pluck('runId')->unique()->values()->all() === [$run->id]
             && $jobs->pluck('nhlGameId')->sort()->values()->all() === [2025020001, 2025020002];
     });
-    $status = $this->getJson(route('admin.nhl-game-imports.status'))->assertOk()->assertJsonPath('has_active_runs', true);
+    $status = $this->getJson(route('admin.nhl-game-imports.status', ['include_games' => 1]))->assertOk()->assertJsonPath('has_active_runs', true);
     $visible = collect($status->json('runs'))->keyBy('id');
     expect($visible->has($sourceRun->id))->toBeTrue()->and($visible->has($run->id))->toBeTrue()
         ->and($visible[$run->id]['progress']['total_stage_rows'])->toBe(2)
@@ -3143,7 +3143,7 @@ it('keeps scoped processing visible alongside same-range discovery', function (s
     $source = NhlGameImportRun::create([...$attributes, 'action' => 'discover', 'status' => 'completed']);
     $scoped = NhlGameImportRun::create([...$attributes, 'action' => 'process', 'status' => 'running',
         'queued_jobs' => 4, 'payload' => ['process_scope' => $scope, 'processing_started_at' => '2026-01-18T12:00:00Z']]);
-    $status = $this->actingAs(($this->makeSuperAdmin)())->getJson(route('admin.nhl-game-imports.status'))
+    $status = $this->actingAs(($this->makeSuperAdmin)())->getJson(route('admin.nhl-game-imports.status', ['include_games' => 1]))
         ->assertOk()->assertJsonPath('has_active_runs', true);
     expect(collect($status->json('runs'))->pluck('id')->all())->toContain($source->id, $scoped->id);
 })->with(['shots', 'faceoffs', 'refs_staff']);
@@ -3156,7 +3156,7 @@ it('reports incremental Shots progress from committed run work rather than exist
             'run_control' => ['completed' => ['shots:1' => true, 'faceoffs:1' => true],
                 'active' => ['worker' => ['key' => 'shots:2', 'expires' => Carbon::parse('2026-10-23 13:00:00 UTC')->timestamp]]]],
     ]);
-    $this->actingAs(($this->makeSuperAdmin)())->getJson(route('admin.nhl-game-imports.status'))->assertOk()
+    $this->actingAs(($this->makeSuperAdmin)())->getJson(route('admin.nhl-game-imports.status', ['include_games' => 1]))->assertOk()
         ->assertJsonPath('has_active_runs', true)->assertJsonPath('runs.0.progress.completed_stage_rows', 1)
         ->assertJsonPath('runs.0.progress.running_stage_rows', 1)->assertJsonPath('runs.0.progress.scheduled_stage_rows', 2)
         ->assertJsonPath('runs.0.progress.percentage', 25);
@@ -3172,7 +3172,7 @@ it('does not count paused queue messages as completed Shots work', function (): 
         'payload' => ['process_scope' => 'shots', 'shot_fact_batch_id' => 'paused-shots',
             'run_control' => ['generation' => 'resumed', 'completed' => ['shots:1' => true]]],
     ]);
-    $this->actingAs(($this->makeSuperAdmin)())->getJson(route('admin.nhl-game-imports.status'))->assertOk()
+    $this->actingAs(($this->makeSuperAdmin)())->getJson(route('admin.nhl-game-imports.status', ['include_games' => 1]))->assertOk()
         ->assertJsonPath('runs.0.status', 'paused')->assertJsonPath('runs.0.progress.completed_stage_rows', 1)
         ->assertJsonPath('runs.0.progress.percentage', 25);
 });
@@ -3186,7 +3186,7 @@ it('uses batch progress for older Shots runs without durable work checkpoints', 
         'start_date' => '2026-01-17', 'end_date' => '2026-01-17', 'queued_jobs' => 4,
         'payload' => ['process_scope' => 'shots', 'shot_fact_batch_id' => 'legacy-shots'],
     ]);
-    $this->actingAs(($this->makeSuperAdmin)())->getJson(route('admin.nhl-game-imports.status'))->assertOk()
+    $this->actingAs(($this->makeSuperAdmin)())->getJson(route('admin.nhl-game-imports.status', ['include_games' => 1]))->assertOk()
         ->assertJsonPath('runs.0.progress.completed_stage_rows', 2)->assertJsonPath('runs.0.progress.percentage', 50);
 });
 
@@ -3196,7 +3196,7 @@ it('retains completed Shots work when another game fails', function (): void {
         'payload' => ['process_scope' => 'shots', 'shot_fact_failed_game_ids' => [2],
             'run_control' => ['completed' => ['shots:1' => true]]],
     ]);
-    $this->actingAs(($this->makeSuperAdmin)())->getJson(route('admin.nhl-game-imports.status'))->assertOk()
+    $this->actingAs(($this->makeSuperAdmin)())->getJson(route('admin.nhl-game-imports.status', ['include_games' => 1]))->assertOk()
         ->assertJsonPath('runs.0.status', 'failed')->assertJsonPath('runs.0.progress.completed_stage_rows', 1)
         ->assertJsonPath('runs.0.progress.failed_stage_rows', 1)->assertJsonPath('runs.0.progress.percentage', 25);
 });
@@ -3220,7 +3220,7 @@ it('returns completed shot fact processing runs without processable game rows', 
     ]);
 
     $payload = $this->actingAs(($this->makeSuperAdmin)())
-        ->getJson(route('admin.nhl-game-imports.status'))
+        ->getJson(route('admin.nhl-game-imports.status', ['include_games' => 1]))
         ->assertOk()
         ->json('runs.0');
 
@@ -3815,7 +3815,7 @@ it('returns NHL game import status with pipeline progress counts', function () {
     }
 
     $this->actingAs(($this->makeSuperAdmin)())
-        ->getJson(route('admin.nhl-game-imports.status'))
+        ->getJson(route('admin.nhl-game-imports.status', ['include_games' => 1]))
         ->assertOk()
         ->assertJsonPath('runs.0.id', $run->id)
         ->assertJsonPath('runs.0.status', NhlGameImportRun::STATUS_RUNNING)
@@ -3895,7 +3895,7 @@ it('does not show reassigned reprocess progress on older processed discovery run
     }
 
     $runs = $this->actingAs(($this->makeSuperAdmin)())
-        ->getJson(route('admin.nhl-game-imports.status'))
+        ->getJson(route('admin.nhl-game-imports.status', ['include_games' => 1]))
         ->assertOk()
         ->json('runs');
 
@@ -3942,7 +3942,7 @@ it('hides stale ready discovery duplicates when a same-range game import run is 
     ]);
 
     $runs = $this->actingAs(($this->makeSuperAdmin)())
-        ->getJson(route('admin.nhl-game-imports.status'))
+        ->getJson(route('admin.nhl-game-imports.status', ['include_games' => 1]))
         ->assertOk()
         ->assertJsonIsArray('runs')
         ->json('runs');
@@ -4001,7 +4001,7 @@ it('collapses completed duplicate same-range NHL game import runs in status payl
     }
 
     $runs = $this->actingAs(($this->makeSuperAdmin)())
-        ->getJson(route('admin.nhl-game-imports.status'))
+        ->getJson(route('admin.nhl-game-imports.status', ['include_games' => 1]))
         ->assertOk()
         ->assertJsonIsArray('runs')
         ->json('runs');
@@ -4061,7 +4061,7 @@ it('prefers queued discovery rerun rows over completed same-range progress rows 
     }
 
     $runs = $this->actingAs(($this->makeSuperAdmin)())
-        ->getJson(route('admin.nhl-game-imports.status'))
+        ->getJson(route('admin.nhl-game-imports.status', ['include_games' => 1]))
         ->assertOk()
         ->assertJsonIsArray('runs')
         ->json('runs');
@@ -4120,7 +4120,7 @@ it('hides per-game rows for clean completed NHL game import runs', function () {
     }
 
     $payload = $this->actingAs(($this->makeSuperAdmin)())
-        ->getJson(route('admin.nhl-game-imports.status'))
+        ->getJson(route('admin.nhl-game-imports.status', ['include_games' => 1]))
         ->assertOk()
         ->json('runs.0');
 
@@ -4196,7 +4196,7 @@ it('hides stale successful game imports while keeping failed games visible', fun
     }
 
     $payload = $this->actingAs(($this->makeSuperAdmin)())
-        ->getJson(route('admin.nhl-game-imports.status'))
+        ->getJson(route('admin.nhl-game-imports.status', ['include_games' => 1]))
         ->assertOk()
         ->json('runs.0');
 
@@ -4230,7 +4230,7 @@ it('does not complete discovered NHL game import runs until discovery finishes',
     ]);
 
     $this->actingAs(($this->makeSuperAdmin)())
-        ->getJson(route('admin.nhl-game-imports.status'))
+        ->getJson(route('admin.nhl-game-imports.status', ['include_games' => 1]))
         ->assertOk()
         ->assertJsonPath('runs.0.id', $run->id)
         ->assertJsonPath('runs.0.action', NhlGameImportRun::ACTION_DISCOVER)
@@ -4268,7 +4268,7 @@ it('returns discovered NHL game import runs as completed after discovery finishe
     ]);
 
     $this->actingAs(($this->makeSuperAdmin)())
-        ->getJson(route('admin.nhl-game-imports.status'))
+        ->getJson(route('admin.nhl-game-imports.status', ['include_games' => 1]))
         ->assertOk()
         ->assertJsonPath('runs.0.id', $run->id)
         ->assertJsonPath('runs.0.action', NhlGameImportRun::ACTION_DISCOVER)
@@ -4326,7 +4326,7 @@ it('returns NHL season options and season sync progress in game import status', 
     ]);
 
     $this->actingAs(($this->makeSuperAdmin)())
-        ->getJson(route('admin.nhl-game-imports.status'))
+        ->getJson(route('admin.nhl-game-imports.status', ['include_games' => 1]))
         ->assertOk()
         ->assertJsonPath('runs.0.id', $run->id)
         ->assertJsonPath('runs.0.action', NhlGameImportRun::ACTION_SEASON_SYNC)

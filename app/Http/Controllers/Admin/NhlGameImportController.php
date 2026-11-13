@@ -44,6 +44,9 @@ class NhlGameImportController extends Controller
 {
     private const STATUS_RUNS_PER_PAGE = 15;
 
+    /** @var array<int,int> Request-local owned counts for older, uninitialized runs. */
+    private array $ownedProgressCounts = [];
+
     private const SHIFT_RERUN_STAGES = [
         NhlImportStages::SHIFTS,
         NhlImportStages::SHIFT_UNITS,
@@ -57,9 +60,21 @@ class NhlGameImportController extends Controller
      */
     public function status(Request $request): JsonResponse
     {
+        $request->validate(['include_games' => ['sometimes', 'boolean']]);
         $runs = NhlGameImportRun::query()
             ->latest()
             ->get();
+
+        $missing = $runs->filter(fn (NhlGameImportRun $run): bool => data_get($run->payload, 'progress_summary.version') !== 1);
+        if ($missing->isNotEmpty()) {
+            // One grouped compatibility lookup instead of one COUNT per historical run.
+            $this->ownedProgressCounts = DB::table('nhl_import_progress')->whereIn('run_id', $missing->pluck('id'))
+                ->selectRaw('run_id, COUNT(*) as aggregate')->groupBy('run_id')->pluck('aggregate', 'run_id')
+                ->map(fn ($count): int => (int) $count)->all();
+            foreach ($missing as $run) {
+                $this->ownedProgressCounts[$run->id] ??= 0;
+            }
+        }
 
         $runs = $this->collapseDuplicateRangeRuns($runs);
         $orchestrationRuns = $runs
@@ -95,7 +110,7 @@ class NhlGameImportController extends Controller
             ->values();
         $serializedRuns = $pagedRuns
             ->merge($auxiliaryRuns)
-            ->map(fn (NhlGameImportRun $run): array => $this->serializeRun($run))
+            ->map(fn (NhlGameImportRun $run): array => $this->serializeRun($run, $request->boolean('include_games')))
             ->values();
 
         return response()->json([
@@ -114,6 +129,16 @@ class NhlGameImportController extends Controller
             ],
             'seasons' => $this->availableSeasons(),
         ]);
+    }
+
+    /** Return game-level diagnostics only for the run explicitly expanded by an admin. */
+    public function runGames(NhlGameImportRun $run): JsonResponse
+    {
+        $progress = $this->progressForRun($run);
+
+        return response()->json(['run_id' => $run->id,
+            'games' => $this->shouldShowPipelineFacts($run) && $this->shouldShowGameRows($progress)
+                ? $this->gamesForRun($run) : []]);
     }
 
     /**
@@ -1294,7 +1319,7 @@ class NhlGameImportController extends Controller
      *
      * @return array<string, mixed>
      */
-    private function serializeRun(NhlGameImportRun $run): array
+    private function serializeRun(NhlGameImportRun $run, bool $includeGames = true): array
     {
         $progress = $this->progressForRun($run);
         if (in_array($run->status, \App\Services\NhlGameImportRunControl::CONTROLLED, true)) {
@@ -1318,10 +1343,22 @@ class NhlGameImportController extends Controller
             'updated_at' => $run->updated_at?->toIso8601String(),
             'progress' => $progress,
             'facts' => $this->shouldShowPipelineFacts($run) ? $this->factsForRun($run) : [],
-            'games' => $this->shouldShowPipelineFacts($run) && $this->shouldShowGameRows($progress)
+            'games_url' => route('admin.nhl-game-imports.games', $run),
+            'games' => $includeGames && $this->shouldShowPipelineFacts($run) && $this->shouldShowGameRows($progress)
                 ? $this->gamesForRun($run)
                 : [],
         ];
+    }
+
+    /** @return array<string,mixed> */
+    private function progressSummary(NhlGameImportRun $run): array
+    {
+        $summary = app(NhlImportProgressRepo::class)->summaryForRun($run);
+        $payload = $run->payload ?? [];
+        $payload['progress_summary'] = $summary;
+        $run->setAttribute('payload', $payload);
+
+        return $summary;
     }
 
     /**
@@ -1368,10 +1405,8 @@ class NhlGameImportController extends Controller
             return $this->refsStaffProgressForRun($run);
         }
 
-        $rows = $this->progressQueryForRun($run)
-            ->selectRaw('status, COUNT(*) as aggregate')
-            ->groupBy('status')
-            ->pluck('aggregate', 'status');
+        $summary = $this->progressSummary($run);
+        $rows = $summary['counts'];
 
         $scheduled = (int) ($rows['scheduled'] ?? 0);
         $running = (int) ($rows['running'] ?? 0);
@@ -1381,11 +1416,7 @@ class NhlGameImportController extends Controller
         $total = $scheduled + $running + $completed + $skipped + $failed;
         $percentage = $total > 0 ? (int) floor((($completed + $skipped) / $total) * 100) : 0;
         $status = $this->computedStatus($run, $total, $scheduled, $running, $completed, $skipped, $failed);
-        $latestError = $this->progressQueryForRun($run)
-            ->where('status', 'error')
-            ->whereNotNull('last_error')
-            ->latest('updated_at')
-            ->first(['last_error', 'sentry_event_id', 'failure_category', 'retryable']);
+        $latestError = isset($summary['latest_error']) ? (object) $summary['latest_error'] : null;
         $payload = $run->payload ?? [];
         $postProcessStarted = (bool) ($payload['post_process_enrichment_started_at'] ?? false);
         $postProcessCompleted = (bool) ($payload['post_process_enrichment_completed_at'] ?? false);
@@ -1492,10 +1523,7 @@ class NhlGameImportController extends Controller
         $stage = (string) ($payload['repair_stage'] ?? 'scanning');
 
         if ($stage === 'rebuilding') {
-            $rows = $this->progressQueryForRun($run)
-                ->selectRaw('status, COUNT(*) as aggregate')
-                ->groupBy('status')
-                ->pluck('aggregate', 'status');
+            $rows = $this->progressSummary($run)['counts'];
 
             $scheduled = (int) ($rows['scheduled'] ?? 0);
             $running = (int) ($rows['running'] ?? 0);
@@ -1589,17 +1617,7 @@ class NhlGameImportController extends Controller
      */
     private function factsForRun(NhlGameImportRun $run): array
     {
-        $query = $this->progressQueryForRun($run);
-
-        return [
-            'selected_date_count' => $run->date_count,
-            'discovered_game_date_count' => (int) (clone $query)->distinct()->count('game_date'),
-            'discovered_game_count' => (int) (clone $query)->distinct()->count('game_id'),
-            'failed_rerun_game_count' => count($this->failedOnlyGameIdsForRun($run)),
-            'scheduled_stage_rows' => (int) (clone $query)->where('status', 'scheduled')->count(),
-            'skipped_stage_rows' => (int) (clone $query)->where('status', 'skipped')->count(),
-            'total_stage_rows' => (int) (clone $query)->count(),
-        ];
+        return ['selected_date_count' => $run->date_count, ...$this->progressSummary($run)['facts']];
     }
 
     private function sentryEventUrl(?string $eventId): ?string
@@ -1918,6 +1936,14 @@ class NhlGameImportController extends Controller
      */
     private function directProgressCountForRun(NhlGameImportRun $run): int
     {
+        if (data_get($run->payload, 'progress_summary.version') === 1) {
+            return (int) data_get($run->payload, 'progress_summary.owned_stage_rows', 0);
+        }
+        if (array_key_exists($run->id, $this->ownedProgressCounts)) {
+            return $this->ownedProgressCounts[$run->id];
+        }
+
+        // Outside status pagination, preserve the existing action-admission lookup.
         return (int) DB::table('nhl_import_progress')
             ->where('run_id', $run->id)
             ->count();

@@ -68,6 +68,12 @@ class AppServiceProvider extends ServiceProvider
         Event::listen(DraftPickMade::class, UpdateRosterMembershipForDraftPick::class);
         Event::listen(DraftPickMade::class, AnnounceFantraxDraftPick::class);
         Event::listen(\App\Events\GamesDiscovered::class, \App\Listeners\StartDiscoveredGameProcessing::class);
+        Event::listen(\App\Events\NhlGameImportStatusUpdated::class, \App\Listeners\RefreshNhlImportProgressSummary::class);
+        foreach (['saved', 'deleted'] as $action) {
+            Event::listen('eloquent.'.$action.': '.\App\Models\NhlGameValidation::class, function ($validation): void {
+                app(\App\Listeners\RefreshNhlImportProgressSummary::class)->validationChanged($validation);
+            });
+        }
         Event::listen(\App\Events\SatImported::class, \App\Listeners\QueuePredictionSeasonSatScoring::class);
         Event::listen(\App\Events\NhlSeasonStatsSynced::class, \App\Listeners\QueueNhlStatsDashboardRefresh::class);
         Event::listen(\App\Events\NhlStatsSourceUpdated::class, \App\Listeners\QueueNhlStatsDashboardRefresh::class);

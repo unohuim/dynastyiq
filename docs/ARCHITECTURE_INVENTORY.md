@@ -2327,6 +2327,11 @@ app()->make(SumNhlGameStrengthUnits::class, ['gameId' => $gameId])->sum();
 
 ### Import Progress Repository
 
+The existing run payload stores a versioned progress-summary projection refreshed
+from committed import status events. Prepared admin polls read saved counts; older
+visible runs initialize once. Source progress, admission and rollback remain canonical.
+Authority: `docs/architecture/imports/ImportProgressRepository.yaml`.
+
 **Name:** Import Progress Repository
 **Type:** Persistence Abstraction
 **Location:**
@@ -3292,6 +3297,11 @@ Route::post('/player-triage/identities/{identity}/link', [PlayerTriageController
 ---
 
 ### Admin NHL Game Imports
+
+Status polling reads saved summaries and avoids per-run source recounts. Run game
+diagnostics load from an authorized per-run endpoint when expanded; explicit inline
+details remain available for compatibility. Browser requests coalesce and retain
+existing rows during refresh. Authority: `docs/architecture/admin/AdminNhlGameImports.yaml`.
 
 **Name:** Admin NHL Game Imports
 **Type:** Admin Queue Orchestration UI

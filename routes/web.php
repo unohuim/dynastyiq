@@ -366,6 +366,8 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                     ->name('admin.scheduled-processes.discovery.update');
                 Route::get('/nhl-game-imports/status', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'status'])
                     ->name('admin.nhl-game-imports.status');
+                Route::get('/nhl-game-imports/{run}/games', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'runGames'])
+                    ->whereNumber('run')->name('admin.nhl-game-imports.games');
                 Route::post('/nhl-game-imports/{run}/pause', [\App\Http\Controllers\Admin\NhlGameImportRunControlController::class, 'pause'])
                     ->whereNumber('run')->name('admin.nhl-game-imports.pause');
                 Route::post('/nhl-game-imports/{run}/resume', [\App\Http\Controllers\Admin\NhlGameImportRunControlController::class, 'resume'])

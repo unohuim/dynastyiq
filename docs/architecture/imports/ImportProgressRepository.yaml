@@ -2,6 +2,7 @@ name: Import Progress Repository
 type: Persistence Abstraction
 location:
   - app/Repositories/NhlImportProgressRepo.php
+  - app/Listeners/RefreshNhlImportProgressSummary.php
   - database/migrations/2025_08_13_155830_nhl_import_progress.php
   - database/migrations/2026_07_02_160000_add_run_id_to_nhl_import_progress_table.php
   - database/migrations/2026_07_29_000001_make_nhl_import_progress_unique_per_run.php
@@ -29,8 +30,13 @@ rules:
   - Run supervisor reads must expose active-game counts, scheduled candidate games, and open-row checks for run-scoped slot filling.
   - Failed rows may persist Sentry event id, failure category, and retryability so the admin UI can connect import state to exception diagnostics.
   - Rescheduled or completed rows must clear previous failure diagnostics.
+  - The existing import-run payload may store a versioned progress_summary read projection of source stage counts, owned-stage totals, latest failure diagnostics, discovery facts and per-game category counts. nhl_import_progress remains authoritative; never increment projection counters blindly on duplicate delivery or use the projection for stage admission.
+  - Refresh affected projections from committed NhlGameImportStatusUpdated events through RefreshNhlImportProgressSummary, outside transformation transactions. Repository mutations register their projection update independently before broadcast delivery; a shared dispatch guard avoids duplicate refreshes and never enters the broadcast payload. Lock the parent with FOR NO KEY UPDATE, preserve its current payload controls, and do not change lifecycle timestamps or broadcast recursively. Rollbacks must not publish uncommitted progress. Validation corrections/removals refresh initialized failed-rerun projections in their existing date scopes.
+  - An older visible run missing the projection initializes once from its source rows without starting import work. Preserve discovery ownership, legacy process date fallback, error clearing and idempotent repeated notifications. Bulk seed, reschedule, stale-error and overlap events identify their affected runs or legacy games rather than sweeping unrelated history.
 public_interface:
   - NhlImportProgressRepo::claim()
+  - NhlImportProgressRepo::summaryForRun()
+  - NhlImportProgressRepo::refreshRunSummary()
   - NhlImportProgressRepo::isRunning()
   - NhlImportProgressRepo::runningExistsForDate()
   - NhlImportProgressRepo::scheduledGameIdsForDate()
