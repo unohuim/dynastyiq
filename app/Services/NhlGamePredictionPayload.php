@@ -1467,6 +1467,16 @@ class NhlGamePredictionPayload
                 ],
             ],
             'components' => [
+                'away_value_per_game' => round(
+                    self::GOALIE_GSAX_WEIGHT * (float) ($awayGoalie['projected_gsax_per_game'] ?? 0)
+                    + self::GOALIE_MATCHUP_WEIGHT * (float) ($awayGoalie['matchup_value_per_game'] ?? 0),
+                    4
+                ),
+                'home_value_per_game' => round(
+                    self::GOALIE_GSAX_WEIGHT * (float) ($homeGoalie['projected_gsax_per_game'] ?? 0)
+                    + self::GOALIE_MATCHUP_WEIGHT * (float) ($homeGoalie['matchup_value_per_game'] ?? 0),
+                    4
+                ),
                 'projected_gsax_edge' => round($projectedGsaxEdge, 4),
                 'matchup_fit_edge' => round($matchupFitEdge, 4),
                 'weights' => [

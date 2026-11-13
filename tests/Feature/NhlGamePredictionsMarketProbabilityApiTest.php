@@ -363,6 +363,101 @@ it('feeds the goalie section the opposing new SOG and goal projections', functio
         ->assertJsonPath('prediction.goalie_edge.available', false);
 });
 
+it('exposes both weighted goalie contributions without changing the existing edge calculation', function (
+    array $away,
+    array $home,
+    float $awayValue,
+    float $homeValue,
+    float $score,
+    string $side
+): void {
+    $method = new ReflectionMethod(NhlGamePredictionPayload::class, 'goalieEdge');
+    $edge = $method->invoke(app(NhlGamePredictionPayload::class), 'BUF', 'COL', $away, $home);
+
+    expect($edge['components']['away_value_per_game'])->toBe($awayValue)
+        ->and($edge['components']['home_value_per_game'])->toBe($homeValue)
+        ->and($edge['score'])->toBe($score)
+        ->and($edge['side'])->toBe($side)
+        ->and($edge['components']['weights'])->toBe(['projected_gsax_per_game' => 0.7, 'matchup_fit' => 0.3]);
+})->with([
+    'season evidence only' => [['projected_gsax_per_game' => 0.25], ['projected_gsax_per_game' => -0.1], 0.175, -0.07, -0.245, 'away'],
+    'existing matchup terms' => [
+        ['projected_gsax_per_game' => 0.2, 'matchup_value_per_game' => -0.1],
+        ['projected_gsax_per_game' => -0.1, 'matchup_value_per_game' => 0.4], 0.11, 0.05, -0.06, 'away',
+    ],
+    'equal positive contributions' => [['projected_gsax_per_game' => 0.3], ['projected_gsax_per_game' => 0.3], 0.21, 0.21, 0.0, 'even'],
+    'missing away evidence' => [[], ['projected_gsax_per_game' => 0.3], 0.0, 0.21, 0.21, 'home'],
+    'both missing' => [[], [], 0.0, 0.0, 0.0, 'even'],
+    'null remains neutral in existing math' => [
+        ['projected_gsax_per_game' => null, 'matchup_value_per_game' => null],
+        ['projected_gsax_per_game' => 0.0, 'matchup_value_per_game' => 0.0], 0.0, 0.0, 0.0, 'even',
+    ],
+    'independent rounding preserves original score' => [
+        ['projected_gsax_per_game' => 0.1112], ['projected_gsax_per_game' => 0.1113],
+        0.0778, 0.0779, 0.0001, 'home',
+    ],
+]);
+
+it('publishes individual goalie edge values through revision storage and saved API reads', function (): void {
+    DB::table('nhl_goalie_season_projections')->insert([
+        ['projection_version' => 'edge-fixture', 'source_season_id' => '20252026', 'target_season_id' => '20262027',
+            'goalie_player_id' => 901, 'target_team_abbrev' => 'BUF', 'projected_games' => 20, 'projected_gsax' => 5],
+        ['projection_version' => 'edge-fixture', 'source_season_id' => '20252026', 'target_season_id' => '20262027',
+            'goalie_player_id' => 902, 'target_team_abbrev' => 'COL', 'projected_games' => 20, 'projected_gsax' => -2],
+    ]);
+    $this->mock(NhlStartingGoalieSelector::class)->shouldReceive('selectForPrediction')
+        ->andReturnUsing(static fn (int $gameId, string $team): array => [
+            'nhl_player_id' => $team === 'BUF' ? 901 : 902, 'name' => $team.' starter',
+            'selection_source' => 'goalie_projection',
+        ]);
+    $expected = ($this->calculate)();
+    $first = ($this->requestPrediction)(['goalie_projection_version' => 'edge-fixture'])->assertOk()
+        ->assertJsonPath('goalies.away.nhl_player_id', 901)->assertJsonPath('goalies.home.nhl_player_id', 902)
+        ->assertJsonPath('prediction.goalie_edge.components.away_value_per_game', 0.175)
+        ->assertJsonPath('prediction.goalie_edge.components.home_value_per_game', -0.07)
+        ->assertJsonPath('prediction.goalie_edge.score', -0.245)
+        ->assertJsonPath('prediction.goalie_edge.side', 'away')
+        ->assertJsonPath('prediction.goalie_edge.available', true)
+        ->assertJsonPath('prediction.goalie_edge.matchup_fit_available', false)
+        ->assertJsonPath('goalies.away.matchup_value_per_game', null)
+        ->assertJsonPath('goalies.home.matchup_value_per_game', null)
+        ->assertJsonPath('goalies.away.goal_adjustment_applied', false)
+        ->assertJsonPath('goalies.home.goal_adjustment_applied', false)
+        ->assertJsonPath('prediction.predicted_score.away', round($expected['teams']['away']['goals'], 2))
+        ->assertJsonPath('prediction.predicted_score.home', round($expected['teams']['home']['goals'], 2))
+        ->assertJsonPath('prediction.predicted_total_goals', round($expected['total_goals'], 2))
+        ->assertJsonPath('prediction.home_win_probability', $expected['home_win_probability'])
+        ->assertJsonPath('prediction.away_win_probability', $expected['away_win_probability'])
+        ->assertJsonPath('prediction.winner.team_abbrev', $expected['recommendation']);
+    $id = $first->json('meta.prediction_revision_id');
+    $row = DB::table('nhl_game_prediction_revisions')->find($id);
+    $saved = json_decode($row->payload, true, 512, JSON_THROW_ON_ERROR);
+    expect($saved['prediction']['goalie_edge'])->toEqual($first->json('prediction.goalie_edge'))
+        ->and($saved['prediction']['confidence_score'])->toBe($expected['confidence_score']);
+    Cache::flush();
+    Bus::fake();
+    $this->mock(NhlGamePredictionPayload::class)->shouldNotReceive('build');
+    $this->withToken($this->token)->getJson('/api/nhl-game-predictions?nhl_game_id=2026020001')->assertOk()
+        ->assertJsonPath('meta.prediction_revision_id', $id)
+        ->assertJsonPath('prediction.goalie_edge', $first->json('prediction.goalie_edge'))
+        ->assertJsonPath('prediction.predicted_score', $first->json('prediction.predicted_score'))
+        ->assertJsonPath('prediction.confidence_score', $first->json('prediction.confidence_score'));
+    expect(DB::table('nhl_game_prediction_revisions')->find($id))->toEqual($row);
+    $this->assertDatabaseCount('nhl_game_prediction_revisions', 1);
+    Bus::assertNothingDispatched();
+    Http::assertNothingSent();
+});
+
+it('preserves unavailable goalie evidence while exposing the unchanged zero contributions', function (): void {
+    ($this->requestPrediction)()->assertOk()
+        ->assertJsonPath('prediction.goalie_edge.components.away_value_per_game', 0.0)
+        ->assertJsonPath('prediction.goalie_edge.components.home_value_per_game', 0.0)
+        ->assertJsonPath('prediction.goalie_edge.available', false)
+        ->assertJsonPath('prediction.goalie_edge.matchup_fit_available', false)
+        ->assertJsonPath('goalies.away.projection_source', 'unavailable')
+        ->assertJsonPath('goalies.home.projection_source', 'unavailable');
+});
+
 it('archives exact private inputs without exposing them in the API response', function (): void {
     $response = ($this->requestPrediction)()->assertOk()->assertJsonMissingPath('_custom_prediction_evidence');
     $revision = DB::table('nhl_game_prediction_revisions')->find($response->json('meta.prediction_revision_id'));

@@ -1389,6 +1389,32 @@ Final goal normalization leaves winner, win probability, confidence and qualific
 The response also includes `goalies.away` and `goalies.home` with the selected
 starters and their projected stats, including projected xGA/G, GA/G, and GSAx/G.
 
+Newly calculated predictions also expose each selected goalie's existing weighted
+contribution under `prediction.goalie_edge.components`:
+
+| Field | Meaning |
+| --- | --- |
+| `away_value_per_game` | Away goalie's contribution, in goals saved per game. |
+| `home_value_per_game` | Home goalie's contribution, in goals saved per game. |
+
+Each value uses the unchanged edge formula: `0.70 * projected_gsax_per_game +
+0.30 * matchup_value_per_game`. Missing terms contribute zero, exactly as they
+already do in the overall edge. The current engine leaves matchup fit null, so
+each contribution is `0.70 * projected_gsax_per_game`. These values are not win
+probabilities or confidence percentages. Positive means a beneficial contribution;
+negative means an adverse contribution. Home minus away equals `goalie_edge.score`
+before independent four-decimal rounding. For example, away GSAx/G of `0.25` and
+home GSAx/G of `-0.10` produce contributions of `0.1750` and `-0.0700`, and an
+overall edge of `-0.2450` (away advantage).
+
+Consumers can use these fields for individual goalie ratings instead of requiring
+the separate `goalies.*.matchup_value_per_game`, which remains null when no matchup
+fit is applied. Retain the existing `goalie_edge.available` and goalie projection
+source checks: zero from missing evidence is not proof of a league-average goalie.
+Scores, probabilities, confidence and edge scoring are unchanged. Existing saved
+revisions retain their original payload and may lack these additive fields; API
+reads do not rerun or rewrite them.
+
 `teams.away.dressed_roster[]` and `teams.home.dressed_roster[]` add the listed
 goalies to each team's skater roster. `teams.*.roster[]` remains skater-only for
 backward compatibility. Listed goalies have `lineup_role: goalie`, `line_key: G`,
