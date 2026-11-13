@@ -53,6 +53,142 @@ beforeEach(function (): void {
 
 afterEach(function (): void { $this->travelBack(); });
 
+describe('full-name roster references beginning with Will', function (): void {
+    beforeEach(function (): void {
+        NhlGame::query()->whereKey(2026010088)->update(['game_type' => 2]);
+        // Synthetic same-team fixtures exercise identity/membership checks without real roster assumptions.
+        $names = ['Gabe Perreault', 'Mika Zibanejad', 'Alexis Lafrenière',
+            'Macklin Celebrini', 'Will Smith', 'Tyler Toffoli',
+            'Eeli Tolvanen', 'Will Cuylle', 'Pavel Dorofeyev',
+            'Jonathan Drouin', 'Vincent Trocheck', 'Conor Sheary',
+            'Adam Fox', 'Vladislav Gavrikov', 'Will Borgen', 'Matthew Robertson', 'Braden Schneider', 'Scott Morrow',
+            'Igor Shesterkin', 'Jonathan Quick'];
+        foreach ($names as $index => $name) {
+            [$first, $last] = explode(' ', $name, 2);
+            Player::query()->where('nhl_id', 8488001 + $index)->update([
+                'full_name' => $name, 'first_name' => $first, 'last_name' => $last,
+            ]);
+        }
+        $lines = [];
+        foreach (array_chunk(array_slice($names, 0, 12), 3) as $index => $group) {
+            $lines[] = 'F'.($index + 1).': '.implode(', ', $group);
+        }
+        foreach (array_chunk(array_slice($names, 12, 6), 2) as $index => $group) {
+            $lines[] = 'D'.($index + 1).': '.implode(', ', $group);
+        }
+        $this->text = implode("\n", [...$lines, 'Goalies', ...array_slice($names, 18)]);
+        $this->body['text'] = $this->text;
+        $this->cells = fn (string $line): ?array => (new ReflectionMethod(\App\Services\NhlLineupTextParser::class, 'rosterCells'))
+            ->invoke(app(\App\Services\NhlLineupTextParser::class), $line, 3, true);
+    });
+
+    it('retains complete forward cells containing a leading given name Will', function (string $line, array $expected): void {
+        expect(($this->cells)($line))->toBe($expected);
+        Http::assertNothingSent();
+    })->with([
+        'Cuylle full name' => ['Eeli Tolvanen, Will Cuylle, Pavel Dorofeyev', ['Eeli Tolvanen', 'Will Cuylle', 'Pavel Dorofeyev']],
+        'Smith full name' => ['Will Smith, Macklin Celebrini, Tyler Toffoli', ['Will Smith', 'Macklin Celebrini', 'Tyler Toffoli']],
+        'numbered editor row' => ['F3: Eeli Tolvanen, Will Cuylle, Pavel Dorofeyev', ['Eeli Tolvanen', 'Will Cuylle', 'Pavel Dorofeyev']],
+        'case insensitive given name' => ['WILL SMITH, Macklin Celebrini, Tyler Toffoli', ['WILL SMITH', 'Macklin Celebrini', 'Tyler Toffoli']],
+        'lower case given name' => ['will smith, Macklin Celebrini, Tyler Toffoli', ['will smith', 'Macklin Celebrini', 'Tyler Toffoli']],
+    ]);
+
+    it('continues rejecting prose and malformed references around Will', function (string $line): void {
+        expect(($this->cells)($line))->toBeNull();
+    })->with([
+        'standalone verb' => ['Will, Macklin Celebrini, Tyler Toffoli'],
+        'sentence body verb' => ['Cuylle will return, Eeli Tolvanen, Pavel Dorofeyev'],
+        'uppercase body verb' => ['Smith WILL return, Macklin Celebrini, Tyler Toffoli'],
+        'given name followed by more prose' => ['Will Cuylle will return, Eeli Tolvanen, Pavel Dorofeyev'],
+        'other prose keywords retained' => ['Will Cuylle is playing, Eeli Tolvanen, Pavel Dorofeyev'],
+        'prose without Will' => ['Eeli Tolvanen with Cuylle, Mika Zibanejad, Pavel Dorofeyev'],
+        'empty alternative' => ['Will Cuylle/, Eeli Tolvanen, Pavel Dorofeyev'],
+        'empty cell' => ['Will Cuylle,, Pavel Dorofeyev'],
+        'incomplete row' => ['Will Cuylle, Eeli Tolvanen'],
+        'too many cells' => ['Will Cuylle, Eeli Tolvanen, Pavel Dorofeyev, Will Smith'],
+    ]);
+
+    it('submits a full editor roster through the API or manual UI and reads the persisted identities', function (string $path): void {
+        if ($path === '/api/nhl-lineups') {
+            $this->withToken($this->token);
+        } else {
+            $user = User::factory()->create();
+            $role = Role::query()->create(['name' => 'Super Admin', 'slug' => 'super-admin', 'level' => 99]);
+            $user->roles()->attach($role->id, ['organization_id' => null]);
+            $this->actingAs($user);
+        }
+        $this->postJson($path, $this->body)->assertStatus($path === '/api/nhl-lineups' ? 201 : 200)
+            ->assertJsonPath('lineup.manual_override', true)->assertJsonCount(20, 'lineup.players');
+        $observation = NhlLineupObservation::query()->sole();
+        expect($observation->post_text)->toBe($this->text)
+            ->and($observation->players()->where('lineup_role', 'forward')->count())->toBe(12)
+            ->and($observation->players()->where('lineup_role', 'defense')->count())->toBe(6);
+        foreach ([[8488005, 'Will Smith', 'F2', 2], [8488008, 'Will Cuylle', 'F3', 2], [8488015, 'Will Borgen', 'D2', 1]] as [$id, $name, $line, $slot]) {
+            $this->assertDatabaseHas('nhl_lineup_observation_players', [
+                'nhl_lineup_observation_id' => $observation->id, 'nhl_player_id' => $id,
+                'player_name' => $name, 'line_key' => $line, 'slot_index' => $slot, 'resolution_status' => 'resolved',
+            ]);
+            $this->assertDatabaseHas('players', ['nhl_id' => $id, 'full_name' => $name, 'team_abbrev' => 'TOR']);
+        }
+        $this->assertDatabaseHas('nhl_current_lineups', ['nhl_game_id' => 2026010088,
+            'nhl_lineup_observation_id' => $observation->id]);
+        ApiClient::create(['name' => 'Will regression reader', 'token_hash' => ApiClient::hashToken('will-reader'), 'scopes' => ['nhl-stats:read']]);
+        $read = $this->withToken('will-reader')->getJson('/api/nhl/lineups/2026010088')->assertOk()
+            ->assertJsonCount(20, 'game.teams.home.players');
+        $players = collect($read->json('game.teams.home.players'));
+        expect($players->firstWhere('nhl_player_id', 8488008)['line_key'])->toBe('F3')
+            ->and($players->firstWhere('nhl_player_id', 8488005)['line_key'])->toBe('F2');
+        Http::assertNothingSent();
+    })->with(['/api/nhl-lineups', '/games/2026010088/lineup']);
+
+    it('rejects malformed or ineligible editor rosters without replacing accepted lineup evidence', function (string $original, string $replacement): void {
+        $this->withToken($this->token)->postJson('/api/nhl-lineups', $this->body)->assertCreated();
+        $tables = ['nhl_lineup_observations', 'nhl_lineup_observation_players', 'nhl_current_lineups', 'nhl_starting_goalie_observations'];
+        $before = collect($tables)->mapWithKeys(fn (string $table): array => [$table => DB::table($table)->orderBy('id')->get()->toJson()]);
+        $text = str_replace($original, $replacement, $this->text);
+        $this->postJson('/api/nhl-lineups', [...$this->body, 'text' => $text])
+            ->assertUnprocessable()->assertJsonValidationErrors('text');
+        foreach ($tables as $table) {
+            expect(DB::table($table)->orderBy('id')->get()->toJson())->toBe($before[$table]);
+        }
+        Http::assertNothingSent();
+    })->with([
+        'missing forward cell' => ['Eeli Tolvanen, Will Cuylle, Pavel Dorofeyev', 'Eeli Tolvanen, Will Cuylle'],
+        'missing defense cell' => ['Braden Schneider, Scott Morrow', 'Braden Schneider'],
+        'duplicate known forward' => ['Will Cuylle', 'Will Smith'],
+        'goalie in a skater slot' => ['Will Cuylle', 'Igor Shesterkin'],
+        'unresolved third-line player' => ['Will Cuylle', 'Will Unlisted'],
+        'no verified fourth-line peer' => ['Jonathan Drouin, Vincent Trocheck, Conor Sheary', 'Will Unlisted, Unknown Skater, Unmatched Prospect'],
+        'prose in an otherwise complete roster' => ['Will Cuylle', 'Cuylle will return'],
+        'empty forward cell' => ['Eeli Tolvanen, Will Cuylle, Pavel Dorofeyev', 'Eeli Tolvanen,, Pavel Dorofeyev'],
+    ]);
+
+    it('still rejects a known Will player from the wrong team', function (int $id): void {
+        Player::query()->where('nhl_id', $id)->update(['team_abbrev' => 'MTL']);
+        $response = $this->withToken($this->token)->postJson('/api/nhl-lineups', $this->body)
+            ->assertUnprocessable()->assertJsonValidationErrors('text');
+        expect(implode(' ', $response->json('errors.text')))->toContain('MTL, not TOR');
+        $this->assertDatabaseHas('players', ['nhl_id' => $id, 'team_abbrev' => 'MTL']);
+        $this->assertDatabaseCount('nhl_lineup_observations', 0);
+        $this->assertDatabaseCount('nhl_starting_goalie_observations', 0);
+        Http::assertNothingSent();
+    })->with([8488005, 8488008, 8488015]);
+
+    it('preserves existing unknown-player peer allowances for Will-shaped references', function (int $gameType, string $original, string $line): void {
+        NhlGame::query()->whereKey(2026010088)->update(['game_type' => $gameType]);
+        $text = str_replace($original, 'Will Unlisted', $this->text);
+        $this->withToken($this->token)->postJson('/api/nhl-lineups', [...$this->body, 'text' => $text])->assertCreated();
+        $this->assertDatabaseHas('nhl_lineup_observation_players', [
+            'player_name' => 'Will Unlisted', 'nhl_player_id' => null, 'line_key' => $line, 'resolution_status' => 'unresolved',
+        ]);
+        Http::assertNothingSent();
+    })->with([
+        'preseason first-line peer' => [1, 'Gabe Perreault', 'F1'],
+        'regular-season fourth-line peer' => [2, 'Conor Sheary', 'F4'],
+        'regular-season third-pair peer' => [2, 'Scott Morrow', 'D3'],
+    ]);
+});
+
 describe('lineup writes during predictions', function (): void {
     beforeEach(function (): void {
         config(['cache.default' => 'array']);

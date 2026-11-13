@@ -276,8 +276,10 @@ class NhlLineupTextParser
         }
         foreach ($cells as $cell) {
             foreach (explode('/', $cell) as $reference) {
+                // A leading given name is not the sentence verb; retain every other prose check.
+                $proseReference = preg_replace('/^will (?=\p{L})/iu', '', $reference) ?? $reference;
                 if (! preg_match("/^[\pL\pN][\pL\pM\pN.'’`-]*(?: [\pL\pN][\pL\pM\pN.'’`-]*){0,3}$/u", $reference)
-                    || preg_match('/\b(?:is|are|was|were|with|without|will|today|tomorrow|tonight|skating|playing|lines|lineup)\b/iu', $reference)) {
+                    || preg_match('/\b(?:is|are|was|were|with|without|will|today|tomorrow|tonight|skating|playing|lines|lineup)\b/iu', $proseReference)) {
                     return null;
                 }
             }
