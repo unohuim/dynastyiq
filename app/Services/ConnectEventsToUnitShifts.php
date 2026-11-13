@@ -438,7 +438,7 @@ class ConnectEventsToUnitShifts
             $start = (int) $window['start'];
             $end = (int) $window['end'];
 
-            $unitShift = NhlUnitShift::updateOrCreate(
+            $unitShift = NhlUnitShift::upsertForImport(
                 [
                     'unit_id' => $unit->id,
                     'nhl_game_id' => $this->gameId,

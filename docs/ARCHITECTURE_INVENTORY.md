@@ -2077,6 +2077,9 @@ $eligibility->allowsStoredGame($gameId);
 
 **Purpose:**
 Clear game-scoped NHL raw and derived import artifacts and requeue the canonical pipeline from PBP when parser changes make normal upserts insufficient.
+Targeted on-ice replacements retain whole-game rollback and cancellation. Unit-shift
+writes use the existing natural-key constraint through `NhlUnitShift::upsertForImport`
+to avoid one nested transaction savepoint per new shift; no schema change is needed.
 
 **When to Use:**
 Repairing validation failures caused by stale game-scoped records or rerunning a game after parser semantics change.

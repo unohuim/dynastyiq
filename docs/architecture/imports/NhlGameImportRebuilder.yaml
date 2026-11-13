@@ -32,6 +32,7 @@ rules:
   - Full rebuilds must dispatch the pipeline from the PBP stage.
   - Rebuilds must not delete nhl_games rows or global NHL unit composition rows.
   - Targeted on-ice rebuilding validates stored PBP, boxscore and raw-shift coverage before cleanup, preserves those raw sources and SAT facts, and shares the canonical per-game import lock. Derived cleanup and replacement commit atomically under the run cancellation fence.
+  - Unit-shift creation and HTML-supported shift correction use native natural-key upserts instead of one nested savepoint per new shift. Preserve existing row IDs, creation timestamps, unowned columns and whole-game rollback; increasing PostgreSQL lock capacity is operational headroom, not a substitute for bounded transaction bookkeeping. No separate per-shift commits or weaker cancellation fence are permitted.
   - The targeted transformation order is shift units, event-unit links, HTML PBP verification, unit/player strength summaries, then summary validation. Global player identities and unit compositions are retained. Failed validation rolls back the replacement graph.
   - A scoped on-ice run checkpoints successful games. Only after all selected games commit does an active, unsignalled run finalize once and queue one separately tracked Season Sync per affected season; cache publication remains owned by the normal season-sync event flow. Paused finalization waits for Resume; cancelled work cannot dispatch follow-up syncs.
 public_interface:

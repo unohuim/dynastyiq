@@ -272,7 +272,7 @@ class MakeNhlGameShiftUnits
             $unit   = $this->findOrCreateUnit($unitType, $currentPlayerIds, $teamAbbrev);
             $teamId = $teamAbbrev ? $game->getTeamIdByAbbrev($teamAbbrev) : null;
 
-            $unitShift = NhlUnitShift::updateOrCreate(
+            $unitShift = NhlUnitShift::upsertForImport(
                 [
                     'unit_id'            => $unit->id,
                     'nhl_game_id'        => $game->nhl_game_id,

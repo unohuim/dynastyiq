@@ -1977,6 +1977,104 @@ it('does not hide an inconsistent IPP game inside otherwise valid season totals'
         ->and(app(NhlStrengthStatsQuery::class)->players(['strength' => 'EV'])->first()->ipp)->toBeNull();
 });
 
+describe('unit-shift import persistence', function (): void {
+    beforeEach(function (): void {
+        ($this->insertGame)();
+        ($this->makePlayer)(1);
+        $this->importUnit = app(ResolveNhlUnit::class)->resolve('F', [1], 'TOR');
+        $this->shiftIdentity = ['unit_id' => $this->importUnit->id, 'nhl_game_id' => 2026020001, 'start_game_seconds' => 0];
+        $this->shiftValues = ['period' => 1, 'start_time' => '00:00', 'end_time' => '01:00',
+            'end_game_seconds' => 60, 'seconds' => 60, 'team_id' => 1, 'team_abbrev' => 'TOR'];
+    });
+
+    it('creates an import shift and returns its persisted natural identity and timing', function (): void {
+        $row = \App\Models\NhlUnitShift::upsertForImport($this->shiftIdentity, $this->shiftValues);
+        $this->assertDatabaseHas('nhl_unit_shifts', [...$this->shiftIdentity, ...$this->shiftValues, 'id' => $row->id]);
+        expect($row->exists)->toBeTrue()->and($row->created_at)->not->toBeNull()
+            ->and($row->updated_at)->not->toBeNull();
+    });
+
+    it('updates a repeated import without replacing its ID creation time or unowned context', function (): void {
+        $id = ($this->insertUnitShift)($this->importUnit->id, 'F', 0, 60,
+            ['starting_zone' => 'O', 'is_faceoff' => true, 'created_at' => now()->subDay()]);
+        $before = DB::table('nhl_unit_shifts')->find($id);
+        $this->travel(5)->minutes();
+        $row = \App\Models\NhlUnitShift::upsertForImport($this->shiftIdentity,
+            [...$this->shiftValues, 'seconds' => 90, 'end_game_seconds' => 90, 'end_time' => '01:30']);
+        $after = DB::table('nhl_unit_shifts')->find($id);
+        expect($row->id)->toBe($id)->and($after->created_at)->toBe($before->created_at)
+            ->and($after->updated_at)->not->toBe($before->updated_at)
+            ->and($after->starting_zone)->toBe('O')->and((bool) $after->is_faceoff)->toBeTrue()
+            ->and((int) $after->seconds)->toBe(90);
+        $this->assertDatabaseCount('nhl_unit_shifts', 1);
+    });
+
+    it('keeps import shifts separate by game unit and start time', function (string $dimension): void {
+        $first = \App\Models\NhlUnitShift::upsertForImport($this->shiftIdentity, $this->shiftValues);
+        $identity = $this->shiftIdentity;
+        if ($dimension === 'game') {
+            ($this->insertGame)(2026020002);
+            $identity['nhl_game_id'] = 2026020002;
+        } elseif ($dimension === 'unit') {
+            $identity['unit_id'] = app(ResolveNhlUnit::class)->resolve('D', [1], 'TOR')->id;
+        } else {
+            $identity['start_game_seconds'] = 30;
+        }
+        $next = \App\Models\NhlUnitShift::upsertForImport($identity, $this->shiftValues);
+        expect($next->id)->not->toBe($first->id);
+        $this->assertDatabaseCount('nhl_unit_shifts', 2);
+        $this->assertDatabaseHas('nhl_unit_shifts', [...$this->shiftIdentity, 'id' => $first->id]);
+        $this->assertDatabaseHas('nhl_unit_shifts', [...$identity, 'id' => $next->id]);
+    })->with(['game', 'unit', 'start']);
+
+    it('rolls back native shift inserts and corrections with the surrounding game transaction', function (): void {
+        $id = ($this->insertUnitShift)($this->importUnit->id, 'F');
+        $before = DB::table('nhl_unit_shifts')->find($id);
+        expect(function (): void {
+            DB::transaction(function (): void {
+                \App\Models\NhlUnitShift::upsertForImport($this->shiftIdentity,
+                    [...$this->shiftValues, 'seconds' => 90, 'end_game_seconds' => 90]);
+                \App\Models\NhlUnitShift::upsertForImport([...$this->shiftIdentity, 'start_game_seconds' => 60], $this->shiftValues);
+                throw new RuntimeException('Cancelled before game commit');
+            });
+        })->toThrow(RuntimeException::class, 'Cancelled before game commit');
+        expect(DB::table('nhl_unit_shifts')->find($id))->toEqual($before);
+        $this->assertDatabaseCount('nhl_unit_shifts', 1);
+    });
+
+    it('does not create nested transaction savepoints as imported shift volume grows', function (): void {
+        // Establish an enclosing game transaction before recording persistence activity.
+        DB::beginTransaction();
+        Event::fake([\Illuminate\Database\Events\TransactionBeginning::class]);
+        try {
+            foreach (range(0, 99) as $start) {
+                \App\Models\NhlUnitShift::upsertForImport([...$this->shiftIdentity, 'start_game_seconds' => $start], $this->shiftValues);
+            }
+            $this->assertDatabaseCount('nhl_unit_shifts', 100);
+            Event::assertNotDispatched(\Illuminate\Database\Events\TransactionBeginning::class);
+        } finally {
+            DB::rollBack();
+        }
+        $this->assertDatabaseCount('nhl_unit_shifts', 0);
+    });
+
+    it('builds and repeats real shift windows without per-shift transaction growth', function (): void {
+        DB::table('nhl_shifts')->insert(['nhl_game_id' => 2026020001, 'nhl_player_id' => 1, 'shift_number' => 1,
+            'period' => 1, 'start_time' => '00:00', 'end_time' => '01:00', 'shift_start_seconds' => 0,
+            'shift_end_seconds' => 60, 'team_abbrev' => 'TOR', 'team_name' => 'Toronto', 'first_name' => 'Test', 'last_name' => 'Player']);
+        Event::fake([\Illuminate\Database\Events\TransactionBeginning::class]);
+        $builder = app(\App\Services\MakeNhlGameShiftUnits::class);
+        expect($builder->make(2026020001))->toBe(1);
+        $first = DB::table('nhl_unit_shifts')->first();
+        expect((int) $first->seconds)->toBe(60)->and((int) $first->start_game_seconds)->toBe(0)
+            ->and((int) $first->end_game_seconds)->toBe(60);
+        expect($builder->make(2026020001))->toBe(1);
+        $this->assertDatabaseCount('nhl_unit_shifts', 1);
+        expect(DB::table('nhl_unit_shifts')->first()->id)->toBe($first->id);
+        Event::assertNotDispatched(\Illuminate\Database\Events\TransactionBeginning::class);
+    });
+});
+
 describe('derived on-ice rebuild service', function (): void {
     beforeEach(function (): void {
         ($this->insertGame)();
