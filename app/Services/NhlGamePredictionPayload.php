@@ -108,18 +108,13 @@ class NhlGamePredictionPayload
         $custom = $forecast['prediction'];
         $model = $forecast['model'];
         $matchup = $service->matchup($forecast);
-        $goalieVersion = (string) ($overrides['goalie_projection_version'] ?? $this->latestGoalieProjectionVersion((string) $game->season_id));
+        $goalieVersion = 'sat-model-'.$model->id.'-goalie-per60-v1';
         $goalies = $teams = $lineups = $reasons = [];
         foreach (['away' => 'home', 'home' => 'away'] as $venue => $opponent) {
             $abbrev = $game->{$venue.'_team_abbrev'};
-            try {
-                $goalie = $this->resolveGoalie((string) $game->season_id, $goalieVersion, $abbrev,
-                    $overrides[$venue.'_goalie_id'] ?? null, $gameId, (bool) ($overrides['use_stored_boxscore'] ?? false));
-            } catch (ValidationException) {
-                $id = $custom['teams'][$venue]['starting_goalie_id'];
-                $goalie = ['nhl_player_id' => $id, 'name' => $id ? DB::table('players')->where('nhl_id', $id)->value('full_name') : null,
-                    'projection_source' => 'unavailable', 'confidence_score' => null];
-            }
+            $starterId = $custom['teams'][$venue]['starting_goalie_id'] ?? null;
+            $goalie = app(NhlGoalieProjectionRefresh::class)->goalie($model, $starterId === null ? null : (int) $starterId,
+                $abbrev, $forecast['input']['retained_bucket_keys'] ?? []);
             $goalie['matchup_sog_against_per_game'] = $custom['teams'][$opponent]['sog'];
             $goalie['matchup_predicted_ga_per_game'] = $custom['teams'][$opponent]['goals'];
             $goalie['matchup_value_per_game'] = null;
@@ -141,6 +136,8 @@ class NhlGamePredictionPayload
             && ($goalies['away']['projection_source'] ?? null) === 'goalie_model'
             && ($goalies['home']['projection_source'] ?? null) === 'goalie_model';
         $edge['matchup_fit_available'] = false;
+        $edge['sat_model_run_id'] = (int) $model->id;
+        $edge['comparison_minutes'] = 60;
         $prediction = ['winner' => ['side' => $winnerSide, 'team_abbrev' => $winnerSide === 'pickem' ? null : $custom['recommendation']],
             'predicted_score' => ['away' => round($away, 2), 'home' => round($home, 2)],
             'selection_score' => ['away' => $away, 'home' => $home],

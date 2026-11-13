@@ -1,0 +1,37 @@
+name: SAT Model Goalie Ratings
+type: Model-Owned Diagnostic Goalie Rating Snapshot
+location:
+  - app/Services/NhlGoalieProjectionRefresh.php
+  - app/Jobs/RefreshNhlGoalieProjectionsJob.php
+  - app/Listeners/QueueNhlGoalieProjectionRefresh.php
+  - app/Services/NhlGamePredictionPayload.php
+  - app/Providers/AppServiceProvider.php
+purpose: Feed the custom prediction API goalie edge from the forecast's selected SAT model and starter identities, independently of legacy goalie season projections.
+when_to_use:
+  - Preparing production goalie ratings after committed season syncs.
+  - Supplying individual goalie contributions and the overall diagnostic edge in newly calculated prediction payloads.
+when_not_to_use:
+  - Changing goals, winners, probabilities, confidence calculations or edge weights.
+  - Rebuilding training profiles, fitting models or publishing legacy goalie season projections.
+  - Replacing saved prediction revisions or selecting different starters for display.
+rules:
+  - Production refreshes select only the configured production SAT model name with Train seasons preceding the synced season. Experimental models are not automatic substitutes. An explicitly requested forecast still uses its own selected model for diagnostics.
+  - Ratings use the selected model's regular-season all-strength goalie_faced Train profiles and its retained Train-confidence-at-least-fifty-percent bucket keys. Strength splits must not be added to the all-strength rows. Historical team labels must not constrain identity lookup.
+  - Calculate xGA and GA from summed retained bucket totals, and GSAx from their difference. Divide by the single shared goalie exposure and multiply by 3600. Repeated per-bucket exposure is not summed. Missing or inconsistent exposure and absent meaningful personal evidence remain unavailable; observed zero GSAx is valid evidence.
+  - Existing per-game goalie rating fields carry these sixty-minute equivalents, identified by model id, comparison_minutes and projection_basis. They are diagnostic comparisons rather than season workload or next-game GA forecasts. Unavailable EV/PK season projections and workloads remain null.
+  - The default payload uses the forecast's exact starter identities and model; it must not resolve different starters or read legacy season projections to assemble the edge. Existing matchup estimates, neutral goalie scoring and the seventy/thirty edge formula remain unchanged. Source values and consequently the diagnostic edge may change.
+  - Complete snapshots publish atomically in the shared cache, isolated by model and retained keys. Profile build identity and completion stamp invalidate prepared ratings. A committed season sync forces renewal using stored profiles; no game-result aggregation, profile training, provider request or legacy builder runs in this preparation.
+  - Active model builds and concurrent publishers defer preparation rather than publish partial data. Existing snapshots remain usable during a build. New snapshots require a stable complete model before and after calculation. A wholly missing usable goalie build fails preparation visibly; a missing individual prospect does not block modeled goalies.
+  - Existing season-sync payloads track queued preparation through success or failure alongside independent cache publishers. Previously serialized workload/performance coordinator stages and callbacks redirect safely to SAT ratings, without creating or publishing legacy projection rows.
+  - Saved prediction reads remain immutable. Only new prediction calculations capture the new source and rating values.
+public_interface:
+  - NhlGoalieProjectionRefresh::queueSeason
+  - NhlGoalieProjectionRefresh::snapshot
+  - NhlGoalieProjectionRefresh::goalie
+  - NhlSeasonStatsSynced
+  - prediction.goalie_edge
+  - goalies.away
+  - goalies.home
+example_usage: |
+  // After a successful season sync, projections workers prepare the configured SAT model's ratings.
+  // New forecasts expose both selected goalies' sixty-minute GSAx comparisons through the existing edge weights.

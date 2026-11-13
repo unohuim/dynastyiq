@@ -94,21 +94,23 @@ saved separately for each team. Predictions, lineup starter selection and the
 starting-goalies API retain that identity despite later NHL flag changes, relief
 appearances, cache expiry or manual/request overrides. No pregame guess is locked;
 a known live game without an identified starter waits for NHL confirmation.
-The source remains `nhl_boxscore`, status `confirmed`. Missing personal projection
-history still uses the labelled league-average fallback. Live participation and
-save/GA statistics continue updating independently of this starter identity.
+The starter selector's source remains `nhl_boxscore`, status `confirmed`. The
+prediction diagnostic payload labels its reuse of that selected identity as
+`prediction_starter`; missing personal SAT history remains unavailable as described
+below. Live participation and save/GA statistics update independently of identity.
 
 ## Selected starters without goalie history
 
-Game predictions retain the selected starter even without a personal goalie
-projection. `goalies.away` / `goalies.home` expose `projection_source: league_average`
-and `projection_fallback_reason: missing_goalie_projection`. His name and NHL ID
-remain unchanged (ID may be null for a name-only manual starter). The estimate
-uses league expected rates from the selected season/version weighted by projected
-games, neutral GA/xGA of 1 and GSAx of 0, including penalty-kill contribution.
-Confidence is low; season games, starts and workload remain null. Nothing is
-persisted. Modelled starters return `projection_source: goalie_model` and a null
-fallback reason. Other model and lineup prerequisites remain unchanged.
+The current engine retains its forecast's selected starter even without usable
+personal SAT-model history. `goalies.away` / `goalies.home` then expose
+`projection_source: unavailable`, `projection_fallback_reason: missing_sat_goalie_profile`
+and null personal rate values. The NHL identity remains unchanged; the overall
+diagnostic edge is unavailable when either selected goalie lacks evidence.
+An observed personal GSAx of zero remains valid evidence. Modeled starters return
+`projection_source: goalie_model`, with `sat_model_run_id` identifying the same
+SAT model used by the forecast. This diagnostic availability does not block or
+alter game predictions. Legacy projection helpers retain their separately labelled
+league-average fallback; the current custom-engine edge does not consume it.
 
 This is the official and canonical API usage guide for every DynastyIQ partner
 and API consumer. It covers authentication, reference dependencies, NHL season
@@ -1386,8 +1388,15 @@ Final goal normalization leaves winner, win probability, confidence and qualific
 | Positive | Home goalie edge. |
 | Negative | Away goalie edge. |
 
-The response also includes `goalies.away` and `goalies.home` with the selected
-starters and their projected stats, including projected xGA/G, GA/G, and GSAx/G.
+The response also includes `goalies.away` and `goalies.home` with the forecast's
+exact selected starters and SAT model. `projection_basis: sat_model_training_per_60`
+and `comparison_minutes: 60` identify a standard full-game comparison, calculated
+from stored training bucket totals divided by one shared exposure, times 3,600.
+The existing `projected_xga_per_game`, `projected_ga_per_game` and
+`projected_gsax_per_game` fields carry these sixty-minute equivalents. They are
+diagnostic rates, not next-game GA or season workload forecasts. Season workload
+and unavailable EV/PK projection fields remain null. Current venue team labels
+come from the matchup rather than a historical profile's old team.
 
 Newly calculated predictions also expose each selected goalie's existing weighted
 contribution under `prediction.goalie_edge.components`:
@@ -1411,18 +1420,25 @@ Consumers can use these fields for individual goalie ratings instead of requirin
 the separate `goalies.*.matchup_value_per_game`, which remains null when no matchup
 fit is applied. Retain the existing `goalie_edge.available` and goalie projection
 source checks: zero from missing evidence is not proof of a league-average goalie.
-Scores, probabilities, confidence and edge scoring are unchanged. Existing saved
+Scores, probabilities, confidence and edge weights are unchanged. Edge values
+now reflect the selected SAT model's history. Existing saved
 revisions retain their original payload and may lack these additive fields; API
 reads do not rerun or rewrite them.
 
-Successful season-stat syncs now queue a refresh of that target season's existing
-goalie projection configuration. Current team assignments are applied during the
-workload build; performance builds follow only after workload completion. New
-automatic versions become available after the entire refresh publishes. Failures
-retain the previous usable version and appear in the originating admin sync.
-Existing source-season/model settings and edge formulas remain unchanged. A new
-prediction calculation is required to capture refreshed contributions; saved
-prediction API reads continue returning their original revision and timestamp.
+Successful season-stat syncs prepare the named production SAT model's goalie
+rating snapshot on the projections queue. This reads stored goalie profiles and
+does not rebuild legacy workload, season projections or G SAT Profiles. Automatic
+refreshes do not substitute the September testing model. Ratings use only the same
+retained Train-confidence >=50% buckets as predictions and all-strength profiles;
+EV/PP/PK copies are not added again. Snapshots publish atomically and invalidate
+after profile rebuild completion. Missing individual history remains unavailable
+without failing preparation for other modeled goalies.
+
+`prediction.goalie_edge.sat_model_run_id` and `comparison_minutes` also identify
+the source and sixty-minute comparison. Legacy `goalie_projection_version` requests
+remain accepted, but the custom-engine diagnostic edge always follows the forecast's
+SAT model. A new prediction calculation is required to capture refreshed values;
+saved API reads retain the original revision, edge and timestamp.
 
 `teams.away.dressed_roster[]` and `teams.home.dressed_roster[]` add the listed
 goalies to each team's skater roster. `teams.*.roster[]` remains skater-only for

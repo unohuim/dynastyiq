@@ -8,7 +8,7 @@ use App\Events\NhlSeasonStatsSynced;
 use App\Services\NhlGoalieProjectionRefresh;
 use Illuminate\Contracts\Events\ShouldHandleEventsAfterCommit;
 
-/** Attach goalie preparation to every committed season sync, regardless of entrypoint. */
+/** Prepare production SAT goalie ratings after committed season syncs, regardless of entrypoint. */
 class QueueNhlGoalieProjectionRefresh implements ShouldHandleEventsAfterCommit
 {
     /** Record pending preparation before the independently queued cache publishers can finish. */

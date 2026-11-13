@@ -12,7 +12,7 @@ use Illuminate\Queue\Middleware\WithoutOverlapping;
 use Illuminate\Support\Carbon;
 use Throwable;
 
-/** Start or continue a bounded automatic goalie refresh; child jobs retain their existing maths. */
+/** Prepare a model-owned goalie rating snapshot after season sync. */
 class RefreshNhlGoalieProjectionsJob implements ShouldQueue
 {
     use Queueable;
@@ -23,7 +23,7 @@ class RefreshNhlGoalieProjectionsJob implements ShouldQueue
     public int $deadline;
 
     /** @param array<string,mixed> $context */
-    public function __construct(public array $context, public string $stage = 'workload')
+    public function __construct(public array $context, public string $stage = 'ratings')
     {
         $this->onQueue('projections');
         $this->afterCommit = true;
@@ -47,12 +47,9 @@ class RefreshNhlGoalieProjectionsJob implements ShouldQueue
     public function handle(NhlGoalieProjectionRefresh $refresh): void
     {
         try {
-            if ($this->stage === 'workload') {
-                if (! $refresh->start($this->context)) {
-                    $this->release(60);
-                }
-            } else {
-                $refresh->performance($this->context);
+            // Older serialized workload/performance coordinators use this same safe entrypoint.
+            if (! $refresh->start($this->context)) {
+                $this->release(60);
             }
         } catch (Throwable $exception) {
             $refresh->fail($this->context, $exception->getMessage());

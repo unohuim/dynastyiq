@@ -3974,11 +3974,9 @@ Persisting combined and EV/PK split xGA, GA, GSAx, xSOGA, saves, broad actual-vs
 
 Goalie projection builds depend on persisted G SAT profile rows for every workload goalie with projected games above zero and must not recompute goalie bucket skill from shot-attempt facts during projection builds. Active current goalies without enough source-season sample receive explicit neutral low/no-sample fallback G SAT profile rows.
 
-Committed season syncs refresh existing goalie configurations through
-`NhlGoalieProjectionRefresh`: workload children precede performance children,
-and complete automatic versions publish atomically. Failed builds preserve the
-previous usable version and remain visible in season-sync status. Canonical
-rules remain in `stats/NhlGoalieSeasonProjections.yaml`.
+These remain manual legacy tools. Season sync and the current prediction API
+edge instead use the selected SAT model's stored goalie profiles under
+`stats/NhlSatGoalieRatings.yaml`; they do not rebuild these season projections.
 
 **When Not to Use:**
 Replacing historical goalie chance profiles, storing starts-only goalie workload projections, evaluating offensive chance creation, or building projected faced chance buckets directly from historical goalie rows without projected team defensive environment context.
@@ -3998,6 +3996,22 @@ SELECT goalie_player_id, projected_xga, projected_ga, projected_gsax
 FROM nhl_goalie_season_projections
 WHERE target_season_id = '20262027';
 ```
+
+### SAT Model Goalie Ratings
+
+**Name:** SAT Model Goalie Ratings
+**Type:** Model-Owned Diagnostic Goalie Rating Snapshot
+**Location:** `app/Services/NhlGoalieProjectionRefresh.php`,
+`app/Jobs/RefreshNhlGoalieProjectionsJob.php`,
+`app/Listeners/QueueNhlGoalieProjectionRefresh.php`,
+`docs/architecture/stats/NhlSatGoalieRatings.yaml`.
+
+The custom API edge uses each forecast's selected model and starter identities.
+Stored retained Train goalie buckets become sixty-minute xGA, GA and GSAx
+comparisons. Season sync prepares the production model's snapshot in shared cache;
+experimental models and legacy goalie projections are not automatic substitutes.
+Predicted outcomes and edge weights remain unchanged, while diagnostic values
+reflect the selected SAT model. Missing personal evidence remains unavailable.
 
 ### NHL Goalie Workload Projections
 

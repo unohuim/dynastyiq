@@ -127,10 +127,13 @@
 
 ## Game prediction goalie projection provenance
 
-Request-time `goalies.*.projection_source`: `goalie_model` for a personal season
-projection; `league_average` for an unmodelled selected starter.
-`goalies.*.projection_fallback_reason`: `missing_goalie_projection` for that
-fallback, otherwise null. These values do not change starter selection provenance.
+Request-time `goalies.*.projection_source`: `goalie_model` for usable personal
+model evidence; `league_average` for legacy unmodelled season projections;
+`unavailable` for a current-engine starter without usable SAT-model evidence.
+`goalies.*.projection_fallback_reason`: `missing_goalie_projection` for the legacy
+fallback; `missing_sat_goalie_profile` for unavailable SAT-model evidence; otherwise
+null. `goalies.*.projection_basis: sat_model_training_per_60` identifies the current
+diagnostic sixty-minute comparison. These values do not change prediction inputs.
 
 This document defines the canonical, normative enum-like values used throughout the system.
 It is the source of truth for all domain-level enum-like values referenced in database schemas, models, services, controllers, seeders, and tests.
@@ -2399,16 +2402,15 @@ Teams uses the same slice values for GF, GA, Hits, Blocks, SAT, HDSAT, Saves, SO
 
 **Storage location:** `nhl_game_import_runs.payload.goalie_refresh.status`.
 
-- `queued`: Post-sync goalie preparation is waiting for a worker or another refresh.
-- `building`: Workload or performance children are being prepared or processed.
-- `ready`: Both stages passed coverage checks and published successfully.
-- `failed`: Preparation, a child batch, cancellation or publication failed.
-- `skipped`: The synced target season has no existing goalie projection configuration.
+- `queued`: SAT goalie rating preparation is waiting for a worker or model build.
+- `building`: A snapshot of stored SAT goalie training rates is being prepared.
+- `ready`: A complete usable rating snapshot published successfully.
+- `failed`: Rating preparation or publication failed.
+- `skipped`: No named production SAT model has eligible Train seasons for this sync.
 
-`RefreshNhlGoalieProjectionsJob.stage` uses `workload` for initial coordination and
-`performance` for continuation after successful workload completion. Existing
-projection statuses remain `draft`, `published` and `archived`; automatic refreshes
-use `draft` while building and `published` only after successful validation.
+`RefreshNhlGoalieProjectionsJob.stage` uses `ratings`. Serialized `workload` and
+`performance` values remain accepted for deployment compatibility and redirect
+to rating preparation without building legacy season projections.
 
 ---
 
@@ -2935,8 +2937,9 @@ least one resolved peer in the same line or pair.
 - Anticipated-return precision: `exact_date`, `not_before`, `season_start`, `indefinite`, `unknown`.
 - Starting-goalie observation status: `confirmed`, `expected`, `unknown`.
 - Starting-goalie observation provider: `rotowire`, `public_lineup`, `nhl_boxscore`, `manual` (super-admin game-specific selection or validated UI/API lineup G1).
-- Starting-goalie selection source: `provided`, `manual_starter_override`, `nhl_boxscore`, `starting_goalie_observation`, `goalie_projection`, `workload_projection`.
+- Starting-goalie selection source: `provided`, `manual_starter_override`, `nhl_boxscore`, `starting_goalie_observation`, `goalie_projection`, `workload_projection`, `prediction_starter`.
   `manual_starter_override` records selected manual attribution, not permanent priority over newer eligible provider reports.
+  `prediction_starter` means the diagnostic payload reuses the forecast's already-selected goalie identity without independently resolving a starter.
 
 The following enum-like areas are intentionally documented because they are not fully constrained in the database or are inconsistent across code paths:
 

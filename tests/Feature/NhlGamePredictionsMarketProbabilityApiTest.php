@@ -56,6 +56,17 @@ beforeEach(function (): void {
         $this->input['teams'][$venue] = $side;
     }
     $this->calculate = fn (): array => (new NhlCustomGamePredictionEngine())->predict($this->input);
+    $this->satGoalie = function (int $id, float $xga, int $goals, ?int $modelId = null): void {
+        $this->goalieBucketModel ??= DB::table('nhl_expected_goals_models')->insertGetId(['name' => 'SAT goalie fixture', 'version' => 'v1']);
+        DB::table('nhl_sat_model_entity_profile_buckets')->insert([
+            'model_run_id' => $modelId ?? $this->model->id, 'sat_expected_goals_model_id' => $this->goalieBucketModel,
+            'source_season_ids' => json_encode($this->model->train_season_ids), 'game_type' => 2,
+            'profile_type' => 'goalie_faced', 'strength' => 'all', 'entity_key' => 'goalie_faced:'.$id,
+            'entity_id' => $id, 'team_context' => 'OLD', 'matched_bucket_key' => 'B', 'fallback_level' => 1,
+            'bucket_dimensions' => '{}', 'source_sat' => 600, 'source_sog' => 300, 'source_goals' => $goals,
+            'expected_goals' => $xga, 'source_toi_seconds' => 36000, 'confidence_score' => 0.8,
+        ]);
+    };
     $service = Mockery::mock(NhlCustomGameForecast::class)->makePartial();
     $service->shouldReceive('predict')->andReturnUsing(fn (): array => [
         'game' => (object) $this->game->fresh()->getAttributes(), 'model' => $this->model,
@@ -399,20 +410,25 @@ it('exposes both weighted goalie contributions without changing the existing edg
 ]);
 
 it('publishes individual goalie edge values through revision storage and saved API reads', function (): void {
+    $this->input['teams']['away']['starting_goalie_id'] = 901;
+    $this->input['teams']['home']['starting_goalie_id'] = 902;
+    ($this->satGoalie)(901, 32.5, 30);
+    ($this->satGoalie)(902, 29.0, 30);
+    // Conflicting legacy values must not enter the new engine's diagnostic edge.
     DB::table('nhl_goalie_season_projections')->insert([
         ['projection_version' => 'edge-fixture', 'source_season_id' => '20252026', 'target_season_id' => '20262027',
-            'goalie_player_id' => 901, 'target_team_abbrev' => 'BUF', 'projected_games' => 20, 'projected_gsax' => 5],
+            'goalie_player_id' => 901, 'target_team_abbrev' => 'BUF', 'projected_games' => 20, 'projected_gsax' => -500],
         ['projection_version' => 'edge-fixture', 'source_season_id' => '20252026', 'target_season_id' => '20262027',
-            'goalie_player_id' => 902, 'target_team_abbrev' => 'COL', 'projected_games' => 20, 'projected_gsax' => -2],
+            'goalie_player_id' => 902, 'target_team_abbrev' => 'COL', 'projected_games' => 20, 'projected_gsax' => 500],
     ]);
-    $this->mock(NhlStartingGoalieSelector::class)->shouldReceive('selectForPrediction')
-        ->andReturnUsing(static fn (int $gameId, string $team): array => [
-            'nhl_player_id' => $team === 'BUF' ? 901 : 902, 'name' => $team.' starter',
-            'selection_source' => 'goalie_projection',
-        ]);
+    $this->mock(NhlStartingGoalieSelector::class)->shouldNotReceive('selectForPrediction');
     $expected = ($this->calculate)();
     $first = ($this->requestPrediction)(['goalie_projection_version' => 'edge-fixture'])->assertOk()
         ->assertJsonPath('goalies.away.nhl_player_id', 901)->assertJsonPath('goalies.home.nhl_player_id', 902)
+        ->assertJsonPath('goalies.away.sat_model_run_id', $this->model->id)
+        ->assertJsonPath('goalies.home.projection_source', 'goalie_model')
+        ->assertJsonPath('goalies.away.projection_basis', 'sat_model_training_per_60')
+        ->assertJsonPath('goalies.away.comparison_minutes', 60)
         ->assertJsonPath('prediction.goalie_edge.components.away_value_per_game', 0.175)
         ->assertJsonPath('prediction.goalie_edge.components.home_value_per_game', -0.07)
         ->assertJsonPath('prediction.goalie_edge.score', -0.245)
@@ -446,6 +462,31 @@ it('publishes individual goalie edge values through revision storage and saved A
     $this->assertDatabaseCount('nhl_game_prediction_revisions', 1);
     Bus::assertNothingDispatched();
     Http::assertNothingSent();
+});
+
+it('isolates the API edge to the forecast model and its exact selected starters', function (): void {
+    $this->input['teams']['away']['starting_goalie_id'] = 901;
+    $this->input['teams']['home']['starting_goalie_id'] = 902;
+    ($this->satGoalie)(901, 32.5, 30);
+    ($this->satGoalie)(902, 29.0, 30);
+    ($this->satGoalie)(903, 100.0, 0);
+    $testing = NhlModelRun::create(['run_key' => 'edge-test-only', 'name' => 'sep2026', 'model_family' => 'sat',
+        'status' => 'complete', 'train_season_ids' => ['20222023', '20232024', '20242025']]);
+    ($this->satGoalie)(901, 1.0, 30, $testing->id);
+    ($this->requestPrediction)()->assertOk()->assertJsonPath('goalies.away.nhl_player_id', 901)
+        ->assertJsonPath('goalies.home.nhl_player_id', 902)->assertJsonPath('goalies.away.team_abbrev', 'BUF')
+        ->assertJsonPath('goalies.away.projected_gsax_per_game', 0.25)
+        ->assertJsonPath('prediction.goalie_edge.score', -0.245);
+});
+
+it('keeps goalie edge evidence unavailable when one selected starter lacks SAT history', function (): void {
+    $this->input['teams']['away']['starting_goalie_id'] = 901;
+    $this->input['teams']['home']['starting_goalie_id'] = 902;
+    ($this->satGoalie)(901, 32.5, 30);
+    ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction.goalie_edge.available', false)
+        ->assertJsonPath('prediction.goalie_edge.components.away_value_per_game', 0.175)
+        ->assertJsonPath('goalies.home.nhl_player_id', 902)->assertJsonPath('goalies.home.projection_source', 'unavailable')
+        ->assertJsonPath('goalies.home.projected_gsax_per_game', null);
 });
 
 it('preserves unavailable goalie evidence while exposing the unchanged zero contributions', function (): void {

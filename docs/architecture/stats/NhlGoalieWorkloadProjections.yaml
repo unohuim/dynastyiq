@@ -25,7 +25,7 @@ rules:
   - Workload projections must project starts first, then derive projected games and TOI.
   - Workload projection builds must dispatch one worker job per goalie and upsert by projection version, target season, and goalie id.
   - Current goalie team assignment must come from players.team_abbrev; historical source-team-only matches must not create target workload rows.
-  - Post-sync automatic workload refresh sequencing, version publication and failure handling are governed by NhlGoalieSeasonProjections.yaml. Workload refreshes retain the existing formulas and feed performance only after every workload child succeeds.
+  - Season sync no longer dispatches these workload builders. Current custom-engine goalie diagnostic preparation is governed by NhlSatGoalieRatings.yaml; existing manual workload calculations remain unchanged.
   - Workload role assignment must consider source starts/usage, contract AAV and remaining term, team-relative contract rank, age, and career stage.
   - Goalie age adjustment must use a later aging curve than skater projections, with normal early-30s starter workloads preserved unless other workload signals justify reduction.
   - Goalie durability adjustment must penalize extreme source workloads or older low-workload uncertainty, not routine elite-starter usage.

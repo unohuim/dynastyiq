@@ -5,13 +5,11 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Events\NhlGameImportStatusUpdated;
-use App\Jobs\BuildNhlGoalieProjectionForGoalieJob;
-use App\Jobs\BuildNhlGoalieWorkloadProjectionForGoalieJob;
 use App\Jobs\RefreshNhlGoalieProjectionsJob;
 use App\Models\NhlGameImportRun;
-use Illuminate\Bus\Batch;
+use App\Models\NhlModelRun;
+use App\Models\Player;
 use Illuminate\Database\Query\Builder;
-use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -19,12 +17,13 @@ use Illuminate\Support\Str;
 use RuntimeException;
 use Throwable;
 
-/** Refresh existing goalie projection configurations after sync and publish only complete versions. */
+/** Publish model-owned goalie rating snapshots without legacy projection or defensive-profile dependencies. */
 class NhlGoalieProjectionRefresh
 {
+    /** Retain exclusion of drafts left by the superseded automatic season-projection pathway. */
     public const VERSION_PREFIX = 'sync-goalie-';
 
-    /** Exclude unpublished automatic versions while preserving existing manual-version selection. */
+    /** Keep existing manual reads compatible while excluding abandoned automatic drafts. */
     public static function usable(Builder $query, string $alias = 'projections'): Builder
     {
         return $query->where(static function (Builder $query) use ($alias): void {
@@ -33,187 +32,185 @@ class NhlGoalieProjectionRefresh
         });
     }
 
-    /** Reuse the synced target season's existing source/model/TOI settings, not a new algorithm. */
+    /** Queue only the configured production SAT model; never substitute the experimental model. */
     public function queueSeason(string $season, ?int $runId = null): void
     {
         if (! preg_match('/^\d{8}$/', $season)) {
             throw new \InvalidArgumentException('Goalie refresh requires an eight-digit season.');
         }
-        DB::transaction(fn () => $this->queueConfiguredSeason($season, $runId), 3);
-    }
-
-    /** Admit duplicate event deliveries atomically against the originating run, when present. */
-    private function queueConfiguredSeason(string $season, ?int $runId): void
-    {
-        $existing = $runId === null ? null : NhlGameImportRun::query()->lockForUpdate()->find($runId);
-        if (data_get($existing?->payload, 'goalie_refresh.version') !== null) {
-            return;
-        }
-        $configuration = self::usable(DB::table('nhl_goalie_season_projections as projections'))
-            ->where('target_season_id', $season)->where('status', '!=', 'archived')
-            ->orderByDesc('projected_at')->orderByDesc('id')->first();
-        if ($configuration === null) {
-            $this->record(['target' => $season, 'run_id' => $runId], 'skipped');
-            return;
-        }
-        $metadata = json_decode($configuration->metadata ?? '{}', true, 512, JSON_THROW_ON_ERROR);
-        $context = ['target' => $season, 'source' => (string) $configuration->source_season_id,
-            'toi' => $configuration->toi_projection_version, 'model' => $metadata['sat_model_run_id'] ?? null,
-            'version' => self::VERSION_PREFIX.$season.'-'.Str::uuid(), 'run_id' => $runId,
-            'owner' => (string) Str::uuid()];
-        $this->record($context, 'queued');
-        try {
+        DB::transaction(function () use ($season, $runId): void {
+            $run = $runId === null ? null : NhlGameImportRun::query()->lockForUpdate()->find($runId);
+            if (data_get($run?->payload, 'goalie_refresh.version') !== null) {
+                return;
+            }
+            $model = $this->productionModel($season);
+            $context = ['target' => $season, 'run_id' => $runId, 'model_id' => $model?->id,
+                'version' => 'sat-goalie-ratings-'.Str::uuid()];
+            if ($model === null) {
+                $this->record($context, 'skipped');
+                return;
+            }
+            $this->record($context, 'queued');
             RefreshNhlGoalieProjectionsJob::dispatch($context);
-        } catch (Throwable $exception) {
-            $this->fail($context, $exception->getMessage());
-            report($exception);
+        }, 3);
+    }
+
+    /** Reuse the same stored training data as the selected forecast, normalized to sixty minutes.
+     * @param array<int,string> $keys Retained model Train-confidence >= 50% bucket keys.
+     * @return array<string,mixed>|null Null means a build/lock race; a prior snapshot remains untouched.
+     */
+    public function snapshot(NhlModelRun $model, array $keys, bool $force = false): ?array
+    {
+        $keys = array_values(array_unique($keys));
+        sort($keys);
+        $cacheKey = 'nhl:sat-goalie-ratings:v1:'.$model->id.':'.hash('sha256', json_encode($keys, JSON_THROW_ON_ERROR));
+        $model = $model->fresh();
+        if ($model === null) {
+            return null;
+        }
+        $stamp = $this->stamp($model);
+        $saved = Cache::get($cacheKey);
+        if ($model->status !== NhlModelRun::STATUS_COMPLETE) {
+            return is_array($saved) ? $saved : null;
+        }
+        if (! $force && is_array($saved) && ($saved['source_stamp'] ?? null) === $stamp) {
+            return $saved;
+        }
+        $lock = Cache::lock($cacheKey.':build', 120);
+        if (! $lock->get()) {
+            return ! $force && is_array($saved) ? $saved : null;
+        }
+        try {
+            $rows = $keys === [] ? collect() : DB::table('nhl_sat_model_entity_profile_buckets')
+                ->where('model_run_id', $model->id)->where('profile_type', 'goalie_faced')
+                ->where('game_type', 2)->where('strength', 'all')->whereIn('matched_bucket_key', $keys)
+                ->whereNotNull('entity_id')->select('entity_id')
+                ->selectRaw('SUM(source_sat) AS sat, SUM(source_sog) AS sog, SUM(source_goals) AS goals, SUM(expected_goals) AS xga')
+                ->selectRaw('MAX(source_toi_seconds) AS seconds, MIN(source_toi_seconds) AS min_seconds')
+                ->selectRaw('COUNT(*) AS bucket_count, COUNT(source_toi_seconds) AS exposed_buckets')
+                ->selectRaw('SUM(source_sat * confidence_score) AS weighted_confidence')
+                ->groupBy('entity_id')->get();
+            $ratings = [];
+            foreach ($rows as $row) {
+                $seconds = (float) $row->seconds;
+                if ($seconds <= 0 || (float) $row->min_seconds !== $seconds || (int) $row->bucket_count !== (int) $row->exposed_buckets
+                    || (float) $row->sat <= 0 || (float) $row->sog <= 0) {
+                    continue;
+                }
+                $scale = 3600 / $seconds;
+                $ratings[(int) $row->entity_id] = [
+                    'projected_xga_per_game' => round((float) $row->xga * $scale, 4),
+                    'projected_ga_per_game' => round((float) $row->goals * $scale, 4),
+                    'projected_gsax_per_game' => round(((float) $row->xga - (float) $row->goals) * $scale, 4),
+                    'confidence_score' => round(100 * max(0.0, min(1.0, (float) $row->weighted_confidence / (float) $row->sat))),
+                    'source_sat' => (int) $row->sat, 'source_sog' => (int) $row->sog,
+                    'source_goals' => (int) $row->goals, 'source_xga' => (float) $row->xga,
+                    'source_toi_seconds' => (int) $seconds,
+                ];
+            }
+            $current = $model->fresh();
+            if ($current === null || $current->status !== NhlModelRun::STATUS_COMPLETE || $this->stamp($current) !== $stamp) {
+                return null;
+            }
+            $snapshot = ['source_stamp' => $stamp, 'model_run_id' => (int) $model->id,
+                'comparison_minutes' => 60, 'prepared_at' => now()->toIso8601String(), 'ratings' => $ratings];
+            // Missing source data never replaces a previously usable prepared snapshot.
+            if ($ratings !== []) {
+                if (! Cache::forever($cacheKey, $snapshot)) {
+                    throw new RuntimeException('Unable to publish the SAT goalie rating snapshot.');
+                }
+            }
+
+            return $snapshot;
+        } finally {
+            $lock->release();
         }
     }
 
-    /** Hold a cross-stage lease, then queue one existing workload job per current goalie.
+    /** Bind diagnostics to the forecast's exact starter and model, not a second starter selection.
+     * @param array<int,string> $keys
+     * @return array<string,mixed>
+     */
+    public function goalie(NhlModelRun $model, ?int $id, string $team, array $keys): array
+    {
+        $rating = $id === null ? null : ($this->snapshot($model, $keys)['ratings'][$id] ?? null);
+        $name = $id === null ? null : Player::query()->where('nhl_id', $id)->value('full_name');
+
+        return [
+            'nhl_player_id' => $id, 'name' => $name ?? ($id === null ? null : (string) $id), 'team_abbrev' => $team,
+            'selection_source' => 'prediction_starter',
+            'projection_source' => $rating === null ? 'unavailable' : 'goalie_model',
+            'projection_fallback_reason' => $rating === null ? 'missing_sat_goalie_profile' : null,
+            'sat_model_run_id' => (int) $model->id, 'projection_basis' => 'sat_model_training_per_60',
+            'comparison_minutes' => 60, 'projected_games' => null, 'projected_starts' => null, 'projected_toi_hours' => null,
+            'projected_ev_xga_per_game' => null, 'projected_ev_ga_per_game' => null,
+            'projected_pk_xga_per_game' => null, 'projected_pk_ga_per_game' => null,
+            'projected_xga_per_game' => $rating['projected_xga_per_game'] ?? null,
+            'projected_ga_per_game' => $rating['projected_ga_per_game'] ?? null,
+            'projected_gsax_per_game' => $rating['projected_gsax_per_game'] ?? null,
+            'confidence_score' => $rating['confidence_score'] ?? 0,
+        ];
+    }
+
+    /** Refresh a snapshot on projections workers; this never dispatches legacy workload/profile builders.
      * @param array<string,mixed> $context
      */
     public function start(array $context): bool
     {
-        if (DB::table('job_batches')->where('name', 'Goalie workload refresh '.$context['version'])->exists()) {
+        $model = isset($context['model_id']) ? NhlModelRun::query()->find($context['model_id']) : $this->productionModel($context['target']);
+        if ($model === null) {
+            $this->record($context, 'skipped');
             return true;
         }
-        $lock = Cache::lock($this->lockKey($context), 21600, $context['owner']);
-        if (! $lock->get() && ! $lock->isOwnedByCurrentProcess()) {
+        $context['model_id'] = (int) $model->id;
+        if ($model->status === NhlModelRun::STATUS_FAILED) {
+            throw new RuntimeException('The production SAT model build failed; its goalie ratings cannot be refreshed.');
+        }
+        if ($model->status !== NhlModelRun::STATUS_COMPLETE) {
             return false;
         }
-        try {
-            $setup = app(NhlGoalieWorkloadProjectionBuilder::class)->prepareBuild(
-                $context['source'], $context['target'], $context['version']);
-            $context['goalies'] = $setup['goalie_player_ids'];
-            if ($context['goalies'] === []) {
-                throw new RuntimeException('No current-team goalies are available for automatic projection refresh.');
-            }
-            $jobs = array_map(static fn (int $id): BuildNhlGoalieWorkloadProjectionForGoalieJob =>
-                new BuildNhlGoalieWorkloadProjectionForGoalieJob($context['source'], $context['target'], $context['version'], $id),
-                $context['goalies']);
-            $this->record($context, 'building');
-            Bus::batch($jobs)->onQueue('projections')->name('Goalie workload refresh '.$context['version'])
-                ->then(static function (Batch $batch) use ($context): void {
-                    if (! $batch->cancelled() && $batch->failedJobs === 0) {
-                        try {
-                            RefreshNhlGoalieProjectionsJob::dispatch($context, 'performance');
-                        } catch (Throwable $exception) {
-                            app(self::class)->fail($context, $exception->getMessage());
-                            report($exception);
-                        }
-                    }
-                })->catch(static function (Batch $batch, Throwable $exception) use ($context): void {
-                    app(self::class)->fail($context, $exception->getMessage());
-                })->finally(static function (Batch $batch) use ($context): void {
-                    if ($batch->cancelled()) {
-                        app(self::class)->fail($context, 'Goalie workload refresh was cancelled.');
-                    }
-                })->dispatch();
-        } catch (Throwable $exception) {
-            $this->fail($context, $exception->getMessage());
-            throw $exception;
+        $this->record($context, 'building');
+        $filter = app(NhlPregameContextBuilder::class)->evaluationBucketFilter((int) $model->id, $model->train_season_ids);
+        if ($filter['keys'] === []) {
+            throw new RuntimeException('The production SAT model has no retained Train-confidence >= 50% buckets for goalie ratings.');
         }
+        $snapshot = $this->snapshot($model, $filter['keys'], true);
+        if ($snapshot === null) {
+            return false;
+        }
+        if ($snapshot['ratings'] === []) {
+            throw new RuntimeException('Build Goalies under the production SAT model Profiles menu before preparing goalie ratings.');
+        }
+        $this->record($context, 'ready');
+        $this->releaseLegacyLease($context);
 
         return true;
     }
 
-    /** Queue performance only after all workload rows exist under the new isolated version.
-     * @param array<string,mixed> $context
-     */
+    /** Old serialized batch continuations are redirected to SAT snapshots, never legacy calculations. */
     public function performance(array $context): void
     {
-        if (DB::table('job_batches')->where('name', 'Goalie performance refresh '.$context['version'])->exists()) {
-            return;
-        }
-        $this->assertOwner($context);
-        $workload = DB::table('nhl_goalie_workload_projections')->where('target_season_id', $context['target'])
-            ->where('projection_version', $context['version'])->pluck('goalie_player_id')->map(fn ($id): int => (int) $id)->all();
-        if (array_diff($context['goalies'], $workload) !== []) {
-            throw new RuntimeException('Automatic goalie refresh has incomplete workload rows.');
-        }
-        $context['goalies'] = DB::table('nhl_goalie_workload_projections')->where('target_season_id', $context['target'])
-            ->where('projection_version', $context['version'])->where('projected_games', '>', 0)
-            ->pluck('goalie_player_id')->map(fn ($id): int => (int) $id)->all();
-        if ($context['goalies'] === []) {
-            throw new RuntimeException('Automatic goalie refresh has no positive projected workloads.');
-        }
-        $setup = app(NhlGoalieProjectionBuilder::class)->prepareBuild($context['source'], $context['target'],
-            $context['version'], $context['toi'], $context['version'], $context['model']);
-        if ($setup['goalie_player_ids'] === [] || array_diff($context['goalies'], $setup['goalie_player_ids']) !== []) {
-            throw new RuntimeException('Automatic goalie refresh has incomplete performance inputs.');
-        }
-        $jobs = array_map(static fn (int $id): BuildNhlGoalieProjectionForGoalieJob =>
-            new BuildNhlGoalieProjectionForGoalieJob($context['source'], $context['target'], $context['version'],
-                $context['toi'], $context['version'], $id, $context['model']), $context['goalies']);
-        Bus::batch($jobs)->onQueue('projections')->name('Goalie performance refresh '.$context['version'])
-            ->then(static function (Batch $batch) use ($context): void {
-                if ($batch->cancelled() || $batch->failedJobs > 0) {
-                    return;
-                }
-                try {
-                    app(self::class)->publish($context);
-                } catch (Throwable $exception) {
-                    app(self::class)->fail($context, $exception->getMessage());
-                    report($exception);
-                }
-            })->catch(static function (Batch $batch, Throwable $exception) use ($context): void {
-                app(self::class)->fail($context, $exception->getMessage());
-            })->finally(static function (Batch $batch) use ($context): void {
-                if ($batch->cancelled()) {
-                    app(self::class)->fail($context, 'Goalie performance refresh was cancelled.');
-                }
-            })->dispatch();
+        RefreshNhlGoalieProjectionsJob::dispatch($context, 'ratings');
     }
 
-    /** Publish both stages atomically; zero-row children cannot masquerade as successful coverage.
-     * @param array<string,mixed> $context
-     */
+    /** Old completion callbacks must not publish partially rebuilt legacy season rows. */
     public function publish(array $context): void
     {
-        $this->assertOwner($context);
-        DB::transaction(function () use ($context): void {
-            $workloads = DB::table('nhl_goalie_workload_projections')->where('target_season_id', $context['target'])
-                ->where('projection_version', $context['version'])->where('projected_games', '>', 0)
-                ->pluck('goalie_player_id')->map(fn ($id): int => (int) $id)->all();
-            $rows = DB::table('nhl_goalie_season_projections as projections')
-                ->where('projections.target_season_id', $context['target'])->where('projections.projection_version', $context['version'])
-                ->whereNotNull('projected_gsax')->where('projected_games', '>', 0)
-                ->whereExists(static function (Builder $query): void {
-                    $query->selectRaw('1')->from('nhl_goalie_projection_chance_buckets as buckets')
-                        ->whereColumn('buckets.goalie_season_projection_id', 'projections.id')
-                        ->whereColumn('buckets.projection_version', 'projections.projection_version')
-                        ->whereColumn('buckets.target_season_id', 'projections.target_season_id')
-                        ->whereColumn('buckets.goalie_player_id', 'projections.goalie_player_id')
-                        ->whereIn('buckets.projection_strength', ['ev', 'all']);
-                })->pluck('goalie_player_id')->map(fn ($id): int => (int) $id)->all();
-            if ($context['goalies'] === [] || array_diff($context['goalies'], $rows) !== []
-                || array_diff($context['goalies'], $workloads) !== []) {
-                throw new RuntimeException('Automatic goalie refresh has incomplete performance projections, workloads or buckets.');
-            }
-            foreach (['nhl_goalie_workload_projections', 'nhl_goalie_season_projections'] as $table) {
-                DB::table($table)->where('target_season_id', $context['target'])->where('projection_version', $context['version'])
-                    ->update(['status' => 'published', 'updated_at' => now()]);
-            }
-            $this->record($context, 'ready');
-        }, 3);
-        $this->unlock($context);
+        $this->performance($context);
     }
 
-    /** Preserve prior published projections and surface automatic preparation failures.
-     * @param array<string,mixed> $context
-     */
+    /** Record a preparation failure while preserving published snapshots and first meaningful errors. */
     public function fail(array $context, string $error): void
     {
         try {
             $this->record($context, 'failed', $error);
         } finally {
-            $this->unlock($context);
+            $this->releaseLegacyLease($context);
         }
-        Log::error('Automatic goalie projection refresh failed.', ['season' => $context['target'], 'error' => $error]);
+        Log::error('SAT goalie rating preparation failed.', ['season' => $context['target'], 'error' => $error]);
     }
 
-    /** The existing season-sync UI must not report success before goalie preparation finishes. */
+    /** Wait for applicable goalie preparation as well as the independent public stats publishers. */
     public static function runStatus(array $payload): string
     {
         $cache = data_get($payload, 'stats_cache.status', 'queued');
@@ -226,9 +223,25 @@ class NhlGoalieProjectionRefresh
             ? NhlGameImportRun::STATUS_COMPLETED : NhlGameImportRun::STATUS_RUNNING;
     }
 
-    /** Merge progress under the existing run lock without losing cache/aggregation updates.
-     * @param array<string,mixed> $context
-     */
+    /** Select only the named production model with Train seasons preceding the requested season. */
+    private function productionModel(string $season): ?NhlModelRun
+    {
+        $eligible = NhlModelRun::query()->where('model_family', 'sat')
+            ->whereRaw('LOWER(name) = ?', [mb_strtolower((string) config('nhl-custom-prediction.default_model_name', 'sat_v2'))])
+            ->orderByDesc('id')->get()->filter(fn (NhlModelRun $model): bool =>
+                $model->train_season_ids !== null && $model->train_season_ids !== [] && max($model->train_season_ids) < $season);
+
+        return $eligible->first(fn (NhlModelRun $model): bool => $model->status === NhlModelRun::STATUS_COMPLETE) ?? $eligible->first();
+    }
+
+    /** Profile rebuild completion invalidates a snapshot; same-day season sync can also force renewal. */
+    private function stamp(NhlModelRun $model): string
+    {
+        return hash('sha256', json_encode([$model->train_season_ids,
+            data_get($model->metrics, 'profile_build.id'), data_get($model->metrics, 'profiles_completed_at')], JSON_THROW_ON_ERROR));
+    }
+
+    /** Merge into the existing admin progress payload without losing cache or aggregation updates. */
     private function record(array $context, string $status, ?string $error = null): void
     {
         if (($context['run_id'] ?? null) === null) {
@@ -244,13 +257,12 @@ class NhlGoalieProjectionRefresh
                 return;
             }
             $payload['goalie_refresh'] = ['status' => $status, 'version' => $context['version'] ?? null,
-                'season' => $context['target'], 'error' => $error];
+                'model_run_id' => $context['model_id'] ?? null, 'season' => $context['target'], 'error' => $error];
             $runStatus = $run->status === NhlGameImportRun::STATUS_FAILED ? NhlGameImportRun::STATUS_FAILED : self::runStatus($payload);
             if ($runStatus === NhlGameImportRun::STATUS_COMPLETED) {
                 $payload['completed_at'] = now()->toIso8601String();
             }
-            $run->update(['payload' => $payload, 'status' => $runStatus,
-                'last_error' => $error ?? $run->last_error]);
+            $run->update(['payload' => $payload, 'status' => $runStatus, 'last_error' => $error ?? $run->last_error]);
         }, 3);
         DB::afterCommit(static function () use ($context): void {
             try {
@@ -261,25 +273,11 @@ class NhlGoalieProjectionRefresh
         });
     }
 
-    /** @param array<string,mixed> $context */
-    private function lockKey(array $context): string
-    {
-        return 'nhl:goalie-refresh:'.$context['target'];
-    }
-
-    /** @param array<string,mixed> $context */
-    private function assertOwner(array $context): void
-    {
-        if (! isset($context['owner']) || ! Cache::restoreLock($this->lockKey($context), $context['owner'])->isOwnedByCurrentProcess()) {
-            throw new RuntimeException('Automatic goalie refresh lease expired; its draft outputs remain unpublished.');
-        }
-    }
-
-    /** @param array<string,mixed> $context */
-    private function unlock(array $context): void
+    /** Release only a lease owned by an old serialized automatic refresh. */
+    private function releaseLegacyLease(array $context): void
     {
         if (isset($context['owner'])) {
-            Cache::restoreLock($this->lockKey($context), $context['owner'])->release();
+            Cache::restoreLock('nhl:goalie-refresh:'.$context['target'], $context['owner'])->release();
         }
     }
 }
