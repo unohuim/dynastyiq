@@ -119,7 +119,7 @@ class NhlStartingGoalieSelector
         $goalieProjectionVersion ??= $this->latestGoalieProjectionVersion($targetSeasonId);
         $projected = $goalieProjectionVersion === null
             ? null
-            : DB::table('nhl_goalie_season_projections')
+            : NhlGoalieProjectionRefresh::usable(DB::table('nhl_goalie_season_projections'), 'nhl_goalie_season_projections')
                 ->where('target_season_id', $targetSeasonId)
                 ->where('projection_version', $goalieProjectionVersion)
                 ->where('target_team_abbrev', $teamAbbrev)
@@ -134,7 +134,7 @@ class NhlStartingGoalieSelector
             return null;
         }
 
-        $workload = DB::table('nhl_goalie_workload_projections')
+        $workload = NhlGoalieProjectionRefresh::usable(DB::table('nhl_goalie_workload_projections'), 'nhl_goalie_workload_projections')
             ->where('target_season_id', $targetSeasonId)
             ->where('target_team_abbrev', $teamAbbrev)
             ->orderByDesc('projected_starts')
@@ -424,12 +424,12 @@ class NhlStartingGoalieSelector
             return null;
         }
 
-        return DB::table('nhl_goalie_season_projections as projections')
+        return NhlGoalieProjectionRefresh::usable(DB::table('nhl_goalie_season_projections as projections'))
             ->join('nhl_goalie_projection_chance_buckets as buckets', function ($join): void {
                 $join->on('buckets.projection_version', '=', 'projections.projection_version')
                     ->on('buckets.target_season_id', '=', 'projections.target_season_id')
                     ->on('buckets.goalie_player_id', '=', 'projections.goalie_player_id')
-                    ->where('buckets.projection_strength', '=', 'ev');
+                    ->whereIn('buckets.projection_strength', ['ev', 'all']);
             })
             ->where('projections.target_season_id', $targetSeasonId)
             ->groupBy('projections.projection_version')

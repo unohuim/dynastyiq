@@ -481,7 +481,7 @@ class NhlProjectedTeamMatchupSimulator
             return null;
         }
 
-        $row = DB::table('nhl_goalie_season_projections as projections')
+        $row = NhlGoalieProjectionRefresh::usable(DB::table('nhl_goalie_season_projections as projections'))
             ->leftJoin('players', 'players.nhl_id', '=', 'projections.goalie_player_id')
             ->where('projections.target_season_id', $targetSeasonId)
             ->where('projections.projection_version', $goalieProjectionVersion)
@@ -548,7 +548,7 @@ class NhlProjectedTeamMatchupSimulator
      */
     public function leagueAverageGoalieProjection(string $season, string $version): object
     {
-        $rows = DB::table('nhl_goalie_season_projections')
+        $rows = NhlGoalieProjectionRefresh::usable(DB::table('nhl_goalie_season_projections'), 'nhl_goalie_season_projections')
             ->where('target_season_id', $season)->where('projection_version', $version)
             ->where('projected_games', '>', 0)->get();
         $games = (float) $rows->sum('projected_games');

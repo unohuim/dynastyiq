@@ -2395,6 +2395,23 @@ Teams uses the same slice values for GF, GA, Hits, Blocks, SAT, HDSAT, Saves, SO
 
 ---
 
+### NHL Automatic Goalie Refresh State
+
+**Storage location:** `nhl_game_import_runs.payload.goalie_refresh.status`.
+
+- `queued`: Post-sync goalie preparation is waiting for a worker or another refresh.
+- `building`: Workload or performance children are being prepared or processed.
+- `ready`: Both stages passed coverage checks and published successfully.
+- `failed`: Preparation, a child batch, cancellation or publication failed.
+- `skipped`: The synced target season has no existing goalie projection configuration.
+
+`RefreshNhlGoalieProjectionsJob.stage` uses `workload` for initial coordination and
+`performance` for continuation after successful workload completion. Existing
+projection statuses remain `draft`, `published` and `archived`; automatic refreshes
+use `draft` while building and `published` only after successful validation.
+
+---
+
 ### NHL Player Projection Confidence Bucket
 
 **Name:** NHL player projection confidence bucket

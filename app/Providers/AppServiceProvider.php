@@ -75,6 +75,7 @@ class AppServiceProvider extends ServiceProvider
             });
         }
         Event::listen(\App\Events\SatImported::class, \App\Listeners\QueuePredictionSeasonSatScoring::class);
+        Event::listen(\App\Events\NhlSeasonStatsSynced::class, \App\Listeners\QueueNhlGoalieProjectionRefresh::class);
         Event::listen(\App\Events\NhlSeasonStatsSynced::class, \App\Listeners\QueueNhlStatsDashboardRefresh::class);
         Event::listen(\App\Events\NhlStatsSourceUpdated::class, \App\Listeners\QueueNhlStatsDashboardRefresh::class);
         Event::listen(\App\Events\SatImported::class, function (\App\Events\SatImported $event): void {

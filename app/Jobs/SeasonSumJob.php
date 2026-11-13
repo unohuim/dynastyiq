@@ -101,12 +101,7 @@ class SeasonSumJob implements ShouldQueue
             $payload = $current->payload ?? [];
             $payload['rows_upserted'] = $rows;
             $payload['aggregation_completed_at'] = now()->toIso8601String();
-            $cacheStatus = $payload['stats_cache']['status'] ?? 'queued';
-            $status = match ($cacheStatus) {
-                'ready' => NhlGameImportRun::STATUS_COMPLETED,
-                'failed' => NhlGameImportRun::STATUS_FAILED,
-                default => NhlGameImportRun::STATUS_RUNNING,
-            };
+            $status = \App\Services\NhlGoalieProjectionRefresh::runStatus($payload);
             if ($status === NhlGameImportRun::STATUS_COMPLETED) {
                 $payload['completed_at'] = now()->toIso8601String();
             }

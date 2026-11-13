@@ -1415,6 +1415,15 @@ Scores, probabilities, confidence and edge scoring are unchanged. Existing saved
 revisions retain their original payload and may lack these additive fields; API
 reads do not rerun or rewrite them.
 
+Successful season-stat syncs now queue a refresh of that target season's existing
+goalie projection configuration. Current team assignments are applied during the
+workload build; performance builds follow only after workload completion. New
+automatic versions become available after the entire refresh publishes. Failures
+retain the previous usable version and appear in the originating admin sync.
+Existing source-season/model settings and edge formulas remain unchanged. A new
+prediction calculation is required to capture refreshed contributions; saved
+prediction API reads continue returning their original revision and timestamp.
+
 `teams.away.dressed_roster[]` and `teams.home.dressed_roster[]` add the listed
 goalies to each team's skater roster. `teams.*.roster[]` remains skater-only for
 backward compatibility. Listed goalies have `lineup_role: goalie`, `line_key: G`,

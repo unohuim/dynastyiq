@@ -6,6 +6,10 @@ location:
   - app/Services/NhlGoalieProjectionBuilder.php
   - app/Jobs/BuildNhlGoalieProjectionsJob.php
   - app/Jobs/BuildNhlGoalieProjectionForGoalieJob.php
+  - app/Events/NhlSeasonStatsSynced.php
+  - app/Listeners/QueueNhlGoalieProjectionRefresh.php
+  - app/Jobs/RefreshNhlGoalieProjectionsJob.php
+  - app/Services/NhlGoalieProjectionRefresh.php
   - app/Console/Commands/BuildNhlGoalieProjectionsCommand.php
   - app/Http/Controllers/Admin/NhlShotAttemptController.php
   - resources/views/admin/nhl-shot-attempts/index.blade.php
@@ -40,12 +44,19 @@ rules:
   - Goalie bucket skill must be shrunk by goalie bucket confidence, and missing meaningful goalie bucket skill must fail the goalie projection unless the G SAT profile build persisted an explicit neutral low/no-sample fallback row for that goalie.
   - Summary projection totals must reconcile to bucket rows plus any retained Other tail bucket.
   - Projection builds must dispatch one worker job per goalie and upsert season rows by projection version, target season, and goalie id.
+  - Committed season syncs automatically refresh an already configured target season through the existing source season, TOI version and optional SAT model. A season without an existing configuration is skipped; sync never invents one or trains missing prerequisites.
+  - Automatic refreshes use projections workers and new isolated versions. All current-team workload children finish before performance preparation; only positive projected workloads require performance rows. Missing prerequisites, failed or cancelled children, missing rows or incompatible buckets prevent publication and preserve the previous usable version.
+  - Automatic versions use the sync-goalie- prefix and remain unavailable to prediction, goalie fallback and starter reads until workload and performance outputs publish atomically. Existing manual-version selection remains compatible. Projection formulas, goalie-edge weights and saved prediction revisions are unchanged.
+  - Same-season automatic refreshes serialize across both stages. Redelivered coordinators reuse existing batches rather than rebuilding a published version. Locks have bounded lifetimes; deferred requests retain their own pending work rather than being discarded.
+  - Originating season-sync runs track goalie preparation in their existing payload and expose failure through the existing error/status surface. Sync completion waits for aggregation, cache preparation and configured goalie preparation. Independent cache refreshes cannot overwrite goalie failures or prematurely complete a sync.
 public_interface:
   - nhl_goalie_season_projections
   - nhl_goalie_projection_chance_buckets
   - NhlGoalieSeasonProjection
   - NhlGoalieProjectionChanceBucket
   - NhlGoalieProjectionBuilder
+  - NhlGoalieProjectionRefresh
+  - NhlSeasonStatsSynced
   - nhl:goalie-projections
   - admin.nhl-shot-attempts.goalie-projections.build
 example_usage: |

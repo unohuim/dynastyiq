@@ -97,12 +97,13 @@ class QueueNhlStatsDashboardRefresh implements ShouldQueueAfterCommit
                 return;
             }
             $payload['stats_cache'] = ['status' => $status, 'batch_id' => $batch->id, 'error' => $error];
-            $runStatus = $status === 'failed' ? NhlGameImportRun::STATUS_FAILED : NhlGameImportRun::STATUS_RUNNING;
-            if ($status === 'ready' && isset($payload['aggregation_completed_at'])) {
-                $runStatus = NhlGameImportRun::STATUS_COMPLETED;
+            $runStatus = $run->status === NhlGameImportRun::STATUS_FAILED
+                ? NhlGameImportRun::STATUS_FAILED
+                : \App\Services\NhlGoalieProjectionRefresh::runStatus($payload);
+            if ($runStatus === NhlGameImportRun::STATUS_COMPLETED) {
                 $payload['completed_at'] = now()->toIso8601String();
             }
-            $run->update(['status' => $runStatus, 'payload' => $payload, 'last_error' => $error]);
+            $run->update(['status' => $runStatus, 'payload' => $payload, 'last_error' => $error ?? $run->last_error]);
         }, 3);
         try {
             broadcast(new NhlGameImportStatusUpdated('season-sync-progress', $runId));

@@ -1125,7 +1125,7 @@ class NhlGamePredictionPayload
             return null;
         }
 
-        return DB::table('nhl_goalie_season_projections as projections')
+        return NhlGoalieProjectionRefresh::usable(DB::table('nhl_goalie_season_projections as projections'))
             ->join('nhl_goalie_projection_chance_buckets as buckets', function ($join): void {
                 $join->on('buckets.projection_version', '=', 'projections.projection_version')
                     ->on('buckets.target_season_id', '=', 'projections.target_season_id')
@@ -1234,7 +1234,7 @@ class NhlGamePredictionPayload
             ? 'projections.goalie_player_id::text'
             : 'CAST(projections.goalie_player_id AS TEXT)';
 
-        $row = DB::table('nhl_goalie_season_projections as projections')
+        $row = NhlGoalieProjectionRefresh::usable(DB::table('nhl_goalie_season_projections as projections'))
             ->leftJoin('players', 'players.nhl_id', '=', 'projections.goalie_player_id')
             ->where('projections.target_season_id', $targetSeasonId)
             ->where('projections.projection_version', $goalieProjectionVersion)

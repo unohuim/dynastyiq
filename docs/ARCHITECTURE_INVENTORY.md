@@ -3974,6 +3974,12 @@ Persisting combined and EV/PK split xGA, GA, GSAx, xSOGA, saves, broad actual-vs
 
 Goalie projection builds depend on persisted G SAT profile rows for every workload goalie with projected games above zero and must not recompute goalie bucket skill from shot-attempt facts during projection builds. Active current goalies without enough source-season sample receive explicit neutral low/no-sample fallback G SAT profile rows.
 
+Committed season syncs refresh existing goalie configurations through
+`NhlGoalieProjectionRefresh`: workload children precede performance children,
+and complete automatic versions publish atomically. Failed builds preserve the
+previous usable version and remain visible in season-sync status. Canonical
+rules remain in `stats/NhlGoalieSeasonProjections.yaml`.
+
 **When Not to Use:**
 Replacing historical goalie chance profiles, storing starts-only goalie workload projections, evaluating offensive chance creation, or building projected faced chance buckets directly from historical goalie rows without projected team defensive environment context.
 
