@@ -101,6 +101,185 @@ const loadAdminHub = async () => {
     return (await import('./admin-hub.js')).default;
 };
 
+describe('game import progress recovery', () => {
+    const run = (completed, status = 'running') => ({
+        id: 225, action: 'season-sync', status,
+        progress: { cache_total: 19, cache_completed: completed },
+    });
+    const response = (completed = 18, active = true) => ({
+        ok: true,
+        json: async () => ({ runs: [run(completed, active ? 'running' : 'completed')], has_active_runs: active }),
+    });
+    const setup = async () => {
+        const hub = (await loadAdminHub())();
+        hub.activeTab = 'game-imports';
+        hub.gameImports.runs = [run(11)];
+        hub.gameImports.hasActiveRuns = true;
+        return hub;
+    };
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.stubGlobal('fetch', vi.fn());
+        vi.stubGlobal('window', { location: { search: '' } });
+    });
+    afterEach(() => {
+        vi.clearAllTimers();
+        vi.useRealTimers();
+        vi.unstubAllGlobals();
+    });
+
+    it('retries failed background reads quietly and advances retained season sync progress', async () => {
+        fetch.mockRejectedValueOnce(new Error('Connection lost')).mockResolvedValue(response());
+        const hub = await setup();
+        hub.gameImports.error = 'An unrelated manual action failed';
+        await hub.loadGameImports({ background: true });
+        expect(hub.gameImports.runs).toEqual([run(11)]);
+        expect(hub.gameImports.loading).toBe(false);
+        expect(hub.gameImports.error).toBe('An unrelated manual action failed');
+        expect(hub.gameImports.statusRetryNeeded).toBe(true);
+        await vi.advanceTimersByTimeAsync(4999);
+        expect(fetch).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(fetch).toHaveBeenCalledTimes(2);
+        expect(hub.gameImports.runs).toEqual([run(18)]);
+        expect(hub.gameImports.statusRetryNeeded).toBe(false);
+        expect(hub.gameImports.error).toBe('An unrelated manual action failed');
+    });
+
+    it('preserves progress and schedules recovery after an HTTP error', async () => {
+        fetch.mockResolvedValue({ ok: false, json: async () => ({ message: 'Unavailable' }) });
+        const hub = await setup();
+        await hub.loadGameImports({ background: true });
+        expect(hub.gameImports.runs).toEqual([run(11)]);
+        expect(hub.gameImports.error).toBe('');
+        expect(hub.gameImports.statusBusy).toBe(false);
+        expect(hub.gameImportPoller).not.toBeNull();
+        await vi.advanceTimersByTimeAsync(5000);
+        expect(fetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not replace retained progress with malformed JSON', async () => {
+        fetch.mockResolvedValueOnce({ ok: true, json: async () => { throw new SyntaxError('Invalid JSON'); } })
+            .mockResolvedValue(response());
+        const hub = await setup();
+        await hub.loadGameImports({ background: true });
+        expect(hub.gameImports.runs).toEqual([run(11)]);
+        await vi.advanceTimersByTimeAsync(5000);
+        expect(hub.gameImports.runs).toEqual([run(18)]);
+    });
+
+    it('rejects an invalid run collection without losing the last successful read', async () => {
+        fetch.mockResolvedValue({ ok: true, json: async () => ({ runs: {} }) });
+        const hub = await setup();
+        await hub.loadGameImports({ background: true });
+        expect(hub.gameImports.runs).toEqual([run(11)]);
+        expect(hub.gameImports.statusRetryNeeded).toBe(true);
+        expect(hub.gameImports.error).toBe('');
+    });
+
+    it('recovers an initial failure even before active runs are known and clears its own error', async () => {
+        fetch.mockRejectedValueOnce(new Error('Connection lost')).mockResolvedValue(response());
+        const hub = await setup();
+        hub.gameImports.hasActiveRuns = false;
+        await hub.loadGameImports();
+        expect(hub.gameImports.error).toBe('Connection lost');
+        expect(hub.gameImports.loading).toBe(false);
+        await vi.advanceTimersByTimeAsync(5000);
+        expect(hub.gameImports.runs).toEqual([run(18)]);
+        expect(hub.gameImports.error).toBe('');
+    });
+
+    it('does not clear a newer manual action error when a failed status read recovers', async () => {
+        fetch.mockRejectedValueOnce(new Error('Connection lost')).mockResolvedValue(response());
+        const hub = await setup();
+        await hub.loadGameImports();
+        hub.gameImports.error = 'Manual validation failed';
+        await vi.advanceTimersByTimeAsync(5000);
+        expect(hub.gameImports.error).toBe('Manual validation failed');
+        expect(hub.gameImports.statusError).toBe('');
+    });
+
+    it('releases a stalled fetch and ignores its late response after newer progress arrives', async () => {
+        let release;
+        fetch.mockReturnValueOnce(new Promise((resolve) => { release = resolve; }))
+            .mockResolvedValue(response());
+        const hub = await setup();
+        const request = hub.loadGameImports({ background: true });
+        const signal = fetch.mock.calls[0][1].signal;
+        await vi.advanceTimersByTimeAsync(14999);
+        expect(hub.gameImports.statusBusy).toBe(true);
+        await vi.advanceTimersByTimeAsync(1);
+        await request;
+        expect(signal.aborted).toBe(true);
+        expect(hub.gameImports.statusBusy).toBe(false);
+        expect(hub.gameImports.runs).toEqual([run(11)]);
+        expect(hub.gameImports.error).toBe('');
+        await vi.advanceTimersByTimeAsync(5000);
+        expect(hub.gameImports.runs).toEqual([run(18)]);
+        release(response(12));
+        await vi.advanceTimersByTimeAsync(0);
+        expect(hub.gameImports.runs).toEqual([run(18)]);
+    });
+
+    it('also bounds stalled response body parsing', async () => {
+        let release;
+        fetch.mockResolvedValueOnce({ ok: true, json: () => new Promise((resolve) => { release = resolve; }) })
+            .mockResolvedValue(response());
+        const hub = await setup();
+        const request = hub.loadGameImports({ background: true });
+        await vi.advanceTimersByTimeAsync(15000);
+        await request;
+        expect(hub.gameImports.statusBusy).toBe(false);
+        expect(fetch.mock.calls[0][1].signal.aborted).toBe(true);
+        await vi.advanceTimersByTimeAsync(5000);
+        release({ runs: [run(12)] });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(hub.gameImports.runs).toEqual([run(18)]);
+    });
+
+    it('stops polling after a successful terminal read and clears the request deadline', async () => {
+        fetch.mockResolvedValue(response(19, false));
+        const hub = await setup();
+        await hub.loadGameImports({ background: true });
+        expect(hub.gameImports.runs).toEqual([run(19, 'completed')]);
+        expect(hub.gameImportPoller).toBeNull();
+        await vi.advanceTimersByTimeAsync(20000);
+        expect(fetch).toHaveBeenCalledTimes(1);
+        expect(fetch.mock.calls[0][1].signal.aborted).toBe(false);
+    });
+
+    it('does not schedule recovery after the user leaves game imports', async () => {
+        let reject;
+        fetch.mockReturnValue(new Promise((_resolve, fail) => { reject = fail; }));
+        const hub = await setup();
+        const request = hub.loadGameImports({ background: true });
+        hub.activeTab = 'imports';
+        reject(new Error('Connection lost'));
+        await request;
+        await vi.advanceTimersByTimeAsync(20000);
+        expect(fetch).toHaveBeenCalledTimes(1);
+        expect(hub.gameImportPoller).toBeNull();
+    });
+
+    it('drains the latest queued page after a timeout without overlapping live requests', async () => {
+        fetch.mockReturnValueOnce(new Promise(() => {})).mockResolvedValue(response());
+        const hub = await setup();
+        const request = hub.loadGameImports({ background: true, page: 1 });
+        await hub.loadGameImports({ background: true, page: 2 });
+        await hub.loadGameImports({ background: true, page: 3 });
+        expect(fetch).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(15000);
+        await request;
+        expect(fetch).toHaveBeenCalledTimes(2);
+        expect(fetch.mock.calls[0][1].signal.aborted).toBe(true);
+        expect(fetch.mock.calls[1][0]).toContain('page=3');
+        expect(hub.gameImports.statusBusy).toBe(false);
+        expect(hub.gameImports.queuedStatusPage).toBeNull();
+        expect(hub.gameImports.runs).toEqual([run(18)]);
+    });
+});
+
 describe('saved import summaries and lazy games', () => {
     beforeEach(() => {
         vi.useFakeTimers();
@@ -890,6 +1069,7 @@ describe('admin-hub import listeners', () => {
         });
         expect(fetch).toHaveBeenNthCalledWith(4, '/admin/nhl-game-imports/status', {
             headers: { Accept: 'application/json' },
+            signal: expect.anything(),
         });
         expect(document.querySelector('[data-validation-triage-page]')).not.toBeNull();
         expect(instance.gameImports.runs[0].id).toBe(28);
@@ -944,6 +1124,7 @@ describe('admin-hub import listeners', () => {
 
         expect(fetch).toHaveBeenNthCalledWith(1, '/admin/nhl-game-imports/status', {
             headers: { Accept: 'application/json' },
+            signal: expect.anything(),
         });
         expect(fetch).toHaveBeenNthCalledWith(2, '/admin/nhl-game-imports/source-gaps', {
             headers: { Accept: 'application/json' },
@@ -1289,6 +1470,7 @@ describe('admin-hub import listeners', () => {
         });
         expect(fetch).toHaveBeenNthCalledWith(2, '/admin/nhl-game-imports/status', {
             headers: { Accept: 'application/json' },
+            signal: expect.anything(),
         });
         expect(instance.gameImports.runs[0].id).toBe(29);
         expect(instance.gameImports.syncingSeason).toBe(false);
@@ -1338,6 +1520,7 @@ describe('admin-hub import listeners', () => {
         });
         expect(fetch).toHaveBeenNthCalledWith(2, '/admin/nhl-game-imports/status', {
             headers: { Accept: 'application/json' },
+            signal: expect.anything(),
         });
         expect(instance.gameImports.runs[0].id).toBe(32);
         expect(instance.gameImports.emptyingGames).toBe(false);
@@ -1594,6 +1777,7 @@ describe('admin-hub import listeners', () => {
         });
         expect(fetch).toHaveBeenNthCalledWith(2, '/admin/nhl-game-imports/status', {
             headers: { Accept: 'application/json' },
+            signal: expect.anything(),
         });
         expect(instance.gameImports.drawerOpen).toBe(false);
         expect(instance.gameImports.runs[0].id).toBe(22);
@@ -1673,6 +1857,7 @@ describe('admin-hub import listeners', () => {
         });
         expect(fetch).toHaveBeenNthCalledWith(2, '/admin/nhl-game-imports/status', {
             headers: { Accept: 'application/json' },
+            signal: expect.anything(),
         });
         expect(instance.gameImports.processingRuns['23:shots']).toBeUndefined();
     });
@@ -1713,6 +1898,7 @@ describe('admin-hub import listeners', () => {
         });
         expect(fetch).toHaveBeenNthCalledWith(2, '/admin/nhl-game-imports/status', {
             headers: { Accept: 'application/json' },
+            signal: expect.anything(),
         });
         expect(instance.gameImports.processingRuns['23:faceoffs']).toBeUndefined();
     });
@@ -1753,6 +1939,7 @@ describe('admin-hub import listeners', () => {
         });
         expect(fetch).toHaveBeenNthCalledWith(2, '/admin/nhl-game-imports/status', {
             headers: { Accept: 'application/json' },
+            signal: expect.anything(),
         });
         expect(instance.gameImports.processingRuns['23:refs_staff']).toBeUndefined();
     });
@@ -1795,6 +1982,7 @@ describe('admin-hub import listeners', () => {
         });
         expect(fetch).toHaveBeenNthCalledWith(2, '/admin/nhl-game-imports/status', {
             headers: { Accept: 'application/json' },
+            signal: expect.anything(),
         });
         expect(instance.refreshValidationContainers).toHaveBeenCalledTimes(1);
         expect(instance.gameImports.rerunningRuns['24:full']).toBeUndefined();
@@ -1841,6 +2029,7 @@ describe('admin-hub import listeners', () => {
         });
         expect(fetch).toHaveBeenNthCalledWith(2, '/admin/nhl-game-imports/status', {
             headers: { Accept: 'application/json' },
+            signal: expect.anything(),
         });
         expect(instance.refreshValidationContainers).toHaveBeenCalledTimes(1);
         expect(instance.gameImports.rerunningRuns['24:failed']).toBeUndefined();
@@ -1903,6 +2092,7 @@ describe('admin-hub import listeners', () => {
         });
         expect(fetch).toHaveBeenNthCalledWith(2, '/admin/nhl-game-imports/status', {
             headers: { Accept: 'application/json' },
+            signal: expect.anything(),
         });
         expect(instance.refreshValidationContainers).toHaveBeenCalledTimes(1);
         expect(instance.gameImports.rerunningRuns['31:full']).toBeUndefined();
@@ -1996,6 +2186,7 @@ describe('admin-hub import listeners', () => {
         });
         expect(fetch).toHaveBeenNthCalledWith(3, '/admin/nhl-game-imports/status', {
             headers: { Accept: 'application/json' },
+            signal: expect.anything(),
         });
         expect(instance.gameImports.sourceGaps.items).toHaveLength(0);
         expect(instance.gameImports.runs[0].id).toBe(24);
@@ -2041,6 +2232,7 @@ describe('admin-hub import listeners', () => {
         });
         expect(fetch).toHaveBeenNthCalledWith(3, '/admin/nhl-game-imports/status', {
             headers: { Accept: 'application/json' },
+            signal: expect.anything(),
         });
         expect(instance.gameImports.runs[0].id).toBe(25);
         expect(instance.gameImports.rerunningGames[2026020001]).toBeUndefined();

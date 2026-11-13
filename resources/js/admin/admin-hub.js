@@ -2,6 +2,7 @@ import { bootPlayerTriage } from './player-triage.js';
 
 let importListenersRegistered = false;
 const validationDetailTransitionMs = 300;
+const gameImportStatusTimeoutMs = 15000;
 const seasonSyncDismissedStorageKey = 'dynastyiq:admin:nhl-game-imports:season-sync-dismissed';
 
 function readDismissedSeasonSyncRunIds() {
@@ -134,6 +135,8 @@ export default function adminHub(options = {}) {
             expandedRuns: {},
             runDetails: {},
             statusBusy: false,
+            statusRetryNeeded: false,
+            statusError: '',
             statusPage: null,
             queuedStatusPage: null,
             processMenuRunId: null,
@@ -983,22 +986,43 @@ export default function adminHub(options = {}) {
             }
             this.gameImports.statusBusy = true;
             this.gameImports.statusPage = page;
+            this.stopGameImportPoll();
+            const controller = new AbortController();
+            let requestTimeout;
 
             if (!background) {
                 this.gameImports.loading = true;
+                this.gameImports.error = '';
+                this.gameImports.statusError = '';
             }
 
-            this.gameImports.error = '';
-
             try {
-                const response = await fetch(this.gameImportStatusPageUrl(page), {
-                    headers: { Accept: 'application/json' },
+                const request = async () => {
+                    const response = await fetch(this.gameImportStatusPageUrl(page), {
+                        headers: { Accept: 'application/json' },
+                        signal: controller.signal,
+                    });
+                    return { response, payload: await response.json() };
+                };
+                const deadline = new Promise((_resolve, reject) => {
+                    requestTimeout = setTimeout(() => {
+                        controller.abort();
+                        reject(new Error('Game import progress request timed out'));
+                    }, gameImportStatusTimeoutMs);
                 });
-                const payload = await response.json().catch(() => ({}));
+                const { response, payload } = await Promise.race([request(), deadline]);
 
                 if (!response.ok) {
                     throw new Error(payload.message ?? 'Unable to load game imports');
                 }
+                if (!Array.isArray(payload.runs ?? [])) {
+                    throw new Error('Invalid game import progress response');
+                }
+                if (this.gameImports.statusError && this.gameImports.error === this.gameImports.statusError) {
+                    this.gameImports.error = '';
+                }
+                this.gameImports.statusError = '';
+                this.gameImports.statusRetryNeeded = false;
 
                 this.gameImports.runs = payload.runs ?? [];
                 for (const run of this.gameImports.runs) {
@@ -1018,10 +1042,14 @@ export default function adminHub(options = {}) {
                     from: Number(payload.pagination?.from) || 0,
                     to: Number(payload.pagination?.to) || 0,
                 };
-                this.scheduleGameImportPollIfNeeded();
             } catch (error) {
-                this.gameImports.error = error.message ?? 'Unable to load game imports';
+                this.gameImports.statusRetryNeeded = true;
+                if (!background) {
+                    this.gameImports.statusError = error.message ?? 'Unable to load game imports';
+                    this.gameImports.error = this.gameImports.statusError;
+                }
             } finally {
+                clearTimeout(requestTimeout);
                 this.gameImports.statusBusy = false;
                 if (!background) {
                     this.gameImports.loading = false;
@@ -1029,6 +1057,7 @@ export default function adminHub(options = {}) {
                 const queuedPage = this.gameImports.queuedStatusPage;
                 this.gameImports.queuedStatusPage = null;
                 if (queuedPage !== null) return this.loadGameImports({ background: true, page: queuedPage });
+                this.scheduleGameImportPollIfNeeded();
             }
         },
 
@@ -2709,7 +2738,7 @@ export default function adminHub(options = {}) {
         scheduleGameImportPollIfNeeded() {
             this.stopGameImportPoll();
 
-            if (!this.gameImports.hasActiveRuns || this.activeTab !== 'game-imports') {
+            if ((!this.gameImports.hasActiveRuns && !this.gameImports.statusRetryNeeded) || this.activeTab !== 'game-imports') {
                 return;
             }
 

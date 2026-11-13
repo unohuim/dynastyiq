@@ -25,6 +25,7 @@ rules:
   - Chunked imports may broadcast lightweight progress events, but the admin UI must still read import_runs as the authoritative progress state.
   - Import status values must remain aligned with docs/ENUMS.md.
   - NHL game import status broadcasts must be treated as invalidation signals; the browser should reload authoritative status from the admin endpoint.
+  - While the game-imports tab is active, progress polling must recover from failed or stalled status reads, including an initial failure before active runs are known. Bound both the request and response-body read, retain the last successful display quietly during background retries, and prevent late responses from replacing newer progress. Preserve single-flight reads and the latest queued page; stop periodic polling after a successful inactive response or when leaving the tab.
   - Committed NHL game import status events also refresh affected run progress projections through ImportProgressRepository. Keep the broadcast payload lightweight and unchanged; projection writes must not recursively emit another invalidation. Consumers read saved summaries and request run game details only when expanded.
 public_interface:
   - ImportBroadcast::started()
