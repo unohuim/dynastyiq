@@ -1305,7 +1305,7 @@ describe('season sync after a completed Full import', function (): void {
         $this->assertDatabaseHas('nhl_import_progress', ['run_id' => $other->id, 'status' => $status]);
         Bus::assertDispatchedTimes(\App\Jobs\SeasonSumJob::class, 1);
         Bus::assertDispatched(\App\Jobs\SeasonSumJob::class,
-            fn ($job): bool => $job->seasonId === '20262027' && $job->runId === $ids[0]);
+            fn ($job): bool => $job->seasonId === '20262027' && $job->runId === $ids[0] && $job->queue === 'projections');
     })->with(['scheduled', 'running', 'error']);
 
     it('waits for enrichment instead of syncing after an individual validation', function (): void {

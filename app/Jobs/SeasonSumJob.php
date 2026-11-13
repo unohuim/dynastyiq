@@ -33,8 +33,10 @@ class SeasonSumJob implements ShouldQueue
     /** @var int */
     public int $timeout = 600;
 
+    /** Route every newly dispatched season rollup away from the ordinary import backlog. */
     public function __construct(string $seasonId, ?int $runId = null)
     {
+        $this->onQueue('projections');
         $this->seasonId = $seasonId;
         $this->runId = $runId;
     }

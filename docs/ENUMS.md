@@ -178,7 +178,7 @@ Storage: `nhl_lineup_observations.raw_evidence.ocr[].status` and local post audi
 **Storage location(s):** Laravel queued-job payloads and `config/horizon.php`
 
 - `default`: General application and import work.
-- `projections`: Model builds, profiles, projections, comparisons, SAT Engine discovery/ranking, next-game evaluations, and historical pregame-context builds (including coordinators, loaders, continuations, and child batches).
+- `projections`: Model builds, profiles, projections, comparisons, SAT Engine discovery/ranking, next-game evaluations, historical pregame-context builds, season-stat rollups, and required stats-cache/goalie-rating preparation (including coordinators, loaders, continuations, and child batches).
 - `fantrax`: Fantrax import, league-sync, and draft-sync work.
 - `lineups`: Time-sensitive anticipated NHL lineup work and live game-prediction cache refreshes.
 - `nhl-live`: Shared five-second NHL live-source polls; four to eight dedicated Horizon workers.

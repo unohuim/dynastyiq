@@ -767,6 +767,22 @@ it('retains prepared report bundles after a failed replacement', function (): vo
 });
 
 
+it('preserves projections routing and season identity when rollup jobs are serialized', function (?int $runId): void {
+    $job = unserialize(serialize(new \App\Jobs\SeasonSumJob('20262027', $runId)));
+
+    expect($job->queue)->toBe('projections')->and($job->seasonId)->toBe('20262027')
+        ->and($job->runId)->toBe($runId)->and($job->connection)->toBeNull()
+        ->and($job->timeout)->toBe(600)->and($job->tries)->toBe(5);
+    Bus::assertNothingDispatched();
+})->with([null, 17]);
+
+it('routes command line season sync dispatches to projections', function (): void {
+    $this->artisan('nhl:sum', ['--season' => '20262027'])->assertSuccessful();
+
+    Bus::assertDispatched(\App\Jobs\SeasonSumJob::class, fn ($job): bool =>
+        $job->queue === 'projections' && $job->seasonId === '20262027' && $job->runId === null);
+});
+
 it('keeps season sync running when aggregation finishes before cache preparation', function (): void {
     $run = NhlGameImportRun::create(['action' => 'season-sync', 'mode' => 'season', 'status' => 'queued',
         'start_date' => '2026-09-01', 'end_date' => '2027-08-31', 'payload' => ['season' => '20262027']]);

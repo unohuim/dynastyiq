@@ -8,6 +8,7 @@ location:
   - app/Listeners/QueueNhlStatsDashboardRefresh.php
   - app/Jobs/RefreshNhlStatsDashboardJob.php
   - app/Services/SumNhlSeasonStats.php
+  - app/Jobs/SeasonSumJob.php
   - app/Services/NhlStatsDashboardPayload.php
   - app/Services/NhlDashboardPayload.php
   - app/Services/ImportNhlBoxscore.php
@@ -23,6 +24,7 @@ when_not_to_use:
   - Caching custom date ranges, private reports, draft contexts or availability and fantasy ownership scopes.
   - Replacing canonical raw facts or changing calculation semantics.
 rules:
+  - SeasonSumJob selects projections in its constructor for every new admin, automatic-import and command-line dispatch. Required public-cache publishers and SAT goalie-rating preparation use the same existing queue. This routing change does not move previously serialized pending or reserved jobs, change worker allocations or interrupt active work.
   - SumNhlSeasonStats emits NhlSeasonStatsSynced independently of optional admin run identity. The event carries the affected season, upsert count and optional originating admin run ID, including zero for an empty successful source selection.
   - The same committed event independently prepares production SAT goalie rating snapshots under NhlSatGoalieRatings.yaml. Cache preparation remains independent, but originating season-sync completion also waits for that preparation; cache updates retain goalie failures.
   - Season summary chunks commit atomically in stable player/type order. The event is delivered only after the outermost application transaction commits; rolled-back or failed writes cannot trigger publication.

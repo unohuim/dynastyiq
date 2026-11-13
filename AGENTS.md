@@ -102,6 +102,7 @@ If conflicts are detected between authoritative sources, work MUST pause and be 
 
 ## CI & Execution Policy (Strict)
 
+- Production writes require a concrete production-specific plan followed by explicit human approval, including data/cache writes, queue job moves or cancellations, deployments and worker operations. A direct-sounding request is not a substitute for presenting that plan and obtaining approval. Code-change approval never implicitly authorizes production writes.
 - Codex MUST NOT run `./ci.sh` or any test/CI commands unless explicitly instructed.
 - Codex MUST NOT run import, sync, queue, scheduler, bot, migration, seed, or destructive data commands unless explicitly instructed.
 - The human is responsible for running all CI, tests, scripts, imports, and operational commands.

@@ -3577,7 +3577,7 @@ it('allows super admins to queue NHL season stat syncs', function () {
         ->and($run->queued_jobs)->toBe(1);
 
     Bus::assertDispatched(SeasonSumJob::class, function (SeasonSumJob $job) use ($run): bool {
-        return $job->seasonId === '20252026' && $job->runId === $run->id;
+        return $job->seasonId === '20252026' && $job->runId === $run->id && $job->queue === 'projections';
     });
     Event::assertDispatched(NhlGameImportStatusUpdated::class, function (NhlGameImportStatusUpdated $event) use ($run): bool {
         return $event->reason === 'season-sync-queued' && $event->runId === $run->id;
