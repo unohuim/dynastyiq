@@ -93,7 +93,10 @@ class HandleInertiaRequests extends Middleware
         return [
             'csrf' => csrf_token(),
             'primary' => $primary,
-            'tools' => [$link('Schedule', 'tools.schedule', 'tools.schedule')],
+            'tools' => [
+                $link('Schedule', 'tools.schedule', 'tools.schedule'),
+                $link('Lines', 'tools.lines', 'tools.lines'),
+            ],
             'scoreboard_url' => route('games.scoreboard'),
             'scoreboard_games_url' => route('games.index'),
             'news' => [

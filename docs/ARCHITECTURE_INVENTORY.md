@@ -31,6 +31,16 @@ next two weeks, this month and season from today,
 independently of the browsed week, using an inclusive
 50%-of-season-teams-playing cutoff rather than fixed weekdays. Authority: `docs/architecture/ui/InertiaAppShell.yaml`.
 
+Tools → Lines at `/tools/lines` lists current-season teams as accordions with
+their own latest completed game's EV, PP and PK combinations. It reads prepared
+strength summaries and memberships, ranking shared TOI and skipping groups that
+reuse selected players within a strength. EV shows up to four forward trios and
+three defensive pairs; PP and PK show up to two forward and defensive groups.
+Full special-teams units are split by stored position, summing repeated subgroups
+across changes to their other members. Missing latest-game data remains unavailable.
+Authority: `docs/architecture/stats/NhlStrengthOnIceStats.yaml` and
+`docs/architecture/ui/InertiaAppShell.yaml`.
+
 The shared Inertia mobile and desktop layout includes a compact dark scoreboard with date
 controls and a Games link with a right chevron above a full-width strip. Horizontal browsing
 updates the selected date and link, loading weeks with directional feedback and
@@ -2307,6 +2317,9 @@ game-strength summaries; see `docs/architecture/stats/NhlStrengthOnIceStats.yaml
 **Location:**
 - `app/Services/SumNhlGameStrengthUnits.php`
 - `app/Services/NhlStrengthStatsQuery.php`
+- `app/Services/NhlTeamLines.php`
+- `app/Http/Controllers/NhlLinesController.php`
+- `resources/js/pages/Tools/Lines.vue`
 - `app/Models/NhlUnitGameStrengthSummary.php`
 - `app/Models/NhlPlayerGameStrengthSummary.php`
 - `database/migrations/2026_06_29_020001_create_nhl_strength_summaries_table.php`
@@ -2324,6 +2337,8 @@ Importing raw play-by-play events, replacing validation, or storing cheap rate v
 - `SumNhlGameStrengthUnits::sum()`
 - `NhlStrengthStatsQuery::players()`
 - `NhlStrengthStatsQuery::units()`
+- `NhlTeamLines::read()`
+- `GET /tools/lines` named `tools.lines`
 - `NhlUnitGameStrengthSummary`
 - `NhlPlayerGameStrengthSummary`
 

@@ -48,6 +48,7 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
 
     Route::get('/stats', [StatsController::class, 'index'])->name('stats.index');
     Route::get('/tools/schedule', [\App\Http\Controllers\NhlScheduleController::class, 'index'])->name('tools.schedule');
+    Route::get('/tools/lines', [\App\Http\Controllers\NhlLinesController::class, 'index'])->name('tools.lines');
 
     Route::get('/api/stats', [StatsController::class, 'payload'])
         ->middleware('web')

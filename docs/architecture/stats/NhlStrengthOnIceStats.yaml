@@ -6,6 +6,9 @@ location:
   - app/Models/NhlUnitGameStrengthSummary.php
   - app/Models/NhlPlayerGameStrengthSummary.php
   - app/Http/Controllers/StatsUnitsController.php
+  - app/Services/NhlTeamLines.php
+  - app/Http/Controllers/NhlLinesController.php
+  - resources/js/pages/Tools/Lines.vue
   - database/migrations/2026_06_29_020001_create_nhl_strength_summaries_table.php
 purpose: Persist strength-aware on-ice totals by game so stats requests can aggregate summaries instead of scanning raw play-by-play events.
 when_to_use:
@@ -31,11 +34,16 @@ rules:
   - The ordinary stats ipp alias uses EV-only participation and EV on-ice goals while other on-ice aliases retain their existing populations. Explicit strength-summary queries retain their selected strength. Empty-net contexts follow the existing EV rule rather than silently narrowing EV to five-on-five.
   - Missing EV goals or inconsistent persisted point/goal populations produce an unavailable derived IPP. A bad individual game cannot be hidden by pooling it with other valid games. Display percentages are never repaired by capping them at one hundred; stored legacy zero-denominator ipp values do not imply a meaningful zero-percent result.
   - Legacy nhl_unit_game_summaries may remain during migration but must not be the target strength model.
+  - The public Tools Lines page uses current-season schedule participants and each team's latest completed scheduled game independently. Do not substitute an older imported game when its latest game lacks summaries. Read prepared strength summaries and canonical memberships in batches without raw-event or shift scans, imports, predictions, or request-time writes.
+  - Tools Lines combines shared TOI by sorted player membership before ranking. EV accepts forward trios and defensive pairs; full stored special-teams units are separated into forward and defensive subgroups using stored player position types, with position-code fallback. Sum identical subgroups across changes to the other subgroup. Unknown roles or goalies cannot silently become skater combinations.
+  - Tools Lines greedily selects combinations by descending shared TOI, breaking ties by stable unit ID. Each selected player is excluded from subsequent groups within that team and strength. EV permits up to four forward lines and three defensive pairs; PP and PK each permit up to two forward and two defensive groups. Reset player exclusion between strengths. Missing or overlapping evidence may produce fewer groups; never manufacture replacements.
 public_interface:
   - SumNhlGameStrengthUnits::sum()
   - NhlStrengthStatsQuery::players()
   - NhlStrengthStatsQuery::units()
   - NhlUnitGameStrengthSummary
   - NhlPlayerGameStrengthSummary
+  - NhlTeamLines::read()
+  - GET /tools/lines named tools.lines
 example_usage: |
   app()->make(SumNhlGameStrengthUnits::class, ['gameId' => $gameId])->sum();
