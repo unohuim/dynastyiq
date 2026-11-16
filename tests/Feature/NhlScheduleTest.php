@@ -37,6 +37,22 @@ beforeEach(function (): void {
             ->assertInertia(fn (Assert $page) => $page->component('Tools/Schedule')->has('schedule.days', 7));
         return $response->viewData('page')['props']['schedule'];
     };
+    $this->league = function (): array {
+        $ids = [6, 8, 10, ...range(101, 129)];
+        foreach (range(101, 129) as $id) {
+            DB::table('nhl_teams')->insert(['nhl_id' => $id, 'abbrev' => 'X'.($id - 100)]);
+            ($this->game)(2026020100 + $id, '2026-11-11', ['away_team_id' => $id, 'away_team_abbrev' => 'X'.($id - 100)]);
+        }
+        return $ids;
+    };
+    $this->slate = function (array $ids, int $count, string $date, int $base): void {
+        foreach (range(0, $count - 1) as $index) {
+            ($this->game)($base + $index, $date, [
+                'home_team_id' => $ids[$index * 2], 'home_team_abbrev' => 'H'.$index,
+                'away_team_id' => $ids[$index * 2 + 1], 'away_team_abbrev' => 'A'.$index,
+            ]);
+        }
+    };
     $this->row = fn (array $schedule, string $team): array => collect($schedule['teams'])->keyBy('abbrev')[$team];
 });
 
@@ -203,4 +219,97 @@ it('marks today only within the selected week', function (): void {
 it('keeps Schedule reachable from legacy desktop and mobile Tools navigation', function (): void {
     $html = view('nav.main')->render();
     expect($html)->toContain(route('tools.schedule'), 'Tools navigation', 'tools-menu-title', 'legacy-tools-panel');
+});
+
+it('includes exactly half the league as an off night even on Tuesday', function (): void {
+    $ids = ($this->league)();
+    ($this->slate)($ids, 8, '2026-11-17', 2026021000);
+    $schedule = ($this->read)();
+    $day = $schedule['days'][1];
+    expect($day['games'])->toBe(8)->and($day['teams_playing'])->toBe(16)
+        ->and($day['league_teams'])->toBe(32)->and($day['is_off_night'])->toBeTrue()
+        ->and(($this->row)($schedule, 'BOS')['off_night_gp'])->toBe(1)
+        ->and(($this->row)($schedule, 'MTL')['off_night_gp'])->toBe(1);
+});
+
+it('excludes a busy Monday when more than half the league plays', function (): void {
+    $ids = ($this->league)();
+    ($this->slate)($ids, 9, '2026-11-16', 2026021000);
+    $schedule = ($this->read)();
+    expect($schedule['days'][0]['is_off_night'])->toBeFalse()
+        ->and(($this->row)($schedule, 'BOS')['off_night_gp'])->toBe(0)
+        ->and(($this->row)($schedule, 'BOS')['total_gp'])->toBe(1);
+});
+
+it('retains every season team with zero off-night games where appropriate', function (): void {
+    $ids = ($this->league)();
+    ($this->slate)($ids, 1, '2026-11-17', 2026021000);
+    $schedule = ($this->read)();
+    expect($schedule['teams'])->toHaveCount(32)
+        ->and(($this->row)($schedule, 'TOR')['off_night_gp'])->toBe(0)
+        ->and(collect($schedule['teams'])->sum('off_night_gp'))->toBe(2);
+});
+
+it('counts only unique playing teams when a team has multiple games in a day', function (): void {
+    ($this->league)();
+    foreach (range(1, 9) as $offset) {
+        ($this->game)(2026021000 + $offset);
+    }
+    $schedule = ($this->read)();
+    expect($schedule['days'][0]['teams_playing'])->toBe(2)
+        ->and($schedule['days'][0]['games'])->toBe(9)->and($schedule['days'][0]['is_off_night'])->toBeTrue()
+        ->and(($this->row)($schedule, 'TOR')['off_night_gp'])->toBe(9);
+});
+
+it('excludes postponed or cancelled games from off-night activity and counts', function (string $field, string $state): void {
+    $ids = ($this->league)();
+    ($this->slate)($ids, 8, '2026-11-17', 2026021000);
+    ($this->game)(2026022000, '2026-11-17', ['home_team_id' => $ids[16], 'away_team_id' => $ids[17], $field => $state]);
+    $schedule = ($this->read)();
+    expect($schedule['days'][1]['games'])->toBe(8)->and($schedule['days'][1]['is_off_night'])->toBeTrue()
+        ->and(collect($schedule['teams'])->sum('off_night_gp'))->toBe(16);
+})->with([['game_state', 'PPD'], ['game_state', 'CNCL'], ['game_schedule_state', 'PPD'], ['game_schedule_state', 'CNCL']]);
+
+it('does not invent team off-night games on dates with an empty slate', function (): void {
+    ($this->league)();
+    $schedule = ($this->read)();
+    expect($schedule['days'][0]['is_off_night'])->toBeTrue()
+        ->and($schedule['days'][0]['teams_playing'])->toBe(0)
+        ->and(collect($schedule['teams'])->sum('off_night_gp'))->toBe(0);
+});
+
+it('counts completed live and future off-night games within the selected week only', function (): void {
+    ($this->league)();
+    foreach (['OFF', 'LIVE', 'FUT'] as $offset => $state) {
+        ($this->game)(2026021000 + $offset, '2026-11-'.(16 + $offset), ['game_state' => $state]);
+    }
+    ($this->game)(2026022000, '2026-11-23');
+    $schedule = ($this->read)();
+    expect(($this->row)($schedule, 'TOR')['off_night_gp'])->toBe(3)
+        ->and(($this->row)($schedule, 'MTL')['off_night_gp'])->toBe(3);
+});
+
+it('uses the season population rather than assuming thirty-two teams', function (): void {
+    ($this->game)();
+    $schedule = ($this->read)();
+    expect($schedule['days'][0]['league_teams'])->toBe(3)
+        ->and($schedule['days'][0]['teams_playing'])->toBe(2)
+        ->and($schedule['days'][0]['is_off_night'])->toBeFalse();
+});
+
+it('does not classify dates without stored season coverage as off nights', function (): void {
+    $schedule = ($this->read)(['week' => '2030-11-18']);
+    expect($schedule['days'][0]['league_teams'])->toBe(0)
+        ->and($schedule['days'][0]['is_off_night'])->toBeFalse();
+});
+
+it('uses each dates own season population in a week crossing September first', function (): void {
+    ($this->game)(2026021000, '2026-11-19', ['away_team_id' => 11, 'away_team_abbrev' => 'NEW']);
+    ($this->game)(2025021000, '2026-08-31', ['season_id' => '20252026']);
+    ($this->game)(2026022000, '2026-09-01');
+    $schedule = ($this->read)(['week' => '2026-08-31']);
+    expect($schedule['days'][0]['league_teams'])->toBe(2)
+        ->and($schedule['days'][0]['is_off_night'])->toBeFalse()
+        ->and($schedule['days'][1]['league_teams'])->toBe(4)
+        ->and($schedule['days'][1]['is_off_night'])->toBeTrue();
 });

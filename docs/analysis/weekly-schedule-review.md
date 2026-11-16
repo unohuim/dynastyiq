@@ -91,8 +91,8 @@ The existing fresh-install guard is retained.
 
 | File | `it(...)` declarations |
 | --- | ---: |
-| tests/Feature/NhlScheduleTest.php | 27 |
-| resources/js/pages/games.test.js | 142 |
+| tests/Feature/NhlScheduleTest.php | 37 |
+| resources/js/pages/games.test.js | 146 |
 
 ## Verification
 
@@ -106,3 +106,58 @@ Suggested human commands:
 No migration is required. No production commands were run. An empty or incomplete
 stored season still requires its ordinary schedule import; this page does not
 initiate one during a visit.
+
+
+## Off Nights extension
+
+The approved extension touches the controller, Schedule Vue page, the two existing
+test files, InertiaAppShell architecture, inventory and this review. No routes,
+authorization, migrations, dependencies, global state or production records change.
+Weekly remains the initial tab. Off Nights uses the selected week and preserves
+its tab during week navigation. It shows every team, qualifying game dates and
+opponents, and a count. Zero-count teams remain visible.
+
+At most 50% of that date's stored season participants may be playing. The boundary
+is inclusive (16 of 32 teams, normally eight games). Count distinct active team
+IDs; exclude postponed and cancelled games from both slate activity and team
+counts. A quiet Tuesday qualifies and a busy Monday does not. Season membership
+is calculated separately for each date's season, even across September first.
+Zero-game dates contribute no team games; missing season coverage does not
+classify a date as an off night. Partial stored schedules remain a limitation:
+classification reflects the imported schedule, so a complete season schedule is
+needed for dependable league percentages.
+
+### Extension coverage matrix
+
+COVERED means authored, not executed.
+
+| Requirement | Status | Test names |
+| --- | --- | --- |
+| Inclusive threshold and weekday independence | COVERED | includes exactly half the league as an off night even on Tuesday; excludes a busy Monday when more than half the league plays |
+| League denominator, distinct IDs and season boundary | COVERED | uses the season population rather than assuming thirty-two teams; counts only unique playing teams when a team has multiple games in a day; uses each dates own season population in a week crossing September first |
+| Every team, zero counts, active dates/states, missing coverage | COVERED | retains every season team with zero off-night games where appropriate; excludes postponed or cancelled games from off-night activity and counts; does not invent team off-night games on dates with an empty slate; counts completed live and future off-night games within the selected week only; does not classify dates without stored season coverage as off nights |
+| Default tab, request-free switching, rendered dates/counts | COVERED | defaults to Weekly and switches to Off Nights without a request; keeps zero-count teams and omits postponed and busy-day games from off-night links |
+| Keyboard selection and week changes | COVERED | supports arrow Home and End keyboard navigation between schedule tabs; preserves Off Nights across week navigation and renders updated counts |
+
+### Extension requirements checklist
+
+1. SATISFIED: Weekly remains default; Off Nights is second.
+2. SATISFIED: all teams, qualifying dates and counts use the selected week.
+3. SATISFIED: inclusive league-activity cutoff replaces weekday assumptions.
+4. SATISFIED: postponed/cancelled and empty dates do not add team games.
+5. SATISFIED: browser-owned tab state, keyboard controls and week preservation.
+6. SATISFIED: coverage authored in existing files (37 Pest declarations; 146 JS declarations).
+
+The GET /tools/schedule auth/scope matrix above remains applicable and unchanged:
+guest access maps to `allows guests to view the schedule in the shared shell`;
+member access maps to `allows authenticated members without an admin role to view
+the same schedule`; validation maps to `rejects malformed impossible and
+non-scalar week dates`. Off-night HTTP assertions exercise derived values from
+stored games; no mutation endpoint or stored derived field was introduced.
+
+Frontend checklist: selected-state transitions, ARIA tab/panel linkage, roving
+keyboard focus, dates/counts, zero-game rows, unchanged Weekly columns and updated
+props are asserted. No external requests, uncontrolled clocks or global state.
+Existing tab color transitions respect reduced motion. No tests, CI, build,
+browser checks, migrations or operational commands were run. Only static diff
+review and `git diff --check` are performed before the requested push.

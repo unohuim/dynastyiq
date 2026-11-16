@@ -25,7 +25,9 @@ layouts and their Alpine bootstrap remain separate. Authority:
 Tools → Schedule exposes a public Monday–Sunday team grid at `/tools/schedule`,
 reading stored season participants and game metadata without importing data or
 running predictions. Week navigation uses the Eastern calendar; each team retains
-its zero-game row and weekly GP total. Authority: `docs/architecture/ui/InertiaAppShell.yaml`.
+its zero-game row and weekly GP total. Weekly is the default tab; Off Nights lists
+each team’s qualifying dates and count for the same week, using an inclusive
+50%-of-season-teams-playing cutoff rather than fixed weekdays. Authority: `docs/architecture/ui/InertiaAppShell.yaml`.
 
 The shared Inertia mobile and desktop layout includes a compact dark scoreboard with date
 controls and a Games link with a right chevron above a full-width strip. Horizontal browsing

@@ -1084,12 +1084,12 @@ describe('weekly Schedule page', () => {
     beforeEach(() => {
         document.body.innerHTML = '<div id="weekly-schedule"></div>';
         const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((label, index) => ({
-            label, date: `2026-11-${16 + index}`, display_date: `Nov ${16 + index}`, is_today: index === 2,
+            label, date: `2026-11-${16 + index}`, display_date: `Nov ${16 + index}`, is_today: index === 2, is_off_night: index === 0,
         }));
         state = reactive({ schedule: {
             label: 'Nov 16 – Nov 22, 2026', days, is_current_week: true, game_count: 1,
             previous_url: '/tools/schedule?week=2026-11-09', next_url: '/tools/schedule?week=2026-11-23', current_url: '/tools/schedule',
-            teams: ['MTL', 'TOR'].map((abbrev, index) => ({ id: index + 1, abbrev, name: abbrev, logo: `/${abbrev}.svg`, total_gp: 1,
+            teams: ['MTL', 'TOR'].map((abbrev, index) => ({ id: index + 1, abbrev, name: abbrev, logo: `/${abbrev}.svg`, total_gp: 1, off_night_gp: 1,
                 days: Object.fromEntries(days.map(day => [day.date, day.label === 'Mon' ? [{ id: 7, href: '/games/7',
                     opponent: index ? 'MTL' : 'TOR', venue: index ? 'home' : 'away', time: '7:00 PM', status: null }] : []])),
             })),
@@ -1180,6 +1180,68 @@ describe('weekly Schedule page', () => {
         expect(feedback.textContent).toContain('Please try again');
         expect(document.querySelector('[aria-label="Next week"]').disabled).toBe(false);
     });
+
+    it('defaults to Weekly and switches to Off Nights without a request', async () => {
+        mount();
+        const tabs = [...document.querySelectorAll('[role=tab]')];
+        expect(tabs.map(tab => tab.textContent)).toEqual(['Weekly', 'Off Nights']);
+        expect(tabs[0].getAttribute('aria-selected')).toBe('true');
+        tabs[1].click();
+        await nextTick();
+        expect(tabs[1].getAttribute('aria-selected')).toBe('true');
+        expect(document.querySelector('[role=tabpanel]').id).toBe(tabs[1].getAttribute('aria-controls'));
+        expect(document.querySelector('main').textContent).toContain('50% or fewer');
+        expect(document.querySelectorAll('tbody tr')).toHaveLength(2);
+        expect(document.querySelector('tbody a').textContent).toContain('Mon Nov 16');
+        expect(document.querySelector('tbody tr').lastElementChild.textContent).toBe('1');
+        expect(visit).not.toHaveBeenCalled();
+    });
+
+    it('keeps zero-count teams and omits postponed and busy-day games from off-night links', async () => {
+        state.schedule.teams[0].off_night_gp = 0;
+        state.schedule.teams[0].days['2026-11-16'][0].status = 'Postponed';
+        state.schedule.teams[0].days['2026-11-17'] = [{ id: 8, href: '/games/8', opponent: 'BOS', venue: 'home', status: null }];
+        mount();
+        document.querySelectorAll('[role=tab]')[1].click();
+        await nextTick();
+        const row = document.querySelector('tbody tr');
+        expect(row.querySelectorAll('a')).toHaveLength(0);
+        expect(row.textContent).toContain('MTL');
+        expect(row.lastElementChild.textContent).toBe('0');
+    });
+
+    it('supports arrow Home and End keyboard navigation between schedule tabs', async () => {
+        mount();
+        const tabs = [...document.querySelectorAll('[role=tab]')];
+        for (const [index, key, expected] of [[0, 'ArrowRight', 1], [1, 'Home', 0], [0, 'End', 1], [1, 'ArrowLeft', 0]]) {
+            tabs[index].dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+            await nextTick();
+            expect(document.activeElement).toBe(tabs[expected]);
+            expect(tabs[expected].getAttribute('tabindex')).toBe('0');
+            expect(tabs[1 - expected].getAttribute('tabindex')).toBe('-1');
+        }
+    });
+
+    it('preserves Off Nights across week navigation and renders updated counts', async () => {
+        mount();
+        document.querySelectorAll('[role=tab]')[1].click();
+        await nextTick();
+        document.querySelector('[aria-label="Next week"]').click();
+        expect(visit.mock.calls[0][2].preserveState).toBe(true);
+        state.schedule = { ...state.schedule, label: 'Nov 23 – Nov 29, 2026',
+            days: state.schedule.days.map(day => ({ ...day, is_off_night: false })),
+            teams: state.schedule.teams.map(team => ({ ...team, off_night_gp: 0 })),
+        };
+        await nextTick();
+        expect(document.querySelector('[role=tabpanel]').id).toBe('schedule-panel-off-nights');
+        expect(document.querySelector('caption').textContent).toContain('Nov 23');
+        expect(document.querySelectorAll('tbody a')).toHaveLength(0);
+        expect(document.querySelector('tbody tr').lastElementChild.textContent).toBe('0');
+        document.querySelectorAll('[role=tab]')[0].click();
+        await nextTick();
+        expect(document.querySelectorAll('thead th')).toHaveLength(9);
+    });
+
 });
 
 
