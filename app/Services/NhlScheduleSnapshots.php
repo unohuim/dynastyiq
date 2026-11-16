@@ -56,6 +56,11 @@ class NhlScheduleSnapshots
             'teams' => [], 'game_count' => 0,
         ];
         $payload['off_nights']['built_at'] = $off?->built_at;
+        if ($off !== null && ! isset($payload['off_nights']['period_ends'])) {
+            // Retain published season totals while a worker prepares the added windows.
+            $prepared = false;
+            $this->queueSeason($season);
+        }
         $payload['is_current_week'] = $start->isSameDay($today->startOfWeek(CarbonImmutable::MONDAY));
         foreach ($payload['days'] as &$day) {
             $day['is_today'] = $day['date'] === $today->toDateString();

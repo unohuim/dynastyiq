@@ -463,6 +463,102 @@ it('stores off-night counts and build timestamps without the unused game-date li
         ->and(array_key_exists('logo', $payload['teams'][0]))->toBeFalse();
 });
 
+it('publishes inclusive off-night windows through preparation storage and HTTP', function (): void {
+    ($this->league)();
+    foreach (['2026-11-17', '2026-11-18', '2026-11-22', '2026-11-23', '2026-11-29', '2026-11-30', '2026-12-01'] as $index => $date) {
+        ($this->game)(2026026000 + $index, $date);
+    }
+    $this->artisan('nhl:prepare-schedule', ['--season' => '20262027'])->assertSuccessful();
+    $stored = DB::table('nhl_schedule_snapshots')->where('snapshot_key', 'off:20262027:2026-11-18')->first();
+    $payload = json_decode($stored->payload, true, 512, JSON_THROW_ON_ERROR);
+    $toronto = ($this->row)($payload, 'TOR');
+    expect($payload['period_ends'])->toBe([
+        'this_week_gp' => '2026-11-22', 'next_two_weeks_gp' => '2026-11-29', 'this_month_gp' => '2026-11-30',
+    ])->and($toronto['this_week_gp'])->toBe(2)->and($toronto['next_two_weeks_gp'])->toBe(4)
+        ->and($toronto['this_month_gp'])->toBe(5)->and($toronto['off_night_gp'])->toBe(6);
+    $index = array_search('TOR', array_column($payload['teams'], 'abbrev'), true);
+    $this->get(route('tools.schedule'))->assertOk()->assertInertia(fn (Assert $page) => $page
+        ->where('schedule.prepared', true)
+        ->where("schedule.off_nights.teams.$index.this_week_gp", 2)
+        ->where("schedule.off_nights.teams.$index.next_two_weeks_gp", 4)
+        ->where("schedule.off_nights.teams.$index.this_month_gp", 5)
+        ->where("schedule.off_nights.teams.$index.off_night_gp", 6));
+});
+
+it('keeps all window counts zero for teams without remaining qualifying games', function (): void {
+    ($this->league)();
+    ($this->game)(2026026100, '2026-11-18', ['game_state' => 'FINAL']);
+    ($this->game)(2026026101, '2026-11-19', ['game_state' => 'OFF']);
+    ($this->game)(2026026102, '2026-11-20', ['game_state' => 'PPD']);
+    ($this->game)(2026026103, '2026-11-21', ['game_schedule_state' => 'CNCL']);
+    $payload = ($this->read)()['off_nights'];
+    expect($payload['teams'])->toHaveCount(32);
+    foreach ($payload['teams'] as $team) {
+        expect([$team['this_week_gp'], $team['next_two_weeks_gp'], $team['this_month_gp'], $team['off_night_gp']])->toBe([0, 0, 0, 0]);
+    }
+});
+
+it('counts live games but excludes busy dates from every off-night window', function (): void {
+    $ids = ($this->league)();
+    ($this->slate)($ids, 9, '2026-11-18', 2026026200);
+    ($this->game)(2026026210, '2026-11-19', ['game_state' => 'LIVE']);
+    $toronto = ($this->row)(($this->read)()['off_nights'], 'TOR');
+    expect([$toronto['this_week_gp'], $toronto['next_two_weeks_gp'], $toronto['this_month_gp'], $toronto['off_night_gp']])->toBe([1, 1, 1, 1]);
+});
+
+it('includes today on Sunday and prepares the next Eastern days own boundaries', function (): void {
+    ($this->league)();
+    $this->travelTo(Carbon::parse('2026-11-22 14:00:00 UTC'));
+    ($this->game)(2026026300, '2026-11-22');
+    ($this->game)(2026026301, '2026-11-23');
+    ($this->game)(2026026302, '2026-11-29');
+    ($this->game)(2026026303, '2026-11-30');
+    $today = ($this->read)()['off_nights'];
+    $toronto = ($this->row)($today, 'TOR');
+    expect([$toronto['this_week_gp'], $toronto['next_two_weeks_gp']])->toBe([1, 3]);
+    $this->travelTo(Carbon::parse('2026-11-23 05:01:00 UTC'));
+    $tomorrow = app(NhlScheduleSnapshots::class)->read(CarbonImmutable::parse('2026-11-23', 'America/Toronto'));
+    $toronto = ($this->row)($tomorrow['off_nights'], 'TOR');
+    expect($tomorrow['prepared'])->toBeTrue()
+        ->and($tomorrow['off_nights']['period_ends']['this_week_gp'])->toBe('2026-11-29')
+        ->and($tomorrow['off_nights']['period_ends']['next_two_weeks_gp'])->toBe('2026-12-06')
+        ->and([$toronto['this_week_gp'], $toronto['next_two_weeks_gp']])->toBe([2, 3]);
+});
+
+it('keeps calendar month counts independent of weekly windows over year end', function (): void {
+    ($this->league)();
+    $this->travelTo(Carbon::parse('2026-12-30 14:00:00 UTC'));
+    foreach (['2026-12-30', '2026-12-31', '2027-01-01', '2027-01-03', '2027-01-10', '2027-01-11'] as $index => $date) {
+        ($this->game)(2026026400 + $index, $date);
+    }
+    $off = ($this->read)()['off_nights'];
+    $toronto = ($this->row)($off, 'TOR');
+    expect($off['period_ends'])->toBe([
+        'this_week_gp' => '2027-01-03', 'next_two_weeks_gp' => '2027-01-10', 'this_month_gp' => '2026-12-31',
+    ])->and([$toronto['this_week_gp'], $toronto['next_two_weeks_gp'], $toronto['this_month_gp'], $toronto['off_night_gp']])->toBe([4, 5, 2, 6]);
+});
+
+it('retains legacy season counts and queues window preparation without source aggregation', function (): void {
+    ($this->league)();
+    ($this->game)(2026026500, '2026-11-20');
+    $service = app(NhlScheduleSnapshots::class);
+    $service->build('20262027');
+    $key = 'off:20262027:2026-11-18';
+    $payload = json_decode(DB::table('nhl_schedule_snapshots')->where('snapshot_key', $key)->value('payload'), true, 512, JSON_THROW_ON_ERROR);
+    unset($payload['period_ends']);
+    foreach ($payload['teams'] as &$team) {
+        unset($team['this_week_gp'], $team['next_two_weeks_gp'], $team['this_month_gp']);
+    }
+    unset($team);
+    DB::table('nhl_schedule_snapshots')->where('snapshot_key', $key)->update(['payload' => json_encode($payload, JSON_THROW_ON_ERROR)]);
+    $this->mock(\App\Services\NhlScheduleCalculator::class)->shouldNotReceive('week');
+    $this->get(route('tools.schedule'))->assertOk()->assertInertia(fn (Assert $page) => $page
+        ->where('schedule.prepared', false)->where('schedule.off_nights.from_date', '2026-11-18')
+        ->where('schedule.off_nights.teams', $payload['teams']));
+    Bus::assertDispatched(BuildNhlScheduleSnapshotsJob::class, fn ($job) => $job->seasonId === '20262027');
+    expect(DB::table('nhl_schedule_snapshots')->where('snapshot_key', $key)->value('payload'))->toBe(json_encode($payload, JSON_THROW_ON_ERROR));
+});
+
 it('uses the game-processing queue and shared database uniqueness for background builds', function (): void {
     $job = new BuildNhlScheduleSnapshotsJob('20262027');
     expect($job->queue)->toBe('games-processing')->and($job->uniqueId())->toBe('20262027')

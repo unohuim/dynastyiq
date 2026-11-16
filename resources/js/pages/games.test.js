@@ -1128,7 +1128,9 @@ describe('weekly Schedule page', () => {
         } });
         state.schedule.off_nights = {
             label: 'Remaining 2026–27 season · From Nov 18, 2026', game_count: 1,
-            teams: state.schedule.teams.map(team => ({ ...team, games: [{
+            from_date: '2026-11-18',
+            period_ends: { this_week_gp: '2026-11-22', next_two_weeks_gp: '2026-11-29', this_month_gp: '2026-11-30' },
+            teams: state.schedule.teams.map(team => ({ ...team, this_week_gp: 0, next_two_weeks_gp: 1, this_month_gp: 1, games: [{
                 id: 99, href: '/games/99', date: '2026-11-23', label: 'Mon Nov 23',
                 opponent: team.abbrev === 'MTL' ? 'TOR' : 'MTL', venue: 'home',
             }] })),
@@ -1246,9 +1248,9 @@ describe('weekly Schedule page', () => {
         expect(document.querySelector('main').textContent).toContain('50% or fewer');
         expect(document.querySelector('[role=tabpanel]').firstElementChild.getAttribute('role')).toBe('region');
         expect(document.querySelectorAll('tbody tr')).toHaveLength(2);
-        expect([...document.querySelectorAll('thead th')].map(cell => cell.textContent)).toEqual(['Team', 'Total']);
+        expect([...document.querySelectorAll('thead th')].map(cell => cell.textContent)).toEqual(['Team', 'This Week', 'Next 2 Weeks', 'This Month', 'Season']);
         expect(document.querySelectorAll('tbody a, tbody img')).toHaveLength(0);
-        expect(document.querySelector('tbody tr').children).toHaveLength(2);
+        expect(document.querySelector('tbody tr').children).toHaveLength(5);
         expect(document.querySelector('[aria-label="Schedule week"]')).toBeNull();
         expect(document.querySelector('header').textContent).toContain('Remaining 2026–27 season');
         expect(document.querySelector('tbody tr').lastElementChild.textContent).toBe('1');
@@ -1298,9 +1300,9 @@ describe('weekly Schedule page', () => {
         await nextTick();
         expect(document.querySelector('[role=tabpanel]').id).toBe('schedule-panel-off-nights');
         expect(document.querySelector('caption').textContent).toContain('Remaining 2026–27 season');
-        expect([...document.querySelectorAll('thead th')].map(cell => cell.textContent)).toEqual(['Team', 'Total']);
+        expect([...document.querySelectorAll('thead th')].map(cell => cell.textContent)).toEqual(['Team', 'This Week', 'Next 2 Weeks', 'This Month', 'Season']);
         expect(document.querySelectorAll('tbody a, tbody img')).toHaveLength(0);
-        expect(document.querySelector('tbody tr').children).toHaveLength(2);
+        expect(document.querySelector('tbody tr').children).toHaveLength(5);
         expect(document.querySelector('tbody tr').lastElementChild.textContent).toBe('1');
         document.querySelectorAll('[role=tab]')[0].click();
         await nextTick();
@@ -1344,7 +1346,7 @@ describe('weekly Schedule page', () => {
         mount();
         document.querySelectorAll('[role=tab]')[1].click();
         await nextTick();
-        document.querySelector('[aria-label="Sort total ascending"]').click();
+        document.querySelector('[aria-label="Sort Season ascending"]').click();
         await nextTick();
         expect(document.querySelector('tbody th').textContent).toBe('MTL');
         expect(document.querySelector('th[aria-sort]').getAttribute('aria-sort')).toBe('ascending');
@@ -1360,11 +1362,80 @@ describe('weekly Schedule page', () => {
         state.schedule.off_nights.teams[0].off_night_gp = 20;
         await nextTick();
         expect(document.querySelector('tbody th').textContent).toBe('TOR');
-        document.querySelector('[aria-label="Sort total descending"]').click();
+        document.querySelector('[aria-label="Sort Season descending"]').click();
         await nextTick();
         expect(document.querySelector('tbody th').textContent).toBe('MTL');
         expect(document.querySelector('th[aria-sort]').getAttribute('aria-sort')).toBe('descending');
         expect(visit).not.toHaveBeenCalled();
+    });
+
+    it('renders prepared window counts in regular weight with compact responsive sizing', async () => {
+        mount();
+        document.querySelectorAll('[role=tab]')[1].click();
+        await nextTick();
+        expect([...document.querySelector('tbody tr').children].map(cell => cell.textContent)).toEqual(['MTL', '0', '1', '1', '1']);
+        expect(document.querySelector('table').classList.contains('table-fixed')).toBe(true);
+        expect(document.querySelector('table').classList.contains('text-[9px]')).toBe(true);
+        expect(document.querySelector('table').classList.contains('min-[420px]:text-[10px]')).toBe(true);
+        document.querySelectorAll('tbody th, tbody td, thead th').forEach(cell => {
+            expect(cell.classList.contains('font-normal')).toBe(true);
+            expect(cell.classList.contains('font-semibold')).toBe(false);
+        });
+        expect(document.querySelector('[aria-label="Sort This Week descending"]').title).toBe('2026-11-18 through 2026-11-22 (inclusive)');
+    });
+
+    it.each([
+        ['This Week', 'this_week_gp'], ['Next 2 Weeks', 'next_two_weeks_gp'], ['This Month', 'this_month_gp'],
+    ])('sorts %s counts locally in both directions without changing input order', async (label, key) => {
+        state.schedule.off_nights.teams[0][key] = 2;
+        state.schedule.off_nights.teams[1][key] = 10;
+        mount();
+        document.querySelectorAll('[role=tab]')[1].click();
+        await nextTick();
+        document.querySelector(`[aria-label="Sort ${label} descending"]`).click();
+        await nextTick();
+        expect(document.querySelector('tbody th').textContent).toBe('TOR');
+        expect(document.querySelector('th[aria-sort]').textContent).toBe(label);
+        document.querySelector(`[aria-label="Sort ${label} ascending"]`).click();
+        await nextTick();
+        expect(document.querySelector('tbody th').textContent).toBe('MTL');
+        expect(state.schedule.off_nights.teams.map(team => team.abbrev)).toEqual(['MTL', 'TOR']);
+        expect(visit).not.toHaveBeenCalled();
+    });
+
+    it('sorts team abbreviations alphabetically with a reversible accessible direction', async () => {
+        mount();
+        document.querySelectorAll('[role=tab]')[1].click();
+        await nextTick();
+        document.querySelector('[aria-label="Sort Team ascending"]').click();
+        await nextTick();
+        expect([...document.querySelectorAll('tbody th')].map(cell => cell.textContent)).toEqual(['MTL', 'TOR']);
+        expect(document.querySelector('th[aria-sort]').getAttribute('aria-sort')).toBe('ascending');
+        document.querySelector('[aria-label="Sort Team descending"]').click();
+        await nextTick();
+        expect([...document.querySelectorAll('tbody th')].map(cell => cell.textContent)).toEqual(['TOR', 'MTL']);
+    });
+
+    it('retains season totals while showing missing window counts as unknown until refreshed', async () => {
+        state.schedule.prepared = false;
+        delete state.schedule.off_nights.period_ends;
+        state.schedule.off_nights.teams.forEach(team => {
+            delete team.this_week_gp;
+            delete team.next_two_weeks_gp;
+            delete team.this_month_gp;
+        });
+        mount();
+        document.querySelectorAll('[role=tab]')[1].click();
+        await nextTick();
+        expect([...document.querySelector('tbody tr').children].map(cell => cell.textContent)).toEqual(['MTL', '—', '—', '—', '1']);
+        state.schedule.off_nights.teams[0].this_week_gp = 0;
+        document.querySelector('[aria-label="Sort This Week descending"]').click();
+        await nextTick();
+        expect(document.querySelector('tbody th').textContent).toBe('MTL');
+        document.querySelector('[aria-label="Sort This Week ascending"]').click();
+        await nextTick();
+        expect(document.querySelector('tbody th').textContent).toBe('MTL');
+        expect(document.querySelector('main').textContent).not.toContain('No remaining games');
     });
 
     it('keeps both table headers above vertically scrolling rows in bounded regions', async () => {

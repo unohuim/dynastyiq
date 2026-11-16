@@ -26,7 +26,8 @@ Tools → Schedule exposes a public Monday–Sunday team grid at `/tools/schedul
 reading stored season participants and game metadata without importing data or
 running predictions. Week navigation uses the Eastern calendar; each team retains
 its zero-game row and weekly GP total. Weekly is the default tab; Off Nights lists
-each current-season team’s abbreviation and remaining off-night count from today,
+each current-season team’s abbreviation and remaining off-night counts for this week,
+next two weeks, this month and season from today,
 independently of the browsed week, using an inclusive
 50%-of-season-teams-playing cutoff rather than fixed weekdays. Authority: `docs/architecture/ui/InertiaAppShell.yaml`.
 
@@ -4447,8 +4448,10 @@ contract: `docs/integrations/DIQ-API-Usage-Doc.md`.
 
 Public Tools Schedule reads durable `nhl_schedule_snapshots` rows rather than
 aggregating source games during navigation. A registered **Prepare NHL Schedule**
-admin process publishes weeks and remaining-season off-night totals atomically,
-with ordinary import progress and opt-in daily-default scheduling. A green recycle
+admin process publishes weeks and off-night window totals atomically,
+including inclusive Sunday and calendar-month cutoffs. All five Off Nights columns
+sort locally, defaulting to Season descending, with regular-weight compact rows.
+Preparation retains ordinary import progress and opt-in daily-default scheduling. A green recycle
 toggle enables refresh; its gear supports an Eastern start time at every frequency and the card
 shows the next scheduled run. Source schedule
 refreshes, final-game updates and season rollups queue worker refreshes. Warm

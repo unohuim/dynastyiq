@@ -7,11 +7,34 @@ const activeTab = ref('weekly');
 const tabs = [{ key: 'weekly', label: 'Weekly' }, { key: 'off-nights', label: 'Off Nights' }];
 const loading = ref(false);
 const error = ref('');
-const totalsDescending = ref(true);
+const offNightColumns = [
+    { key: 'team', label: 'Team' },
+    { key: 'this_week_gp', label: 'This Week' },
+    { key: 'next_two_weeks_gp', label: 'Next 2 Weeks' },
+    { key: 'this_month_gp', label: 'This Month' },
+    { key: 'off_night_gp', label: 'Season' },
+];
+const sortKey = ref('off_night_gp');
+const sortDescending = ref(true);
 const offNightTeams = computed(() => [...props.schedule.off_nights.teams].sort((a, b) => {
-    const difference = totalsDescending.value ? b.off_night_gp - a.off_night_gp : a.off_night_gp - b.off_night_gp;
-    return difference || (a.abbrev || a.name).localeCompare(b.abbrev || b.name, 'en', { sensitivity: 'base' });
+    const alphabetical = (a.abbrev || a.name).localeCompare(b.abbrev || b.name, 'en', { sensitivity: 'base' });
+    if (sortKey.value === 'team') return sortDescending.value ? -alphabetical : alphabetical;
+    const left = a[sortKey.value];
+    const right = b[sortKey.value];
+    if (left == null || right == null) return left == null && right == null ? alphabetical : left == null ? 1 : -1;
+    const difference = sortDescending.value ? right - left : left - right;
+    return difference || alphabetical;
 }));
+
+function sortOffNights(key) {
+    sortDescending.value = sortKey.value === key ? !sortDescending.value : key !== 'team';
+    sortKey.value = key;
+}
+
+function sortLabel(column) {
+    const descending = sortKey.value === column.key ? !sortDescending.value : column.key !== 'team';
+    return `Sort ${column.label} ${descending ? 'descending' : 'ascending'}`;
+}
 
 function changeTab(event, index) {
     const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1
@@ -152,18 +175,19 @@ function navigate(url) {
         </section>
         <section v-else id="schedule-panel-off-nights" role="tabpanel" class="flex min-h-0 flex-1 flex-col" aria-labelledby="schedule-tab-off-nights">
             <div class="min-h-0 max-w-full flex-1 overscroll-y-none [overflow-anchor:none] overflow-x-hidden overflow-y-auto rounded-lg border border-gray-200 bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500" role="region" aria-label="Off-night NHL team schedule" tabindex="0">
-                <table class="w-full border-collapse text-left text-sm">
+                <table class="w-full table-fixed border-collapse text-left text-[9px] min-[420px]:text-[10px] sm:text-xs lg:text-sm">
                     <caption class="sr-only">{{ schedule.off_nights.label }}. Each team's remaining off-night count.</caption>
                     <thead>
-                        <tr class="border-b border-gray-200 bg-gray-50 text-xs text-gray-600">
-                            <th scope="col" class="sticky top-0 z-20 bg-gray-50 px-3 py-2">Team</th>
-                            <th scope="col" class="sticky top-0 z-20 bg-gray-50 px-3 py-1 text-right" :aria-sort="totalsDescending ? 'descending' : 'ascending'"><button type="button" class="inline-flex min-h-6 items-center gap-1 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500" :aria-label="totalsDescending ? 'Sort total ascending' : 'Sort total descending'" @click="totalsDescending = !totalsDescending">Total<svg aria-hidden="true" class="h-3 w-3 transition-transform duration-150 motion-reduce:transition-none" :class="totalsDescending ? '' : 'rotate-180'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 5v14m-5-5 5 5 5-5" /></svg></button></th>
+                        <tr class="border-b border-gray-200 bg-gray-50 text-[8px] text-gray-600 min-[420px]:text-[9px] sm:text-[11px] lg:text-xs">
+                            <th v-for="column in offNightColumns" :key="column.key" scope="col" class="sticky top-0 z-20 bg-gray-50 px-1 py-1 font-normal sm:px-3" :class="column.key === 'team' ? 'text-left' : 'text-right'" :aria-sort="sortKey === column.key ? (sortDescending ? 'descending' : 'ascending') : undefined">
+                                <button type="button" class="inline-flex min-h-6 max-w-full items-center gap-0.5 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500" :aria-label="sortLabel(column)" :title="schedule.off_nights.period_ends?.[column.key] ? `${schedule.off_nights.from_date} through ${schedule.off_nights.period_ends[column.key]} (inclusive)` : undefined" @click="sortOffNights(column.key)"><span>{{ column.label }}</span><svg v-if="sortKey === column.key" aria-hidden="true" class="h-3 w-3 shrink-0 transition-transform duration-150 motion-reduce:transition-none" :class="sortDescending ? '' : 'rotate-180'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 5v14m-5-5 5 5 5-5" /></svg></button>
+                            </th>
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-gray-100">
                         <tr v-for="team in offNightTeams" :key="team.id">
-                            <th scope="row" class="px-3 py-1.5 font-semibold" :title="team.name">{{ team.abbrev || team.name }}</th>
-                            <td class="px-3 py-1.5 text-right font-semibold tabular-nums text-gray-900">{{ team.off_night_gp }}</td>
+                            <th scope="row" class="px-1 py-1 font-normal sm:px-3" :title="team.name">{{ team.abbrev || team.name }}</th>
+                            <td v-for="column in offNightColumns.slice(1)" :key="column.key" class="px-1 py-1 text-right font-normal tabular-nums text-gray-900 sm:px-3">{{ team[column.key] ?? '—' }}</td>
                         </tr>
                     </tbody>
                 </table>

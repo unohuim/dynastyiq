@@ -317,3 +317,68 @@ fixtures retain fixed clocks and mocked fetch. Counts: PHP 75, admin-hub JS 133,
 pages JS 156 unchanged. Only manual diff and whitespace checks performed; tests,
 builds, browser checks and production operations were not run. No migration
 required.
+
+## Off Nights date-window columns
+
+Files changed:
+
+- `app/Services/NhlScheduleCalculator.php`
+- `app/Services/NhlScheduleSnapshots.php`
+- `resources/js/pages/Tools/Schedule.vue`
+- `tests/Feature/NhlScheduleTest.php`
+- `resources/js/pages/games.test.js`
+- `docs/architecture/ui/InertiaAppShell.yaml`
+- `docs/architecture/ui/NhlScheduleSnapshots.yaml`
+- `docs/ARCHITECTURE_INVENTORY.md`
+- `docs/analysis/prepared-schedule-review.md`
+
+Coverage matrix (authored, not executed):
+
+| Contract | Status | Test names |
+| --- | --- | --- |
+| Prepared inclusive windows, persisted and read through HTTP | COVERED | publishes inclusive off-night windows through preparation storage and HTTP |
+| Inactive/completed exclusions and zero-count teams | COVERED | keeps all window counts zero for teams without remaining qualifying games |
+| Full-slate off-night classification; live inclusion | COVERED | counts live games but excludes busy dates from every off-night window |
+| Sunday inclusion and prebuilt next-day boundaries | COVERED | includes today on Sunday and prepares the next Eastern days own boundaries |
+| Independent calendar-month and weekly/year boundaries | COVERED | keeps calendar month counts independent of weekly windows over year end |
+| Legacy rows retained while refresh is queued | COVERED | retains legacy season counts and queues window preparation without source aggregation; retains season totals while showing missing window counts as unknown until refreshed |
+| Compact regular font, columns and date labels | COVERED | renders prepared window counts in regular weight with compact responsive sizing |
+| Sort each window and Team; retain Season default and tab state | COVERED | sorts %s counts locally in both directions without changing input order (three cases); sorts team abbreviations alphabetically with a reversible accessible direction; defaults to numeric descending off-night totals and breaks ties alphabetically; toggles off-night sort direction retains it between tabs and reorders changed counts |
+
+Requirements checklist:
+
+1. SATISFIED: display Team, This Week, Next 2 Weeks, This Month, Season.
+2. SATISFIED: all windows start at the Eastern as-of date, inclusively. This Week
+   ends this Sunday; Next 2 Weeks ends the following Sunday; This Month ends on
+   the calendar month's last day. November 16 uses November 22 and 29 Sundays.
+3. SATISFIED: existing Season totals and off-night qualification are preserved;
+   the three new counts are calculated during snapshot preparation, not visits.
+4. SATISFIED: regular-weight rows match Weekly's responsive font sizes; five
+   columns fit the mobile container and retain the pinned header/scroll region.
+5. SATISFIED: each column sorts locally, with Season descending by default,
+   accessible direction indicators, alphabetical ties and retained tab state.
+6. SATISFIED: legacy snapshots queue the existing builder, preserving Season
+   counts and displaying unknown new counts as em dashes until rebuilt.
+
+Endpoint × verb auth/scope checklist (unchanged public route):
+
+| Endpoint / verb | Scope | Test names |
+| --- | --- | --- |
+| GET /tools/schedule | Guests allowed | allows guests to view the schedule in the shared shell |
+| GET /tools/schedule | Authenticated members allowed | allows authenticated members without an admin role to view the same schedule |
+| GET /tools/schedule | Public projection; no owner/organization scope | publishes inclusive off-night windows through preparation storage and HTTP |
+
+Frontend checklist: native keyboard-accessible sort buttons, reactive numeric and
+alphabetical sorts, aria-sort/direction icon, tab retention, responsive column and
+font contracts, date-range titles, missing values and immutable input order are
+covered. Existing bounded polling and mounted-only cache remain in place. Fixed
+clocks, local fixtures and mocked requests; no external calls or global state.
+
+Test-count report: `tests/Feature/NhlScheduleTest.php` has 81 `it(...)`
+declarations. `resources/js/pages/games.test.js` has 159 `it(...)` and five
+`it.each(...)` declarations (164 total declarations; parameterized cases expand
+when executed). No new test file.
+
+Only scoped manual diff review and `git diff --check` were performed. Tests,
+builds, browser checks, commands that prepare data and production operations were
+not run. No migration required for these additional snapshot payload fields.

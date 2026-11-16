@@ -104,6 +104,11 @@ class NhlScheduleCalculator
     private function remainingOffNights(CarbonImmutable $today, Collection $participants, Collection $references): array
     {
         $season = $this->seasonId($today);
+        $periodEnds = [
+            'this_week_gp' => $today->endOfWeek(CarbonImmutable::SUNDAY)->toDateString(),
+            'next_two_weeks_gp' => $today->endOfWeek(CarbonImmutable::SUNDAY)->addWeek()->toDateString(),
+            'this_month_gp' => $today->endOfMonth()->toDateString(),
+        ];
         $teams = [];
         foreach ($participants as $team) {
             $reference = $references->get($team->nhl_id);
@@ -113,6 +118,7 @@ class NhlScheduleCalculator
                 'id' => (int) $team->nhl_id, 'abbrev' => $abbrev, 'name' => $name ?: $abbrev ?: 'Team '.$team->nhl_id,
                 'logo' => $abbrev ? 'https://assets.nhle.com/logos/nhl/svg/'.$abbrev.'_light.svg' : null,
                 'off_night_gp' => 0,
+                'this_week_gp' => 0, 'next_two_weeks_gp' => 0, 'this_month_gp' => 0,
             ];
         }
         $games = DB::table('nhl_games')->where('season_id', $season)->whereIn('game_type', [1, 2, 3])
@@ -140,12 +146,18 @@ class NhlScheduleCalculator
                         continue;
                     }
                     $teams[$id]['off_night_gp']++;
+                    foreach ($periodEnds as $field => $endDate) {
+                        if ($date <= $endDate) {
+                            $teams[$id][$field]++;
+                        }
+                    }
                 }
             }
         }
 
         return [
             'season_id' => $season, 'from_date' => $today->toDateString(),
+            'period_ends' => $periodEnds,
             'label' => 'Remaining '.substr($season, 0, 4).'–'.substr($season, 6, 2).' season · From '.$today->format('M j, Y'),
             'teams' => collect($teams)->sortBy('abbrev', SORT_NATURAL | SORT_FLAG_CASE)->values()->all(),
             'game_count' => $gameCount,
