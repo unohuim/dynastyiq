@@ -12,6 +12,7 @@ import GameCard from './Games/GameCard.vue';
 import GamesIndex from './Games/Index.vue';
 import LineupTeam from './Games/LineupTeam.vue';
 import GameShow from './Games/Show.vue';
+import WeeklySchedule from './Tools/Schedule.vue';
 import { applyGamePanel } from './Games/game-panels';
 import {
     createGameCard,
@@ -1032,6 +1033,152 @@ describe('Inertia mobile navigation', () => {
         menus[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
         await nextTick();
         expect(trigger.getAttribute('aria-expanded')).toBe('false');
+    });
+
+    it('opens the desktop Tools menu with its backend-owned Schedule link', async () => {
+        page.props.shell.tools = [{ label: 'Schedule', href: '/tools/schedule', active: true }];
+        mountShell();
+        const trigger = document.querySelector('[aria-label="Open tools menu"]');
+        trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+        await nextTick();
+        await nextTick();
+        expect(trigger.getAttribute('aria-expanded')).toBe('true');
+        expect(document.querySelector('[role="menu"] a').getAttribute('href')).toBe('/tools/schedule');
+        expect(document.querySelector('[role="menu"] a').getAttribute('aria-current')).toBe('page');
+    });
+
+    it('lets guests open Tools from the mobile bar without member navigation', async () => {
+        page.props.auth.user = null;
+        page.props.shell.tools = [{ label: 'Schedule', href: '/tools/schedule', active: false }];
+        mountShell();
+        mobileNav().querySelector('[aria-label="Open tools navigation"]').click();
+        await nextTick();
+        await nextTick();
+        const nav = document.querySelector('[aria-label="Tools navigation"]');
+        expect(nav.querySelector('a').getAttribute('href')).toBe('/tools/schedule');
+        expect(nav.textContent).not.toContain('Profile');
+        expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    });
+
+    it('includes Tools in the member navigation drawer without removing existing entries', async () => {
+        page.props.shell.tools = [{ label: 'Schedule', href: '/tools/schedule', active: false }];
+        mountShell();
+        [...mobileNav().querySelectorAll('button')].find(button => button.textContent.trim() === 'Menu').click();
+        await nextTick();
+        await nextTick();
+        const nav = document.querySelector('[aria-label="All navigation"]');
+        expect(nav.querySelector('a[href="/stats"]')).not.toBeNull();
+        expect(nav.querySelector('a[href="/tools/schedule"]')).not.toBeNull();
+        expect(nav.textContent).toContain('Tools');
+    });
+});
+
+describe('weekly Schedule page', () => {
+    let app;
+    let state;
+    let visit;
+    const mount = () => {
+        app = createApp({ render: () => h(WeeklySchedule, { schedule: state.schedule }) });
+        app.mount('#weekly-schedule');
+    };
+    beforeEach(() => {
+        document.body.innerHTML = '<div id="weekly-schedule"></div>';
+        const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((label, index) => ({
+            label, date: `2026-11-${16 + index}`, display_date: `Nov ${16 + index}`, is_today: index === 2,
+        }));
+        state = reactive({ schedule: {
+            label: 'Nov 16 – Nov 22, 2026', days, is_current_week: true, game_count: 1,
+            previous_url: '/tools/schedule?week=2026-11-09', next_url: '/tools/schedule?week=2026-11-23', current_url: '/tools/schedule',
+            teams: ['MTL', 'TOR'].map((abbrev, index) => ({ id: index + 1, abbrev, name: abbrev, logo: `/${abbrev}.svg`, total_gp: 1,
+                days: Object.fromEntries(days.map(day => [day.date, day.label === 'Mon' ? [{ id: 7, href: '/games/7',
+                    opponent: index ? 'MTL' : 'TOR', venue: index ? 'home' : 'away', time: '7:00 PM', status: null }] : []])),
+            })),
+        } });
+        visit = vi.spyOn(inertia.router, 'get').mockImplementation(() => {});
+    });
+    afterEach(() => { app?.unmount(); document.body.innerHTML = ''; vi.restoreAllMocks(); });
+
+    it('renders only Team Monday through Sunday and Total GP columns', () => {
+        mount();
+        expect([...document.querySelectorAll('thead th')].map(cell => cell.textContent.replace(/Nov \d+/, '').trim()))
+            .toEqual(['Team', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun', 'Total GP']);
+        expect(document.querySelectorAll('tbody tr')).toHaveLength(2);
+        expect(document.querySelectorAll('tbody tr')[0].children).toHaveLength(9);
+    });
+
+    it('shows reciprocal home and away opponents with Eastern start times', () => {
+        mount();
+        const links = [...document.querySelectorAll('tbody a')];
+        expect(links[0].textContent).toContain('@TOR');
+        expect(links[1].textContent).toContain('vsMTL');
+        expect(links[0].getAttribute('aria-label')).toContain('away at TOR');
+        expect(links[0].textContent).toContain('7:00 PM');
+        expect(document.querySelector('main').textContent).toContain('All times Eastern');
+    });
+
+    it('keeps horizontal scrolling inside the table with team and GP columns pinned', () => {
+        mount();
+        expect(document.querySelector('[aria-label="Weekly NHL team schedule"]').classList.contains('overflow-x-auto')).toBe(true);
+        expect(document.querySelector('tbody th').classList.contains('sticky')).toBe(true);
+        expect(document.querySelector('tbody th').classList.contains('left-0')).toBe(true);
+        expect(document.querySelector('tbody tr').lastElementChild.classList.contains('right-0')).toBe(true);
+    });
+
+    it('requests the selected week while retaining the current table during loading', async () => {
+        mount();
+        const table = document.querySelector('table');
+        document.querySelector('[aria-label="Next week"]').click();
+        expect(visit).toHaveBeenCalledWith(state.schedule.next_url, {}, expect.objectContaining({ preserveState: true, preserveScroll: true }));
+        visit.mock.calls[0][2].onStart();
+        await nextTick();
+        expect(document.querySelector('table')).toBe(table);
+        expect(document.querySelector('main').getAttribute('aria-busy')).toBe('true');
+        expect(document.querySelector('[aria-label="Previous week"]').disabled).toBe(true);
+        visit.mock.calls[0][2].onFinish();
+        await nextTick();
+        expect(document.querySelector('main').getAttribute('aria-busy')).toBe('false');
+    });
+
+    it('uses the previous-week URL and enables This Week for a historical selection', () => {
+        state.schedule.is_current_week = false;
+        mount();
+        document.querySelector('[aria-label="Previous week"]').click();
+        expect(visit.mock.calls[0][0]).toBe(state.schedule.previous_url);
+        [...document.querySelectorAll('button')].find(button => button.textContent === 'This Week').click();
+        expect(visit.mock.calls[1][0]).toBe('/tools/schedule');
+    });
+
+    it('updates the displayed days and rows when navigation supplies new props', async () => {
+        mount();
+        state.schedule = { ...state.schedule, label: 'Nov 23 – Nov 29, 2026', game_count: 0,
+            teams: [{ ...state.schedule.teams[0], total_gp: 0, days: {} }],
+            days: state.schedule.days.map((day, index) => ({ ...day, date: `2026-11-${23 + index}`, display_date: `Nov ${23 + index}`, is_today: false })),
+        };
+        await nextTick();
+        expect(document.querySelector('main').textContent).toContain('Nov 23 – Nov 29');
+        expect(document.querySelectorAll('tbody tr')).toHaveLength(1);
+        expect(document.querySelector('tbody tr').lastElementChild.textContent).toBe('0');
+    });
+
+    it('shows postponed status and zero GP without hiding the game', () => {
+        state.schedule.teams[0].days['2026-11-16'][0].status = 'Postponed';
+        state.schedule.teams[0].total_gp = 0;
+        mount();
+        expect(document.querySelector('tbody a').textContent).toContain('Postponed');
+        expect(document.querySelector('tbody tr').lastElementChild.textContent).toBe('0');
+    });
+
+    it('reports explicit navigation errors in the reserved feedback slot and permits retry', async () => {
+        mount();
+        const feedback = document.querySelector('[role="status"]');
+        document.querySelector('[aria-label="Next week"]').click();
+        visit.mock.calls[0][2].onStart();
+        visit.mock.calls[0][2].onError();
+        visit.mock.calls[0][2].onFinish();
+        await nextTick();
+        expect(document.querySelector('[role="status"]')).toBe(feedback);
+        expect(feedback.textContent).toContain('Please try again');
+        expect(document.querySelector('[aria-label="Next week"]').disabled).toBe(false);
     });
 });
 

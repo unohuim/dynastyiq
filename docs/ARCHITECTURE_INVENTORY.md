@@ -22,6 +22,11 @@ endpoints. The root Blade file is only an HTML/asset/mount document. Legacy page
 layouts and their Alpine bootstrap remain separate. Authority:
 `docs/architecture/ui/InertiaAppShell.yaml`.
 
+Tools → Schedule exposes a public Monday–Sunday team grid at `/tools/schedule`,
+reading stored season participants and game metadata without importing data or
+running predictions. Week navigation uses the Eastern calendar; each team retains
+its zero-game row and weekly GP total. Authority: `docs/architecture/ui/InertiaAppShell.yaml`.
+
 The shared Inertia mobile and desktop layout includes a compact dark scoreboard with date
 controls and a Games link with a right chevron above a full-width strip. Horizontal browsing
 updates the selected date and link, loading weeks with directional feedback and

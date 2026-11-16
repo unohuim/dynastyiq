@@ -16,6 +16,7 @@
         accountOpen:false,
         leftOpen:false,
         newsOpen:false,
+        toolsOpen:false,
         fantasyStates: @js($fantasyStates),
         hasFantasyLeagues: {{ $hasFantasyLeagues ? 'true':'false' }},
         hasDiscord: {{ $hasDiscord ? 'true':'false' }},
@@ -73,6 +74,16 @@
                     <x-dropdown-link href="{{ route('starting-goalies.index') }}">Starting Goalies</x-dropdown-link>
                     <x-dropdown-link href="{{ route('injuries.index') }}">Injuries</x-dropdown-link>
                 </x-slot>
+            </x-dropdown>
+
+            <x-dropdown align="left" width="48">
+                <x-slot name="trigger">
+                    <button type="button" aria-haspopup="menu" :aria-expanded="open" @keydown.escape.stop="open = false" class="inline-flex items-center gap-1 border-b-2 border-transparent px-1 pt-1 text-sm font-medium leading-5 {{ request()->routeIs('tools.*') ? 'text-indigo-600' : 'text-gray-600 hover:text-indigo-500' }}">
+                        Tools
+                        <svg aria-hidden="true" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m6 9 6 6 6-6" /></svg>
+                    </button>
+                </x-slot>
+                <x-slot name="content"><x-dropdown-link href="{{ route('tools.schedule') }}">Schedule</x-dropdown-link></x-slot>
             </x-dropdown>
 
             @auth
@@ -158,6 +169,13 @@
                     <a href="{{ route('starting-goalies.index') }}" class="block px-4 py-2 hover:bg-gray-100">Starting Goalies</a>
                     <a href="{{ route('injuries.index') }}" class="block px-4 py-2 hover:bg-gray-100">Injuries</a>
                 </div>
+            </li>
+
+            <li class="flex-1 text-center">
+                <button type="button" @click="toolsOpen = true" aria-controls="legacy-tools-panel" :aria-expanded="toolsOpen" class="flex min-h-11 w-full flex-col items-center justify-center">
+                    <svg aria-hidden="true" class="mb-0.5 h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 5h14v14H5zM8 3v4m8-4v4M5 10h14m-10 3h2m2 0h2m-6 3h2" /></svg>
+                    Tools
+                </button>
             </li>
 
             @auth
@@ -318,6 +336,14 @@
         </section>
     </div>
     @endauth
+
+    <x-ui.slide-over show="toolsOpen" close-action="toolsOpen = false" title-id="tools-menu-title" max-width="max-w-sm" id="legacy-tools-panel" x-trap.inert.noscroll="toolsOpen">
+        <header class="flex items-center justify-between border-b border-gray-200 px-5 py-4">
+            <h2 id="tools-menu-title" class="text-lg font-semibold text-gray-900">Tools</h2>
+            <button type="button" aria-label="Close tools" class="min-h-11 min-w-11 rounded-lg text-xl text-gray-500 hover:bg-gray-100" @click="toolsOpen = false">×</button>
+        </header>
+        <nav aria-label="Tools navigation" class="p-3"><a href="{{ route('tools.schedule') }}" class="block rounded-lg px-3 py-3 text-sm text-gray-700 hover:bg-gray-100">Schedule</a></nav>
+    </x-ui.slide-over>
 
     @include('nav.partials._right-account-drawer')
 </div>

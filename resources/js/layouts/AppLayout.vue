@@ -16,6 +16,7 @@ const shell = computed(() => page.props.shell);
 const user = computed(() => page.props.auth?.user);
 const drawer = ref(null);
 const newsOpen = ref(false);
+const toolsOpen = ref(false);
 const mobileNewsOpen = ref(false);
 const liveGame = shallowRef(null);
 const liveConnected = ref(false);
@@ -28,6 +29,7 @@ let opener;
 let disconnect;
 let mounted = false;
 const mobileLinks = computed(() => (shell.value?.primary ?? []).filter(link => link.mobile !== false));
+const toolLinks = computed(() => shell.value?.tools ?? []);
 const toastClasses = { success: 'bg-emerald-700', error: 'bg-red-700', info: 'bg-sky-700' };
 
 function dismiss(id) {
@@ -71,6 +73,7 @@ function reconnect() {
 watch(() => page.url, url => {
     drawer.value = new URL(url, 'https://dynastyiq.invalid').searchParams.get('drawer') === 'account' && user.value ? 'account' : null;
     newsOpen.value = false;
+    toolsOpen.value = false;
     mobileNewsOpen.value = false;
 }, { immediate: true });
 watch(() => shell.value?.flashes, flashes => (flashes ?? []).forEach(notify), { immediate: true });
@@ -111,6 +114,13 @@ onBeforeUnmount(() => {
                             <svg aria-hidden="true" class="h-3 w-3 shrink-0 transition-transform duration-300 ease-out motion-reduce:transition-none" :class="newsOpen ? 'rotate-180' : ''" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m6 9 6 6 6-6" /></svg>
                         </DropdownMenuTrigger>
                         <DropdownMenuPortal force-mount><Transition enter-active-class="transition-opacity duration-200 ease-out motion-reduce:transition-none" leave-active-class="transition-opacity duration-100 ease-in motion-reduce:transition-none" enter-from-class="opacity-0" leave-to-class="opacity-0"><DropdownMenuContent v-if="newsOpen" force-mount :side-offset="8" class="z-40 min-w-48 rounded-lg border border-gray-200 bg-white p-1 shadow-lg"><DropdownMenuItem v-for="link in shell.news" :key="link.href" as-child><a :href="link.href" :aria-current="link.active ? 'page' : undefined" class="block rounded px-3 py-2 text-sm outline-none data-[highlighted]:bg-gray-100">{{ link.label }}</a></DropdownMenuItem></DropdownMenuContent></Transition></DropdownMenuPortal>
+                    </DropdownMenuRoot>
+                    <DropdownMenuRoot v-if="toolLinks.length" v-model:open="toolsOpen">
+                        <DropdownMenuTrigger aria-label="Open tools menu" class="flex items-center gap-1 py-2 text-sm font-medium transition-colors duration-150 hover:text-white motion-reduce:transition-none" :class="toolLinks.some(link => link.active) ? 'text-white' : 'text-[#C9D5E0]'">
+                            <span>Tools</span>
+                            <svg aria-hidden="true" class="h-3 w-3 transition-transform duration-300 ease-out motion-reduce:transition-none" :class="toolsOpen ? 'rotate-180' : ''" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m6 9 6 6 6-6" /></svg>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuPortal force-mount><Transition enter-active-class="transition-opacity duration-200 ease-out motion-reduce:transition-none" leave-active-class="transition-opacity duration-100 ease-in motion-reduce:transition-none" enter-from-class="opacity-0" leave-to-class="opacity-0"><DropdownMenuContent v-if="toolsOpen" force-mount :side-offset="8" class="z-40 min-w-48 rounded-lg border border-gray-200 bg-white p-1 text-gray-700 shadow-lg"><DropdownMenuItem v-for="link in toolLinks" :key="link.href" as-child><a :href="link.href" :aria-current="link.active ? 'page' : undefined" class="block rounded px-3 py-2 text-sm outline-none data-[highlighted]:bg-gray-100">{{ link.label }}</a></DropdownMenuItem></DropdownMenuContent></Transition></DropdownMenuPortal>
                     </DropdownMenuRoot>
                 </nav>
                 <button v-if="user" type="button" aria-label="Notification settings" class="hidden h-9 w-9 shrink-0 items-center justify-center rounded text-slate-200 transition-colors duration-150 hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 motion-reduce:transition-none lg:flex" @click="openDrawer('account', $event)"><svg aria-hidden="true" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M14.25 18.75a2.25 2.25 0 0 1-4.5 0m10.5-2.25H3.75c1.5-1.5 2.25-3 2.25-6a6 6 0 0 1 12 0c0 3 .75 4.5 2.25 6Z" /></svg></button>
@@ -157,6 +167,12 @@ onBeforeUnmount(() => {
                         </DropdownMenuPortal>
                     </DropdownMenuRoot>
                 </li>
+                <li v-if="toolLinks.length" class="flex-1 text-center">
+                    <button type="button" aria-label="Open tools navigation" aria-haspopup="dialog" :aria-expanded="drawer === 'tools'" aria-controls="tools-navigation-panel" class="flex min-h-11 w-full flex-col items-center justify-center" :class="toolLinks.some(link => link.active) ? 'text-white' : ''" @click="openDrawer('tools', $event)">
+                        <svg aria-hidden="true" class="mb-0.5 h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 5h14v14H5zM8 3v4m8-4v4M5 10h14m-10 3h2m2 0h2m-6 3h2" /></svg>
+                        Tools
+                    </button>
+                </li>
                 <li v-if="user" class="flex-1 text-center">
                     <button type="button" class="flex min-h-11 w-full flex-col items-center justify-center" @click="openDrawer('navigation', $event)">
                         <svg aria-hidden="true" class="mb-0.5 h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -184,11 +200,11 @@ onBeforeUnmount(() => {
                 <div class="pointer-events-none fixed inset-x-0 top-0 z-50 h-[100dvh] overflow-hidden">
                     <Transition enter-active-class="transition-opacity duration-200 motion-reduce:transition-none" leave-active-class="transition-opacity duration-150 motion-reduce:transition-none" enter-from-class="opacity-0" leave-to-class="opacity-0"><DialogOverlay v-if="drawer" force-mount class="pointer-events-auto absolute inset-0 bg-gray-950/35" /></Transition>
                     <Transition enter-active-class="transition-transform duration-500 ease-out motion-reduce:transition-none" leave-active-class="transition-transform duration-300 ease-in motion-reduce:transition-none" enter-from-class="translate-x-full" leave-to-class="translate-x-full">
-                        <DialogContent v-if="drawer && shell" force-mount class="pointer-events-auto absolute right-0 top-0 flex h-full min-h-0 w-full max-w-md flex-col overflow-hidden bg-white shadow-2xl" @close-auto-focus="restoreFocus">
-                            <header class="flex shrink-0 items-center justify-between border-b border-gray-200 px-5 py-4"><div><DialogTitle class="text-lg font-semibold">{{ drawer === 'account' ? 'Account' : 'Navigation' }}</DialogTitle><DialogDescription class="mt-1 text-xs text-gray-500">{{ drawer === 'account' ? user?.name : 'Explore DynastyIQ' }}</DialogDescription></div><button type="button" aria-label="Close menu" class="rounded-lg p-3 text-xl text-gray-500 hover:bg-gray-100" @click="drawer = null">×</button></header>
+                        <DialogContent v-if="drawer && shell" :id="drawer === 'tools' ? 'tools-navigation-panel' : undefined" force-mount class="pointer-events-auto absolute right-0 top-0 flex h-full min-h-0 w-full max-w-md flex-col overflow-hidden bg-white shadow-2xl" @close-auto-focus="restoreFocus">
+                            <header class="flex shrink-0 items-center justify-between border-b border-gray-200 px-5 py-4"><div><DialogTitle class="text-lg font-semibold">{{ drawer === 'account' ? 'Account' : drawer === 'tools' ? 'Tools' : 'Navigation' }}</DialogTitle><DialogDescription class="mt-1 text-xs text-gray-500">{{ drawer === 'account' ? user?.name : 'Explore DynastyIQ' }}</DialogDescription></div><button type="button" aria-label="Close menu" class="rounded-lg p-3 text-xl text-gray-500 hover:bg-gray-100" @click="drawer = null">×</button></header>
                             <div class="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain px-3 pt-5 pb-[calc(3rem+env(safe-area-inset-bottom))]">
                                 <AccountPanel v-if="drawer === 'account' && user" :shell="shell" @notify="notify" />
-                                <nav v-else aria-label="All navigation" class="space-y-1"><a v-for="link in [...mobileLinks, ...shell.news]" :key="link.href" :href="link.href" :aria-current="link.active ? 'page' : undefined" class="block rounded-lg px-3 py-3 text-sm hover:bg-gray-100" :class="link.active ? 'font-semibold text-indigo-700' : 'text-gray-700'">{{ link.label }}</a><a v-if="user" :href="shell.profile_url" class="block rounded-lg border-t border-gray-200 px-3 py-3 text-sm hover:bg-gray-100">Profile</a></nav>
+                                <nav v-else :aria-label="drawer === 'tools' ? 'Tools navigation' : 'All navigation'" class="space-y-1"><template v-if="drawer !== 'tools'"><a v-for="link in [...mobileLinks, ...shell.news]" :key="link.href" :href="link.href" :aria-current="link.active ? 'page' : undefined" class="block rounded-lg px-3 py-3 text-sm hover:bg-gray-100" :class="link.active ? 'font-semibold text-indigo-700' : 'text-gray-700'">{{ link.label }}</a></template><p v-if="toolLinks.length && drawer !== 'tools'" class="px-3 pt-4 pb-1 text-xs font-semibold uppercase tracking-wide text-gray-500">Tools</p><a v-for="link in toolLinks" :key="link.href" :href="link.href" :aria-current="link.active ? 'page' : undefined" class="block rounded-lg px-3 py-3 text-sm text-gray-700 hover:bg-gray-100">{{ link.label }}</a><a v-if="user && drawer !== 'tools'" :href="shell.profile_url" class="block rounded-lg border-t border-gray-200 px-3 py-3 text-sm hover:bg-gray-100">Profile</a></nav>
                             </div>
                         </DialogContent>
                     </Transition>
