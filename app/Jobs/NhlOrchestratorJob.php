@@ -26,6 +26,7 @@ class NhlOrchestratorJob implements ShouldQueue
      */
     public function __construct(string $gameDate, ?int $runId = null)
     {
+        $this->onQueue('games-processing');
         $this->gameDate = $gameDate;
         $this->runId = $runId;
         $this->captureRunGeneration();

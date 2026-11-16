@@ -39,6 +39,7 @@ class DedupeNhlPlayByPlayRepairJob implements ShouldQueue, ShouldBeUnique
 
     public function __construct(public int $runId)
     {
+        $this->onQueue('games-processing');
         $this->afterCommit = true;
     }
 

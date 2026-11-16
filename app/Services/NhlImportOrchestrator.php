@@ -583,7 +583,7 @@ class NhlImportOrchestrator
             'updated_at' => now(),
         ]);
 
-        $batch = Bus::batch($jobs)
+        $batch = Bus::batch($jobs)->onQueue('games-processing')
             ->then(function (Batch $batch) use ($runId): void {
                 self::recordFullPostProcessCompleted($runId, $batch->id);
             })

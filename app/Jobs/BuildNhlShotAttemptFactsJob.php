@@ -44,6 +44,7 @@ class BuildNhlShotAttemptFactsJob implements ShouldQueue
 
     public function __construct(public int $nhlGameId, public ?int $runId = null)
     {
+        $this->onQueue('games-processing');
         $this->afterCommit = true;
         $this->captureRunGeneration();
     }

@@ -26,10 +26,10 @@ class RebuildNhlOnIceStatsJob implements ShouldQueue
     public int $timeout = 600;
     public array $backoff = [30, 120, 300];
 
-    /** Capture the scoped run generation and retain ordinary import queue routing. */
+    /** Capture the scoped run generation and use the dedicated game-processing queue. */
     public function __construct(public int $nhlGameId, public ?int $runId = null)
     {
-        $this->onQueue('default');
+        $this->onQueue('games-processing');
         $this->afterCommit = true;
         $this->captureRunGeneration();
     }

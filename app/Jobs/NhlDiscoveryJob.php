@@ -46,6 +46,7 @@ class NhlDiscoveryJob implements ShouldQueue
      */
     public function __construct($start, $end, ?int $runId = null)
     {
+        $this->onQueue('games-processing');
         $this->start = $start instanceof Carbon ? $start->copy()->startOfDay() : Carbon::parse((string) $start)->startOfDay();
         $this->end   = $end   instanceof Carbon ? $end->copy()->startOfDay()   : Carbon::parse((string) $end)->startOfDay();
         $this->runId = $runId;

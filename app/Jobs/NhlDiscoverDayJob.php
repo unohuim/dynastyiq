@@ -33,6 +33,7 @@ class NhlDiscoverDayJob implements ShouldQueue
 
     public function __construct(string $date, ?int $runId = null)
     {
+        $this->onQueue('games-processing');
         $this->date = $date;
         $this->runId = $runId;
         $this->captureRunGeneration();

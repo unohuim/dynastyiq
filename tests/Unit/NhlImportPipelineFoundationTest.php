@@ -318,6 +318,70 @@ it('maps stage names to their queue job classes', function (): void {
         ->and(NhlImportStages::jobClassFor(NhlImportStages::SUM_GAME_UNITS))->toBe(SumNhlGameUnitsJob::class);
 });
 
+it('routes every canonical game stage to games-processing and retains routing when serialized', function (): void {
+    foreach (NhlImportStages::ordered() as $stage) {
+        $class = NhlImportStages::jobClassFor($stage);
+        $job = new $class(2026020001);
+        $restored = unserialize(serialize($job));
+        expect($job->queue)->toBe('games-processing')
+            ->and($restored->queue)->toBe('games-processing')
+            ->and($restored->gameId)->toBe(2026020001);
+    }
+});
+
+it('routes new discovery repair and fact jobs to games-processing', function (string $class, array $arguments): void {
+    $job = new $class(...$arguments);
+    $restored = unserialize(serialize($job));
+    expect($job->queue)->toBe('games-processing')->and($restored->queue)->toBe('games-processing');
+})->with([
+    'discovery range' => [NhlDiscoveryJob::class, ['2026-01-15', '2026-01-14']],
+    'discovery day' => [NhlDiscoverDayJob::class, ['2026-01-15']],
+    'coordinator' => [\App\Jobs\NhlOrchestratorJob::class, ['2026-01-15']],
+    'shots' => [\App\Jobs\BuildNhlShotAttemptFactsJob::class, [2026020001]],
+    'faceoffs' => [\App\Jobs\BuildNhlFaceoffFactsJob::class, [2026020001]],
+    'refs and staff' => [\App\Jobs\RefreshNhlGameContextJob::class, [2026020001]],
+    'on-ice rebuild' => [\App\Jobs\RebuildNhlOnIceStatsJob::class, [2026020001]],
+    'game rebuild' => [\App\Jobs\RebuildNhlGameImportJob::class, [2026020001]],
+    'cleanup' => [\App\Jobs\ClearNhlGameImportJob::class, [2026020001, null, []]],
+    'preflight' => [\App\Jobs\PreflightNhlGameImportRebuildJob::class, [2026020001]],
+    'reseed' => [\App\Jobs\SeedNhlGameImportProgressJob::class, [2026020001, null, []]],
+    'pipeline dispatch' => [\App\Jobs\DispatchNhlGameImportPipelineJob::class, [2026020001]],
+    'goalie decisions' => [\App\Jobs\RefreshNhlGoalieDecisionJob::class, [2026020001]],
+    'special teams splits' => [\App\Jobs\RefreshNhlSpecialTeamsSplitsJob::class, [2026020001]],
+    'duplicate scan' => [\App\Jobs\ScanDuplicateNhlPlayByPlayRepairJob::class, [1]],
+    'duplicate dedupe' => [\App\Jobs\DedupeNhlPlayByPlayRepairJob::class, [1]],
+    'duplicate rebuild dispatch' => [\App\Jobs\QueueDuplicatePbpAffectedRebuildsJob::class, [1]],
+]);
+
+it('isolates scheduled game refresh and discovery readiness from the default queue', function (): void {
+    $job = new \App\Jobs\RefreshNhlScheduleDateJob(Carbon::parse('2026-01-15'), 1);
+    expect(unserialize(serialize($job))->queue)->toBe('games-processing')
+        ->and((new \App\Listeners\StartDiscoveredGameProcessing())->queue)->toBe('games-processing');
+});
+
+it('allocates ten dedicated game-processing workers in every Horizon environment', function (): void {
+    $settings = config('horizon.defaults.supervisor-games-processing');
+    expect($settings['queue'])->toBe(['games-processing'])
+        ->and($settings['connection'])->toBe('redis')
+        ->and($settings['minProcesses'])->toBe(10)->and($settings['maxProcesses'])->toBe(10)
+        ->and($settings['timeout'])->toBeLessThan((int) config('queue.connections.redis.retry_after'))
+        ->and(config('horizon.environments.*'))->toHaveKey('supervisor-games-processing')
+        ->and(config('horizon.defaults.supervisor-default.queue'))->toBe(['default'])
+        ->and(config('horizon.defaults.supervisor-projections.queue'))->toBe(['projections']);
+});
+
+it('preserves live queues and the projections queue for season rollups', function (): void {
+    expect((new \App\Jobs\PollNhlLiveGameJob(2026020001, 1794821400))->queue)->toBe('nhl-live')
+        ->and((new \App\Jobs\ProcessNhlLivePbpJob(2026020001))->queue)->toBe('nhl-live-stats')
+        ->and((new \App\Jobs\SeasonSumJob('20262027'))->queue)->toBe('projections');
+});
+
+it('retains the original queue of already serialized game rebuild work', function (): void {
+    $legacy = (new \App\Jobs\RebuildNhlOnIceStatsJob(2026020001))->onQueue('default');
+    expect(unserialize(serialize($legacy))->queue)->toBe('default')
+        ->and((new \App\Jobs\RebuildNhlOnIceStatsJob(2026020001))->queue)->toBe('games-processing');
+});
+
 it('maps stage names to the actual NHL import timeout config keys', function (): void {
     expect(NhlImportStages::timeoutConfigKeyFor(NhlImportStages::SUMMARY))
         ->toBe('apiImportNhl.max_game_summaries_seconds')
@@ -1239,6 +1303,7 @@ it('excludes overlap-owned games from full post-processing without dropping thei
     app(NhlImportOrchestrator::class)->fillActiveGameSlotsForRun($run->id);
 
     Bus::assertBatched(fn (\Illuminate\Bus\PendingBatch $batch): bool => $batch->name === 'NHL:FullPostProcess:'.$run->id
+        && $batch->options['queue'] === 'games-processing'
         && count($batch->jobs) === 3 && collect($batch->jobs)->every(fn ($job): bool => $job->nhlGameId === 2026020002));
     expect(DB::table('nhl_import_progress')->where('run_id', $run->id)->where('status', 'completed')->count())->toBe(18)
         ->and($run->fresh()->payload['post_process_enrichment_game_count'])->toBe(1);

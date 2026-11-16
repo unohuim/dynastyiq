@@ -37,6 +37,7 @@ class RefreshNhlScheduleDateJob implements ShouldQueue
         public Carbon $date,
         public int $runId
     ) {
+        $this->onQueue('games-processing');
         $this->date = $this->date->copy()->startOfDay();
     }
 

@@ -40,6 +40,7 @@ class RebuildNhlGameImportJob implements ShouldQueue, ShouldBeUnique
         public int $gameId,
         public ?int $runId = null
     ) {
+        $this->onQueue('games-processing');
         $this->afterCommit = true;
     }
 

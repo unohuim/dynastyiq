@@ -679,7 +679,11 @@ describe('prediction Matchup completion', function (): void {
         }
         Bus::assertDispatchedTimes(RefreshNhlPublicGamePageJob::class, 1);
         $pending = new RefreshNhlPublicGamePageJob(2026020001, 'source-one');
-        expect($pending->queue)->toBe('default')->and($pending->uniqueId())
+        Bus::assertDispatched(RefreshNhlPublicGamePageJob::class,
+            fn ($job): bool => $job->gameId === 2026020001 && $job->queue === 'projections');
+        expect($pending->queue)->toBe('projections')->and(unserialize(serialize($pending))->queue)->toBe('projections')
+            ->and((new RefreshNhlPublicGamePageJob(2026020001))->queue)->toBe('default')
+            ->and($pending->uniqueId())
             ->not->toBe((new RefreshNhlPublicGamePageJob(2026020001))->uniqueId());
     });
 

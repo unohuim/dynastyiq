@@ -27,11 +27,11 @@ final class RefreshNhlPublicGamePageJob implements ShouldQueue, ShouldBeUniqueUn
     /** Optional source-bound prediction dependency; older queued public refreshes retain null. */
     public ?string $predictionFingerprint = null;
 
-    /** Retain only the public game identity on the ordinary import queue. */
+    /** Route prediction dependencies separately from ordinary public-page refreshes. */
     public function __construct(public int $gameId, ?string $predictionFingerprint = null)
     {
         $this->predictionFingerprint = $predictionFingerprint;
-        $this->onQueue('default');
+        $this->onQueue($predictionFingerprint === null ? 'default' : 'projections');
     }
 
     /** Coalesce pending refreshes while allowing updates during an active build. */

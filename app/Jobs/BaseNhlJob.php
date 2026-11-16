@@ -47,6 +47,7 @@ abstract class BaseNhlJob implements ShouldQueue
 
     public function __construct(int $gameId, ?int $runId = null)
     {
+        $this->onQueue('games-processing');
         $this->gameId = $gameId;
         $this->runId = $runId;
         $this->captureRunGeneration();

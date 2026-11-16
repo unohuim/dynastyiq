@@ -11,7 +11,7 @@ use Illuminate\Contracts\Queue\ShouldQueueAfterCommit;
 /** Start bounded processing outside the discovery transaction and worker. */
 class StartDiscoveredGameProcessing implements ShouldQueueAfterCommit
 {
-    public string $queue = 'default';
+    public string $queue = 'games-processing';
     public int $tries = 3;
     public int $timeout = 300;
     public int $backoff = 30;

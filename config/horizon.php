@@ -85,6 +85,7 @@ return [
 
     'waits' => [
         'redis:default' => 60,
+        'redis:games-processing' => 60,
     ],
 
     /*
@@ -195,6 +196,21 @@ return [
             'timeout' => 3660,
             'nice' => 0,
         ],
+        'supervisor-games-processing' => [
+            'connection' => 'redis',
+            'queue' => ['games-processing'],
+            'balance' => 'auto',
+            'autoScalingStrategy' => 'time',
+            'minProcesses' => 10,
+            'maxProcesses' => 10,
+            'maxTime' => 0,
+            'maxJobs' => 0,
+            'memory' => 128,
+            'tries' => 5,
+            // Preserve the import timeout envelope below Redis retry_after (3900).
+            'timeout' => 3660,
+            'nice' => 0,
+        ],
         'supervisor-projections' => [
             'connection' => 'redis',
             'queue' => ['projections'],
@@ -266,6 +282,7 @@ return [
     'environments' => [
         '*' => [
             'supervisor-default' => [],
+            'supervisor-games-processing' => [],
             'supervisor-projections' => [],
             'supervisor-fantrax' => [],
             'supervisor-lineups' => [],

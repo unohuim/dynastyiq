@@ -413,7 +413,8 @@ describe('scoped on-ice rebuilds', function (): void {
             ->and($this->run->fresh()->status)->toBe('completed');
         Bus::assertBatched(fn ($batch): bool => $batch->jobs->count() === 1
             && $batch->jobs->first() instanceof \App\Jobs\RebuildNhlOnIceStatsJob
-            && $batch->jobs->first()->queue === 'default');
+            && $batch->jobs->first()->queue === 'games-processing'
+            && $batch->options['queue'] === 'games-processing');
         Bus::assertNotDispatched(\App\Jobs\ImportPbpNhlJob::class);
         Bus::assertNotDispatched(\App\Jobs\BuildNhlShotAttemptFactsJob::class);
     });

@@ -39,6 +39,7 @@ class ClearNhlGameImportJob implements ShouldQueue, ShouldBeUnique
         public ?int $runId,
         public array $context
     ) {
+        $this->onQueue('games-processing');
         $this->afterCommit = true;
     }
 

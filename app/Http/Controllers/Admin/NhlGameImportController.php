@@ -495,7 +495,7 @@ class NhlGameImportController extends Controller
             $jobs[] = new RefreshNhlScheduleDateJob($date->copy(), (int) $run->id);
         }
 
-        $batch = Bus::batch($jobs)
+        $batch = Bus::batch($jobs)->onQueue('games-processing')
             ->name('NHL:ScheduleRefresh:' . $run->id)
             ->dispatch();
 
@@ -681,7 +681,7 @@ class NhlGameImportController extends Controller
                     ]);
                     $runId = $run->id;
                     $jobs = array_map(fn (int $id) => new \App\Jobs\RebuildNhlOnIceStatsJob($id, $runId), $ids);
-                    $batch = Bus::batch($jobs)->onQueue('default')->name('NHL:OnIceStats:'.$runId)
+                    $batch = Bus::batch($jobs)->onQueue('games-processing')->name('NHL:OnIceStats:'.$runId)
                         ->then(static function (Batch $batch) use ($runId): void {
                             app(\App\Services\NhlGameImportRebuilder::class)->finishOnIceRun($runId, $batch->id);
                         })
@@ -751,7 +751,7 @@ class NhlGameImportController extends Controller
             $gameIds,
         );
 
-        $batch = Bus::batch($jobs)
+        $batch = Bus::batch($jobs)->onQueue('games-processing')
             ->then(function (Batch $batch) use ($runId): void {
                 self::recordShotFactBatchCompleted($runId, $batch->id);
             })
@@ -823,7 +823,7 @@ class NhlGameImportController extends Controller
             $gameIds,
         );
 
-        $batch = Bus::batch($jobs)
+        $batch = Bus::batch($jobs)->onQueue('games-processing')
             ->then(function (Batch $batch) use ($runId): void {
                 self::recordFaceoffFactBatchCompleted($runId, $batch->id);
             })
@@ -895,7 +895,7 @@ class NhlGameImportController extends Controller
             $gameIds,
         );
 
-        $batch = Bus::batch($jobs)
+        $batch = Bus::batch($jobs)->onQueue('games-processing')
             ->then(function (Batch $batch) use ($runId): void {
                 self::recordRefsStaffBatchCompleted($runId, $batch->id);
             })

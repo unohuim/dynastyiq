@@ -37,6 +37,7 @@ class RefreshNhlSpecialTeamsSplitsJob implements ShouldQueue
 
     public function __construct(public int $nhlGameId)
     {
+        $this->onQueue('games-processing');
         $this->afterCommit = true;
     }
 

@@ -2441,7 +2441,8 @@ it('allows super admins to queue NHL game discovery for a single date', function
 
     Bus::assertDispatched(NhlDiscoveryJob::class, function (NhlDiscoveryJob $job): bool {
         return $job->start->toDateString() === '2026-01-15'
-            && $job->end->toDateString() === '2026-01-15';
+            && $job->end->toDateString() === '2026-01-15'
+            && $job->queue === 'games-processing';
     });
     Event::assertDispatched(NhlGameImportStatusUpdated::class, function (NhlGameImportStatusUpdated $event): bool {
         return $event->reason === 'discovery-queued';
@@ -2774,6 +2775,7 @@ it('allows super admins to queue shot fact processing for a game import run rang
             ->values();
 
         return $batch->name === 'NHL:ShotAttemptFacts:' . $run->id
+            && $batch->options['queue'] === 'games-processing'
             && $jobs->count() === 2
             && $jobs->pluck('runId')->unique()->values()->all() === [$run->id]
             && $jobs->pluck('nhlGameId')->sort()->values()->all() === [2025020001, 2025020002];
@@ -2871,6 +2873,7 @@ it('queues faceoff fact jobs for games in a discovered run without starting full
             ->values();
 
         return $batch->name === 'NHL:FaceoffFacts:' . $run->id
+            && $batch->options['queue'] === 'games-processing'
             && $jobs->count() === 2
             && $jobs->pluck('runId')->unique()->values()->all() === [$run->id]
             && $jobs->pluck('nhlGameId')->sort()->values()->all() === [2025020001, 2025020002];

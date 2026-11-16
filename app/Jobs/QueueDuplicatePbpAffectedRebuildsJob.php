@@ -39,6 +39,7 @@ class QueueDuplicatePbpAffectedRebuildsJob implements ShouldQueue, ShouldBeUniqu
 
     public function __construct(public int $runId)
     {
+        $this->onQueue('games-processing');
         $this->afterCommit = true;
     }
 
