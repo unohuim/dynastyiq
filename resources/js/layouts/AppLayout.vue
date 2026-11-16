@@ -12,6 +12,7 @@ import { connectShellRealtime } from './shell-realtime';
 const page = usePage();
 const statsPage = computed(() => page.component === 'Stats/Index');
 const gamePage = computed(() => page.component === 'Games/Show');
+const schedulePage = computed(() => page.component === 'Tools/Schedule');
 const shell = computed(() => page.props.shell);
 const user = computed(() => page.props.auth?.user);
 const drawer = ref(null);
@@ -92,7 +93,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-    <div class="min-h-screen pb-20 md:pb-0" :class="statsPage ? 'bg-[#020e17] text-slate-100' : gamePage ? 'bg-[#101923] text-[#E7EEF6] lg:flex lg:h-dvh lg:flex-col lg:overflow-hidden' : 'bg-gray-50 text-gray-900'">
+    <div :class="[statsPage ? 'bg-[#020e17] text-slate-100' : gamePage ? 'bg-[#101923] text-[#E7EEF6] lg:flex lg:h-dvh lg:flex-col lg:overflow-hidden' : 'bg-gray-50 text-gray-900', schedulePage ? 'flex h-dvh flex-col overflow-hidden pb-[calc(5rem+env(safe-area-inset-bottom))] md:pb-0' : 'min-h-screen pb-20 md:pb-0']">
         <a href="#page-content" class="sr-only fixed left-4 top-4 z-[200] rounded-lg bg-white px-4 py-2 shadow focus:not-sr-only">Skip to content</a>
         <header v-if="shell" class="hidden shrink-0 border-b border-[#1F2B37] bg-[#101923] text-[#E7EEF6] md:block">
             <div class="flex w-full items-center justify-between gap-6 px-6 py-2">
@@ -129,7 +130,7 @@ onBeforeUnmount(() => {
             </div>
         </header>
         <MobileScoreboard class="shrink-0" v-if="shell?.scoreboard_url" :endpoint="shell.scoreboard_url" :games-url="shell.scoreboard_games_url" :selected-game-id="gamePage ? page.props.game?.nhl_game_id : null" />
-        <div id="page-content" tabindex="-1" :class="gamePage ? 'lg:min-h-0 lg:flex-1 lg:overflow-y-auto' : ''"><slot /></div>
+        <div id="page-content" tabindex="-1" :class="schedulePage ? 'min-h-0 flex-1 overflow-hidden' : gamePage ? 'lg:min-h-0 lg:flex-1 lg:overflow-y-auto' : ''"><slot /></div>
         <nav v-if="shell" aria-label="Mobile navigation" class="fixed inset-x-0 bottom-0 z-30 border-t bg-gray-900 pb-[env(safe-area-inset-bottom)] text-gray-100 shadow md:hidden">
             <ul class="flex items-center justify-between px-4 py-2 text-xs font-medium text-gray-300">
                 <li v-for="(link, index) in shell.primary.slice(0, 2)" :key="link.href" class="flex-1 text-center">

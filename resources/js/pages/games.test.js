@@ -1071,6 +1071,36 @@ describe('Inertia mobile navigation', () => {
         expect(nav.querySelector('a[href="/tools/schedule"]')).not.toBeNull();
         expect(nav.textContent).toContain('Tools');
     });
+    it('reserves the Schedule viewport beneath the scoreboard and above mobile navigation', () => {
+        page.component = 'Tools/Schedule';
+        page.url = '/tools/schedule';
+        mountShell();
+        const root = document.querySelector('#mobile-shell').firstElementChild;
+        expect(root.classList.contains('h-dvh')).toBe(true);
+        expect(root.classList.contains('flex-col')).toBe(true);
+        expect(root.classList.contains('overflow-hidden')).toBe(true);
+        expect(root.classList.contains('pb-[calc(5rem+env(safe-area-inset-bottom))]')).toBe(true);
+        expect(root.classList.contains('md:pb-0')).toBe(true);
+        const content = document.querySelector('#page-content');
+        expect(content.classList.contains('min-h-0')).toBe(true);
+        expect(content.classList.contains('flex-1')).toBe(true);
+        expect(content.classList.contains('overflow-hidden')).toBe(true);
+        expect(content.classList.contains('overflow-y-auto')).toBe(false);
+    });
+
+    it('preserves ordinary page scrolling and the existing game-page layout outside Schedule', () => {
+        page.component = 'Games/Show';
+        mountShell();
+        const root = document.querySelector('#mobile-shell').firstElementChild;
+        expect(root.classList.contains('h-dvh')).toBe(false);
+        expect(root.classList.contains('min-h-screen')).toBe(true);
+        expect(root.classList.contains('lg:h-dvh')).toBe(true);
+        expect(root.classList.contains('pb-20')).toBe(true);
+        const content = document.querySelector('#page-content');
+        expect(content.classList.contains('lg:overflow-y-auto')).toBe(true);
+        expect(content.classList.contains('overflow-hidden')).toBe(false);
+    });
+
 });
 
 describe('weekly Schedule page', () => {
@@ -1339,7 +1369,13 @@ describe('weekly Schedule page', () => {
         mount();
         const assertPinnedHeader = () => {
             const region = document.querySelector('[role=tabpanel] [role=region]');
-            expect(region.classList.contains('max-h-[60dvh]')).toBe(true);
+            expect(region.classList.contains('max-h-[60dvh]')).toBe(false);
+            expect(region.classList.contains('min-h-0')).toBe(true);
+            expect(region.classList.contains('flex-1')).toBe(true);
+            expect(region.classList.contains('overscroll-y-none')).toBe(true);
+            expect(region.classList.contains('[overflow-anchor:none]')).toBe(true);
+            expect(region.parentElement.classList.contains('min-h-0')).toBe(true);
+            expect(region.parentElement.classList.contains('flex-1')).toBe(true);
             expect(region.classList.contains('overflow-y-auto')).toBe(true);
             expect(region.classList.contains('overflow-x-hidden')).toBe(true);
             for (const header of region.querySelectorAll('thead th')) {
@@ -1348,6 +1384,8 @@ describe('weekly Schedule page', () => {
                 expect(header.classList.contains('z-20') || header.classList.contains('z-30')).toBe(true);
             }
         };
+        expect(document.querySelector('main').classList.contains('h-full')).toBe(true);
+        expect(document.querySelector('main').classList.contains('overflow-hidden')).toBe(true);
         assertPinnedHeader();
         document.querySelectorAll('[role=tab]')[1].click();
         await nextTick();

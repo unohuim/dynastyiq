@@ -35,8 +35,8 @@ function navigate(url) {
 </script>
 
 <template>
-    <main class="mx-auto w-full max-w-7xl px-2 py-5 min-[420px]:px-3 sm:px-6 sm:py-7" :aria-busy="loading">
-        <header class="flex flex-wrap items-center justify-between gap-4">
+    <main class="mx-auto flex h-full min-h-0 w-full max-w-7xl flex-col overflow-hidden px-2 py-5 min-[420px]:px-3 sm:px-6 sm:py-7" :aria-busy="loading">
+        <header class="flex shrink-0 flex-wrap items-center justify-between gap-4">
             <div>
                 <p class="text-xs font-medium uppercase tracking-wide text-gray-500">Tools</p>
                 <h1 class="mt-1 text-2xl font-semibold tracking-tight text-gray-900">Schedule</h1>
@@ -52,7 +52,7 @@ function navigate(url) {
                 </button>
             </nav>
         </header>
-        <div class="relative mt-4">
+        <div class="relative mt-4 shrink-0">
             <div role="tablist" aria-label="Schedule view" class="flex gap-1 border-b border-gray-200">
                 <button v-for="(tab, index) in tabs" :id="`schedule-tab-${tab.key}`" :key="tab.key" type="button" role="tab" :aria-selected="activeTab === tab.key" :aria-controls="`schedule-panel-${tab.key}`" :tabindex="activeTab === tab.key ? 0 : -1" class="min-h-11 border-b-2 px-4 text-sm font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 motion-reduce:transition-none" :class="activeTab === tab.key ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-gray-500 hover:text-gray-800'" @click="activeTab = tab.key" @keydown="changeTab($event, index)">{{ tab.label }}</button>
             </div>
@@ -61,8 +61,8 @@ function navigate(url) {
                 <span v-else-if="loading" class="text-gray-500">Loading schedule…</span>
             </div>
         </div>
-        <section v-if="activeTab === 'weekly'" id="schedule-panel-weekly" role="tabpanel" aria-labelledby="schedule-tab-weekly">
-            <div class="max-h-[60dvh] max-w-full overflow-x-hidden overflow-y-auto lg:overflow-x-auto rounded-lg border border-gray-200 bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500" role="region" aria-label="Weekly NHL team schedule" tabindex="0">
+        <section v-if="activeTab === 'weekly'" id="schedule-panel-weekly" role="tabpanel" class="flex min-h-0 flex-1 flex-col" aria-labelledby="schedule-tab-weekly">
+            <div class="min-h-0 max-w-full flex-1 overscroll-y-none [overflow-anchor:none] overflow-x-hidden overflow-y-auto lg:overflow-x-auto rounded-lg border border-gray-200 bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500" role="region" aria-label="Weekly NHL team schedule" tabindex="0">
                 <table class="w-full table-fixed border-collapse text-center text-[9px] leading-tight min-[420px]:text-[10px] sm:text-xs lg:min-w-[920px] lg:table-auto lg:text-left lg:text-sm">
                     <caption class="sr-only">{{ schedule.label }}. Teams by Monday through Sunday, followed by total games played or scheduled.</caption>
                     <colgroup>
@@ -104,8 +104,8 @@ function navigate(url) {
                 </table>
             </div>
         </section>
-        <section v-else id="schedule-panel-off-nights" role="tabpanel" aria-labelledby="schedule-tab-off-nights">
-            <div class="max-h-[60dvh] max-w-full overflow-x-hidden overflow-y-auto rounded-lg border border-gray-200 bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500" role="region" aria-label="Off-night NHL team schedule" tabindex="0">
+        <section v-else id="schedule-panel-off-nights" role="tabpanel" class="flex min-h-0 flex-1 flex-col" aria-labelledby="schedule-tab-off-nights">
+            <div class="min-h-0 max-w-full flex-1 overscroll-y-none [overflow-anchor:none] overflow-x-hidden overflow-y-auto rounded-lg border border-gray-200 bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500" role="region" aria-label="Off-night NHL team schedule" tabindex="0">
                 <table class="w-full border-collapse text-left text-sm">
                     <caption class="sr-only">{{ schedule.off_nights.label }}. Each team's remaining off-night count.</caption>
                     <thead>
@@ -122,11 +122,11 @@ function navigate(url) {
                     </tbody>
                 </table>
             </div>
-            <p class="mt-2 text-xs text-gray-600">Off nights: 50% or fewer league teams playing that day (8 or fewer games in a 32-team league).</p>
-            <p v-if="!schedule.off_nights.game_count" class="mt-4 text-sm text-gray-500">No remaining games available for this season.</p>
+            <p class="mt-2 shrink-0 text-xs text-gray-600">Off nights: 50% or fewer league teams playing that day (8 or fewer games in a 32-team league).</p>
+            <p v-if="!schedule.off_nights.game_count" class="mt-4 shrink-0 text-sm text-gray-500">No remaining games available for this season.</p>
         </section>
-        <p v-if="activeTab === 'weekly' && (!schedule.teams.length || !schedule.game_count)" class="mt-4 text-sm text-gray-500">No games available for this week.</p>
-        <p v-if="activeTab === 'weekly'" class="mt-3 text-xs text-gray-500">{{ schedule.teams.length }} teams · {{ schedule.game_count }} games · All times Eastern · @ Away · vs Home</p>
-        <p v-else class="mt-3 text-xs text-gray-500">{{ schedule.off_nights.teams.length }} teams · {{ schedule.off_nights.game_count }} remaining games · @ Away · vs Home</p>
+        <p v-if="activeTab === 'weekly' && (!schedule.teams.length || !schedule.game_count)" class="mt-4 shrink-0 text-sm text-gray-500">No games available for this week.</p>
+        <p v-if="activeTab === 'weekly'" class="mt-3 shrink-0 text-xs text-gray-500">{{ schedule.teams.length }} teams · {{ schedule.game_count }} games · All times Eastern · @ Away · vs Home</p>
+        <p v-else class="mt-3 shrink-0 text-xs text-gray-500">{{ schedule.off_nights.teams.length }} teams · {{ schedule.off_nights.game_count }} remaining games · @ Away · vs Home</p>
     </main>
 </template>

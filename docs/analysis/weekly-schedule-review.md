@@ -98,7 +98,7 @@ The existing fresh-install guard is retained.
 | File | `it(...)` declarations |
 | --- | ---: |
 | tests/Feature/NhlScheduleTest.php | 43 |
-| resources/js/pages/games.test.js | 151 |
+| resources/js/pages/games.test.js | 153 |
 
 ## Verification
 
@@ -383,3 +383,45 @@ verb auth/scope matrix remains unchanged; no backend or permission changes.
 Frontend file retains 151 test declarations. No migration required.
 Static diff review and whitespace checks only; tests, builds, browser checks and
 production commands were not run.
+
+
+## Schedule scroll ownership correction
+
+Files changed: `resources/js/layouts/AppLayout.vue`,
+`resources/js/pages/Tools/Schedule.vue`, `resources/js/pages/games.test.js`,
+`docs/architecture/ui/InertiaAppShell.yaml`, and this document.
+
+The earlier 60dvh table cap is superseded. It did not reserve the actual shared
+header/scoreboard and mobile navigation space, and scrolling could pass to the
+outer document at the table boundary.
+
+1. SATISFIED: only Tools/Schedule uses an all-breakpoint viewport-height flex
+   shell with hidden outer overflow; shared header and scoreboard do not shrink.
+2. SATISFIED: reserve 5rem plus the bottom safe-area inset for fixed mobile nav;
+   remove that reservation when the mobile bar is hidden at md.
+3. SATISFIED: page-content, main and panels fill/shrink within the remaining
+   height; tables use flex remaining space rather than 60dvh.
+4. SATISFIED: table regions alone scroll vertically, with boundary overscroll and
+   scroll anchoring disabled. Headers, footer and legend retain their space.
+5. SATISFIED: other routes retain their prior root padding and scrolling rules;
+   mobile width, compact rows, sticky headers, shading and sorting preserved.
+
+Coverage matrix (authored, not executed):
+
+| Contract | Status | Test name |
+| --- | --- | --- |
+| Schedule-only viewport, nav inset and non-scrolling content | COVERED | reserves the Schedule viewport beneath the scoreboard and above mobile navigation |
+| Existing game-page root and scrolling retained | COVERED | preserves ordinary page scrolling and the existing game-page layout outside Schedule |
+| Both tab regions fill available space, suppress overscroll/anchoring, keep headers | COVERED | keeps both table headers above vertically scrolling rows in bounded regions |
+
+Frontend checklist: shell selection, route-scoped class behavior, reserved inset,
+flex minimums/height, overflow ownership, table overscroll/anchoring and sticky
+header contracts asserted. No wheel/touch interception, resize observers, global
+state, timers or extra requests introduced. Existing navigation/sort assertions
+and endpoint × verb authorization/scope matrix remain applicable; no endpoints,
+backend payloads, calculations, or permissions change.
+Frontend file: 153 test declarations. No migration required.
+Static scoped-diff review and whitespace checks only. Tests, builds and browser
+checks were not run; native scrolling, final-row reachability and safe-area
+behavior need browser review at 350px, 420px and desktop, including touch input.
+No production operations were performed.
