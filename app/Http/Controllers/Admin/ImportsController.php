@@ -87,6 +87,7 @@ class ImportsController extends Controller
 
         return response()->json([
             'import_run' => $importRun ? $this->importRunPayload($importRun) : null,
+            'schedule' => $key === 'nhl-schedule-snapshots' ? $this->schedules->payload($key) : null,
         ]);
     }
 
@@ -124,7 +125,7 @@ class ImportsController extends Controller
                 $key,
                 (bool) $data['enabled'],
                 $intervals,
-                in_array($key, ['contracts', 'fantrax', AdminImportSchedules::ANTICIPATED_LINEUPS, AdminImportSchedules::GAME_BOXSCORES], true)
+                in_array($key, ['contracts', 'fantrax', 'nhl-schedule-snapshots', AdminImportSchedules::ANTICIPATED_LINEUPS, AdminImportSchedules::GAME_BOXSCORES], true)
                     ? ($data['timing'] ?? []) : []
             ),
         ]);

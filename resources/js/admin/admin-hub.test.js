@@ -3133,7 +3133,88 @@ describe('prepared NHL schedule admin controls', () => {
         expect(section).toContain('aria-haspopup="dialog"');
         expect(section).toContain('<circle cx="10" cy="10.6" r="2.5"');
         expect(section).not.toContain('>Settings</button>');
+        expect(section).not.toContain('>Auto refresh</button>');
+        expect(section).toContain('rounded-full');
+        expect(section).toContain('border-green-400 text-green-400');
+        expect(section).toContain('schedulePreparationTimingText(schedulePreparation)');
+        expect(section).toContain('schedulePreparationNextRunText(schedulePreparation)');
+        expect(template).toContain('Daily run time (Eastern)');
         const compiled = compileTemplate({ source: template, filename: 'Dashboard.vue', id: 'admin-dashboard' });
         expect(compiled.errors).toEqual([]);
+    });
+});
+
+
+describe('daily prepared schedule timing', () => {
+    let hub;
+    let item;
+    const schedule = (extra = {}) => ({ enabled: false,
+        lanes: { current: { interval_seconds: 86400, next_due_at: null } },
+        timing: { daily_start_time: '06:30', timezone: 'America/Toronto' }, ...extra });
+    beforeEach(async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-11-18T14:00:00Z'));
+        document.body.innerHTML = '<meta name="csrf-token" content="test-token">';
+        hub = (await loadAdminHub())({ imports: [{ key: 'nhl-schedule-snapshots', label: 'Prepare NHL Schedule',
+            schedule_url: '/admin/imports/nhl-schedule-snapshots/schedule', status_url: '/admin/imports/nhl-schedule-snapshots/status',
+            schedule: schedule() }] });
+        item = hub.importItems[0];
+    });
+    afterEach(() => { document.body.innerHTML = ''; vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.useRealTimers(); });
+
+    it('opens the existing gear settings with the Eastern daily clock and preserved frequency', () => {
+        hub.openImportScheduleSettings(item);
+        expect(hub.scheduleSettings.open).toBe(true);
+        expect(hub.scheduleSettings.timing.daily_start_time).toBe('06:30');
+        expect(hub.scheduleSettings.timing.timezone).toBe('America/Toronto');
+        expect(hub.scheduleSettings.lanes.current).toEqual({ hours: 24, minutes: 0, seconds: 0 });
+    });
+
+    it('saves the chosen daily time and reuses it when enabling the recycle toggle', async () => {
+        vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ schedule: schedule() }) })));
+        hub.openImportScheduleSettings(item);
+        hub.scheduleSettings.timing.daily_start_time = '07:15';
+        fetch.mockImplementationOnce(async () => ({ ok: true, json: async () => ({ schedule: { ...schedule(), timing: { daily_start_time: '07:15', timezone: 'America/Toronto' } } }) }));
+        await hub.saveImportScheduleSettings();
+        expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ enabled: false, intervals: { current: 86400 }, timing: { daily_start_time: '07:15', timezone: 'America/Toronto' } });
+        expect(hub.scheduleSettings.open).toBe(false);
+        fetch.mockImplementationOnce(async () => ({ ok: true, json: async () => ({ schedule: schedule({ enabled: true, timing: { daily_start_time: '07:15', timezone: 'America/Toronto' } }) }) }));
+        await hub.saveImportSchedule(item, true);
+        expect(JSON.parse(fetch.mock.calls[1][1].body).timing.daily_start_time).toBe('07:15');
+        expect(item.schedule.enabled).toBe(true);
+        expect(item.schedule.saving).toBe(false);
+    });
+
+    it('shows the configured daily time and the next run in Eastern standard or daylight time', () => {
+        expect(hub.schedulePreparationTimingText(item)).toBe('Daily at 6:30 AM Eastern');
+        expect(hub.schedulePreparationNextRunText(item)).toBe('Auto refresh off');
+        item.schedule.enabled = true;
+        item.schedule.lanes.current.next_due_at = '2026-11-18T18:30:00Z';
+        expect(hub.schedulePreparationNextRunText(item)).toContain('1:30');
+        expect(hub.schedulePreparationNextRunText(item)).toMatch(/EST|GMT-5/);
+        item.schedule.lanes.current.next_due_at = '2027-06-01T10:30:00Z';
+        expect(hub.schedulePreparationNextRunText(item)).toContain('6:30');
+        expect(hub.schedulePreparationNextRunText(item)).toMatch(/EDT|GMT-4/);
+        item.schedule.timing.daily_start_time = null;
+        expect(hub.schedulePreparationTimingText(item)).toBe('Every 24h');
+    });
+
+    it('refreshes the displayed next run from status without overwriting settings while saving', async () => {
+        const fresh = schedule({ enabled: true, lanes: { current: { interval_seconds: 86400, next_due_at: '2026-11-19T11:30:00Z' } } });
+        vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ import_run: null, schedule: structuredClone(fresh) }) })));
+        await hub.refreshImportProgress(item.key, false);
+        expect(item.schedule.lanes.current.next_due_at).toBe('2026-11-19T11:30:00Z');
+        item.schedule.saving = true;
+        item.schedule.lanes.current.next_due_at = 'unchanged';
+        await hub.refreshImportProgress(item.key, false);
+        expect(item.schedule.lanes.current.next_due_at).toBe('unchanged');
+    });
+
+    it('restores the toggle and shows the save failure when scheduling is rejected', async () => {
+        vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, json: async () => ({ message: 'Unable to save schedule' }) })));
+        expect(await hub.saveImportSchedule(item, true)).toBe(false);
+        expect(item.schedule.enabled).toBe(false);
+        expect(item.schedule.saving).toBe(false);
+        expect(item.schedule.error).toBe('Unable to save schedule');
     });
 });

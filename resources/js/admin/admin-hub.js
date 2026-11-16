@@ -3086,6 +3086,31 @@ export default function adminHub(options = {}) {
             }[laneKey] ?? laneKey;
         },
 
+        schedulePreparationTimingText(importItem) {
+            const seconds = Number(importItem?.schedule?.lanes?.current?.interval_seconds || 0);
+            const time = importItem?.schedule?.timing?.daily_start_time;
+            if (seconds === 86400 && time) {
+                const [hour, minute] = time.split(':').map(Number);
+                return `Daily at ${hour % 12 || 12}:${String(minute).padStart(2, '0')} ${hour < 12 ? 'AM' : 'PM'} Eastern`;
+            }
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const remainder = seconds % 60;
+            const duration = [hours ? `${hours}h` : '', minutes ? `${minutes}m` : '', remainder ? `${remainder}s` : ''].filter(Boolean).join(' ');
+            return duration ? `Every ${duration}` : 'Frequency not configured';
+        },
+
+        schedulePreparationNextRunText(importItem) {
+            if (!importItem?.schedule?.enabled) return 'Auto refresh off';
+            const due = importItem.schedule.lanes?.current?.next_due_at;
+            if (!due) return 'Next run: due now';
+            const date = new Date(due);
+            if (Number.isNaN(date.getTime())) return 'Next run unavailable';
+            return `Next run: ${new Intl.DateTimeFormat('en-CA', {
+                timeZone: 'America/Toronto', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true, timeZoneName: 'short',
+            }).format(date)}`;
+        },
+
         openImportScheduleSettings(importItem) {
             if (!importItem?.schedule?.lanes) return;
 
@@ -3103,8 +3128,8 @@ export default function adminHub(options = {}) {
                     }]
                 )),
                 timing: {
-                    daily_start_time: importItem.schedule.timing?.daily_start_time ?? (['contracts', 'fantrax'].includes(importItem.key) ? '' : '11:00'),
-                    timezone: importItem.schedule.timing?.timezone || browserTimezone,
+                    daily_start_time: importItem.schedule.timing?.daily_start_time ?? (['contracts', 'fantrax', 'nhl-schedule-snapshots'].includes(importItem.key) ? '' : '11:00'),
+                    timezone: importItem.key === 'nhl-schedule-snapshots' ? 'America/Toronto' : (importItem.schedule.timing?.timezone || browserTimezone),
                     outside_mode: importItem.schedule.timing?.outside_mode ?? 'recurring',
                     within_two_hours_enabled: importItem.schedule.timing?.within_two_hours_enabled ?? true,
                 },
@@ -3164,7 +3189,7 @@ export default function adminHub(options = {}) {
                     }
                 ));
                 const body = { enabled: Boolean(enabled), intervals };
-                if (['contracts', 'fantrax'].includes(importItem.key)) {
+                if (['contracts', 'fantrax', 'nhl-schedule-snapshots'].includes(importItem.key)) {
                     body.timing = {
                         daily_start_time: timing?.daily_start_time || null,
                         timezone: timing?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
@@ -3331,6 +3356,11 @@ export default function adminHub(options = {}) {
                 }
 
                 const payload = await response.json();
+                if (key === 'nhl-schedule-snapshots' && payload.schedule && !config.schedule?.saving) {
+                    const refreshed = hydrateImportSchedules([{ schedule: payload.schedule }])[0].schedule;
+                    if (config.schedule) Object.assign(config.schedule, refreshed);
+                    else config.schedule = refreshed;
+                }
                 const importRun = payload.import_run ?? null;
                 this.applyImportRun(key, importRun);
 

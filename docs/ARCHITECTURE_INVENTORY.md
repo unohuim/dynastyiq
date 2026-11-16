@@ -4448,7 +4448,9 @@ contract: `docs/integrations/DIQ-API-Usage-Doc.md`.
 Public Tools Schedule reads durable `nhl_schedule_snapshots` rows rather than
 aggregating source games during navigation. A registered **Prepare NHL Schedule**
 admin process publishes weeks and remaining-season off-night totals atomically,
-with ordinary import progress and opt-in daily-default scheduling. Source schedule
+with ordinary import progress and opt-in daily-default scheduling. A green recycle
+toggle enables refresh; its gear supports a fixed daily Eastern time and the card
+shows the next scheduled run. Source schedule
 refreshes, final-game updates and season rollups queue worker refreshes. Warm
 navigation requests schedule props only; loaded weeks have a short mounted-only
 browser cache. Missing known views queue preparation and retain previous totals.

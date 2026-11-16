@@ -145,9 +145,9 @@ It does not rely solely on a GET echo assertion.
 
 | File | it declarations |
 | --- | ---: |
-| tests/Feature/NhlScheduleTest.php | 62 |
+| tests/Feature/NhlScheduleTest.php | 68 |
 | resources/js/pages/games.test.js | 156 |
-| resources/js/admin/admin-hub.test.js | 127 |
+| resources/js/admin/admin-hub.test.js | 132 |
 
 ## Verification and required setup
 
@@ -208,3 +208,66 @@ Only static diff and whitespace checks were performed. Tests, builds, browser
 checks, migrations and production operations were not run. No new migration is
 required for this default/icon adjustment; the original snapshot-table migration
 remains required if it has not yet been applied.
+
+
+## Daily clock time, next run and recycle control
+
+Files changed:
+
+- `app/Services/AdminImportSchedules.php`
+- `app/Http/Controllers/Admin/ImportsController.php`
+- `resources/js/admin/admin-hub.js`
+- `resources/js/pages/Admin/Dashboard.vue`
+- `tests/Feature/NhlScheduleTest.php`
+- `resources/js/admin/admin-hub.test.js`
+- `docs/architecture/ui/NhlScheduleSnapshots.yaml`
+- `docs/ARCHITECTURE_INVENTORY.md`
+- This document.
+
+1. SATISFIED: use the existing circle/recycle SVG control, green when enabled,
+   immediately saving its boolean and restoring state on failure.
+2. SATISFIED: adjacent gear retains the existing settings dialog. When frequency
+   equals 24 hours, expose an optional native daily-time input fixed to Eastern.
+3. SATISFIED: reuse existing daily_start_time/timezone fields and daily scheduling
+   logic for this source. A selected time follows America/Toronto across DST;
+   a missed un-dispatched daily time remains due. Without time, use dispatch-based
+   24-hour intervals. Other saved intervals remain supported.
+4. SATISFIED: show configured daily time or interval and next_due_at on the card,
+   formatting the due timestamp in Eastern with EST/EDT. Disabled means no next run.
+5. SATISFIED: import-status reads refresh the saved timing after dispatch, while
+   pending settings writes retain their local state and the failure remains visible.
+6. SATISFIED: preserve source permissions, queued execution, default-disabled
+   auto refresh and separation between saving settings and executing work.
+
+Coverage matrix (authored, not executed):
+
+| Contract | Status | Test names |
+| --- | --- | --- |
+| Admin timing save → DB → status read | COVERED | saves daily Eastern run time through admin HTTP and returns it with the next run |
+| Preserve configured time through enabled toggle | COVERED | retains the chosen daily time when the recycle toggle changes enabled state |
+| Spring/fall wall-clock cadence | COVERED | keeps the same Eastern daily time through daylight-saving transitions (two DST cases) |
+| Blank-time/subdaily behavior | COVERED | uses the interval cadence when a daily clock time is blank or the interval is not daily |
+| Reject invalid time | COVERED | rejects invalid daily clock input on the admin schedule endpoint |
+| Settings hydrate/save and toggle request | COVERED | opens the existing gear settings with the Eastern daily clock and preserved frequency; saves the chosen daily time and reuses it when enabling the recycle toggle |
+| Card formatting and disabled state | COVERED | shows the configured daily time and the next run in Eastern standard or daylight time |
+| Poll timing without clobbering a save | COVERED | refreshes the displayed next run from status without overwriting settings while saving |
+| Failed toggle rollback | COVERED | restores the toggle and shows the save failure when scheduling is rejected |
+| Icon/time-input markup and retained handlers | COVERED | exposes queued build progress and existing scheduling controls inside Game Imports |
+
+Additional endpoint × verb authorization/scope:
+
+| Endpoint / verb | Scope | Test names |
+| --- | --- | --- |
+| GET /admin/imports/nhl-schedule-snapshots/status | Guest/member denied | restricts prepared schedule timing status to super-admins (two auth cases) |
+| Same | Super-admin sees saved clock and next run | saves daily Eastern run time through admin HTTP and returns it with the next run |
+| PUT /admin/imports/nhl-schedule-snapshots/schedule | Existing guest/member denial retained | blocks non-admin schedule preparation and scheduling mutations |
+| Same | Super-admin save and time validation | saves daily Eastern run time through admin HTTP and returns it with the next run; rejects invalid daily clock input on the admin schedule endpoint |
+
+Frontend checklist: accessible icon labels and pressed state, native time input,
+reactive configured/next-run text, request payload, failed-save rollback and status
+refresh guards asserted. Fixed clocks, mocked fetch, controlled fixture dates and
+explicit timezone formatting; no external calls, global state or new timers.
+Counts: PHP 68; admin-hub JS 132; pages JS 156 unchanged.
+Only manual scoped-diff review and whitespace checks were performed. Tests, builds,
+CI, browser checks and production operations were not run. No new migration is
+required; the original snapshot-table migration still applies if not installed.

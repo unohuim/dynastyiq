@@ -555,3 +555,69 @@ it('defaults new automatic schedule preparation to daily without replacing saved
     expect($schedules->forSource('nhl-schedule-snapshots')->first()->interval_seconds)->toBe(7200);
     Bus::assertNothingDispatched();
 });
+
+
+it('saves daily Eastern run time through admin HTTP and returns it with the next run', function (): void {
+    $role = Role::create(['name' => 'Super Admin', 'slug' => 'super-admin', 'level' => 99]);
+    $this->viewer->roles()->attach($role->id, ['organization_id' => null]);
+    $this->actingAs($this->viewer)->putJson(route('admin.imports.schedule.update', ['key' => 'nhl-schedule-snapshots']), [
+        'enabled' => true, 'intervals' => ['current' => 86400],
+        'timing' => ['daily_start_time' => '14:30', 'timezone' => 'America/Toronto'],
+    ])->assertOk()->assertJsonPath('schedule.timing.daily_start_time', '14:30')->assertJsonPath('schedule.timing.timezone', 'America/Toronto');
+    $this->assertDatabaseHas('admin_import_schedules', ['source_key' => 'nhl-schedule-snapshots', 'daily_start_time' => '14:30', 'timezone' => 'America/Toronto']);
+    $this->getJson(route('admin.imports.status', ['key' => 'nhl-schedule-snapshots']))->assertOk()
+        ->assertJsonPath('schedule.timing.daily_start_time', '14:30')
+        ->assertJsonPath('schedule.lanes.current.next_due_at', '2026-11-18T19:30:00+00:00');
+    Bus::assertNothingDispatched();
+});
+
+it('retains the chosen daily time when the recycle toggle changes enabled state', function (): void {
+    $service = app(\App\Services\AdminImportSchedules::class);
+    $service->update('nhl-schedule-snapshots', false, ['current' => 86400], ['daily_start_time' => '14:30', 'timezone' => 'America/Toronto']);
+    $payload = $service->update('nhl-schedule-snapshots', true, []);
+    expect($payload['timing']['daily_start_time'])->toBe('14:30')
+        ->and($payload['lanes']['current']['next_due_at'])->toBe('2026-11-18T19:30:00+00:00');
+    $payload = $service->update('nhl-schedule-snapshots', false, []);
+    expect($payload['timing']['daily_start_time'])->toBe('14:30')->and($payload['lanes']['current']['next_due_at'])->toBeNull();
+});
+
+it('keeps the same Eastern daily time through daylight-saving transitions', function (string $now, string $dispatched, string $next): void {
+    $this->travelTo(Carbon::parse($now));
+    $service = app(\App\Services\AdminImportSchedules::class);
+    $service->update('nhl-schedule-snapshots', true, ['current' => 86400], ['daily_start_time' => '06:30']);
+    $row = \App\Models\AdminImportSchedule::where('source_key', 'nhl-schedule-snapshots')->firstOrFail();
+    $service->markDispatched($row, CarbonImmutable::parse($dispatched));
+    expect($row->fresh()->next_due_at->utc()->format('Y-m-d H:i:s'))->toBe($next);
+})->with([
+    ['2027-03-13 11:00:00 UTC', '2027-03-13 11:30:00 UTC', '2027-03-14 10:30:00'],
+    ['2026-10-31 10:00:00 UTC', '2026-10-31 10:30:00 UTC', '2026-11-01 11:30:00'],
+]);
+
+it('uses the interval cadence when a daily clock time is blank or the interval is not daily', function (): void {
+    $service = app(\App\Services\AdminImportSchedules::class);
+    $service->update('nhl-schedule-snapshots', true, ['current' => 3600], ['daily_start_time' => '06:30']);
+    $row = \App\Models\AdminImportSchedule::where('source_key', 'nhl-schedule-snapshots')->firstOrFail();
+    $service->markDispatched($row, CarbonImmutable::parse('2026-11-18 14:00:00 UTC'));
+    expect($row->fresh()->next_due_at->utc()->format('Y-m-d H:i:s'))->toBe('2026-11-18 15:00:00');
+    $service->update('nhl-schedule-snapshots', true, ['current' => 86400], ['daily_start_time' => null]);
+    $row->refresh();
+    $service->markDispatched($row, CarbonImmutable::parse('2026-11-18 14:00:00 UTC'));
+    expect($row->fresh()->next_due_at->utc()->format('Y-m-d H:i:s'))->toBe('2026-11-19 14:00:00');
+});
+
+it('rejects invalid daily clock input on the admin schedule endpoint', function (): void {
+    $role = Role::create(['name' => 'Super Admin', 'slug' => 'super-admin', 'level' => 99]);
+    $this->viewer->roles()->attach($role->id, ['organization_id' => null]);
+    $this->actingAs($this->viewer)->putJson(route('admin.imports.schedule.update', ['key' => 'nhl-schedule-snapshots']), [
+        'enabled' => true, 'intervals' => ['current' => 86400], 'timing' => ['daily_start_time' => '25:90'],
+    ])->assertUnprocessable()->assertJsonValidationErrors('timing.daily_start_time');
+    Bus::assertNothingDispatched();
+});
+
+
+it('restricts prepared schedule timing status to super-admins', function (bool $signedIn): void {
+    if ($signedIn) {
+        $this->actingAs($this->viewer);
+    }
+    $this->getJson(route('admin.imports.status', ['key' => 'nhl-schedule-snapshots']))->assertStatus($signedIn ? 403 : 401);
+})->with([false, true]);

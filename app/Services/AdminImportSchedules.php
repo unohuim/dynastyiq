@@ -79,11 +79,11 @@ class AdminImportSchedules
             ];
         }
 
-        if (in_array($sourceKey, ['contracts', 'fantrax'], true)) {
+        if (in_array($sourceKey, ['contracts', 'fantrax', 'nhl-schedule-snapshots'], true)) {
             $payload['timing'] = [
                 'daily_start_time' => $rows->first()->daily_start_time
                     ? substr($rows->first()->daily_start_time, 0, 5) : null,
-                'timezone' => $rows->first()->timezone,
+                'timezone' => $sourceKey === 'nhl-schedule-snapshots' ? 'America/Toronto' : $rows->first()->timezone,
             ];
         }
 
@@ -149,11 +149,12 @@ class AdminImportSchedules
                 }
             }
 
-            if (in_array($sourceKey, ['contracts', 'fantrax'], true)) {
+            if (in_array($sourceKey, ['contracts', 'fantrax', 'nhl-schedule-snapshots'], true)) {
                 $time = array_key_exists('daily_start_time', $timing)
                     ? $timing['daily_start_time'] : $row->daily_start_time;
                 $attributes['daily_start_time'] = $time ?: null;
-                $attributes['timezone'] = $timing['timezone'] ?? $row->timezone ?? config('app.timezone', 'UTC');
+                $attributes['timezone'] = $sourceKey === 'nhl-schedule-snapshots' ? 'America/Toronto'
+                    : ($timing['timezone'] ?? $row->timezone ?? config('app.timezone', 'UTC'));
                 $now = CarbonImmutable::now();
                 $attributes['next_due_at'] = null;
                 if ($enabled) {
@@ -222,9 +223,10 @@ class AdminImportSchedules
     /** Persist the dispatch timestamp and calculate the lane's next due time. */
     public function markDispatched(AdminImportSchedule $schedule, CarbonImmutable $now): void
     {
-        if (in_array($schedule->source_key, ['contracts', 'fantrax'], true)
+        if (in_array($schedule->source_key, ['contracts', 'fantrax', 'nhl-schedule-snapshots'], true)
             && $schedule->interval_seconds === 86400 && $schedule->daily_start_time) {
-            $timezone = $schedule->timezone ?: config('app.timezone', 'UTC');
+            $timezone = $schedule->source_key === 'nhl-schedule-snapshots' ? 'America/Toronto'
+                : ($schedule->timezone ?: config('app.timezone', 'UTC'));
             $tomorrow = $now->setTimezone($timezone)->addDay()->toDateString();
             $schedule->update([
                 'last_dispatched_at' => $now,
