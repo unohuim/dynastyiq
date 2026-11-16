@@ -2,8 +2,9 @@
 
 Current scope: Weekly uses the selected week. Off Nights independently covers the
 remaining current season from today in America/Toronto, including uncompleted
-live games. Earlier weekly Off Nights descriptions below are superseded by the
-Remaining-season correction section.
+live games. Off Nights displays only Team and Total, with no logos or game dates. Earlier
+weekly/date-list descriptions below are superseded by the Remaining-season
+correction and Compact rows sections.
 
 ## Files changed
 
@@ -255,3 +256,35 @@ is not applicable to this public NHL schedule.
 The imported schedule still defines available coverage. No external schedule
 fetch, generated future games, prediction runs or league-stat preparation occurs
 when reading either tab. No migration required.
+
+
+## Compact rows
+
+Files changed: `resources/js/pages/Tools/Schedule.vue`,
+`resources/js/pages/games.test.js`, `docs/architecture/ui/InertiaAppShell.yaml`,
+`docs/ARCHITECTURE_INVENTORY.md`, and this document.
+
+1. SATISFIED: remove team logos in Weekly and Off Nights.
+2. SATISFIED: reduce weekly body padding from 8px to 4px vertically, lower game
+   link minimum height from 40px to 24px, and remove the identity height minimum.
+3. SATISFIED: Off Nights has exactly Team (abbreviation) and Total columns;
+   remove the game-date links and use compact 6px vertical cell padding.
+4. SATISFIED: preserve remaining-season counts, zero-count teams, headings,
+   week navigation, tabs, game links in Weekly and mobile width behavior.
+
+Coverage matrix (authored, not executed):
+
+| Contract | Status | Existing updated test |
+| --- | --- | --- |
+| Weekly logos removed and rows compacted | COVERED | fits all seven days with fixed mobile columns and retains desktop sizing |
+| Two columns, no dates/links/logos, correct count | COVERED | defaults to Weekly and switches to Off Nights without a request |
+| Remaining-season counts independent of browsed week | COVERED | keeps remaining-season off nights unchanged after browsing a different week |
+| Zero-count teams | COVERED | shows server-provided remaining off-night counts independently of weekly games |
+
+Frontend checklist: nine weekly columns retained; two Off Nights columns, absent
+logos/links, compact row classes and counts asserted; existing local tab,
+keyboard and week navigation assertions retained. No new requests, timers or
+global state. The existing endpoint/verb auth-scope matrix remains applicable;
+no backend or permission changes. Frontend file retains 147 test declarations.
+No migration required. Static diff/whitespace review only: tests, builds, browser
+checks and production commands were not run.

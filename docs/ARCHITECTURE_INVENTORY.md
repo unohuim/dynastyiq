@@ -26,7 +26,7 @@ Tools → Schedule exposes a public Monday–Sunday team grid at `/tools/schedul
 reading stored season participants and game metadata without importing data or
 running predictions. Week navigation uses the Eastern calendar; each team retains
 its zero-game row and weekly GP total. Weekly is the default tab; Off Nights lists
-each current-season team’s remaining qualifying dates and count from today,
+each current-season team’s abbreviation and remaining off-night count from today,
 independently of the browsed week, using an inclusive
 50%-of-season-teams-playing cutoff rather than fixed weekdays. Authority: `docs/architecture/ui/InertiaAppShell.yaml`.
 

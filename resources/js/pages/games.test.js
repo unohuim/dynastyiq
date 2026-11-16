@@ -1134,6 +1134,9 @@ describe('weekly Schedule page', () => {
         expect(table.classList.contains('min-[420px]:text-[10px]')).toBe(true);
         expect(table.classList.contains('lg:table-auto')).toBe(true);
         expect(table.querySelectorAll('colgroup col')).toHaveLength(9);
+        expect(table.querySelectorAll('img')).toHaveLength(0);
+        expect(table.querySelector('tbody a').classList.contains('min-h-6')).toBe(true);
+        expect(table.querySelector('tbody td').classList.contains('py-1')).toBe(true);
         expect(table.querySelector('colgroup col').classList.contains('w-[10%]')).toBe(true);
         expect(document.querySelector('tbody th').classList.contains('lg:sticky')).toBe(true);
         expect(document.querySelector('tbody tr').lastElementChild.classList.contains('lg:right-0')).toBe(true);
@@ -1207,7 +1210,9 @@ describe('weekly Schedule page', () => {
         expect(document.querySelector('[role=tabpanel]').id).toBe(tabs[1].getAttribute('aria-controls'));
         expect(document.querySelector('main').textContent).toContain('50% or fewer');
         expect(document.querySelectorAll('tbody tr')).toHaveLength(2);
-        expect(document.querySelector('tbody a').textContent).toContain('Mon Nov 23');
+        expect([...document.querySelectorAll('thead th')].map(cell => cell.textContent)).toEqual(['Team', 'Total']);
+        expect(document.querySelectorAll('tbody a, tbody img')).toHaveLength(0);
+        expect(document.querySelector('tbody tr').children).toHaveLength(2);
         expect(document.querySelector('[aria-label="Schedule week"]')).toBeNull();
         expect(document.querySelector('header').textContent).toContain('Remaining 2026–27 season');
         expect(document.querySelector('tbody tr').lastElementChild.textContent).toBe('1');
@@ -1257,7 +1262,9 @@ describe('weekly Schedule page', () => {
         await nextTick();
         expect(document.querySelector('[role=tabpanel]').id).toBe('schedule-panel-off-nights');
         expect(document.querySelector('caption').textContent).toContain('Remaining 2026–27 season');
-        expect(document.querySelector('tbody a').textContent).toContain('Mon Nov 23');
+        expect([...document.querySelectorAll('thead th')].map(cell => cell.textContent)).toEqual(['Team', 'Total']);
+        expect(document.querySelectorAll('tbody a, tbody img')).toHaveLength(0);
+        expect(document.querySelector('tbody tr').children).toHaveLength(2);
         expect(document.querySelector('tbody tr').lastElementChild.textContent).toBe('1');
         document.querySelectorAll('[role=tab]')[0].click();
         await nextTick();

@@ -74,17 +74,16 @@ function navigate(url) {
                     </thead>
                     <tbody class="divide-y divide-gray-100">
                         <tr v-for="team in schedule.teams" :key="team.id" class="group">
-                            <th scope="row" class="bg-white px-0.5 py-2 text-gray-800 lg:sticky lg:left-0 lg:z-10 lg:px-3">
-                                <div class="flex min-h-10 flex-col items-center justify-center gap-0.5 lg:flex-row lg:justify-start lg:gap-2">
-                                    <img v-if="team.logo" :src="team.logo" alt="" loading="lazy" class="h-[18px] w-[18px] shrink-0 object-contain min-[420px]:h-5 min-[420px]:w-5 lg:h-8 lg:w-8" />
+                            <th scope="row" class="bg-white px-0.5 py-1 text-gray-800 lg:sticky lg:left-0 lg:z-10 lg:px-3">
+                                <div class="flex items-center justify-center lg:justify-start">
                                     <span class="truncate font-semibold" :title="team.name">{{ team.abbrev || team.name }}</span>
                                     <span class="sr-only">{{ team.name }}</span>
                                 </div>
                             </th>
-                            <td v-for="day in schedule.days" :key="day.date" class="px-0.5 py-2 align-middle lg:px-3" :class="day.is_today ? 'bg-indigo-50/40' : ''">
-                                <ul v-if="team.days[day.date]?.length" class="space-y-2">
+                            <td v-for="day in schedule.days" :key="day.date" class="px-0.5 py-1 align-middle lg:px-3" :class="day.is_today ? 'bg-indigo-50/40' : ''">
+                                <ul v-if="team.days[day.date]?.length" class="space-y-1">
                                     <li v-for="game in team.days[day.date]" :key="game.id">
-                                        <a :href="game.href" class="inline-flex min-h-10 w-full min-w-0 flex-col lg:w-auto justify-center rounded text-gray-800 transition-colors duration-150 hover:text-indigo-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 motion-reduce:transition-none" :aria-label="`${team.abbrev} ${game.venue === 'home' ? 'home versus' : 'away at'} ${game.opponent}, ${day.label} ${day.display_date}, ${game.status || game.time} Eastern`">
+                                        <a :href="game.href" class="inline-flex min-h-6 w-full min-w-0 flex-col lg:w-auto justify-center rounded text-gray-800 transition-colors duration-150 hover:text-indigo-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 motion-reduce:transition-none" :aria-label="`${team.abbrev} ${game.venue === 'home' ? 'home versus' : 'away at'} ${game.opponent}, ${day.label} ${day.display_date}, ${game.status || game.time} Eastern`">
                                             <span class="whitespace-nowrap font-medium"><span class="mr-0.5 text-[8px] font-normal min-[420px]:text-[9px] lg:mr-1 lg:text-xs text-gray-400">{{ game.venue === 'home' ? 'vs' : '@' }}</span>{{ game.opponent }}</span>
                                             <span class="mt-0.5 break-words text-[7px] min-[420px]:text-[8px] sm:text-[10px] lg:text-[11px]" :class="game.status ? 'text-amber-700' : 'text-gray-500'">{{ game.status || game.time }}</span>
                                         </a>
@@ -92,7 +91,7 @@ function navigate(url) {
                                 </ul>
                                 <template v-else><span aria-hidden="true" class="text-gray-300">—</span><span class="sr-only">No game</span></template>
                             </td>
-                            <td class="bg-white px-0.5 py-2 lg:sticky lg:right-0 lg:z-10 lg:px-3 text-center font-semibold tabular-nums text-gray-900">{{ team.total_gp }}</td>
+                            <td class="bg-white px-0.5 py-1 lg:sticky lg:right-0 lg:z-10 lg:px-3 text-center font-semibold tabular-nums text-gray-900">{{ team.total_gp }}</td>
                         </tr>
                     </tbody>
                 </table>
@@ -102,13 +101,17 @@ function navigate(url) {
             <p class="mb-3 text-sm text-gray-600">Off nights: 50% or fewer league teams playing that day (8 or fewer games in a 32-team league).</p>
             <div class="max-w-full rounded-lg border border-gray-200 bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500" role="region" aria-label="Off-night NHL team schedule" tabindex="0">
                 <table class="w-full border-collapse text-left text-sm">
-                    <caption class="sr-only">{{ schedule.off_nights.label }}. Each team's off-night games and count.</caption>
-                    <thead><tr class="border-b border-gray-200 bg-gray-50 text-xs text-gray-600"><th scope="col" class="px-3 py-3">Team</th><th scope="col" class="px-3 py-3">Remaining off-night games</th><th scope="col" class="px-3 py-3 text-center">Total</th></tr></thead>
+                    <caption class="sr-only">{{ schedule.off_nights.label }}. Each team's remaining off-night count.</caption>
+                    <thead>
+                        <tr class="border-b border-gray-200 bg-gray-50 text-xs text-gray-600">
+                            <th scope="col" class="px-3 py-2">Team</th>
+                            <th scope="col" class="px-3 py-2 text-right">Total</th>
+                        </tr>
+                    </thead>
                     <tbody class="divide-y divide-gray-100">
                         <tr v-for="team in schedule.off_nights.teams" :key="team.id">
-                            <th scope="row" class="px-3 py-2"><div class="flex min-h-10 items-center gap-2"><img v-if="team.logo" :src="team.logo" alt="" loading="lazy" class="h-8 w-8 shrink-0 object-contain" /><span :title="team.name">{{ team.abbrev || team.name }}</span></div></th>
-                            <td class="px-3 py-2"><ul v-if="team.games.length" class="flex flex-wrap gap-x-5 gap-y-2"><li v-for="game in team.games" :key="game.id"><a :href="game.href" class="inline-flex min-h-10 flex-col justify-center rounded text-gray-800 hover:text-indigo-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"><span class="font-medium">{{ game.label }}</span><span class="text-xs text-gray-500">{{ game.venue === 'home' ? 'vs' : '@' }} {{ game.opponent }}</span></a></li></ul><span v-else class="text-gray-400">—</span></td>
-                            <td class="px-3 py-2 text-center font-semibold tabular-nums text-gray-900">{{ team.off_night_gp }}</td>
+                            <th scope="row" class="px-3 py-1.5 font-semibold" :title="team.name">{{ team.abbrev || team.name }}</th>
+                            <td class="px-3 py-1.5 text-right font-semibold tabular-nums text-gray-900">{{ team.off_night_gp }}</td>
                         </tr>
                     </tbody>
                 </table>
