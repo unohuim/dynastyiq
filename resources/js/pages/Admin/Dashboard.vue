@@ -25,6 +25,9 @@ export default {
         });
     },
     computed: {
+        schedulePreparation() {
+            return (this.importItems ?? []).find((item) => item.key === 'nhl-schedule-snapshots');
+        },
         playerImports() {
             return (this.importItems ?? []).filter((item) => item.group === 'player');
         },
@@ -661,6 +664,19 @@ export default {
             <GamePredictions v-if="activeTab === 'game-predictions'" :url="urls.gamePredictionsUrl" :today="predictionDate" />
 
             <div v-show="activeTab === 'game-imports'" >
+                <section v-if="schedulePreparation" aria-label="Prepare NHL Schedule" class="mb-4 border-y border-gray-200 bg-white px-4 py-4">
+                    <div class="flex flex-wrap items-center justify-between gap-3">
+                        <div><h3 class="text-sm font-semibold text-gray-900">Prepare NHL Schedule</h3><p class="mt-1 text-xs text-gray-600">Build weekly views and remaining-season Off Nights totals. Last run: {{ formatLastRun(schedulePreparation.key) }}</p></div>
+                        <div class="flex flex-wrap items-center gap-2">
+                            <button type="button" class="rounded border px-3 py-2 text-xs transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-indigo-500 motion-reduce:transition-none" :class="schedulePreparation.schedule?.enabled ? 'border-green-500 text-green-700' : 'border-gray-300 text-gray-600'" :disabled="schedulePreparation.schedule?.saving" :aria-pressed="!!schedulePreparation.schedule?.enabled" @click="saveImportSchedule(schedulePreparation, !schedulePreparation.schedule?.enabled)">Auto refresh</button>
+                            <button type="button" class="rounded border border-gray-300 px-3 py-2 text-xs text-gray-700 focus-visible:ring-2 focus-visible:ring-indigo-500" :disabled="schedulePreparation.schedule?.saving" @click="openImportScheduleSettings(schedulePreparation)">Settings</button>
+                            <button type="button" class="rounded bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-700 focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:opacity-50" :disabled="streams[schedulePreparation.key]?.running === true" @click="startImport(schedulePreparation.key)">Build Schedule</button>
+                        </div>
+                    </div>
+                    <p v-if="schedulePreparation.schedule?.error" class="mt-2 text-xs text-red-700" role="alert">{{ schedulePreparation.schedule.error }}</p>
+                    <p v-if="streams[schedulePreparation.key]?.messages?.find(entry => entry.status === 'failed')" class="mt-2 text-xs text-red-700" role="alert">{{ streams[schedulePreparation.key].messages.find(entry => entry.status === 'failed').message }}</p>
+                    <p v-if="shouldShowImportProgress(schedulePreparation.key)" class="mt-2 text-xs text-gray-600" role="status">{{ streams[schedulePreparation.key]?.importRun?.status || schedulePreparation.status }} · {{ importProgressText(schedulePreparation.key) }} · {{ importProgressDetailText(schedulePreparation.key) }}</p>
+                </section>
                 <div class="mb-4 border-y border-gray-200 bg-white px-4 py-4">
                     <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                         <div class="min-w-0">

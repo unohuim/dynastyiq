@@ -3078,7 +3078,7 @@ export default function adminHub(options = {}) {
 
         importScheduleLaneLabel(laneKey) {
             return {
-                current: 'Current injuries',
+                current: this.scheduleSettings.importKey === 'nhl-schedule-snapshots' ? 'Schedule refresh' : 'Current injuries',
                 today: "Today's games",
                 future: 'Future dates',
                 within_two_hours: 'Within 2 hours of puck drop',

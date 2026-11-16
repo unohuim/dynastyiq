@@ -4441,3 +4441,15 @@ and participating-goalie SV/SA/SV%/GSAx, with independent observation/advanced
 processing timestamps and availability. No request-triggered provider fetch,
 scoring or prediction work. Authority: `imports/NhlLiveGameFeed.yaml`; partner
 contract: `docs/integrations/DIQ-API-Usage-Doc.md`.
+
+
+### Prepared NHL schedule displays
+
+Public Tools Schedule reads durable `nhl_schedule_snapshots` rows rather than
+aggregating source games during navigation. A registered **Prepare NHL Schedule**
+admin process publishes weeks and remaining-season off-night totals atomically,
+with ordinary import progress and opt-in hourly scheduling. Source schedule
+refreshes, final-game updates and season rollups queue worker refreshes. Warm
+navigation requests schedule props only; loaded weeks have a short mounted-only
+browser cache. Missing known views queue preparation and retain previous totals.
+Authority: `docs/architecture/ui/NhlScheduleSnapshots.yaml`.

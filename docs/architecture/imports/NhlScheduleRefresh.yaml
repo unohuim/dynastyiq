@@ -18,7 +18,7 @@ when_not_to_use:
   - Reprocessing imported games or rebuilding game-derived tables.
   - Deleting played, in-progress, or imported game rows.
 rules:
-  - Schedule refresh must write only nhl_games rows.
+  - Schedule refresh must write only nhl_games source rows; after successful writes it may queue prepared display refreshes under ui/NhlScheduleSnapshots.yaml, without calculating them inline.
   - Schedule refresh must not seed nhl_import_progress rows or dispatch game import jobs.
   - The default command window starts today and ends on July 1 of the next calendar year.
   - Admin UI schedule refresh requests must queue one RefreshNhlScheduleDateJob per schedule date and expose progress separately from normal game import orchestrations.

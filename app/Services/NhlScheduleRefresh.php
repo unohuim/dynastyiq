@@ -92,6 +92,8 @@ class NhlScheduleRefresh
                 DB::table('nhl_games')->insert($rows);
             }
 
+            app(NhlScheduleSnapshots::class)->changedDate($date->toDateString());
+
             return [
                 'date' => $date->toDateString(),
                 'fetched' => count($rows),
@@ -111,6 +113,8 @@ class NhlScheduleRefresh
                 $this->upsertColumns()
             );
         }
+
+        app(NhlScheduleSnapshots::class)->changedDate($date->toDateString());
 
         return [
             'date' => $date->toDateString(),

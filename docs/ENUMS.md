@@ -1119,6 +1119,7 @@ zero-game enrichment and a historical processing timestamp are not completion ev
 - `nhl-injuries`
 - `nhl-anticipated-lineups`
 - `nhl-game-boxscores`
+- `nhl-schedule-snapshots`
 
 **Semantic meaning:**
 
@@ -1133,6 +1134,7 @@ zero-game enrichment and a historical processing timestamp are not completion ev
 - `nhl-starting-goalies`: RotoWire starting-goalie observation import.
 - `nhl-injuries`: CBS/RotoWire current injury import.
 - `nhl-anticipated-lineups`: Stored-source X timeline discovery of text-based anticipated NHL lineups.
+- `nhl-schedule-snapshots`: Prepare durable weekly schedule views and current remaining-season Off Nights totals from stored games.
 - `nhl-game-boxscores`: UTC-today NHL game-state and available boxscore refresh for non-final games.
 
 ### Admin Import Schedule Lane
@@ -3132,3 +3134,11 @@ identifies a completed empty missing-work selection. Updates keep the existing
   statistical fields and summary values. Polling/creation/update timestamps are
   excluded from those value fingerprints; completed import publication and processed PBP revisions remain
   separate invalidators for derived shot/strength facts.
+
+
+### Prepared schedule snapshot keys
+
+`nhl_schedule_snapshots.snapshot_key` uses `week:YYYY-MM-DD` for a Monday-based
+weekly display and `off:YYYYYYYY:YYYY-MM-DD` for one season's remaining off-night
+totals as of an Eastern calendar date. These are replaceable derived displays;
+`nhl_games` remains the schedule source.

@@ -16,6 +16,7 @@ class AdminImportSchedules
     public const GAME_BOXSCORES = 'nhl-game-boxscores';
 
     public const DEFINITIONS = [
+        'nhl-schedule-snapshots' => ['current' => 3600],
         'contracts' => ['current' => 86400],
         'fantrax' => ['current' => 86400],
         'nhl-starting-goalies' => ['today' => 900, 'future' => 3600],

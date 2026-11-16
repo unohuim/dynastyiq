@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { router } from '@inertiajs/vue3';
 
 const props = defineProps({ schedule: { type: Object, required: true } });
@@ -23,9 +23,54 @@ function changeTab(event, index) {
     event.currentTarget.parentElement.querySelectorAll('[role=tab]')[next].focus();
 }
 
+const weekCache = new Map();
+const easternCalendar = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit' });
+let pollTimer;
+let pollAttempts = 0;
+let disposed = false;
+
+function cacheKey(url) {
+    return new URL(url, 'https://dynastyiq.invalid').searchParams.get('week') || 'current';
+}
+
+function pollPreparation() {
+    clearTimeout(pollTimer);
+    if (disposed || props.schedule.prepared !== false) return;
+    if (pollAttempts >= 30) {
+        if (!props.schedule.teams.length) error.value = 'Schedule preparation is taking longer than expected. Try this week again shortly.';
+        return;
+    }
+    pollTimer = setTimeout(() => {
+        if (loading.value) { pollPreparation(); return; }
+        pollAttempts++;
+        router.reload({ only: ['schedule'], preserveState: true, preserveScroll: true, onFinish: pollPreparation });
+    }, 2000);
+}
+
+watch(() => props.schedule, snapshot => {
+    if (snapshot.prepared !== false && snapshot.week_start) {
+        const entry = { payload: snapshot, at: Date.now(), offBuild: snapshot.off_nights.built_at, day: easternCalendar.format(new Date()) };
+        weekCache.set(snapshot.week_start, entry);
+        if (snapshot.is_current_week) weekCache.set('current', entry);
+        while (weekCache.size > 16) weekCache.delete(weekCache.keys().next().value);
+        pollAttempts = 0;
+    }
+    pollPreparation();
+}, { immediate: true });
+
+onBeforeUnmount(() => { disposed = true; clearTimeout(pollTimer); weekCache.clear(); });
+
 function navigate(url) {
     if (loading.value) return;
+    error.value = '';
+    const cached = weekCache.get(cacheKey(url));
+    if (cached && cached.day === easternCalendar.format(new Date()) && Date.now() - cached.at < 300000 && cached.offBuild === props.schedule.off_nights.built_at) {
+        router.push({ url, props: current => ({ ...current, schedule: cached.payload }), preserveState: true, preserveScroll: true });
+        return;
+    }
+    pollAttempts = 0;
     router.get(url, {}, {
+        only: ['schedule'],
         preserveState: true, preserveScroll: true,
         onStart: () => { loading.value = true; error.value = ''; },
         onError: () => { error.value = 'Unable to load this week. Please try again.'; },
@@ -35,7 +80,7 @@ function navigate(url) {
 </script>
 
 <template>
-    <main class="mx-auto flex h-full min-h-0 w-full max-w-7xl flex-col overflow-hidden px-2 py-5 min-[420px]:px-3 sm:px-6 sm:py-7" :aria-busy="loading">
+    <main class="mx-auto flex h-full min-h-0 w-full max-w-7xl flex-col overflow-hidden px-2 py-5 min-[420px]:px-3 sm:px-6 sm:py-7" :aria-busy="loading || (schedule.prepared === false && !schedule.teams.length)">
         <header class="flex shrink-0 flex-wrap items-center justify-between gap-4">
             <div>
                 <p class="text-xs font-medium uppercase tracking-wide text-gray-500">Tools</p>
@@ -59,6 +104,7 @@ function navigate(url) {
             <div class="absolute bottom-3 right-0 max-w-[40%] truncate text-right text-xs" :title="error || undefined" role="status" aria-live="polite">
                 <span v-if="error" class="text-red-700">{{ error }}</span>
                 <span v-else-if="loading" class="text-gray-500">Loading schedule…</span>
+                <span v-else-if="schedule.prepared === false && !schedule.teams.length" class="text-gray-500">Preparing schedule…</span>
             </div>
         </div>
         <section v-if="activeTab === 'weekly'" id="schedule-panel-weekly" role="tabpanel" class="flex min-h-0 flex-1 flex-col" aria-labelledby="schedule-tab-weekly">
@@ -123,9 +169,9 @@ function navigate(url) {
                 </table>
             </div>
             <p class="mt-2 shrink-0 text-xs text-gray-600">Off nights: 50% or fewer league teams playing that day (8 or fewer games in a 32-team league).</p>
-            <p v-if="!schedule.off_nights.game_count" class="mt-4 shrink-0 text-sm text-gray-500">No remaining games available for this season.</p>
+            <p v-if="schedule.prepared !== false && !schedule.off_nights.game_count" class="mt-4 shrink-0 text-sm text-gray-500">No remaining games available for this season.</p>
         </section>
-        <p v-if="activeTab === 'weekly' && (!schedule.teams.length || !schedule.game_count)" class="mt-4 shrink-0 text-sm text-gray-500">No games available for this week.</p>
+        <p v-if="schedule.prepared !== false && activeTab === 'weekly' && (!schedule.teams.length || !schedule.game_count)" class="mt-4 shrink-0 text-sm text-gray-500">No games available for this week.</p>
         <p v-if="activeTab === 'weekly'" class="mt-3 shrink-0 text-xs text-gray-500">{{ schedule.teams.length }} teams · {{ schedule.game_count }} games · All times Eastern · @ Away · vs Home</p>
         <p v-else class="mt-3 shrink-0 text-xs text-gray-500">{{ schedule.off_nights.teams.length }} teams · {{ schedule.off_nights.game_count }} remaining games · @ Away · vs Home</p>
     </main>

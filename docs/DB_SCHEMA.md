@@ -5155,3 +5155,21 @@ stack, or player-evaluation records.
 ## Live PBP reconciliation
 
 Migration `2026_10_28_000001_create_nhl_pbp_reconciliation_records.php` adds nullable `play_by_plays.withdrawn_at`, game-keyed `nhl_pbp_processing_states` checkpoints (pending/processed versions, newest payload, model provenance, metrics and errors), and game/event/version-keyed `nhl_pbp_event_revisions` preserving correction evidence. There is no historical data backfill. Withdrawn events remain stored but are excluded from active analytical reads.
+
+
+## nhl_schedule_snapshots
+
+**Organization-owned:** No
+**Purpose:** Durable prepared display data for Tools Schedule. Source games remain
+in `nhl_games`; these rows can be rebuilt without reimporting source results.
+**Migration:** `2026_11_16_210000_create_nhl_schedule_snapshots_table`.
+
+| Column | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| snapshot_key | varchar(80) | No | Primary key; key formats are canonical in ENUMS.md |
+| season_id | varchar(8) | No | Indexed season scope |
+| payload | JSON | No | Pre-rendered week rows or team off-night counts; no player facts |
+| built_at | timestamp with timezone | No | Last successful publication time |
+
+Whole replacements publish in one transaction. Empty migration; no historical
+copy or rebuild runs inside it. No source-game foreign keys are introduced.

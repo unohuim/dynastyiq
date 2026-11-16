@@ -51,6 +51,10 @@ class DispatchScheduledAdminImportsCommand extends Command
     /** @return array<string,mixed> */
     private function commandOptions(AdminImportSchedule $schedule): array
     {
+        if ($schedule->source_key === 'nhl-schedule-snapshots') {
+            return ['--season' => app(\App\Services\NhlScheduleSnapshots::class)->seasonId(CarbonImmutable::now('America/Toronto'))];
+        }
+
         if ($schedule->source_key === 'fantrax') {
             return ['--players' => true];
         }

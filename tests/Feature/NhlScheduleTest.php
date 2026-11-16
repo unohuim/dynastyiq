@@ -3,6 +3,11 @@
 declare(strict_types=1);
 
 use App\Models\NhlGame;
+use App\Models\Role;
+use App\Jobs\BuildNhlScheduleSnapshotsJob;
+use App\Jobs\RunImportCommandJob;
+use App\Services\NhlScheduleSnapshots;
+use Carbon\CarbonImmutable;
 use App\Models\User;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Bus;
@@ -33,6 +38,12 @@ beforeEach(function (): void {
     ($this->game)(2026020001, '2026-11-09');
     ($this->game)(2026020002, '2026-11-10', ['away_team_id' => 6, 'away_team_abbrev' => 'BOS']);
     $this->read = function (array $query = []): array {
+        $snapshots = app(NhlScheduleSnapshots::class);
+        $today = CarbonImmutable::now('America/Toronto');
+        $week = CarbonImmutable::parse($query['week'] ?? $today->toDateString(), 'America/Toronto')->startOfWeek();
+        foreach (array_unique([$snapshots->seasonId($week), $snapshots->seasonId($today)]) as $season) {
+            $snapshots->build($season);
+        }
         $response = $this->get(route('tools.schedule', $query))->assertOk()
             ->assertInertia(fn (Assert $page) => $page->component('Tools/Schedule')->has('schedule.days', 7));
         return $response->viewData('page')['props']['schedule'];
@@ -185,7 +196,7 @@ it('retains multiple games in one day in chronological order', function (): void
 it('links each scheduled game to its existing preview or recap route', function (): void {
     ($this->game)();
     expect(($this->row)(($this->read)(), 'TOR')['days']['2026-11-16'][0]['href'])
-        ->toBe(route('games.show', ['nhlGameId' => 2026020003]));
+        ->toBe(route('games.show', ['nhlGameId' => 2026020003], false));
 });
 
 it('does not require imported boxscores or completed pregame context', function (): void {
@@ -325,7 +336,7 @@ it('counts off nights across the remaining season rather than the selected week'
     expect($remaining['season_id'])->toBe('20262027')->and($remaining['from_date'])->toBe('2026-11-18')
         ->and($remaining['game_count'])->toBe(3)->and($remaining['teams'])->toHaveCount(32)
         ->and(($this->row)($remaining, 'TOR')['off_night_gp'])->toBe(3)
-        ->and(array_column(($this->row)($remaining, 'TOR')['games'], 'date'))->toBe(['2026-11-18', '2026-12-23', '2027-04-07'])
+        ->and(array_key_exists('games', ($this->row)($remaining, 'TOR')))->toBeFalse()
         ->and(($this->row)($remaining, 'BOS')['off_night_gp'])->toBe(0)
         ->and(($this->row)($schedule, 'TOR')['total_gp'])->toBe(1);
 });
@@ -352,7 +363,7 @@ it('excludes past completed cancelled postponed and other-season games from rema
     $remaining = ($this->read)()['off_nights'];
     expect($remaining['game_count'])->toBe(2)
         ->and(($this->row)($remaining, 'TOR')['off_night_gp'])->toBe(2)
-        ->and(array_column(($this->row)($remaining, 'TOR')['games'], 'date'))->toBe(['2026-11-18', '2026-11-23']);
+        ->and(array_key_exists('games', ($this->row)($remaining, 'TOR')))->toBeFalse();
 });
 
 it('applies the inclusive off-night cutoff to each future full league slate', function (): void {
@@ -362,7 +373,6 @@ it('applies the inclusive off-night cutoff to each future full league slate', fu
     $remaining = ($this->read)()['off_nights'];
     expect($remaining['game_count'])->toBe(17)
         ->and(($this->row)($remaining, 'BOS')['off_night_gp'])->toBe(1)
-        ->and(array_column(($this->row)($remaining, 'BOS')['games'], 'date'))->toBe(['2026-12-22'])
         ->and(collect($remaining['teams'])->sum('off_night_gp'))->toBe(16);
 });
 
@@ -380,4 +390,158 @@ it('retains zero-count teams when no uncompleted games remain this season', func
     $remaining = ($this->read)()['off_nights'];
     expect($remaining['game_count'])->toBe(0)->and($remaining['teams'])->toHaveCount(32)
         ->and(collect($remaining['teams'])->sum('off_night_gp'))->toBe(0);
+});
+
+
+it('prepares source data through the command persists it and serves it through HTTP', function (): void {
+    ($this->game)();
+    $this->artisan('nhl:prepare-schedule', ['--season' => '20262027'])->assertSuccessful();
+    $this->assertDatabaseHas('nhl_schedule_snapshots', ['snapshot_key' => 'week:2026-11-16']);
+    $this->get(route('tools.schedule'))->assertOk()->assertInertia(fn (Assert $page) => $page
+        ->where('schedule.prepared', true)->where('schedule.game_count', 1));
+});
+
+it('upserts published snapshots without duplicating weeks', function (): void {
+    $service = app(NhlScheduleSnapshots::class);
+    $service->build('20262027');
+    $count = DB::table('nhl_schedule_snapshots')->count();
+    ($this->game)();
+    $service->build('20262027');
+    expect(DB::table('nhl_schedule_snapshots')->count())->toBe($count);
+    $row = DB::table('nhl_schedule_snapshots')->where('snapshot_key', 'week:2026-11-16')->first();
+    expect(json_decode($row->payload, true)['game_count'])->toBe(1);
+});
+
+it('warm reads do not query source games or team identities', function (): void {
+    app(NhlScheduleSnapshots::class)->build('20262027');
+    DB::flushQueryLog();
+    DB::enableQueryLog();
+    try {
+        $payload = app(NhlScheduleSnapshots::class)->read(CarbonImmutable::parse('2026-11-16', 'America/Toronto'));
+        $queries = collect(DB::getQueryLog())->pluck('query')->implode(' ');
+    } finally {
+        DB::disableQueryLog();
+        DB::flushQueryLog();
+    }
+    expect($payload['prepared'])->toBeTrue()->and($queries)->not->toContain('nhl_games', 'nhl_teams');
+    Bus::assertNothingDispatched();
+});
+
+it('cold reads queue preparation without calculating or publishing source data inline', function (): void {
+    $this->mock(\App\Services\NhlScheduleCalculator::class)->shouldNotReceive('week');
+    $this->get(route('tools.schedule'))->assertOk()->assertInertia(fn (Assert $page) => $page
+        ->where('schedule.prepared', false)->has('schedule.days', 7));
+    $this->assertDatabaseCount('nhl_schedule_snapshots', 0);
+    Bus::assertDispatched(BuildNhlScheduleSnapshotsJob::class, fn ($job) => $job->seasonId === '20262027');
+});
+
+it('keeps the last published snapshot unchanged when replacement calculation fails', function (): void {
+    $service = app(NhlScheduleSnapshots::class);
+    $service->build('20262027');
+    $before = DB::table('nhl_schedule_snapshots')->orderBy('snapshot_key')->get()->toJson();
+    $this->mock(\App\Services\NhlScheduleCalculator::class)->shouldReceive('week')->once()->andThrow(new RuntimeException('Calculation failed'));
+    expect(fn () => $service->build('20262027'))->toThrow(RuntimeException::class, 'Calculation failed');
+    expect(DB::table('nhl_schedule_snapshots')->orderBy('snapshot_key')->get()->toJson())->toBe($before);
+});
+
+it('retains last off-night totals while queuing the new Eastern dates preparation', function (): void {
+    app(NhlScheduleSnapshots::class)->build('20262027');
+    $this->travelTo(Carbon::parse('2026-11-20 05:01:00 UTC'));
+    $payload = app(NhlScheduleSnapshots::class)->read(CarbonImmutable::parse('2026-11-16', 'America/Toronto'));
+    expect($payload['prepared'])->toBeFalse()->and($payload['off_nights']['from_date'])->toBe('2026-11-19');
+    Bus::assertDispatched(BuildNhlScheduleSnapshotsJob::class);
+});
+
+it('stores off-night counts and build timestamps without the unused game-date list', function (): void {
+    ($this->league)();
+    ($this->game)(2026025000, '2026-12-01');
+    app(NhlScheduleSnapshots::class)->build('20262027');
+    $row = DB::table('nhl_schedule_snapshots')->where('snapshot_key', 'off:20262027:2026-11-18')->first();
+    $payload = json_decode($row->payload, true);
+    expect($row->built_at)->not->toBeNull()->and($payload['teams'])->toHaveCount(32)
+        ->and(array_key_exists('games', $payload['teams'][0]))->toBeFalse()
+        ->and(array_key_exists('logo', $payload['teams'][0]))->toBeFalse();
+});
+
+it('uses the game-processing queue and shared database uniqueness for background builds', function (): void {
+    $job = new BuildNhlScheduleSnapshotsJob('20262027');
+    expect($job->queue)->toBe('games-processing')->and($job->uniqueId())->toBe('20262027')
+        ->and($job)->toBeInstanceOf(\Illuminate\Contracts\Queue\ShouldBeUniqueUntilProcessing::class)
+        ->and($job->middleware()[0])->toBeInstanceOf(\Illuminate\Queue\Middleware\WithoutOverlapping::class);
+});
+
+it('rejects invalid seasons before calculating or writing snapshots', function (string $season): void {
+    expect(fn () => app(NhlScheduleSnapshots::class)->build($season))->toThrow(InvalidArgumentException::class);
+    $this->assertDatabaseCount('nhl_schedule_snapshots', 0);
+})->with(['2026', '20262028', 'nonsense']);
+
+it('queues both seasons affected by schedule edits across September first', function (): void {
+    app(NhlScheduleSnapshots::class)->changedDate('2026-09-01');
+    Bus::assertDispatched(BuildNhlScheduleSnapshotsJob::class, fn ($job) => $job->seasonId === '20252026');
+    Bus::assertDispatched(BuildNhlScheduleSnapshotsJob::class, fn ($job) => $job->seasonId === '20262027');
+});
+
+it('blocks non-admin schedule preparation and scheduling mutations', function (bool $signedIn): void {
+    if ($signedIn) {
+        $this->actingAs($this->viewer);
+    }
+    $this->postJson(route('admin.imports.run', ['key' => 'nhl-schedule-snapshots']))->assertStatus($signedIn ? 403 : 401);
+    $this->putJson(route('admin.imports.schedule.update', ['key' => 'nhl-schedule-snapshots']), ['enabled' => true])->assertStatus($signedIn ? 403 : 401);
+})->with([false, true]);
+
+it('lets super-admins queue schedule preparation with a persistent progress run', function (): void {
+    $role = Role::create(['name' => 'Super Admin', 'slug' => 'super-admin', 'level' => 99]);
+    $this->viewer->roles()->attach($role->id, ['organization_id' => null]);
+    $this->actingAs($this->viewer)->postJson(route('admin.imports.run', ['key' => 'nhl-schedule-snapshots']))->assertOk();
+    $this->assertDatabaseHas('import_runs', ['source' => 'nhl-schedule-snapshots', 'status' => 'working']);
+    Bus::assertBatched(fn ($batch) => $batch->jobs->contains(fn ($job) => $job instanceof RunImportCommandJob && $job->command === 'nhl:prepare-schedule') && $batch->options['queue'] === 'games-processing');
+});
+
+it('lets super-admins save the existing automatic preparation schedule without running it', function (): void {
+    $role = Role::create(['name' => 'Super Admin', 'slug' => 'super-admin', 'level' => 99]);
+    $this->viewer->roles()->attach($role->id, ['organization_id' => null]);
+    $this->actingAs($this->viewer)->putJson(route('admin.imports.schedule.update', ['key' => 'nhl-schedule-snapshots']), [
+        'enabled' => true, 'intervals' => ['current' => 3600],
+    ])->assertOk();
+    $this->assertDatabaseHas('admin_import_schedules', ['source_key' => 'nhl-schedule-snapshots', 'enabled' => true, 'interval_seconds' => 3600]);
+    Bus::assertNothingDispatched();
+});
+
+it('does not queue builds for an arbitrary season with no stored source schedule', function (): void {
+    app(NhlScheduleSnapshots::class)->build('20262027');
+    $payload = app(NhlScheduleSnapshots::class)->read(CarbonImmutable::parse('2090-11-13', 'America/Toronto')->startOfWeek());
+    expect($payload['prepared'])->toBeTrue()->and($payload['teams'])->toBe([]);
+    Bus::assertNothingDispatched();
+});
+
+
+it('refreshes snapshots for final changes while ignoring ordinary live clock updates', function (): void {
+    $listener = new \App\Listeners\QueueNhlScheduleSnapshots;
+    $listener->completed(new \App\Events\NhlLiveGameUpdated(['changed' => true, 'game' => ['game_state' => 'LIVE', 'game_date' => '2026-11-18']]));
+    Bus::assertNothingDispatched();
+    $listener->completed(new \App\Events\NhlLiveGameUpdated(['changed' => true, 'game' => ['game_state' => 'FINAL', 'game_date' => '2026-11-18']]));
+    Bus::assertDispatched(BuildNhlScheduleSnapshotsJob::class, fn ($job) => $job->seasonId === '20262027');
+});
+
+it('queues the affected season after season-stat source rollup commits', function (): void {
+    (new \App\Listeners\QueueNhlScheduleSnapshots)->synced(new \App\Events\NhlSeasonStatsSynced('20252026', 32));
+    Bus::assertDispatched(BuildNhlScheduleSnapshotsJob::class, fn ($job) => $job->seasonId === '20252026');
+});
+
+
+it('limits scheduled refreshes to the current season while manual builds can prepare history', function (): void {
+    app(\App\Services\AdminImportSchedules::class)->update('nhl-schedule-snapshots', true, ['current' => 3600]);
+    $this->artisan('admin:dispatch-scheduled-imports')->assertSuccessful();
+    Bus::assertBatched(fn ($batch) => $batch->jobs->contains(fn ($job) => $job instanceof RunImportCommandJob
+        && $job->source === 'nhl-schedule-snapshots' && ($job->options['--season'] ?? null) === '20262027'));
+    $this->assertDatabaseCount('nhl_schedule_snapshots', 0);
+});
+
+
+it('prepares the next Eastern day so ordinary midnight rollover remains a warm read', function (): void {
+    app(NhlScheduleSnapshots::class)->build('20262027');
+    $this->travelTo(Carbon::parse('2026-11-19 05:01:00 UTC'));
+    $payload = app(NhlScheduleSnapshots::class)->read(CarbonImmutable::parse('2026-11-16', 'America/Toronto'));
+    expect($payload['prepared'])->toBeTrue()->and($payload['off_nights']['from_date'])->toBe('2026-11-19');
+    Bus::assertNothingDispatched();
 });

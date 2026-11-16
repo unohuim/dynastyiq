@@ -3118,3 +3118,18 @@ describe('On-ice stats rebuild controls', () => {
         expect(text).toContain('Season Sync queued separately');
     });
 });
+
+
+describe('prepared NHL schedule admin controls', () => {
+    it('exposes queued build progress and existing scheduling controls inside Game Imports', () => {
+        const source = readFileSync(new URL('../pages/Admin/Dashboard.vue', import.meta.url), 'utf8');
+        const { descriptor, errors } = parse(source);
+        expect(errors).toEqual([]);
+        const template = descriptor.template.content;
+        const section = template.slice(template.indexOf('aria-label="Prepare NHL Schedule"'), template.indexOf('</section>', template.indexOf('aria-label="Prepare NHL Schedule"')));
+        for (const expected of ['startImport(schedulePreparation.key)', 'openImportScheduleSettings(schedulePreparation)', 'saveImportSchedule(schedulePreparation', 'importProgressText(schedulePreparation.key)']) expect(section).toContain(expected);
+        expect(source).toContain("item.key === 'nhl-schedule-snapshots'");
+        const compiled = compileTemplate({ source: template, filename: 'Dashboard.vue', id: 'admin-dashboard' });
+        expect(compiled.errors).toEqual([]);
+    });
+});

@@ -425,3 +425,14 @@ Static scoped-diff review and whitespace checks only. Tests, builds and browser
 checks were not run; native scrolling, final-row reachability and safe-area
 behavior need browser review at 350px, 420px and desktop, including touch input.
 No production operations were performed.
+
+
+## Durable preparation pathway
+
+The public read/calculation descriptions above are superseded by
+`docs/architecture/ui/NhlScheduleSnapshots.yaml` and
+`docs/analysis/prepared-schedule-review.md`. Week and off-night calculations now
+run in a queued admin/background preparation pathway and publish durable database
+snapshots. Public reads do not perform those calculations. A migration is required
+before using this pathway; see the prepared-schedule handoff for setup and authored
+coverage. Previous test-count snapshots describe their respective revisions.

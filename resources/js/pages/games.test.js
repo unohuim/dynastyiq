@@ -1112,12 +1112,14 @@ describe('weekly Schedule page', () => {
         app.mount('#weekly-schedule');
     };
     beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-11-18T14:00:00Z'));
         document.body.innerHTML = '<div id="weekly-schedule"></div>';
         const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((label, index) => ({
             label, date: `2026-11-${16 + index}`, display_date: `Nov ${16 + index}`, is_today: index === 2, is_off_night: index === 0,
         }));
         state = reactive({ schedule: {
-            label: 'Nov 16 – Nov 22, 2026', days, is_current_week: true, game_count: 1,
+            week_start: '2026-11-16', label: 'Nov 16 – Nov 22, 2026', days, is_current_week: true, game_count: 1,
             previous_url: '/tools/schedule?week=2026-11-09', next_url: '/tools/schedule?week=2026-11-23', current_url: '/tools/schedule',
             teams: ['MTL', 'TOR'].map((abbrev, index) => ({ id: index + 1, abbrev, name: abbrev, logo: `/${abbrev}.svg`, total_gp: 1, off_night_gp: 1,
                 days: Object.fromEntries(days.map(day => [day.date, day.label === 'Mon' ? [{ id: 7, href: '/games/7',
@@ -1133,7 +1135,7 @@ describe('weekly Schedule page', () => {
         };
         visit = vi.spyOn(inertia.router, 'get').mockImplementation(() => {});
     });
-    afterEach(() => { app?.unmount(); document.body.innerHTML = ''; vi.restoreAllMocks(); });
+    afterEach(() => { app?.unmount(); document.body.innerHTML = ''; vi.restoreAllMocks(); vi.useRealTimers(); });
 
     it('renders only Team Monday through Sunday and Total GP columns', () => {
         mount();
@@ -1414,6 +1416,57 @@ describe('weekly Schedule page', () => {
         expect(headers[2].classList.contains('bg-gray-50')).toBe(true);
         expect(headers[2].classList.contains('bg-gray-200')).toBe(false);
         expect(cells[1].classList.contains('bg-white')).toBe(true);
+    });
+
+    it('requests only prepared schedule props when changing to an uncached week', () => {
+        mount();
+        document.querySelector('[aria-label="Next week"]').click();
+        expect(visit.mock.calls[0][2].only).toEqual(['schedule']);
+    });
+
+    it('reuses a loaded week immediately through client-side navigation without another request', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-11-18T14:00:00Z'));
+        const push = vi.spyOn(inertia.router, 'push').mockImplementation(() => {});
+        mount();
+        document.querySelector('[aria-label="Next week"]').click();
+        state.schedule = { ...state.schedule, week_start: '2026-11-23', is_current_week: false,
+            previous_url: '/tools/schedule?week=2026-11-16', next_url: '/tools/schedule?week=2026-11-30' };
+        await nextTick();
+        document.querySelector('[aria-label="Previous week"]').click();
+        expect(visit).toHaveBeenCalledTimes(1);
+        expect(push).toHaveBeenCalledWith(expect.objectContaining({ preserveState: true, preserveScroll: true }));
+        expect(push.mock.calls[0][0].props({ shell: { test: true } }).schedule.week_start).toBe('2026-11-16');
+        expect(push.mock.calls[0][0].props({ shell: { test: true } }).shell.test).toBe(true);
+        state.schedule.off_nights.built_at = 'new-build';
+        document.querySelector('[aria-label="Previous week"]').click();
+        expect(visit).toHaveBeenCalledTimes(2);
+        vi.advanceTimersByTime(300001);
+        document.querySelector('[aria-label="Previous week"]').click();
+        expect(visit).toHaveBeenCalledTimes(3);
+    });
+
+    it('polls snapshot preparation without calculating in the browser and stops when prepared', async () => {
+        vi.useFakeTimers();
+        const reload = vi.spyOn(inertia.router, 'reload').mockImplementation(() => {});
+        state.schedule.prepared = false;
+        state.schedule.teams = [];
+        mount();
+        expect(document.querySelector('[role=status]').textContent).toContain('Preparing schedule');
+        expect(document.querySelector('main').getAttribute('aria-busy')).toBe('true');
+        expect(document.querySelector('main').textContent).not.toContain('No games available for this week.');
+        await vi.advanceTimersByTimeAsync(2000);
+        expect(reload).toHaveBeenCalledWith(expect.objectContaining({ only: ['schedule'] }));
+        state.schedule = { ...state.schedule, prepared: true };
+        await nextTick();
+        reload.mock.calls[0][0].onFinish();
+        expect(vi.getTimerCount()).toBe(0);
+        state.schedule = { ...state.schedule, prepared: false };
+        await nextTick();
+        app.unmount();
+        app = null;
+        reload.mock.calls[0][0].onFinish();
+        expect(vi.getTimerCount()).toBe(0);
     });
 
 });

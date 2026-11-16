@@ -62,6 +62,13 @@ class AdminImports
             ['key' => 'nhl-injuries', 'label' => 'Injuries', 'group' => 'player', 'command' => 'nhl:import-injuries', 'options' => []],
             ['key' => 'nhl-anticipated-lineups', 'label' => 'Anticipated Lineups', 'group' => 'player', 'command' => 'nhl:import-anticipated-lineups', 'options' => []],
             [
+                'key' => 'nhl-schedule-snapshots',
+                'label' => 'Prepare NHL Schedule',
+                'group' => 'game',
+                'command' => 'nhl:prepare-schedule',
+                'options' => [],
+            ],
+            [
                 'key' => 'nhl-game-boxscores',
                 'label' => 'Today Game Boxscores',
                 'group' => 'game',
@@ -180,6 +187,10 @@ class AdminImports
 
     private function queueForSource(string $sourceKey): string
     {
+        if ($sourceKey === 'nhl-schedule-snapshots') {
+            return 'games-processing';
+        }
+
         if ($sourceKey === 'nhl-anticipated-lineups') {
             return 'lineups';
         }
