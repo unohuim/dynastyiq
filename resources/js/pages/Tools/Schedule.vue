@@ -52,15 +52,17 @@ function navigate(url) {
                 </button>
             </nav>
         </header>
-        <div role="tablist" aria-label="Schedule view" class="mt-4 flex gap-1 border-b border-gray-200">
-            <button v-for="(tab, index) in tabs" :id="`schedule-tab-${tab.key}`" :key="tab.key" type="button" role="tab" :aria-selected="activeTab === tab.key" :aria-controls="`schedule-panel-${tab.key}`" :tabindex="activeTab === tab.key ? 0 : -1" class="min-h-11 border-b-2 px-4 text-sm font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 motion-reduce:transition-none" :class="activeTab === tab.key ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-gray-500 hover:text-gray-800'" @click="activeTab = tab.key" @keydown="changeTab($event, index)">{{ tab.label }}</button>
-        </div>
-        <div class="mt-3 h-5 text-xs" role="status" aria-live="polite">
-            <span v-if="error" class="text-red-700">{{ error }}</span>
-            <span v-else-if="loading" class="text-gray-500">Loading schedule…</span>
+        <div class="relative mt-4">
+            <div role="tablist" aria-label="Schedule view" class="flex gap-1 border-b border-gray-200">
+                <button v-for="(tab, index) in tabs" :id="`schedule-tab-${tab.key}`" :key="tab.key" type="button" role="tab" :aria-selected="activeTab === tab.key" :aria-controls="`schedule-panel-${tab.key}`" :tabindex="activeTab === tab.key ? 0 : -1" class="min-h-11 border-b-2 px-4 text-sm font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 motion-reduce:transition-none" :class="activeTab === tab.key ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-gray-500 hover:text-gray-800'" @click="activeTab = tab.key" @keydown="changeTab($event, index)">{{ tab.label }}</button>
+            </div>
+            <div class="absolute bottom-3 right-0 max-w-[40%] truncate text-right text-xs" :title="error || undefined" role="status" aria-live="polite">
+                <span v-if="error" class="text-red-700">{{ error }}</span>
+                <span v-else-if="loading" class="text-gray-500">Loading schedule…</span>
+            </div>
         </div>
         <section v-if="activeTab === 'weekly'" id="schedule-panel-weekly" role="tabpanel" aria-labelledby="schedule-tab-weekly">
-            <div class="mt-2 max-h-[60dvh] max-w-full overflow-x-hidden overflow-y-auto lg:overflow-x-auto rounded-lg border border-gray-200 bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500" role="region" aria-label="Weekly NHL team schedule" tabindex="0">
+            <div class="max-h-[60dvh] max-w-full overflow-x-hidden overflow-y-auto lg:overflow-x-auto rounded-lg border border-gray-200 bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500" role="region" aria-label="Weekly NHL team schedule" tabindex="0">
                 <table class="w-full table-fixed border-collapse text-center text-[9px] leading-tight min-[420px]:text-[10px] sm:text-xs lg:min-w-[920px] lg:table-auto lg:text-left lg:text-sm">
                     <caption class="sr-only">{{ schedule.label }}. Teams by Monday through Sunday, followed by total games played or scheduled.</caption>
                     <colgroup>
@@ -103,7 +105,6 @@ function navigate(url) {
             </div>
         </section>
         <section v-else id="schedule-panel-off-nights" role="tabpanel" aria-labelledby="schedule-tab-off-nights">
-            <p class="mb-3 text-sm text-gray-600">Off nights: 50% or fewer league teams playing that day (8 or fewer games in a 32-team league).</p>
             <div class="max-h-[60dvh] max-w-full overflow-x-hidden overflow-y-auto rounded-lg border border-gray-200 bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500" role="region" aria-label="Off-night NHL team schedule" tabindex="0">
                 <table class="w-full border-collapse text-left text-sm">
                     <caption class="sr-only">{{ schedule.off_nights.label }}. Each team's remaining off-night count.</caption>
@@ -121,6 +122,7 @@ function navigate(url) {
                     </tbody>
                 </table>
             </div>
+            <p class="mt-2 text-xs text-gray-600">Off nights: 50% or fewer league teams playing that day (8 or fewer games in a 32-team league).</p>
             <p v-if="!schedule.off_nights.game_count" class="mt-4 text-sm text-gray-500">No remaining games available for this season.</p>
         </section>
         <p v-if="activeTab === 'weekly' && (!schedule.teams.length || !schedule.game_count)" class="mt-4 text-sm text-gray-500">No games available for this week.</p>

@@ -56,7 +56,7 @@ COVERED means authored assertions, not executed tests.
 | Totals, terminal/live/upcoming states, postponed/cancelled and multiple games/day | COVERED | counts completed live and upcoming games once per participating team; keeps postponed and cancelled games visible without counting them toward GP; includes Sunday and excludes both adjacent weeks from totals; retains multiple games in one day in chronological order |
 | Game links, missing data, input validation and no heavy work | COVERED | links each scheduled game to its existing preview or recap route; does not require imported boxscores or completed pregame context; never imports source data or dispatches predictions while reading a schedule; returns an honest empty schedule when the selected season has no stored games; rejects malformed impossible and non-scalar week dates |
 | Desktop and guest/member mobile Tools navigation | COVERED | opens the desktop Tools menu with its backend-owned Schedule link; lets guests open Tools from the mobile bar without member navigation; includes Tools in the member navigation drawer without removing existing entries; keeps Schedule reachable from legacy desktop and mobile Tools navigation |
-| Table structure, scrolling, navigation, retained rows and feedback | COVERED | renders only Team Monday through Sunday and Total GP columns; fits all seven days with fixed mobile columns and retains desktop sizing; requests the selected week while retaining the current table during loading; updates the displayed days and rows when navigation supplies new props; reports explicit navigation errors in the reserved feedback slot and permits retry |
+| Table structure, scrolling, navigation, retained rows and feedback | COVERED | renders only Team Monday through Sunday and Total GP columns; fits all seven days with fixed mobile columns and retains desktop sizing; requests the selected week while retaining the current table during loading; updates the displayed days and rows when navigation supplies new props; reports explicit navigation errors beside the tabs without reserving table space and permits retry |
 
 ## Requirements checklist
 
@@ -354,3 +354,32 @@ Frontend file: 151 test declarations. No migration required.
 Static diff review and `git diff --check` only. Tests, builds, CI and browser
 checks were not run; actual sticky positioning should be visually checked in a
 browser at 350px, 420px and desktop widths. No production operations performed.
+
+
+## Remove space below tabs
+
+Files changed: `resources/js/pages/Tools/Schedule.vue`,
+`resources/js/pages/games.test.js`, `docs/architecture/ui/InertiaAppShell.yaml`,
+and this document.
+
+1. SATISFIED: remove the empty 20px status row, its 12px margin and the Weekly
+   table's 8px top margin so column headers immediately follow the tabs.
+2. SATISFIED: position explicit navigation feedback beside the tabs without layout
+   space; truncate long visible errors with the full text accessible and titled.
+3. SATISFIED: move the Off Nights definition after the table so it does not
+   separate the tab headers from the column headers.
+
+Coverage matrix (authored, not executed):
+
+| Contract | Status | Existing updated test |
+| --- | --- | --- |
+| No Weekly table top margin | COVERED | fits all seven days with fixed mobile columns and retains desktop sizing |
+| Feedback out of flow, same node retained on error and retry | COVERED | reports explicit navigation errors beside the tabs without reserving table space and permits retry |
+| Off Nights table is first in panel, definition retained | COVERED | defaults to Weekly and switches to Off Nights without a request |
+
+Frontend checklist: spacing classes/DOM order and retained navigation/error state
+asserted; no new requests, timers, randomness or global state. Existing endpoint ×
+verb auth/scope matrix remains unchanged; no backend or permission changes.
+Frontend file retains 151 test declarations. No migration required.
+Static diff review and whitespace checks only; tests, builds, browser checks and
+production commands were not run.

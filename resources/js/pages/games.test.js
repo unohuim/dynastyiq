@@ -1128,6 +1128,7 @@ describe('weekly Schedule page', () => {
         const region = document.querySelector('[aria-label="Weekly NHL team schedule"]');
         const table = region.querySelector('table');
         expect(region.classList.contains('overflow-x-auto')).toBe(false);
+        expect(region.classList.contains('mt-2')).toBe(false);
         expect(table.classList.contains('table-fixed')).toBe(true);
         expect(table.classList.contains('min-w-[920px]')).toBe(false);
         expect(table.classList.contains('text-[9px]')).toBe(true);
@@ -1186,9 +1187,11 @@ describe('weekly Schedule page', () => {
         expect(document.querySelector('tbody tr').lastElementChild.textContent).toBe('0');
     });
 
-    it('reports explicit navigation errors in the reserved feedback slot and permits retry', async () => {
+    it('reports explicit navigation errors beside the tabs without reserving table space and permits retry', async () => {
         mount();
         const feedback = document.querySelector('[role="status"]');
+        expect(feedback.classList.contains('absolute')).toBe(true);
+        expect(feedback.classList.contains('h-5')).toBe(false);
         document.querySelector('[aria-label="Next week"]').click();
         visit.mock.calls[0][2].onStart();
         visit.mock.calls[0][2].onError();
@@ -1209,6 +1212,7 @@ describe('weekly Schedule page', () => {
         expect(tabs[1].getAttribute('aria-selected')).toBe('true');
         expect(document.querySelector('[role=tabpanel]').id).toBe(tabs[1].getAttribute('aria-controls'));
         expect(document.querySelector('main').textContent).toContain('50% or fewer');
+        expect(document.querySelector('[role=tabpanel]').firstElementChild.getAttribute('role')).toBe('region');
         expect(document.querySelectorAll('tbody tr')).toHaveLength(2);
         expect([...document.querySelectorAll('thead th')].map(cell => cell.textContent)).toEqual(['Team', 'Total']);
         expect(document.querySelectorAll('tbody a, tbody img')).toHaveLength(0);
