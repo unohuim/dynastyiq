@@ -1116,12 +1116,20 @@ describe('weekly Schedule page', () => {
         expect(document.querySelector('main').textContent).toContain('All times Eastern');
     });
 
-    it('keeps horizontal scrolling inside the table with team and GP columns pinned', () => {
+    it('fits all seven days with fixed mobile columns and retains desktop sizing', () => {
         mount();
-        expect(document.querySelector('[aria-label="Weekly NHL team schedule"]').classList.contains('overflow-x-auto')).toBe(true);
-        expect(document.querySelector('tbody th').classList.contains('sticky')).toBe(true);
-        expect(document.querySelector('tbody th').classList.contains('left-0')).toBe(true);
-        expect(document.querySelector('tbody tr').lastElementChild.classList.contains('right-0')).toBe(true);
+        const region = document.querySelector('[aria-label="Weekly NHL team schedule"]');
+        const table = region.querySelector('table');
+        expect(region.classList.contains('overflow-x-auto')).toBe(false);
+        expect(table.classList.contains('table-fixed')).toBe(true);
+        expect(table.classList.contains('min-w-[920px]')).toBe(false);
+        expect(table.classList.contains('text-[9px]')).toBe(true);
+        expect(table.classList.contains('min-[420px]:text-[10px]')).toBe(true);
+        expect(table.classList.contains('lg:table-auto')).toBe(true);
+        expect(table.querySelectorAll('colgroup col')).toHaveLength(9);
+        expect(table.querySelector('colgroup col').classList.contains('w-[10%]')).toBe(true);
+        expect(document.querySelector('tbody th').classList.contains('lg:sticky')).toBe(true);
+        expect(document.querySelector('tbody tr').lastElementChild.classList.contains('lg:right-0')).toBe(true);
     });
 
     it('requests the selected week while retaining the current table during loading', async () => {

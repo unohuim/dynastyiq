@@ -29,8 +29,8 @@ Reference names/logos supplement stored identities. All game types supported by
 the import pipeline are included; exhibition/event types outside that set are not.
 
 Previous/next/This Week controls preserve the mounted table during explicit
-navigation. Local loading/error feedback has a reserved slot. The table scrolls
-within its container on mobile with pinned identity and GP columns. Desktop uses
+navigation. Local loading/error feedback has a reserved slot. The mobile table fits all seven days in the viewport; desktop retains pinned
+identity and GP columns. Desktop uses
 the existing dropdown pattern; mobile Tools uses an accessible drawer available
 to guests, with the same links also in member navigation. Legacy navigation keeps
 its existing runtime and shared slide-over component. No new global state or
@@ -50,7 +50,7 @@ COVERED means authored assertions, not executed tests.
 | Totals, terminal/live/upcoming states, postponed/cancelled and multiple games/day | COVERED | counts completed live and upcoming games once per participating team; keeps postponed and cancelled games visible without counting them toward GP; includes Sunday and excludes both adjacent weeks from totals; retains multiple games in one day in chronological order |
 | Game links, missing data, input validation and no heavy work | COVERED | links each scheduled game to its existing preview or recap route; does not require imported boxscores or completed pregame context; never imports source data or dispatches predictions while reading a schedule; returns an honest empty schedule when the selected season has no stored games; rejects malformed impossible and non-scalar week dates |
 | Desktop and guest/member mobile Tools navigation | COVERED | opens the desktop Tools menu with its backend-owned Schedule link; lets guests open Tools from the mobile bar without member navigation; includes Tools in the member navigation drawer without removing existing entries; keeps Schedule reachable from legacy desktop and mobile Tools navigation |
-| Table structure, scrolling, navigation, retained rows and feedback | COVERED | renders only Team Monday through Sunday and Total GP columns; keeps horizontal scrolling inside the table with team and GP columns pinned; requests the selected week while retaining the current table during loading; updates the displayed days and rows when navigation supplies new props; reports explicit navigation errors in the reserved feedback slot and permits retry |
+| Table structure, scrolling, navigation, retained rows and feedback | COVERED | renders only Team Monday through Sunday and Total GP columns; fits all seven days with fixed mobile columns and retains desktop sizing; requests the selected week while retaining the current table during loading; updates the displayed days and rows when navigation supplies new props; reports explicit navigation errors in the reserved feedback slot and permits retry |
 
 ## Requirements checklist
 
@@ -59,7 +59,7 @@ COVERED means authored assertions, not executed tests.
 3. SATISFIED: teams are rows, Mon–Sun columns, Total GP last.
 4. SATISFIED: opponent, venue and start time are shown with week navigation.
 5. SATISFIED: stored schedule reads do not run imports, predictions or advanced-stat preparation.
-6. SATISFIED: mobile horizontal scrolling and sticky team identity retain the grid.
+6. SATISFIED: mobile fixed columns retain all seven days without horizontal scrolling.
 7. SATISFIED: regression coverage and canonical/derived documentation added.
 8. SATISFIED: no migration, dependency, production data or worker changes.
 
@@ -80,7 +80,7 @@ The existing fresh-install guard is retained.
 ## Frontend component contract checklist
 
 - State: week visits disable controls, preserve the grid, handle failures and accept new props.
-- DOM: column order, row count, venue/time labels, sticky columns and scroll container asserted.
+- DOM: column order, row count, venue/time labels, responsive column widths and desktop sizing asserted.
 - Payload: navigation uses backend-owned URLs; no browser-derived league membership or dates.
 - Access: keyboard dropdown and guest/member mobile Tools links exercised.
 - Motion: existing dropdown/drawer patterns and reduced-motion classes retained.
@@ -161,3 +161,29 @@ props are asserted. No external requests, uncontrolled clocks or global state.
 Existing tab color transitions respect reduced motion. No tests, CI, build,
 browser checks, migrations or operational commands were run. Only static diff
 review and `git diff --check` are performed before the requested push.
+
+
+## Mobile width adjustment
+
+Files changed: `resources/js/pages/Tools/Schedule.vue`,
+`resources/js/pages/games.test.js`, `docs/architecture/ui/InertiaAppShell.yaml`,
+and this document. This is a layout-only change; no backend fields, authorization,
+requests, calculations, tabs, or navigation behavior change. No migration required.
+
+1. SATISFIED: Team, all seven weekdays and Total GP use a fixed-width mobile table,
+   with 10% reserved for Team and 7% for GP. The days share the remaining 83%.
+2. SATISFIED: remove the mobile 920px minimum and horizontal-scroll requirement.
+3. SATISFIED: compact mobile fonts, cell padding and stacked team logo/abbreviation;
+   increase text and logo sizing at 420px, with desktop sizing restored at lg.
+4. SATISFIED: remove Off Nights' 400px minimum so both tabs fit narrow containers.
+
+Coverage: `fits all seven days with fixed mobile columns and retains desktop
+sizing` replaces the superseded mobile-scroll expectation. Existing tests retain
+nine-column structure, game links/content, default tab, keyboard navigation,
+week-change state and feedback coverage. This is authored class/DOM-contract
+coverage, not a browser measurement of widths; jsdom does not perform layout.
+The same GET guest/member/validation matrix remains unchanged and mapped above.
+The frontend file retains 146 test declarations. No new test files, global state,
+external requests or uncontrolled timing. Static diff review and whitespace checks
+only; tests, builds and browser checks were not run. The human should visually
+check 350px, 420px and desktop widths, including postponed/cancelled games.

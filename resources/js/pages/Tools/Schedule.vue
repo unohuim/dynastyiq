@@ -35,7 +35,7 @@ function navigate(url) {
 </script>
 
 <template>
-    <main class="mx-auto w-full max-w-7xl px-3 py-5 sm:px-6 sm:py-7" :aria-busy="loading">
+    <main class="mx-auto w-full max-w-7xl px-2 py-5 min-[420px]:px-3 sm:px-6 sm:py-7" :aria-busy="loading">
         <header class="flex flex-wrap items-center justify-between gap-4">
             <div>
                 <p class="text-xs font-medium uppercase tracking-wide text-gray-500">Tools</p>
@@ -60,39 +60,44 @@ function navigate(url) {
             <span v-else-if="loading" class="text-gray-500">Loading schedule…</span>
         </div>
         <section v-if="activeTab === 'weekly'" id="schedule-panel-weekly" role="tabpanel" aria-labelledby="schedule-tab-weekly">
-            <div class="mt-2 max-w-full overflow-x-auto rounded-lg border border-gray-200 bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500" role="region" aria-label="Weekly NHL team schedule" tabindex="0">
-                <table class="w-full min-w-[920px] border-collapse text-left text-sm">
+            <div class="mt-2 max-w-full lg:overflow-x-auto rounded-lg border border-gray-200 bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500" role="region" aria-label="Weekly NHL team schedule" tabindex="0">
+                <table class="w-full table-fixed border-collapse text-center text-[9px] leading-tight min-[420px]:text-[10px] sm:text-xs lg:min-w-[920px] lg:table-auto lg:text-left lg:text-sm">
                     <caption class="sr-only">{{ schedule.label }}. Teams by Monday through Sunday, followed by total games played or scheduled.</caption>
+                    <colgroup>
+                        <col class="w-[10%] lg:w-44" />
+                        <col v-for="day in schedule.days" :key="day.date" />
+                        <col class="w-[7%] lg:w-20" />
+                    </colgroup>
                     <thead>
                         <tr class="border-b border-gray-200 bg-gray-50 text-gray-600">
-                            <th scope="col" class="sticky left-0 z-20 w-36 bg-gray-50 px-3 py-3 text-xs font-semibold sm:w-44">Team</th>
-                            <th v-for="day in schedule.days" :key="day.date" scope="col" class="min-w-24 px-3 py-3 text-xs font-semibold" :class="day.is_today ? 'bg-indigo-50 text-indigo-700' : ''">
-                                <span class="block">{{ day.label }}</span><span class="mt-0.5 block text-[11px] font-normal">{{ day.display_date }}</span>
+                            <th scope="col" class="bg-gray-50 px-0.5 py-2 text-[8px] font-semibold min-[420px]:text-[9px] sm:text-[11px] lg:sticky lg:left-0 lg:z-20 lg:px-3 lg:py-3 lg:text-xs">Team</th>
+                            <th v-for="day in schedule.days" :key="day.date" scope="col" class="px-0.5 py-2 text-[8px] font-semibold min-[420px]:text-[9px] sm:text-[11px] lg:min-w-24 lg:px-3 lg:py-3 lg:text-xs" :class="day.is_today ? 'bg-indigo-50 text-indigo-700' : ''">
+                                <span class="block">{{ day.label }}</span><span class="mt-0.5 block text-[7px] font-normal min-[420px]:text-[8px] sm:text-[10px] lg:text-[11px]">{{ day.display_date }}</span>
                             </th>
-                            <th scope="col" class="sticky right-0 z-20 w-20 bg-gray-50 px-3 py-3 text-center text-xs font-semibold">Total GP</th>
+                            <th scope="col" class="bg-gray-50 px-0.5 py-2 text-center text-[8px] font-semibold min-[420px]:text-[9px] sm:text-[11px] lg:sticky lg:right-0 lg:z-20 lg:px-3 lg:py-3 lg:text-xs">Total GP</th>
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-gray-100">
                         <tr v-for="team in schedule.teams" :key="team.id" class="group">
-                            <th scope="row" class="sticky left-0 z-10 bg-white px-3 py-2 text-gray-800">
-                                <div class="flex min-h-10 items-center gap-2">
-                                    <img v-if="team.logo" :src="team.logo" alt="" loading="lazy" class="h-8 w-8 shrink-0 object-contain" />
+                            <th scope="row" class="bg-white px-0.5 py-2 text-gray-800 lg:sticky lg:left-0 lg:z-10 lg:px-3">
+                                <div class="flex min-h-10 flex-col items-center justify-center gap-0.5 lg:flex-row lg:justify-start lg:gap-2">
+                                    <img v-if="team.logo" :src="team.logo" alt="" loading="lazy" class="h-[18px] w-[18px] shrink-0 object-contain min-[420px]:h-5 min-[420px]:w-5 lg:h-8 lg:w-8" />
                                     <span class="truncate font-semibold" :title="team.name">{{ team.abbrev || team.name }}</span>
                                     <span class="sr-only">{{ team.name }}</span>
                                 </div>
                             </th>
-                            <td v-for="day in schedule.days" :key="day.date" class="px-3 py-2 align-middle" :class="day.is_today ? 'bg-indigo-50/40' : ''">
+                            <td v-for="day in schedule.days" :key="day.date" class="px-0.5 py-2 align-middle lg:px-3" :class="day.is_today ? 'bg-indigo-50/40' : ''">
                                 <ul v-if="team.days[day.date]?.length" class="space-y-2">
                                     <li v-for="game in team.days[day.date]" :key="game.id">
-                                        <a :href="game.href" class="inline-flex min-h-10 flex-col justify-center rounded text-gray-800 transition-colors duration-150 hover:text-indigo-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 motion-reduce:transition-none" :aria-label="`${team.abbrev} ${game.venue === 'home' ? 'home versus' : 'away at'} ${game.opponent}, ${day.label} ${day.display_date}, ${game.status || game.time} Eastern`">
-                                            <span class="whitespace-nowrap font-medium"><span class="mr-1 text-xs font-normal text-gray-400">{{ game.venue === 'home' ? 'vs' : '@' }}</span>{{ game.opponent }}</span>
-                                            <span class="mt-0.5 text-[11px]" :class="game.status ? 'text-amber-700' : 'text-gray-500'">{{ game.status || game.time }}</span>
+                                        <a :href="game.href" class="inline-flex min-h-10 w-full min-w-0 flex-col lg:w-auto justify-center rounded text-gray-800 transition-colors duration-150 hover:text-indigo-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 motion-reduce:transition-none" :aria-label="`${team.abbrev} ${game.venue === 'home' ? 'home versus' : 'away at'} ${game.opponent}, ${day.label} ${day.display_date}, ${game.status || game.time} Eastern`">
+                                            <span class="whitespace-nowrap font-medium"><span class="mr-0.5 text-[8px] font-normal min-[420px]:text-[9px] lg:mr-1 lg:text-xs text-gray-400">{{ game.venue === 'home' ? 'vs' : '@' }}</span>{{ game.opponent }}</span>
+                                            <span class="mt-0.5 break-words text-[7px] min-[420px]:text-[8px] sm:text-[10px] lg:text-[11px]" :class="game.status ? 'text-amber-700' : 'text-gray-500'">{{ game.status || game.time }}</span>
                                         </a>
                                     </li>
                                 </ul>
                                 <template v-else><span aria-hidden="true" class="text-gray-300">—</span><span class="sr-only">No game</span></template>
                             </td>
-                            <td class="sticky right-0 z-10 bg-white px-3 py-2 text-center font-semibold tabular-nums text-gray-900">{{ team.total_gp }}</td>
+                            <td class="bg-white px-0.5 py-2 lg:sticky lg:right-0 lg:z-10 lg:px-3 text-center font-semibold tabular-nums text-gray-900">{{ team.total_gp }}</td>
                         </tr>
                     </tbody>
                 </table>
@@ -100,8 +105,8 @@ function navigate(url) {
         </section>
         <section v-else id="schedule-panel-off-nights" role="tabpanel" aria-labelledby="schedule-tab-off-nights">
             <p class="mb-3 text-sm text-gray-600">Off nights: 50% or fewer league teams playing that day (8 or fewer games in a 32-team league).</p>
-            <div class="max-w-full overflow-x-auto rounded-lg border border-gray-200 bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500" role="region" aria-label="Off-night NHL team schedule" tabindex="0">
-                <table class="w-full min-w-[400px] border-collapse text-left text-sm">
+            <div class="max-w-full rounded-lg border border-gray-200 bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500" role="region" aria-label="Off-night NHL team schedule" tabindex="0">
+                <table class="w-full border-collapse text-left text-sm">
                     <caption class="sr-only">{{ schedule.label }}. Each team's off-night games and count.</caption>
                     <thead><tr class="border-b border-gray-200 bg-gray-50 text-xs text-gray-600"><th scope="col" class="px-3 py-3">Team</th><th scope="col" class="px-3 py-3">Off-night games</th><th scope="col" class="px-3 py-3 text-center">Total</th></tr></thead>
                     <tbody class="divide-y divide-gray-100">
