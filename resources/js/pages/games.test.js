@@ -1331,6 +1331,49 @@ describe('weekly Schedule page', () => {
         expect(visit).not.toHaveBeenCalled();
     });
 
+    it('keeps both table headers above vertically scrolling rows in bounded regions', async () => {
+        mount();
+        const assertPinnedHeader = () => {
+            const region = document.querySelector('[role=tabpanel] [role=region]');
+            expect(region.classList.contains('max-h-[60dvh]')).toBe(true);
+            expect(region.classList.contains('overflow-y-auto')).toBe(true);
+            expect(region.classList.contains('overflow-x-hidden')).toBe(true);
+            for (const header of region.querySelectorAll('thead th')) {
+                expect(header.classList.contains('sticky')).toBe(true);
+                expect(header.classList.contains('top-0')).toBe(true);
+                expect(header.classList.contains('z-20') || header.classList.contains('z-30')).toBe(true);
+            }
+        };
+        assertPinnedHeader();
+        document.querySelectorAll('[role=tab]')[1].click();
+        await nextTick();
+        assertPinnedHeader();
+        expect(document.querySelector('th[aria-sort]').getAttribute('aria-sort')).toBe('descending');
+    });
+
+    it('shades non-off-night columns regardless of today and reacts to new day classifications', async () => {
+        state.schedule.days[0].is_today = true;
+        state.schedule.days[1].is_today = false;
+        mount();
+        const headers = [...document.querySelectorAll('thead th')];
+        const cells = [...document.querySelector('tbody tr').querySelectorAll('td')];
+        expect(headers[1].classList.contains('bg-gray-50')).toBe(true);
+        expect(headers[2].classList.contains('bg-gray-200')).toBe(true);
+        expect(cells[0].classList.contains('bg-white')).toBe(true);
+        expect(cells[1].classList.contains('bg-gray-100')).toBe(true);
+        expect(document.querySelector('table').querySelector('.bg-indigo-50, .text-indigo-700')).toBeNull();
+        state.schedule.days[0].is_today = false;
+        state.schedule.days[1].is_today = true;
+        await nextTick();
+        expect(headers[1].classList.contains('bg-gray-50')).toBe(true);
+        expect(headers[2].classList.contains('bg-gray-200')).toBe(true);
+        state.schedule.days[1].is_off_night = true;
+        await nextTick();
+        expect(headers[2].classList.contains('bg-gray-50')).toBe(true);
+        expect(headers[2].classList.contains('bg-gray-200')).toBe(false);
+        expect(cells[1].classList.contains('bg-white')).toBe(true);
+    });
+
 });
 
 

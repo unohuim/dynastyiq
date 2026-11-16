@@ -98,7 +98,7 @@ The existing fresh-install guard is retained.
 | File | `it(...)` declarations |
 | --- | ---: |
 | tests/Feature/NhlScheduleTest.php | 43 |
-| resources/js/pages/games.test.js | 149 |
+| resources/js/pages/games.test.js | 151 |
 
 ## Verification
 
@@ -320,3 +320,37 @@ change introduces no endpoints, writes, payload fields or permission changes.
 Frontend file: 149 test declarations. No migration required.
 Static diff review and whitespace checks only; tests, CI, builds and browser checks
 were not run. No production operations performed.
+
+
+## Fixed headers and non-off-night column backgrounds
+
+Files changed: `resources/js/pages/Tools/Schedule.vue`,
+`resources/js/pages/games.test.js`, `docs/architecture/ui/InertiaAppShell.yaml`,
+and this document.
+
+1. SATISFIED: both tables scroll rows vertically in a maximum 60dvh region.
+2. SATISFIED: column headers stick at top zero with opaque backgrounds; weekly
+   Team/GP header intersections use higher stacking than pinned body columns.
+3. SATISFIED: non-off-night columns use gray-200 headers and gray-100 body cells;
+   off-night columns use gray-50 headers and white body cells.
+4. SATISFIED: remove all today-specific column backgrounds and text color.
+5. SATISFIED: retain narrow mobile columns without horizontal scrolling, compact
+   rows, keyboard-focusable regions, native table semantics and Total sorting.
+
+Coverage matrix (authored, not executed):
+
+| Contract | Status | Test name |
+| --- | --- | --- |
+| Both bounded vertical scroll regions and pinned headers | COVERED | keeps both table headers above vertically scrolling rows in bounded regions |
+| Non-off-night shading, no today highlight and changed props | COVERED | shades non-off-night columns regardless of today and reacts to new day classifications |
+| Mobile width, sorting and tabs | COVERED | fits all seven days with fixed mobile columns and retains desktop sizing; toggles off-night sort direction retains it between tabs and reorders changed counts |
+
+Frontend checklist: scrolling/sticky/stacking class contracts asserted for both
+tabs; header/body shading and reactive classification updates asserted; existing
+local navigation and sorting state retained. No timers, randomness, global state
+or external requests. The earlier endpoint × verb authorization/scope matrix is
+unchanged; no endpoints, writes, or backend calculation changes.
+Frontend file: 151 test declarations. No migration required.
+Static diff review and `git diff --check` only. Tests, builds, CI and browser
+checks were not run; actual sticky positioning should be visually checked in a
+browser at 350px, 420px and desktop widths. No production operations performed.

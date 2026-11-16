@@ -60,7 +60,7 @@ function navigate(url) {
             <span v-else-if="loading" class="text-gray-500">Loading schedule…</span>
         </div>
         <section v-if="activeTab === 'weekly'" id="schedule-panel-weekly" role="tabpanel" aria-labelledby="schedule-tab-weekly">
-            <div class="mt-2 max-w-full lg:overflow-x-auto rounded-lg border border-gray-200 bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500" role="region" aria-label="Weekly NHL team schedule" tabindex="0">
+            <div class="mt-2 max-h-[60dvh] max-w-full overflow-x-hidden overflow-y-auto lg:overflow-x-auto rounded-lg border border-gray-200 bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500" role="region" aria-label="Weekly NHL team schedule" tabindex="0">
                 <table class="w-full table-fixed border-collapse text-center text-[9px] leading-tight min-[420px]:text-[10px] sm:text-xs lg:min-w-[920px] lg:table-auto lg:text-left lg:text-sm">
                     <caption class="sr-only">{{ schedule.label }}. Teams by Monday through Sunday, followed by total games played or scheduled.</caption>
                     <colgroup>
@@ -70,11 +70,11 @@ function navigate(url) {
                     </colgroup>
                     <thead>
                         <tr class="border-b border-gray-200 bg-gray-50 text-gray-600">
-                            <th scope="col" class="bg-gray-50 px-0.5 py-2 text-[8px] font-semibold min-[420px]:text-[9px] sm:text-[11px] lg:sticky lg:left-0 lg:z-20 lg:px-3 lg:py-3 lg:text-xs">Team</th>
-                            <th v-for="day in schedule.days" :key="day.date" scope="col" class="px-0.5 py-2 text-[8px] font-semibold min-[420px]:text-[9px] sm:text-[11px] lg:min-w-24 lg:px-3 lg:py-3 lg:text-xs" :class="day.is_today ? 'bg-indigo-50 text-indigo-700' : ''">
+                            <th scope="col" class="sticky top-0 z-30 bg-gray-50 px-0.5 py-2 text-[8px] font-semibold min-[420px]:text-[9px] sm:text-[11px] lg:left-0 lg:px-3 lg:py-3 lg:text-xs">Team</th>
+                            <th v-for="day in schedule.days" :key="day.date" scope="col" class="sticky top-0 z-20 px-0.5 py-2 text-[8px] font-semibold min-[420px]:text-[9px] sm:text-[11px] lg:min-w-24 lg:px-3 lg:py-3 lg:text-xs" :class="day.is_off_night ? 'bg-gray-50' : 'bg-gray-200'">
                                 <span class="block">{{ day.label }}</span><span class="mt-0.5 block text-[7px] font-normal min-[420px]:text-[8px] sm:text-[10px] lg:text-[11px]">{{ day.display_date }}</span>
                             </th>
-                            <th scope="col" class="bg-gray-50 px-0.5 py-2 text-center text-[8px] font-semibold min-[420px]:text-[9px] sm:text-[11px] lg:sticky lg:right-0 lg:z-20 lg:px-3 lg:py-3 lg:text-xs">Total GP</th>
+                            <th scope="col" class="sticky top-0 z-30 bg-gray-50 px-0.5 py-2 text-center text-[8px] font-semibold min-[420px]:text-[9px] sm:text-[11px] lg:right-0 lg:px-3 lg:py-3 lg:text-xs">Total GP</th>
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-gray-100">
@@ -85,7 +85,7 @@ function navigate(url) {
                                     <span class="sr-only">{{ team.name }}</span>
                                 </div>
                             </th>
-                            <td v-for="day in schedule.days" :key="day.date" class="px-0.5 py-1 align-middle lg:px-3" :class="day.is_today ? 'bg-indigo-50/40' : ''">
+                            <td v-for="day in schedule.days" :key="day.date" class="px-0.5 py-1 align-middle lg:px-3" :class="day.is_off_night ? 'bg-white' : 'bg-gray-100'">
                                 <ul v-if="team.days[day.date]?.length" class="space-y-1">
                                     <li v-for="game in team.days[day.date]" :key="game.id">
                                         <a :href="game.href" class="inline-flex min-h-6 w-full min-w-0 flex-col lg:w-auto justify-center rounded text-gray-800 transition-colors duration-150 hover:text-indigo-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 motion-reduce:transition-none" :aria-label="`${team.abbrev} ${game.venue === 'home' ? 'home versus' : 'away at'} ${game.opponent}, ${day.label} ${day.display_date}, ${game.status || game.time} Eastern`">
@@ -104,13 +104,13 @@ function navigate(url) {
         </section>
         <section v-else id="schedule-panel-off-nights" role="tabpanel" aria-labelledby="schedule-tab-off-nights">
             <p class="mb-3 text-sm text-gray-600">Off nights: 50% or fewer league teams playing that day (8 or fewer games in a 32-team league).</p>
-            <div class="max-w-full rounded-lg border border-gray-200 bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500" role="region" aria-label="Off-night NHL team schedule" tabindex="0">
+            <div class="max-h-[60dvh] max-w-full overflow-x-hidden overflow-y-auto rounded-lg border border-gray-200 bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500" role="region" aria-label="Off-night NHL team schedule" tabindex="0">
                 <table class="w-full border-collapse text-left text-sm">
                     <caption class="sr-only">{{ schedule.off_nights.label }}. Each team's remaining off-night count.</caption>
                     <thead>
                         <tr class="border-b border-gray-200 bg-gray-50 text-xs text-gray-600">
-                            <th scope="col" class="px-3 py-2">Team</th>
-                            <th scope="col" class="px-3 py-1 text-right" :aria-sort="totalsDescending ? 'descending' : 'ascending'"><button type="button" class="inline-flex min-h-6 items-center gap-1 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500" :aria-label="totalsDescending ? 'Sort total ascending' : 'Sort total descending'" @click="totalsDescending = !totalsDescending">Total<svg aria-hidden="true" class="h-3 w-3 transition-transform duration-150 motion-reduce:transition-none" :class="totalsDescending ? '' : 'rotate-180'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 5v14m-5-5 5 5 5-5" /></svg></button></th>
+                            <th scope="col" class="sticky top-0 z-20 bg-gray-50 px-3 py-2">Team</th>
+                            <th scope="col" class="sticky top-0 z-20 bg-gray-50 px-3 py-1 text-right" :aria-sort="totalsDescending ? 'descending' : 'ascending'"><button type="button" class="inline-flex min-h-6 items-center gap-1 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500" :aria-label="totalsDescending ? 'Sort total ascending' : 'Sort total descending'" @click="totalsDescending = !totalsDescending">Total<svg aria-hidden="true" class="h-3 w-3 transition-transform duration-150 motion-reduce:transition-none" :class="totalsDescending ? '' : 'rotate-180'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 5v14m-5-5 5 5 5-5" /></svg></button></th>
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-gray-100">
