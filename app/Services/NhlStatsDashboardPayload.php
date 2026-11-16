@@ -15,6 +15,10 @@ class NhlStatsDashboardPayload
 {
     public const CACHE_PREFIX = 'nhl:stats:leaders:v12:';
     public const TEAM_CACHE_PREFIX = 'nhl:stats:teams:v2:';
+    private const LEADERS_PREPARATION_PREFIX = 'nhl:stats:leaders-preparation:v1:';
+    private const LEADERS_PAGE_GAMES = 5;
+    private const LEADERS_PAGE_PLAYERS = 25;
+    private const LEADERS_WORK_SECONDS = 21600;
 
     /** Reuse the homepage's factual comparisons, independently of its editorial feed. */
     public function __construct(private readonly NhlDashboardPayload $dashboard)
@@ -50,6 +54,13 @@ class NhlStatsDashboardPayload
             throw new InvalidArgumentException('Only supported public season views can be cached.');
         }
         $facts = $this->seasonFacts($season, $view);
+
+        return $this->publishFacts($season, $view, $facts);
+    }
+
+    /** Atomically replace a complete view; failed calculations never evict the prior snapshot. */
+    private function publishFacts(string $season, string $view, array $facts): array
+    {
         $facts['prepared_at'] = now()->toIso8601String();
         $key = $this->cacheKey($season, $view);
         // Provider failures leave PP unavailable; retry those cold snapshots instead of retaining gaps forever.
@@ -65,6 +76,167 @@ class NhlStatsDashboardPayload
         }
 
         return $facts;
+    }
+
+    /** Advance one saved Leaders page. The owning publisher retains its batch task until complete. */
+    public function advanceLeadersPreparation(string $season, string $refreshId): bool
+    {
+        if (! preg_match('/^\d{8}$/', $season) || ! preg_match('/^[a-zA-Z0-9-]{1,80}$/', $refreshId)) {
+            throw new InvalidArgumentException('Leaders preparation requires a season and refresh identity.');
+        }
+        $base = self::LEADERS_PREPARATION_PREFIX.$season;
+        $key = $base.':'.$refreshId;
+        $lock = Cache::lock($base.':lock', 240);
+        if (! $lock->get()) {
+            return false;
+        }
+        try {
+            $work = Cache::get($key);
+            if (($work['phase'] ?? null) === 'complete') {
+                return true;
+            }
+            $published = Cache::get($base.':published');
+            if (is_array($work) && is_array($published) && $published['refresh_id'] !== $refreshId
+                && \Illuminate\Support\Carbon::parse($published['as_of'])->greaterThanOrEqualTo($work['as_of'])) {
+                // A terminally failed older job may be explicitly retried after a newer refresh.
+                $this->saveLeadersWork($key, ['phase' => 'complete', 'diagnostics' => $work['diagnostics'] ?? []]);
+                return true;
+            }
+            $owned = Cache::lock($base.':ownership', 10)->block(5, function () use ($base, $refreshId): bool {
+                $owner = Cache::get($base.':owner');
+                if ($owner !== null && $owner !== $refreshId) {
+                    return false;
+                }
+                $this->saveLeadersWork($base.':owner', $refreshId);
+                return true;
+            });
+            if (! $owned) {
+                return false;
+            }
+            if (! is_array($work)) {
+                $work = ['phase' => 'on_ice', 'cursor' => 0, 'model' => $this->goalModelId($season),
+                    'as_of' => now()->toIso8601String(), 'on_ice' => [], 'expected' => [], 'against' => [],
+                    'team_totals' => [[], []], 'rookie_ids' => [],
+                    'games' => DB::table('nhl_games')->where('season_id', $season)->where('game_type', 2)
+                        ->whereIn('game_state', ['OFF', 'FINAL'])->orderBy('nhl_game_id')->pluck('nhl_game_id')->all(),
+                    'players' => DB::table('nhl_season_stats as s')->join('players as p', 'p.nhl_id', '=', 's.nhl_player_id')
+                        ->where('s.season_id', $season)->where('s.game_type', 2)->where('s.gp', '>', 0)
+                        ->where(fn ($q) => $q->whereNull('p.is_goalie')->orWhere('p.is_goalie', false))
+                        ->where(fn ($q) => $q->whereNull('p.position')->orWhere('p.position', '<>', 'G'))
+                        ->distinct()->orderBy('s.nhl_player_id')->pluck('s.nhl_player_id')->all()];
+            }
+            $phase = $work['phase'];
+            $started = hrtime(true);
+            $work['diagnostics'] = ['phase' => $phase, 'cursor' => $work['cursor'],
+                'total' => count($phase === 'rookies' ? $work['players'] : $work['games']),
+                'started_at' => now()->toIso8601String(), 'elapsed_seconds' => 0];
+            // Persist admission before source reads so a hard timeout still identifies the stalled page.
+            $this->saveLeadersWork($key, $work);
+            if ($phase === 'publish') {
+                $this->publishFacts($season, 'leaders', $this->seasonFacts($season, 'leaders', $work));
+                $this->saveLeadersWork($base.':published', ['refresh_id' => $refreshId, 'as_of' => $work['as_of']]);
+                $work = ['phase' => 'complete', 'diagnostics' => $work['diagnostics']];
+            } elseif ($phase === 'rookies') {
+                $page = array_slice($work['players'], $work['cursor'], self::LEADERS_PAGE_PLAYERS);
+                $eligible = app(ProspectEligibilityService::class)->eligibleNhlPlayerIds(
+                    $page, \Illuminate\Support\Carbon::parse($work['as_of']), for_drafting: false,
+                );
+                $work['rookie_ids'] = array_values(array_unique([...$work['rookie_ids'], ...$eligible]));
+                $work['cursor'] += count($page);
+                if ($work['cursor'] >= count($work['players'])) {
+                    $work['phase'] = 'publish';
+                    $work['cursor'] = 0;
+                }
+            } else {
+                $page = array_slice($work['games'], $work['cursor'], self::LEADERS_PAGE_GAMES);
+                if ($page !== []) {
+                    if ($phase === 'on_ice') {
+                        $rows = DB::table('nhl_player_game_strength_summaries')->whereIn('nhl_game_id', $page)
+                            ->where('strength', 'EV')->groupBy('nhl_player_id')
+                            ->selectRaw('nhl_player_id, SUM(satf) AS cf, SUM(sata) AS ca')->get()->keyBy('nhl_player_id');
+                        $this->mergeLeadersRows($work['on_ice'], $rows, ['cf', 'ca']);
+                    } elseif ($phase === 'xgf' && $work['model'] !== null) {
+                        $this->mergeLeadersRows($work['expected'], $this->expectedFor($season, $work['model'], $page), ['xgf'], ['xgf']);
+                    } elseif ($phase === 'xga' && $work['model'] !== null) {
+                        $this->mergeLeadersRows($work['against'], $this->expectedAgainst($season, $work['model'], $page),
+                            ['games', 'attempts', 'scored_attempts', 'goals_against', 'xga'], ['xga']);
+                    } elseif ($phase === 'teams') {
+                        foreach ($this->teamAttemptTotals($season, $work['model'], $page) as $side => $rows) {
+                            $this->mergeLeadersRows($work['team_totals'][$side], $rows,
+                                ['games', 'attempts', 'scored', 'xg', 'goals', 'ev_sat', 'goalie_attempts']);
+                        }
+                    }
+                }
+                $work['cursor'] += count($page);
+                if ($work['cursor'] >= count($work['games'])) {
+                    $work['phase'] = ['on_ice' => 'xgf', 'xgf' => 'xga', 'xga' => 'teams', 'teams' => 'rookies'][$phase];
+                    $work['cursor'] = 0;
+                }
+            }
+            $work['diagnostics']['elapsed_seconds'] = round((hrtime(true) - $started) / 1e9, 3);
+            $work['diagnostics']['finished_at'] = now()->toIso8601String();
+            $this->saveLeadersWork($key, $work);
+            if ($work['phase'] === 'complete') {
+                $this->releaseLeadersPreparation($season, $refreshId);
+                return true;
+            }
+            return false;
+        } finally {
+            $lock->release();
+        }
+    }
+
+    /** Return saved page diagnostics without loading or recalculating source facts. */
+    public function leadersPreparationProgress(string $season, string $refreshId): array
+    {
+        $work = Cache::get(self::LEADERS_PREPARATION_PREFIX.$season.':'.$refreshId);
+        return $work['diagnostics'] ?? [];
+    }
+
+    /** Let another publisher proceed after terminal failure, retaining this refresh's retry checkpoint. */
+    public function releaseLeadersPreparation(string $season, string $refreshId): void
+    {
+        $base = self::LEADERS_PREPARATION_PREFIX.$season;
+        // A hard-timeout callback may run before the long page lock expires.
+        $lock = Cache::lock($base.':ownership', 10);
+        $lock->block(5, function () use ($base, $refreshId): void {
+            if (Cache::get($base.':owner') === $refreshId) {
+                Cache::forget($base.':owner');
+            }
+        });
+    }
+
+    /** Require successful checkpoint writes before acknowledging a page. */
+    private function saveLeadersWork(string $key, mixed $value): void
+    {
+        if (! Cache::put($key, $value, self::LEADERS_WORK_SECONDS)) {
+            throw new \RuntimeException('Unable to save Leaders preparation progress.');
+        }
+    }
+
+    /**
+     * Merge disjoint game pages, retaining incomplete coverage rather than inventing zero xG.
+     *
+     * @param array<int,array<string,mixed>> $totals
+     * @param Collection<int,object> $rows
+     * @param array<int,string> $columns
+     * @param array<int,string> $requireComplete
+     */
+    private function mergeLeadersRows(array &$totals, Collection $rows, array $columns, array $requireComplete = []): void
+    {
+        foreach ($rows as $id => $row) {
+            $values = (array) $row;
+            if (! array_key_exists($id, $totals)) {
+                $totals[$id] = $values;
+                continue;
+            }
+            foreach ($columns as $column) {
+                $old = $totals[$id][$column];
+                $new = $values[$column];
+                $totals[$id][$column] = ($old === null || $new === null) && in_array($column, $requireComplete, true)
+                    ? null : ($old === null && $new === null ? null : ($old ?? 0) + ($new ?? 0));
+            }
+        }
     }
 
     /** Version the expanded Teams snapshot without invalidating ready player and Leaders data. */
@@ -115,7 +287,7 @@ class NhlStatsDashboardPayload
     }
 
     /** Normalize actual season totals and rates; missing denominators remain unavailable. */
-    private function seasonFacts(string $season, string $view): array
+    private function seasonFacts(string $season, string $view, ?array $prepared = null): array
     {
         if ($view === 'teams') {
             return $this->teamSeasonFacts($season);
@@ -123,14 +295,18 @@ class NhlStatsDashboardPayload
         $previousSeason = preg_match('/^\d{8}$/', $season) ? (string) ((int) $season - 10001) : '';
         $prior = DB::table('nhl_season_stats')->where('season_id', $previousSeason)->where('game_type', 2)
             ->where('gp', '>', 0)->get()->keyBy('nhl_player_id');
-        $onIce = $view !== 'leaders' ? collect() : DB::table('nhl_player_game_strength_summaries as s')
+        $onIce = $prepared !== null ? collect($prepared['on_ice'])->map(fn (array $row): object => (object) $row)
+            : ($view !== 'leaders' ? collect() : DB::table('nhl_player_game_strength_summaries as s')
             ->join('nhl_games as g', 'g.nhl_game_id', '=', 's.nhl_game_id')
             ->where('g.season_id', $season)->where('g.game_type', 2)->where('s.strength', 'EV')
             ->whereIn('g.game_state', ['OFF', 'FINAL'])->groupBy('s.nhl_player_id')
-            ->selectRaw('s.nhl_player_id, SUM(s.satf) AS cf, SUM(s.sata) AS ca')->get()->keyBy('nhl_player_id');
-        $model = in_array($view, ['leaders', 'goalies'], true) ? $this->goalModelId($season) : null;
-        $expected = $view === 'leaders' ? $this->expectedFor($season, $model) : collect();
-        $against = $model !== null ? $this->expectedAgainst($season, $model) : collect();
+            ->selectRaw('s.nhl_player_id, SUM(s.satf) AS cf, SUM(s.sata) AS ca')->get()->keyBy('nhl_player_id'));
+        $model = $prepared !== null ? $prepared['model']
+            : (in_array($view, ['leaders', 'goalies'], true) ? $this->goalModelId($season) : null);
+        $expected = $prepared !== null ? collect($prepared['expected'])->map(fn (array $row): object => (object) $row)
+            : ($view === 'leaders' ? $this->expectedFor($season, $model) : collect());
+        $against = $prepared !== null ? collect($prepared['against'])->map(fn (array $row): object => (object) $row)
+            : ($model !== null ? $this->expectedAgainst($season, $model) : collect());
         $rows = DB::table('nhl_season_stats as s')->join('players as p', 'p.nhl_id', '=', 's.nhl_player_id')
             ->leftJoin('nhl_teams as t', 't.nhl_id', '=', 's.nhl_team_id')
             ->where('s.season_id', $season)->where('s.game_type', 2)->where('s.gp', '>', 0)
@@ -187,7 +363,7 @@ class NhlStatsDashboardPayload
         });
         $skaters = $players->where('goalie', false)->values();
         $rookieIds = $view === 'leaders'
-            ? app(ProspectEligibilityService::class)->eligibleNhlPlayerIds($skaters->pluck('id')->all(), for_drafting: false)
+            ? ($prepared['rookie_ids'] ?? app(ProspectEligibilityService::class)->eligibleNhlPlayerIds($skaters->pluck('id')->all(), for_drafting: false))
             : [];
         $goalies = $players->where('goalie', true)->values();
         $goalieCategories = collect(['quality_starts' => 'Quality Starts', 'gsax' => 'GSAx', 'ev_sv_pct' => 'EVSV%'])
@@ -242,7 +418,7 @@ class NhlStatsDashboardPayload
             ])->all();
         }
 
-        $teams = in_array($view, ['leaders', 'teams'], true) ? $this->teams($season, $previousSeason, $model, $view === 'leaders') : [];
+        $teams = in_array($view, ['leaders', 'teams'], true) ? $this->teams($season, $previousSeason, $model, $view === 'leaders', $prepared['team_totals'] ?? null) : [];
 
         return ['season' => $season, 'hero' => $hero, 'goalie_hero' => $goalieHero, 'categories' => $categories->all(),
             'skaters' => $view === 'leaders' ? $skaters->all() : [], 'goalies' => $view === 'leaders' ? $goalies->all() : [], 'goalie_categories' => $goalieCategories,
@@ -320,7 +496,7 @@ class NhlStatsDashboardPayload
     }
 
     /** Read scored on-ice xGF from one existing goal model, deduplicating linked attempts. */
-    private function expectedFor(string $season, ?int $model): Collection
+    private function expectedFor(string $season, ?int $model, ?array $gameIds = null): Collection
     {
         if ($model === null) {
             return collect();
@@ -332,10 +508,11 @@ class NhlStatsDashboardPayload
             ->join('nhl_unit_shift_players as u', 'u.unit_shift_id', '=', 's.id')
             ->join('players as player', 'player.id', '=', 'u.player_id')
             ->join('nhl_expected_goals_models as m', fn ($join) => $join->where('m.id', $model))
-            ->leftJoinSub($this->scoredGoalPredictions(), 'p', function ($join) use ($model): void {
+            ->leftJoinSub($this->scoredGoalPredictions($model, $gameIds), 'p', function ($join) use ($model): void {
                 $join->on('p.shot_attempt_fact_id', '=', 'f.id')->where('p.expected_goals_model_id', $model)
                     ->where('p.prediction_target', 'goal')->where('p.is_scored', true);
             })->where('f.season_id', $season)->where('g.game_type', 2)->whereIn('g.game_state', ['OFF', 'FINAL'])
+            ->when($gameIds !== null, fn ($query) => $query->whereIn('f.nhl_game_id', $gameIds))
             ->where('f.is_shot_attempt', true)
             ->where(fn ($query) => $query->whereNull('f.is_empty_net')->orWhere('f.is_empty_net', false))
             ->where(fn ($query) => $query->whereNull('f.period_type')->orWhere('f.period_type', '!=', 'SO'))
@@ -434,11 +611,15 @@ class NhlStatsDashboardPayload
     }
 
     /** Prefer current SAT ratings, retaining legacy backfills only where no newer rating exists. */
-    private function scoredGoalPredictions(): Builder
+    private function scoredGoalPredictions(?int $model = null, ?array $gameIds = null): Builder
     {
         $scores = DB::table('nhl_shot_attempt_model_scores')->where('prediction_target', 'goal')->where('is_scored', true)
+            ->when($model !== null, fn ($query) => $query->where('expected_goals_model_id', $model))
+            ->when($gameIds !== null, fn ($query) => $query->whereIn('nhl_game_id', $gameIds))
             ->select(['expected_goals_model_id', 'shot_attempt_fact_id', 'prediction_target', 'is_scored', 'probability as xg']);
         $legacy = DB::table('nhl_shot_attempt_predictions as legacy')->where('legacy.prediction_target', 'goal')
+            ->when($model !== null, fn ($query) => $query->where('legacy.expected_goals_model_id', $model))
+            ->when($gameIds !== null, fn ($query) => $query->whereIn('legacy.nhl_game_id', $gameIds))
             ->where('legacy.is_scored', true)
             ->whereNotExists(function ($query): void {
                 $query->selectRaw('1')->from('nhl_shot_attempt_model_scores as newer')
@@ -458,16 +639,17 @@ class NhlStatsDashboardPayload
     }
 
     /** Sum scored goalie-facing expectations, withholding partially scored attempt sets. */
-    private function expectedAgainst(string $season, int $model): Collection
+    private function expectedAgainst(string $season, int $model, ?array $gameIds = null): Collection
     {
         return DB::table('nhl_shot_attempts_facts as f')
             ->join('nhl_games as g', 'g.nhl_game_id', '=', 'f.nhl_game_id')
             ->join('nhl_expected_goals_models as m', fn ($join) => $join->where('m.id', $model))
-            ->leftJoinSub($this->scoredGoalPredictions(), 'p', function ($join) use ($model): void {
+            ->leftJoinSub($this->scoredGoalPredictions($model, $gameIds), 'p', function ($join) use ($model): void {
                 $join->on('p.shot_attempt_fact_id', '=', 'f.id')->where('p.expected_goals_model_id', $model)
                     ->where('p.prediction_target', 'goal')->where('p.is_scored', true);
             })
             ->where('f.season_id', $season)->where('g.game_type', 2)->whereIn('g.game_state', ['OFF', 'FINAL'])
+            ->when($gameIds !== null, fn ($query) => $query->whereIn('f.nhl_game_id', $gameIds))
             ->whereNotNull('f.goalie_player_id')->where('f.is_shot_attempt', true)
             ->where(fn ($query) => $query->whereNull('f.is_empty_net')->orWhere('f.is_empty_net', false))
             ->where(fn ($query) => $query->whereNull('f.period_type')->orWhere('f.period_type', '!=', 'SO'))
@@ -578,7 +760,7 @@ class NhlStatsDashboardPayload
     }
 
     /** Aggregate team results once per completed game, keeping GF and GA separate. */
-    private function teams(string $season, string $previousSeason, ?int $model = null, bool $advanced = false): array
+    private function teams(string $season, string $previousSeason, ?int $model = null, bool $advanced = false, ?array $preparedTotals = null): array
     {
         $games = DB::table('nhl_games')->whereIn('season_id', [$season, $previousSeason])->where('game_type', 2)
             ->whereIn('game_state', ['OFF', 'FINAL'])->whereNotNull('home_team_score')->whereNotNull('away_team_score')
@@ -603,7 +785,9 @@ class NhlStatsDashboardPayload
                 SUM(b.points) AS points, SUM(b.assists) AS assists, SUM(b.sog) AS sog,
                 SUM(b.hits) AS hits, SUM(b.power_play_goals) AS ppg')->get()->keyBy('nhl_team_id');
         $ids = DB::table('nhl_teams')->pluck('nhl_id', 'abbrev');
-        [$offense, $defense] = $advanced ? $this->teamAttemptTotals($season, $model) : [collect(), collect()];
+        [$offense, $defense] = $preparedTotals !== null
+            ? array_map(fn (array $rows): Collection => collect($rows)->map(fn (array $row): object => (object) $row), $preparedTotals)
+            : ($advanced ? $this->teamAttemptTotals($season, $model) : [collect(), collect()]);
         $result = [];
         foreach ($totals as $key => $team) {
             if (! str_starts_with($key, $season.':')) {
@@ -653,7 +837,7 @@ class NhlStatsDashboardPayload
             $facts->selectRaw('CAST(NULL AS DECIMAL(18,6)) AS xg');
         } else {
             $facts->join('nhl_expected_goals_models as m', fn ($join) => $join->where('m.id', $model))
-                ->leftJoinSub($this->scoredGoalPredictions(), 'p', fn ($join) => $join->on('p.shot_attempt_fact_id', '=', 'f.id')
+                ->leftJoinSub($this->scoredGoalPredictions($model, $gameIds), 'p', fn ($join) => $join->on('p.shot_attempt_fact_id', '=', 'f.id')
                     ->where('p.expected_goals_model_id', $model)->where('p.prediction_target', 'goal')->where('p.is_scored', true))
                 ->selectRaw($this->historicalGoalExpectation().' AS xg');
         }

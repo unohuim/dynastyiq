@@ -174,7 +174,7 @@ it('uses a bounded number of queries for multiple candidates', function (): void
     DB::flushQueryLog();
     $ids = $this->service->eligibleNhlPlayerIds([9000001, 9000002], for_drafting: false);
     $queryCount = count(DB::getQueryLog());
-    expect($ids)->toContain(9000001, 9000002)->and($queryCount)->toBe(2);
+    expect($ids)->toContain(9000001, 9000002)->and($queryCount)->toBe(4);
 });
 
 it('does not query for an empty candidate list', function (): void {
@@ -182,4 +182,32 @@ it('does not query for an empty candidate list', function (): void {
     DB::flushQueryLog();
     expect($this->service->eligibleNhlPlayerIds([], for_drafting: false))->toBe([])
         ->and(DB::getQueryLog())->toBe([]);
+});
+
+it('groups career games across teams without counting playoffs or other leagues', function (): void {
+    ($this->stat)(['gp' => 12, 'team_name' => 'First Team']);
+    ($this->stat)(['gp' => 13, 'team_name' => 'Second Team']);
+    ($this->stat)(['gp' => 100, 'game_type_id' => 3]);
+    ($this->stat)(['gp' => 100, 'league_abbrev' => 'AHL']);
+    expect($this->service->eligibleNhlPlayerIds([9000001], for_drafting: false))->toBe([9000001]);
+    ($this->stat)(['gp' => 1, 'team_name' => 'Third Team']);
+    expect($this->service->eligibleNhlPlayerIds([9000001], for_drafting: false))->toBe([]);
+});
+
+it('scopes grouped totals and activity to each candidate independently', function (): void {
+    ($this->stat)(['gp' => 5]);
+    $second = Player::create(['nhl_id' => 9000002, 'full_name' => 'Second Candidate', 'dob' => '2005-01-01']);
+    PlayerExternalIdentity::create(['player_id' => $second->id, 'provider' => 'nhl_draft', 'provider_player_id' => 'second-grouped']);
+    ($this->stat)(['player_id' => $second->id, 'gp' => 30]);
+    expect($this->service->eligibleNhlPlayerIds([9000001, 9000002], for_drafting: false))->toBe([9000001]);
+});
+
+it('uses grouped stat reads rather than correlated totals for each player', function (): void {
+    ($this->stat)();
+    DB::enableQueryLog();
+    DB::flushQueryLog();
+    $this->service->eligibleNhlPlayerIds([9000001], for_drafting: false);
+    $queries = collect(DB::getQueryLog())->pluck('query');
+    expect($queries->filter(fn (string $sql): bool => str_contains(strtolower($sql), 'group by'))->count())->toBe(1)
+        ->and($queries->filter(fn (string $sql): bool => str_contains($sql, 'prospect_career_gp'))->count())->toBe(0);
 });

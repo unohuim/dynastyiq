@@ -6,6 +6,7 @@ namespace App\Services;
 
 use App\Models\Player;
 use App\Models\PlayerExternalIdentity;
+use App\Models\Stat;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Carbon;
 
@@ -36,20 +37,26 @@ final class ProspectEligibilityService
         }
         $asOf ??= Carbon::now();
 
-        return Player::query()->whereIn('nhl_id', $nhlPlayerIds)
+        $players = Player::query()->whereIn('nhl_id', $nhlPlayerIds)
             ->with(['externalIdentities' => fn ($query) => $query->whereIn('provider', [
                 PlayerExternalIdentity::PROVIDER_NHL_DRAFT, PlayerExternalIdentity::PROVIDER_NHL,
             ])])
-            ->withSum(['stats as prospect_career_gp' => fn ($query) => $query
-                ->where('league_abbrev', 'NHL')->where('game_type_id', 2)], 'gp')
-            ->withExists(['stats as prospect_window_games' => fn ($query) => $query
-                ->whereIn('season_id', $this->evaluationSeasonIds($asOf))->where('gp', '>', 0)
-                ->when($for_drafting, fn ($stats) => $stats->where('league_abbrev', '<>', 'NHL'))])
-            ->get()
-            ->filter(fn (Player $player): bool => $this->hasDraftEvidence($player)
-                && $this->isYoungerThanTwentySixOnCutoff($player, $asOf)
-                && (int) $player->prospect_career_gp <= 25 && (bool) $player->prospect_window_games)
-            ->map(fn (Player $player): int => (int) $player->nhl_id)->values()->all();
+            ->get()->filter(fn (Player $player): bool => $this->hasDraftEvidence($player)
+                && $this->isYoungerThanTwentySixOnCutoff($player, $asOf));
+        if ($players->isEmpty()) {
+            return [];
+        }
+        // Group each scoped population once instead of running correlated totals for every player.
+        $career = Stat::query()->whereIn('player_id', $players->modelKeys())
+            ->where('league_abbrev', 'NHL')->where('game_type_id', 2)->groupBy('player_id')
+            ->selectRaw('player_id, SUM(gp) AS career_gp')->pluck('career_gp', 'player_id');
+        $active = Stat::query()->whereIn('player_id', $players->modelKeys())
+            ->whereIn('season_id', $this->evaluationSeasonIds($asOf))->where('gp', '>', 0)
+            ->when($for_drafting, fn ($query) => $query->where('league_abbrev', '<>', 'NHL'))
+            ->distinct()->pluck('player_id')->map(fn ($id): int => (int) $id)->all();
+
+        return $players->filter(fn (Player $player): bool => (int) ($career[$player->id] ?? 0) <= 25
+            && in_array($player->id, $active, true))->map(fn (Player $player): int => (int) $player->nhl_id)->values()->all();
     }
 
     /**

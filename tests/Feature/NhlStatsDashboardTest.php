@@ -60,6 +60,23 @@ beforeEach(function (): void {
     DB::table('nhl_games')->insert(['nhl_game_id' => 2026020001, 'season_id' => '20262027', 'game_type' => 2,
         'game_date' => '2026-10-22', 'game_state' => 'OFF', 'home_team_id' => 10, 'home_team_abbrev' => 'TOR',
         'away_team_id' => 8, 'away_team_abbrev' => 'MTL', 'home_team_score' => 4, 'away_team_score' => 2]);
+    $this->finishLeaders = function (?RefreshNhlStatsDashboardJob $job = null): array {
+        $job ??= new RefreshNhlStatsDashboardJob('20262027', 'leaders');
+        $released = false;
+        $delivery = Mockery::mock(\Illuminate\Contracts\Queue\Job::class);
+        $delivery->shouldReceive('release')->with(0)->andReturnUsing(function () use (&$released): void {
+            $released = true;
+        });
+        $job->setJob($delivery);
+        for ($page = 0; $page < 100; $page++) {
+            $released = false;
+            $job->handle(app(NhlStatsDashboardPayload::class));
+            if (! $released) {
+                return Cache::get(NhlStatsDashboardPayload::CACHE_PREFIX.'leaders:20262027');
+            }
+        }
+        throw new \RuntimeException('Leaders fixture did not finish within 100 bounded pages.');
+    };
     $this->facts = function (): array {
         $service = app(NhlStatsDashboardPayload::class);
         $service->refreshCachedFacts('20262027', 'leaders');
@@ -635,7 +652,7 @@ it('excludes empty net and shootout goals from matched team expectation calculat
 
 it('publishes prepared mobile prospect leaders through the public dashboard response', function (): void {
     ($this->prospectRows)([[]]);
-    (new RefreshNhlStatsDashboardJob('20262027', 'leaders'))->handle(app(NhlStatsDashboardPayload::class));
+    ($this->finishLeaders)();
     expect(Cache::get(NhlStatsDashboardPayload::CACHE_PREFIX.'leaders:20262027')['mobile_leaders'][3]['cards'][0]['value'])->toBe(5);
     $this->get('/stats')->assertOk()->assertInertia(fn (Assert $page) => $page
         ->loadDeferredProps('stats-leaders', fn (Assert $reload) => $reload
@@ -742,6 +759,8 @@ it('tracks the preparation batch on its originating season sync', function (): v
     (new QueueNhlStatsDashboardRefresh())->handle(new NhlSeasonStatsSynced('20262027', 2, $run->id));
     Bus::assertBatched(fn ($batch): bool => $batch->name === 'Public stats · 20262027'
         && count($batch->jobs) >= 5 && $batch->options['queue'] === 'projections' && $batch->options['allowFailures'] === true);
+    Bus::assertBatched(fn ($batch): bool => collect($batch->jobs)->contains(fn ($job): bool =>
+        $job instanceof RefreshNhlStatsDashboardJob && $job->view === 'leaders' && $job->originatingRunId === $run->id));
 });
 
 it('queues preparation when ratings or imported player histories change', function (): void {
@@ -822,6 +841,311 @@ it('requires an explicit scope when rebuilding prepared statistics', function ()
     Bus::assertNothingDispatched();
 });
 
+describe('resumable Leaders preparation', function (): void {
+    beforeEach(function (): void {
+        $this->workKey = fn (RefreshNhlStatsDashboardJob $job): string =>
+            'nhl:stats:leaders-preparation:v1:20262027:'.$job->leadersRefreshId;
+        $this->seedLeadersPages = function (bool $complete = true): void {
+            $model = DB::table('nhl_expected_goals_models')->insertGetId(['name' => 'Paged goals', 'version' => 'paged-v1',
+                'training_season_id' => '20262027', 'prediction_target' => 'goal', 'status' => 'draft']);
+            $template = (array) DB::table('nhl_games')->where('nhl_game_id', 2026020001)->first();
+            $units = [DB::table('nhl_units')->insertGetId(['team_abbrev' => 'TOR', 'unit_type' => 'F']),
+                DB::table('nhl_units')->insertGetId(['team_abbrev' => 'TOR', 'unit_type' => 'D'])];
+            foreach (range(1, 6) as $number) {
+                $gameId = 2026020000 + $number;
+                if ($number > 1) {
+                    DB::table('nhl_games')->insert([...$template, 'nhl_game_id' => $gameId]);
+                }
+                $shifts = [];
+                foreach ($units as $unit) {
+                    $shift = DB::table('nhl_unit_shifts')->insertGetId(['unit_id' => $unit, 'nhl_game_id' => $gameId,
+                        'team_id' => 10, 'team_abbrev' => 'TOR', 'period' => 1, 'start_time' => '00:00', 'end_time' => '01:00',
+                        'start_game_seconds' => 0, 'end_game_seconds' => 60, 'seconds' => 60]);
+                    DB::table('nhl_unit_shift_players')->insert(['unit_shift_id' => $shift, 'player_id' => $this->player->id]);
+                    $shifts[] = $shift;
+                }
+                foreach ([0.2, 0.1] as $index => $xg) {
+                    $play = DB::table('play_by_plays')->insertGetId(['nhl_game_id' => $gameId]);
+                    $fact = DB::table('nhl_shot_attempts_facts')->insertGetId(['play_by_play_id' => $play,
+                        'nhl_game_id' => $gameId, 'season_id' => '20262027', 'team_id' => 10,
+                        'shooter_player_id' => 9000001, 'goalie_player_id' => 9000002, 'is_shot_attempt' => true,
+                        'is_shot_on_goal' => true, 'is_goal' => $index === 0, 'strength' => 'EV', 'attempt_result' => 'shot_on_goal']);
+                    foreach ($shifts as $shift) {
+                        DB::table('event_unit_shifts')->insert(['event_id' => $play, 'unit_shift_id' => $shift]);
+                    }
+                    if ($complete || $number !== 6 || $index !== 1) {
+                        DB::table('nhl_shot_attempt_predictions')->insert(['expected_goals_model_id' => $model,
+                            'shot_attempt_fact_id' => $fact, 'play_by_play_id' => $play, 'nhl_game_id' => $gameId,
+                            'prediction_target' => 'goal', 'is_scored' => true, 'xg' => $xg]);
+                    }
+                }
+            }
+            DB::table('nhl_season_stats')->where('nhl_player_id', 9000002)->update(['gp' => 6, 'ga' => 6]);
+        };
+    });
+
+    it('retains the old dashboard while a Leaders delivery releases its unfinished batch task', function (): void {
+        Cache::forever(NhlStatsDashboardPayload::CACHE_PREFIX.'leaders:20262027', ['old' => true]);
+        $job = new RefreshNhlStatsDashboardJob('20262027', 'leaders');
+        $delivery = Mockery::mock(\Illuminate\Contracts\Queue\Job::class);
+        $delivery->shouldReceive('release')->once()->with(0);
+        $job->setJob($delivery);
+        $job->handle(app(NhlStatsDashboardPayload::class));
+        expect(Cache::get(NhlStatsDashboardPayload::CACHE_PREFIX.'leaders:20262027'))->toBe(['old' => true])
+            ->and(Cache::get(($this->workKey)($job))['phase'])->toBe('xgf');
+    });
+
+    it('preserves the refresh identity and originating run when queued work is serialized', function (): void {
+        $job = new RefreshNhlStatsDashboardJob('20262027', 'leaders', originatingRunId: 17);
+        $restored = unserialize(serialize($job));
+        expect($restored->leadersRefreshId)->toBe($job->leadersRefreshId)
+            ->and($restored->originatingRunId)->toBe(17)->and($restored->queue)->toBe('projections');
+    });
+
+    it('bounds game pages and resumes from the saved cursor with a fresh service instance', function (): void {
+        ($this->seedLeadersPages)();
+        $job = new RefreshNhlStatsDashboardJob('20262027', 'leaders');
+        $service = app(NhlStatsDashboardPayload::class);
+        expect($service->advanceLeadersPreparation('20262027', $job->leadersRefreshId))->toBeFalse();
+        $work = Cache::get(($this->workKey)($job));
+        expect($work['phase'])->toBe('on_ice')->and($work['cursor'])->toBe(5);
+        $fresh = new NhlStatsDashboardPayload(app(NhlDashboardPayload::class));
+        $fresh->advanceLeadersPreparation('20262027', $job->leadersRefreshId);
+        expect(Cache::get(($this->workKey)($job))['phase'])->toBe('xgf');
+    });
+
+    it('matches existing Leaders values and deduplicates on-ice attempts across disjoint pages', function (): void {
+        ($this->seedLeadersPages)();
+        $service = app(NhlStatsDashboardPayload::class);
+        $baseline = $service->refreshCachedFacts('20262027', 'leaders');
+        $facts = ($this->finishLeaders)();
+        expect($facts['hero']['stats']['xgf'])->toEqualWithDelta(1.8, 1e-9)
+            ->and($facts['goalies'][0]['stats']['gsax'])->toEqualWithDelta(-4.2, 1e-9)
+            ->and($facts['hero']['stats']['xgf'])->toEqualWithDelta($baseline['hero']['stats']['xgf'], 1e-9)
+            ->and($facts['goalies'][0]['stats']['gsax'])->toEqualWithDelta($baseline['goalies'][0]['stats']['gsax'], 1e-9)
+            ->and(collect($facts['teams'])->keyBy('team')['TOR']['gax'])->toEqualWithDelta(4.2, 1e-9)
+            ->and(array_column($facts['categories'], 'key'))->toBe(array_column($baseline['categories'], 'key'))
+            ->and(array_column(array_column($facts['categories'], 'player'), 'id'))
+            ->toBe(array_column(array_column($baseline['categories'], 'player'), 'id'));
+        Http::assertNothingSent();
+    });
+
+    it('retains incomplete xGF and goalie scoring when a later page lacks a score', function (): void {
+        ($this->seedLeadersPages)(false);
+        $facts = ($this->finishLeaders)();
+        expect($facts['hero']['stats']['xgf'])->toBeNull()->and($facts['goalies'][0]['stats']['gsax'])->toBeNull()
+            ->and(collect($facts['teams'])->keyBy('team')['TOR']['gax'])->toBeNull();
+    });
+
+    it('uses current SAT scores ahead of legacy predictions within bounded pages', function (): void {
+        ($this->seedLeadersPages)();
+        $legacy = DB::table('nhl_shot_attempt_predictions')->orderBy('id')->first();
+        DB::table('nhl_shot_attempt_model_scores')->insert(['expected_goals_model_id' => $legacy->expected_goals_model_id,
+            'shot_attempt_fact_id' => $legacy->shot_attempt_fact_id, 'play_by_play_id' => $legacy->play_by_play_id,
+            'nhl_game_id' => $legacy->nhl_game_id, 'prediction_target' => 'goal', 'is_scored' => true, 'probability' => 0.4]);
+        $facts = ($this->finishLeaders)();
+        expect($facts['hero']['stats']['xgf'])->toEqualWithDelta(2.0, 1e-9);
+    });
+
+    it('continues after a source exception without discarding previously committed stages', function (): void {
+        ($this->seedLeadersPages)();
+        $service = app(NhlStatsDashboardPayload::class);
+        $job = new RefreshNhlStatsDashboardJob('20262027', 'leaders');
+        $service->advanceLeadersPreparation('20262027', $job->leadersRefreshId);
+        $service->advanceLeadersPreparation('20262027', $job->leadersRefreshId);
+        $fail = true;
+        DB::listen(function (\Illuminate\Database\Events\QueryExecuted $query) use (&$fail): void {
+            if ($fail && str_contains($query->sql, 'event_unit_shifts')) {
+                $fail = false;
+                throw new \RuntimeException('Source read interrupted');
+            }
+        });
+        expect(fn () => $service->advanceLeadersPreparation('20262027', $job->leadersRefreshId))
+            ->toThrow(\RuntimeException::class, 'Source read interrupted');
+        expect(Cache::get(($this->workKey)($job))['phase'])->toBe('xgf')
+            ->and($service->leadersPreparationProgress('20262027', $job->leadersRefreshId)['phase'])->toBe('xgf');
+        expect(($this->finishLeaders)($job)['hero']['stats']['xgf'])->toEqualWithDelta(1.8, 1e-9);
+    });
+
+    it('serializes separate refresh generations until the current publisher completes', function (): void {
+        $service = app(NhlStatsDashboardPayload::class);
+        $first = new RefreshNhlStatsDashboardJob('20262027', 'leaders');
+        $next = new RefreshNhlStatsDashboardJob('20262027', 'leaders');
+        $service->advanceLeadersPreparation('20262027', $first->leadersRefreshId);
+        expect($service->advanceLeadersPreparation('20262027', $next->leadersRefreshId))->toBeFalse()
+            ->and(Cache::get(($this->workKey)($next)))->toBeNull();
+        ($this->finishLeaders)($first);
+        expect($service->advanceLeadersPreparation('20262027', $next->leadersRefreshId))->toBeFalse()
+            ->and(Cache::get(($this->workKey)($next))['phase'])->toBe('xgf');
+    });
+
+    it('does not republish or recalculate a completed refresh on duplicate delivery', function (): void {
+        $job = new RefreshNhlStatsDashboardJob('20262027', 'leaders');
+        $original = ($this->finishLeaders)($job);
+        DB::table('nhl_season_stats')->where('nhl_player_id', 9000001)->update(['pts' => 100]);
+        expect(app(NhlStatsDashboardPayload::class)->advanceLeadersPreparation('20262027', $job->leadersRefreshId))->toBeTrue()
+            ->and(Cache::get(NhlStatsDashboardPayload::CACHE_PREFIX.'leaders:20262027'))->toBe($original);
+    });
+
+    it('records page diagnostics without replacing goalie refresh or rollup progress', function (): void {
+        $run = NhlGameImportRun::create(['action' => 'season-sync', 'mode' => 'season', 'status' => 'running',
+            'start_date' => '2026-09-01', 'end_date' => '2027-08-31',
+            'payload' => ['rows_upserted' => 27, 'stats_cache' => ['status' => 'building'], 'goalie_refresh' => ['status' => 'ready']]]);
+        $job = new RefreshNhlStatsDashboardJob('20262027', 'leaders', originatingRunId: $run->id);
+        $delivery = Mockery::mock(\Illuminate\Contracts\Queue\Job::class);
+        $delivery->shouldReceive('release')->once()->with(0);
+        $job->setJob($delivery);
+        $job->handle(app(NhlStatsDashboardPayload::class));
+        $payload = $run->fresh()->payload;
+        expect($payload['rows_upserted'])->toBe(27)->and($payload['goalie_refresh']['status'])->toBe('ready')
+            ->and($payload['stats_cache']['status'])->toBe('building')
+            ->and($payload['stats_cache']['leaders_preparation']['phase'])->toBe('on_ice')
+            ->and($run->fresh()->status)->toBe('running');
+    });
+
+    it('releases failed ownership and exposes the failing stage while retaining the dashboard', function (): void {
+        $service = app(NhlStatsDashboardPayload::class);
+        $run = NhlGameImportRun::create(['action' => 'season-sync', 'mode' => 'season', 'status' => 'running',
+            'start_date' => '2026-09-01', 'end_date' => '2027-08-31', 'payload' => ['stats_cache' => ['status' => 'building']]]);
+        $job = new RefreshNhlStatsDashboardJob('20262027', 'leaders', originatingRunId: $run->id);
+        Cache::forever(NhlStatsDashboardPayload::CACHE_PREFIX.'leaders:20262027', ['old' => true]);
+        $service->advanceLeadersPreparation('20262027', $job->leadersRefreshId);
+        $job->failed(new \RuntimeException('Worker timed out'));
+        expect($run->fresh()->last_error)->toContain('Leaders stage: on_ice', 'elapsed 0s')
+            ->and(Cache::get('nhl:stats:leaders-preparation:v1:20262027:owner'))->toBeNull()
+            ->and(Cache::get(($this->workKey)($job)))->not->toBeNull()
+            ->and(Cache::get(NhlStatsDashboardPayload::CACHE_PREFIX.'leaders:20262027'))->toBe(['old' => true]);
+    });
+
+    it('prevents an older failed refresh from replacing a newer successful snapshot', function (): void {
+        $service = app(NhlStatsDashboardPayload::class);
+        $old = new RefreshNhlStatsDashboardJob('20262027', 'leaders');
+        $service->advanceLeadersPreparation('20262027', $old->leadersRefreshId);
+        $old->failed(new \RuntimeException('Stopped old delivery'));
+        $this->travel(1)->seconds();
+        DB::table('nhl_season_stats')->where('nhl_player_id', 9000001)->update(['pts' => 99]);
+        $new = ($this->finishLeaders)();
+        expect($service->advanceLeadersPreparation('20262027', $old->leadersRefreshId))->toBeTrue()
+            ->and(Cache::get(NhlStatsDashboardPayload::CACHE_PREFIX.'leaders:20262027'))->toBe($new);
+    });
+
+    it('does not publish a partial snapshot when cache publication fails and resumes at publication', function (): void {
+        $service = app(NhlStatsDashboardPayload::class);
+        $job = new RefreshNhlStatsDashboardJob('20262027', 'leaders');
+        Cache::forever(NhlStatsDashboardPayload::CACHE_PREFIX.'leaders:20262027', ['old' => true]);
+        for ($page = 0; $page < 10; $page++) {
+            $service->advanceLeadersPreparation('20262027', $job->leadersRefreshId);
+            if (Cache::get(($this->workKey)($job))['phase'] === 'publish') {
+                break;
+            }
+        }
+        $cacheManager = Cache::getFacadeRoot();
+        Cache::partialMock()->shouldReceive('forever')->once()
+            ->with(NhlStatsDashboardPayload::CACHE_PREFIX.'leaders:20262027', Mockery::type('array'))->andReturn(false);
+        expect(fn () => $service->advanceLeadersPreparation('20262027', $job->leadersRefreshId))
+            ->toThrow(\RuntimeException::class, 'Public stats cache publication failed.');
+        expect(Cache::get(($this->workKey)($job))['phase'])->toBe('publish')
+            ->and(Cache::get(NhlStatsDashboardPayload::CACHE_PREFIX.'leaders:20262027'))->toBe(['old' => true]);
+        Cache::swap($cacheManager);
+        expect($service->advanceLeadersPreparation('20262027', $job->leadersRefreshId))->toBeTrue()
+            ->and(Cache::get(NhlStatsDashboardPayload::CACHE_PREFIX.'leaders:20262027')['hero']['stats']['points'])->toBe(8);
+    });
+
+    it('retains missing-model behavior and handles an empty completed-game population', function (): void {
+        DB::table('nhl_games')->update(['game_state' => 'FUT']);
+        $facts = ($this->finishLeaders)();
+        expect($facts['hero']['stats']['xgf'])->toBeNull()->and($facts['goalies'][0]['stats']['gsax'])->toBeNull()
+            ->and($facts['teams'])->toBe([]);
+    });
+
+    it('bounds rookie eligibility to twenty-five players and preserves eligibility across pages', function (): void {
+        foreach (range(1, 26) as $number) {
+            $player = Player::create(['nhl_id' => 9100000 + $number, 'full_name' => 'Rookie '.$number,
+                'first_name' => 'Rookie', 'last_name' => (string) $number, 'dob' => '2005-01-01', 'position' => 'C']);
+            DB::table('player_external_identities')->insert(['player_id' => $player->id, 'provider' => 'nhl_draft',
+                'provider_player_id' => 'paged-rookie-'.$number]);
+            DB::table('stats')->insert(['player_id' => $player->id, 'season_id' => '20262027',
+                'league_abbrev' => 'NHL', 'game_type_id' => 2, 'gp' => 5]);
+            DB::table('nhl_season_stats')->insert(['season_id' => '20262027', 'game_type' => 2,
+                'nhl_player_id' => $player->nhl_id, 'nhl_team_id' => 10, 'gp' => 5, 'g' => 1, 'a' => 0, 'pts' => 1]);
+        }
+        $job = new RefreshNhlStatsDashboardJob('20262027', 'leaders');
+        $service = app(NhlStatsDashboardPayload::class);
+        for ($page = 0; $page < 4; $page++) {
+            $service->advanceLeadersPreparation('20262027', $job->leadersRefreshId);
+        }
+        expect(Cache::get(($this->workKey)($job))['phase'])->toBe('rookies');
+        $service->advanceLeadersPreparation('20262027', $job->leadersRefreshId);
+        expect(Cache::get(($this->workKey)($job))['cursor'])->toBe(25);
+        $facts = ($this->finishLeaders)($job);
+        expect($facts['rookies'])->toHaveCount(26);
+    });
+
+    it('retains Leaders diagnostics when batch completion updates the parent run', function (): void {
+        $run = NhlGameImportRun::create(['action' => 'season-sync', 'mode' => 'season', 'status' => 'running',
+            'start_date' => '2026-09-01', 'end_date' => '2027-08-31', 'payload' => [
+                'aggregation_completed_at' => now()->toIso8601String(),
+                'stats_cache' => ['leaders_preparation' => ['phase' => 'publish', 'cursor' => 0]],
+            ]]);
+        $batch = Mockery::mock(\Illuminate\Bus\Batch::class);
+        $batch->id = 'leaders-completion';
+        QueueNhlStatsDashboardRefresh::recordBatch($run->id, $batch, 'ready');
+        expect($run->fresh()->payload['stats_cache']['leaders_preparation']['phase'])->toBe('publish')
+            ->and($run->fresh()->payload['stats_cache']['status'])->toBe('ready');
+    });
+
+    it('can release timed-out ownership while the abandoned page lock is still held', function (): void {
+        $service = app(NhlStatsDashboardPayload::class);
+        $job = new RefreshNhlStatsDashboardJob('20262027', 'leaders');
+        $service->advanceLeadersPreparation('20262027', $job->leadersRefreshId);
+        $pageLock = Cache::lock('nhl:stats:leaders-preparation:v1:20262027:lock', 240);
+        expect($pageLock->get())->toBeTrue();
+        try {
+            $job->failed(new \RuntimeException('Hard timeout'));
+            expect(Cache::get('nhl:stats:leaders-preparation:v1:20262027:owner'))->toBeNull();
+        } finally {
+            $pageLock->release();
+        }
+    });
+
+    it('waits without busy retries when another refresh owns the season', function (): void {
+        $first = new RefreshNhlStatsDashboardJob('20262027', 'leaders');
+        $service = app(NhlStatsDashboardPayload::class);
+        $service->advanceLeadersPreparation('20262027', $first->leadersRefreshId);
+        $next = new RefreshNhlStatsDashboardJob('20262027', 'leaders');
+        $delivery = Mockery::mock(\Illuminate\Contracts\Queue\Job::class);
+        $delivery->shouldReceive('release')->once()->with(15);
+        $next->setJob($delivery);
+        $next->handle($service);
+        expect(Cache::get(($this->workKey)($next)))->toBeNull();
+    });
+
+    it('releases its own preparation owner without publishing when the batch is cancelled', function (): void {
+        $job = Mockery::mock(RefreshNhlStatsDashboardJob::class, ['20262027', 'leaders'])->makePartial();
+        $service = app(NhlStatsDashboardPayload::class);
+        $service->advanceLeadersPreparation('20262027', $job->leadersRefreshId);
+        $batch = Mockery::mock(\Illuminate\Bus\Batch::class);
+        $batch->shouldReceive('cancelled')->once()->andReturnTrue();
+        $job->shouldReceive('batch')->once()->andReturn($batch);
+        $job->handle($service);
+        expect(Cache::get('nhl:stats:leaders-preparation:v1:20262027:owner'))->toBeNull()
+            ->and(Cache::has(NhlStatsDashboardPayload::CACHE_PREFIX.'leaders:20262027'))->toBeFalse();
+    });
+
+    it('recovers legacy refresh ownership from an independently reconstructed failure callback', function (): void {
+        $legacy = new RefreshNhlStatsDashboardJob('20262027', 'leaders');
+        $legacy->leadersRefreshId = null;
+        $failedCopy = unserialize(serialize($legacy));
+        $delivery = Mockery::mock(\Illuminate\Contracts\Queue\Job::class);
+        $delivery->shouldReceive('release')->once()->with(0);
+        $legacy->setJob($delivery);
+        $legacy->handle(app(NhlStatsDashboardPayload::class));
+        $failedCopy->failed(new \RuntimeException('Legacy timeout'));
+        expect($failedCopy->leadersRefreshId)->toBe($legacy->leadersRefreshId)
+            ->and(Cache::get('nhl:stats:leaders-preparation:v1:20262027:owner'))->toBeNull();
+    });
+});
+
 it('queues a cache rebuild without importing season data', function (): void {
     $this->artisan('nhl:stats-cache', ['--season' => '20262027'])
         ->expectsOutput('Public stats preparation queued on projections.')->assertExitCode(0);
@@ -890,7 +1214,7 @@ it('normalizes absent or malformed legacy settings to an empty array during prep
 
 it('repairs missing default-season metadata when the Leaders publisher completes', function (): void {
     Cache::forget(NhlStatsDashboardPayload::CACHE_PREFIX.'latest-season');
-    (new RefreshNhlStatsDashboardJob('20262027', 'leaders'))->handle(app(NhlStatsDashboardPayload::class));
+    ($this->finishLeaders)();
     expect(Cache::get(NhlStatsDashboardPayload::CACHE_PREFIX.'latest-season'))->toBe('20262027');
     $this->get('/stats')->assertOk()->assertInertia(fn (Assert $page) => $page
         ->where('selectedSeason', '20262027')
@@ -901,7 +1225,7 @@ it('repairs missing default-season metadata when the Leaders publisher completes
 it('prepares missing trend data while retaining the existing Leaders snapshot', function (): void {
     $dashboard = new NhlDashboardPayload(app(\App\Services\NhlDashboardNews::class));
     app()->instance(NhlDashboardPayload::class, $dashboard);
-    (new RefreshNhlStatsDashboardJob('20262027', 'leaders'))->handle(app(NhlStatsDashboardPayload::class));
+    ($this->finishLeaders)();
     Cache::forget('nhl:stats:highlights:v1');
     $this->get('/stats')->assertOk()->assertInertia(fn (Assert $page) => $page
         ->where('statsCacheMissing', true)

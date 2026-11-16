@@ -47,7 +47,8 @@ class QueueNhlStatsDashboardRefresh implements ShouldQueueAfterCommit
         $perspectives = Perspective::query()->where('visibility', 'public_guest')->get();
         foreach ($seasons as $seasonId) {
             foreach (['leaders', 'skaters', 'goalies', 'teams'] as $view) {
-                $jobs[] = new RefreshNhlStatsDashboardJob($seasonId, $view);
+                $jobs[] = new RefreshNhlStatsDashboardJob($seasonId, $view,
+                    originatingRunId: $view === 'leaders' ? $runId : null);
             }
             foreach ($perspectives as $perspective) {
                 $gameTypes = str_starts_with((string) $perspective->slug, 'prospects') ? [2] : [1, 2, 3];
@@ -96,7 +97,14 @@ class QueueNhlStatsDashboardRefresh implements ShouldQueueAfterCommit
             if ($status === 'ready' && $run->status === NhlGameImportRun::STATUS_FAILED) {
                 return;
             }
-            $payload['stats_cache'] = ['status' => $status, 'batch_id' => $batch->id, 'error' => $error];
+            $progress = data_get($payload, 'stats_cache.leaders_preparation');
+            if ($error !== null && is_array($progress) && ! str_contains($error, 'Leaders stage:')) {
+                $elapsed = isset($progress['started_at']) ? max(0, now()->timestamp - strtotime($progress['started_at'])) : 0;
+                $error .= ' Leaders stage: '.($progress['phase'] ?? 'initialization')
+                    .', cursor '.($progress['cursor'] ?? 0).', elapsed '.$elapsed.'s.';
+            }
+            $payload['stats_cache'] = [...($payload['stats_cache'] ?? []),
+                'status' => $status, 'batch_id' => $batch->id, 'error' => $error];
             $runStatus = $run->status === NhlGameImportRun::STATUS_FAILED
                 ? NhlGameImportRun::STATUS_FAILED
                 : \App\Services\NhlGoalieProjectionRefresh::runStatus($payload);

@@ -186,6 +186,22 @@ Storage: `nhl_lineup_observations.raw_evidence.ocr[].status` and local post audi
 
 Horizon retains the existing queue allocations and adds four to eight dedicated `nhl-live` workers, as governed by `docs/architecture/application/LaravelApplicationShell.yaml`.
 
+### Leaders preparation phases
+
+**Storage location(s):** shared cache `nhl:stats:leaders-preparation:v1:*`;
+tracked page diagnostics under `nhl_game_import_runs.payload.stats_cache.leaders_preparation`.
+
+- `on_ice`: Merge EV on-ice Corsi counts from completed-game pages.
+- `xgf`: Merge deduplicated scored on-ice expected goals, retaining incomplete coverage.
+- `xga`: Merge goalie-facing expected goals and coverage counts.
+- `teams`: Merge offensive/defensive team shot populations and scored coverage.
+- `rookies`: Evaluate bounded candidate groups using the existing reporting eligibility rules.
+- `publish`: Assemble the unchanged Leaders response and publish its complete replacement.
+- `complete`: Retain a compact delivery marker; no further calculation or publication.
+
+Page diagnostics identify the last admitted stage and its start/end timing;
+`complete` is an internal checkpoint state, not a new import-run status.
+
 ## Scheduled process keys and discovery work scheduling
 
 - `nhl_game_import_runs.payload.auto_process`: boolean; true opts a discovery into automatic Full processing. Manual UI and CLI discovery writes false. With the field absent, only the existing `scheduled_process: nhl-game-discovery` marker qualifies as a legacy scheduled opt-in.
