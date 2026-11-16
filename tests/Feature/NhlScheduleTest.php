@@ -545,3 +545,13 @@ it('prepares the next Eastern day so ordinary midnight rollover remains a warm r
     expect($payload['prepared'])->toBeTrue()->and($payload['off_nights']['from_date'])->toBe('2026-11-19');
     Bus::assertNothingDispatched();
 });
+
+
+it('defaults new automatic schedule preparation to daily without replacing saved intervals', function (): void {
+    $schedules = app(\App\Services\AdminImportSchedules::class);
+    $row = $schedules->forSource('nhl-schedule-snapshots')->first();
+    expect($row->interval_seconds)->toBe(86400)->and($row->enabled)->toBeFalse();
+    $row->update(['interval_seconds' => 7200]);
+    expect($schedules->forSource('nhl-schedule-snapshots')->first()->interval_seconds)->toBe(7200);
+    Bus::assertNothingDispatched();
+});

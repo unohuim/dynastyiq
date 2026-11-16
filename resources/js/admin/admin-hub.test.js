@@ -3129,6 +3129,10 @@ describe('prepared NHL schedule admin controls', () => {
         const section = template.slice(template.indexOf('aria-label="Prepare NHL Schedule"'), template.indexOf('</section>', template.indexOf('aria-label="Prepare NHL Schedule"')));
         for (const expected of ['startImport(schedulePreparation.key)', 'openImportScheduleSettings(schedulePreparation)', 'saveImportSchedule(schedulePreparation', 'importProgressText(schedulePreparation.key)']) expect(section).toContain(expected);
         expect(source).toContain("item.key === 'nhl-schedule-snapshots'");
+        expect(section).toContain('aria-label="Configure schedule automatic refresh"');
+        expect(section).toContain('aria-haspopup="dialog"');
+        expect(section).toContain('<circle cx="10" cy="10.6" r="2.5"');
+        expect(section).not.toContain('>Settings</button>');
         const compiled = compileTemplate({ source: template, filename: 'Dashboard.vue', id: 'admin-dashboard' });
         expect(compiled.errors).toEqual([]);
     });

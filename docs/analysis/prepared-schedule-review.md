@@ -43,7 +43,7 @@ No source results are modified, copied into another fact model, or reimported.
 The former HTTP calculation has been moved to a worker-only calculator. Admin
 Game Imports gains Prepare NHL Schedule, Build Schedule, normal ImportRun progress,
 Auto refresh and the existing schedule settings drawer. The default interval is
-one hour, opt-in. Manual preparation processes all stored seasons plus current;
+24 hours for new settings, opt-in; existing saved intervals are preserved. Manual preparation processes all stored seasons plus current;
 the command can also target one season. Scheduled refreshes target only the
 current season; historical seasons are not rebuilt every hour. Progress advances after each season has
 published. Both admin batches and background builds run on games-processing.
@@ -145,7 +145,7 @@ It does not rely solely on a GET echo assertion.
 
 | File | it declarations |
 | --- | ---: |
-| tests/Feature/NhlScheduleTest.php | 61 |
+| tests/Feature/NhlScheduleTest.php | 62 |
 | resources/js/pages/games.test.js | 156 |
 | resources/js/admin/admin-hub.test.js | 127 |
 
@@ -165,7 +165,8 @@ php artisan migrate --force
 ```
 
 Then use **Admin → Game Imports → Prepare NHL Schedule → Build Schedule** and
-enable **Auto refresh** for its hourly schedule. Cold public visits can also queue
+enable **Auto refresh** for its daily-default schedule. Existing saved intervals
+can be adjusted through the gear. Cold public visits can also queue
 missing known snapshots, but preparing before visitors arrive avoids the cold wait.
 The existing games-processing workers and persisted admin-import dispatcher must
 be running. No new worker pool or server operation was performed here.
@@ -176,3 +177,34 @@ Suggested human checks (not executed):
 php artisan test tests/Feature/NhlScheduleTest.php
 npm test -- --run resources/js/pages/games.test.js resources/js/admin/admin-hub.test.js
 ```
+
+
+## Daily default and settings gear
+
+Files changed: `app/Services/AdminImportSchedules.php`,
+`resources/js/pages/Admin/Dashboard.vue`, `tests/Feature/NhlScheduleTest.php`,
+`resources/js/admin/admin-hub.test.js`, `docs/architecture/ui/NhlScheduleSnapshots.yaml`,
+`docs/ARCHITECTURE_INVENTORY.md`, and this document.
+
+1. SATISFIED: new preparation schedules default to 86400 seconds, disabled until enabled.
+2. SATISFIED: existing saved frequencies remain unchanged and editable.
+3. SATISFIED: a labelled gear button opens the existing frequency settings;
+   Auto refresh and Build Schedule retain their existing actions.
+
+Authored coverage matrix:
+
+| Contract | Status | Test |
+| --- | --- | --- |
+| Daily initialization, saved interval preservation, no dispatch on read | COVERED | defaults new automatic schedule preparation to daily without replacing saved intervals |
+| Gear icon, accessible name, dialog action and retained controls | COVERED | exposes queued build progress and existing scheduling controls inside Game Imports |
+
+The endpoint × verb authorization/scope matrix above is unchanged and remains
+covered by its named guest/member/super-admin tests. Frontend checklist: native
+keyboard button, accessible action label and dialog semantics, existing open
+handler, disabled-saving state, reduced-motion color feedback and retained toggle
+wiring. Controlled fixtures, no new global state, requests or timers.
+Test counts: PHP 62, pages JS 156 (unchanged), admin-hub JS 127.
+Only static diff and whitespace checks were performed. Tests, builds, browser
+checks, migrations and production operations were not run. No new migration is
+required for this default/icon adjustment; the original snapshot-table migration
+remains required if it has not yet been applied.
