@@ -1741,12 +1741,12 @@ export default {
                                     <label class="text-xs font-medium text-gray-600">Seconds<input v-model.number="lane.seconds" type="number" min="0" max="59" class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"></label>
                                 </div>
                             </div>
-                            <template v-if="scheduleSettings.importKey === 'nhl-schedule-snapshots' && importScheduleSeconds(scheduleSettings.lanes.current) === 86400">
+                            <template v-if="scheduleSettings.importKey === 'nhl-schedule-snapshots'">
                                 <label class="mt-3 flex items-center justify-between gap-4 text-sm font-medium text-gray-700">
-                                    Daily run time (Eastern)
+                                    Start time (Eastern)
                                     <input v-model="scheduleSettings.timing.daily_start_time" type="time" class="rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
                                 </label>
-                                <p class="mt-2 text-xs text-gray-500">America/Toronto, including daylight-saving changes. Leave blank to repeat every 24 hours from dispatch.</p>
+                                <p class="mt-2 text-xs text-gray-500">The selected interval starts at this Eastern time. Leave blank to repeat from dispatch time.</p>
                             </template>
                         </template>
                         <p v-if="scheduleSettingsImport()?.schedule.error" class="text-sm text-red-600" v-text="scheduleSettingsImport().schedule.error"></p>

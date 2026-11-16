@@ -593,9 +593,9 @@ it('keeps the same Eastern daily time through daylight-saving transitions', func
     ['2026-10-31 10:00:00 UTC', '2026-10-31 10:30:00 UTC', '2026-11-01 11:30:00'],
 ]);
 
-it('uses the interval cadence when a daily clock time is blank or the interval is not daily', function (): void {
+it('uses dispatch-based interval cadence when no start time is selected', function (): void {
     $service = app(\App\Services\AdminImportSchedules::class);
-    $service->update('nhl-schedule-snapshots', true, ['current' => 3600], ['daily_start_time' => '06:30']);
+    $service->update('nhl-schedule-snapshots', true, ['current' => 3600], ['daily_start_time' => null]);
     $row = \App\Models\AdminImportSchedule::where('source_key', 'nhl-schedule-snapshots')->firstOrFail();
     $service->markDispatched($row, CarbonImmutable::parse('2026-11-18 14:00:00 UTC'));
     expect($row->fresh()->next_due_at->utc()->format('Y-m-d H:i:s'))->toBe('2026-11-18 15:00:00');
@@ -621,3 +621,88 @@ it('restricts prepared schedule timing status to super-admins', function (bool $
     }
     $this->getJson(route('admin.imports.status', ['key' => 'nhl-schedule-snapshots']))->assertStatus($signedIn ? 403 : 401);
 })->with([false, true]);
+
+
+it('aligns the first interval to its Eastern start time before or after that clock time', function (string $now, string $expected): void {
+    $this->travelTo(Carbon::parse($now));
+    $payload = app(\App\Services\AdminImportSchedules::class)->update('nhl-schedule-snapshots', true, ['current' => 10800], ['daily_start_time' => '06:00']);
+    expect($payload['lanes']['current']['next_due_at'])->toBe($expected);
+})->with([
+    ['2026-11-18 09:00:00 UTC', '2026-11-18T11:00:00+00:00'],
+    ['2026-11-18 14:00:00 UTC', '2026-11-18T14:00:00+00:00'],
+    ['2026-11-18 14:05:00 UTC', '2026-11-18T17:00:00+00:00'],
+]);
+
+it('keeps later intervals aligned when a scheduled run is dispatched late', function (): void {
+    $this->travelTo(Carbon::parse('2026-11-18 09:00:00 UTC'));
+    $service = app(\App\Services\AdminImportSchedules::class);
+    $service->update('nhl-schedule-snapshots', true, ['current' => 10800], ['daily_start_time' => '06:00']);
+    $row = \App\Models\AdminImportSchedule::where('source_key', 'nhl-schedule-snapshots')->firstOrFail();
+    $service->markDispatched($row, CarbonImmutable::parse('2026-11-18 11:07:00 UTC'));
+    expect($row->fresh()->next_due_at->utc()->format('H:i'))->toBe('14:00');
+    $row->refresh();
+    $service->markDispatched($row, CarbonImmutable::parse('2026-11-18 14:35:00 UTC'));
+    expect($row->fresh()->next_due_at->utc()->format('H:i'))->toBe('17:00');
+});
+
+it('skips missed interval slots without shifting the next slot or queuing catch-up work', function (): void {
+    $this->travelTo(Carbon::parse('2026-11-18 09:00:00 UTC'));
+    $service = app(\App\Services\AdminImportSchedules::class);
+    $service->update('nhl-schedule-snapshots', true, ['current' => 10800], ['daily_start_time' => '06:00']);
+    $row = \App\Models\AdminImportSchedule::where('source_key', 'nhl-schedule-snapshots')->firstOrFail();
+    $service->markDispatched($row, CarbonImmutable::parse('2026-11-18 21:40:00 UTC'));
+    expect($row->fresh()->next_due_at->utc()->format('Y-m-d H:i:s'))->toBe('2026-11-18 23:00:00');
+    Bus::assertNothingDispatched();
+});
+
+it('preserves a running interval across midnight and unchanged settings saves', function (): void {
+    $this->travelTo(Carbon::parse('2026-11-18 21:00:00 UTC'));
+    $service = app(\App\Services\AdminImportSchedules::class);
+    $service->update('nhl-schedule-snapshots', true, ['current' => 18000], ['daily_start_time' => '18:00']);
+    $row = \App\Models\AdminImportSchedule::where('source_key', 'nhl-schedule-snapshots')->firstOrFail();
+    $service->markDispatched($row, CarbonImmutable::parse('2026-11-18 23:00:00 UTC'));
+    $row->refresh();
+    $service->markDispatched($row, CarbonImmutable::parse('2026-11-19 04:00:00 UTC'));
+    expect($row->fresh()->next_due_at->utc()->format('Y-m-d H:i:s'))->toBe('2026-11-19 09:00:00');
+    $this->travelTo(Carbon::parse('2026-11-19 08:00:00 UTC'));
+    $payload = $service->update('nhl-schedule-snapshots', true, ['current' => 18000], ['daily_start_time' => '18:00']);
+    expect($payload['lanes']['current']['next_due_at'])->toBe('2026-11-19T09:00:00+00:00');
+});
+
+it('reanchors future intervals when the chosen start time or frequency changes', function (): void {
+    $this->travelTo(Carbon::parse('2026-11-18 09:00:00 UTC'));
+    $service = app(\App\Services\AdminImportSchedules::class);
+    $service->update('nhl-schedule-snapshots', true, ['current' => 10800], ['daily_start_time' => '06:00']);
+    $this->travelTo(Carbon::parse('2026-11-18 13:00:00 UTC'));
+    $payload = $service->update('nhl-schedule-snapshots', true, ['current' => 10800], ['daily_start_time' => '07:00']);
+    expect($payload['lanes']['current']['next_due_at'])->toBe('2026-11-18T15:00:00+00:00');
+    $payload = $service->update('nhl-schedule-snapshots', true, ['current' => 18000], ['daily_start_time' => '07:00']);
+    expect($payload['lanes']['current']['next_due_at'])->toBe('2026-11-18T17:00:00+00:00');
+});
+
+it('round trips a three-hour frequency and Eastern start time through admin HTTP', function (): void {
+    $this->travelTo(Carbon::parse('2026-11-18 09:00:00 UTC'));
+    $role = Role::create(['name' => 'Super Admin', 'slug' => 'super-admin', 'level' => 99]);
+    $this->viewer->roles()->attach($role->id, ['organization_id' => null]);
+    $this->actingAs($this->viewer)->putJson(route('admin.imports.schedule.update', ['key' => 'nhl-schedule-snapshots']), [
+        'enabled' => true, 'intervals' => ['current' => 10800], 'timing' => ['daily_start_time' => '06:00'],
+    ])->assertOk()->assertJsonPath('schedule.lanes.current.interval_seconds', 10800);
+    $this->assertDatabaseHas('admin_import_schedules', ['source_key' => 'nhl-schedule-snapshots', 'interval_seconds' => 10800, 'timezone' => 'America/Toronto']);
+    $this->getJson(route('admin.imports.status', ['key' => 'nhl-schedule-snapshots']))->assertOk()
+        ->assertJsonPath('schedule.timing.daily_start_time', '06:00')
+        ->assertJsonPath('schedule.lanes.current.next_due_at', '2026-11-18T11:00:00+00:00');
+    Bus::assertNothingDispatched();
+});
+
+
+it('does not repeat an anchored slot when the frequency changes just after dispatch', function (): void {
+    $this->travelTo(Carbon::parse('2026-11-18 09:00:00 UTC'));
+    $service = app(\App\Services\AdminImportSchedules::class);
+    $service->update('nhl-schedule-snapshots', true, ['current' => 18000], ['daily_start_time' => '06:00']);
+    $row = \App\Models\AdminImportSchedule::where('source_key', 'nhl-schedule-snapshots')->firstOrFail();
+    $service->markDispatched($row, CarbonImmutable::parse('2026-11-18 11:00:00 UTC'));
+    $this->travelTo(Carbon::parse('2026-11-18 11:00:00 UTC'));
+    $payload = $service->update('nhl-schedule-snapshots', true, ['current' => 10800], ['daily_start_time' => '06:00']);
+    expect($payload['lanes']['current']['next_due_at'])->toBe('2026-11-18T14:00:00+00:00');
+    Bus::assertNothingDispatched();
+});

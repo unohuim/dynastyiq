@@ -3089,15 +3089,17 @@ export default function adminHub(options = {}) {
         schedulePreparationTimingText(importItem) {
             const seconds = Number(importItem?.schedule?.lanes?.current?.interval_seconds || 0);
             const time = importItem?.schedule?.timing?.daily_start_time;
-            if (seconds === 86400 && time) {
+            let clock = '';
+            if (time) {
                 const [hour, minute] = time.split(':').map(Number);
-                return `Daily at ${hour % 12 || 12}:${String(minute).padStart(2, '0')} ${hour < 12 ? 'AM' : 'PM'} Eastern`;
+                clock = `${hour % 12 || 12}:${String(minute).padStart(2, '0')} ${hour < 12 ? 'AM' : 'PM'} Eastern`;
             }
+            if (seconds === 86400 && clock) return `Daily at ${clock}`;
             const hours = Math.floor(seconds / 3600);
             const minutes = Math.floor((seconds % 3600) / 60);
             const remainder = seconds % 60;
             const duration = [hours ? `${hours}h` : '', minutes ? `${minutes}m` : '', remainder ? `${remainder}s` : ''].filter(Boolean).join(' ');
-            return duration ? `Every ${duration}` : 'Frequency not configured';
+            return duration ? `Every ${duration}${clock ? ` from ${clock}` : ''}` : 'Frequency not configured';
         },
 
         schedulePreparationNextRunText(importItem) {

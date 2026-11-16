@@ -3138,7 +3138,8 @@ describe('prepared NHL schedule admin controls', () => {
         expect(section).toContain('border-green-400 text-green-400');
         expect(section).toContain('schedulePreparationTimingText(schedulePreparation)');
         expect(section).toContain('schedulePreparationNextRunText(schedulePreparation)');
-        expect(template).toContain('Daily run time (Eastern)');
+        expect(template).toContain('Start time (Eastern)');
+        expect(template).not.toContain("scheduleSettings.importKey === 'nhl-schedule-snapshots' && importScheduleSeconds");
         const compiled = compileTemplate({ source: template, filename: 'Dashboard.vue', id: 'admin-dashboard' });
         expect(compiled.errors).toEqual([]);
     });
@@ -3217,4 +3218,15 @@ describe('daily prepared schedule timing', () => {
         expect(item.schedule.saving).toBe(false);
         expect(item.schedule.error).toBe('Unable to save schedule');
     });
+    it('shows and saves a start time for a three-hour frequency', async () => {
+        item.schedule.lanes.current = { interval_seconds: 10800, hours: 3, minutes: 0, seconds: 0, next_due_at: null };
+        hub.openImportScheduleSettings(item);
+        expect(hub.scheduleSettings.lanes.current.hours).toBe(3);
+        expect(hub.scheduleSettings.timing.daily_start_time).toBe('06:30');
+        expect(hub.schedulePreparationTimingText(item)).toBe('Every 3h from 6:30 AM Eastern');
+        vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ schedule: schedule({ lanes: { current: { interval_seconds: 10800, next_due_at: null } } }) }) })));
+        await hub.saveImportScheduleSettings();
+        expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ enabled: false, intervals: { current: 10800 }, timing: { daily_start_time: '06:30', timezone: 'America/Toronto' } });
+    });
+
 });

@@ -145,9 +145,9 @@ It does not rely solely on a GET echo assertion.
 
 | File | it declarations |
 | --- | ---: |
-| tests/Feature/NhlScheduleTest.php | 68 |
+| tests/Feature/NhlScheduleTest.php | 75 |
 | resources/js/pages/games.test.js | 156 |
-| resources/js/admin/admin-hub.test.js | 132 |
+| resources/js/admin/admin-hub.test.js | 133 |
 
 ## Verification and required setup
 
@@ -246,7 +246,7 @@ Coverage matrix (authored, not executed):
 | Admin timing save → DB → status read | COVERED | saves daily Eastern run time through admin HTTP and returns it with the next run |
 | Preserve configured time through enabled toggle | COVERED | retains the chosen daily time when the recycle toggle changes enabled state |
 | Spring/fall wall-clock cadence | COVERED | keeps the same Eastern daily time through daylight-saving transitions (two DST cases) |
-| Blank-time/subdaily behavior | COVERED | uses the interval cadence when a daily clock time is blank or the interval is not daily |
+| Blank-time/subdaily behavior | COVERED | uses dispatch-based interval cadence when no start time is selected |
 | Reject invalid time | COVERED | rejects invalid daily clock input on the admin schedule endpoint |
 | Settings hydrate/save and toggle request | COVERED | opens the existing gear settings with the Eastern daily clock and preserved frequency; saves the chosen daily time and reuses it when enabling the recycle toggle |
 | Card formatting and disabled state | COVERED | shows the configured daily time and the next run in Eastern standard or daylight time |
@@ -271,3 +271,49 @@ Counts: PHP 68; admin-hub JS 132; pages JS 156 unchanged.
 Only manual scoped-diff review and whitespace checks were performed. Tests, builds,
 CI, browser checks and production operations were not run. No new migration is
 required; the original snapshot-table migration still applies if not installed.
+
+
+## Eastern start clock at every interval
+
+Files changed: `app/Services/AdminImportSchedules.php`,
+`resources/js/admin/admin-hub.js`, `resources/js/pages/Admin/Dashboard.vue`,
+`tests/Feature/NhlScheduleTest.php`, `resources/js/admin/admin-hub.test.js`,
+`docs/architecture/ui/NhlScheduleSnapshots.yaml`, `docs/ARCHITECTURE_INVENTORY.md`,
+and this document.
+
+1. SATISFIED: always expose Start time (Eastern) for prepared schedules, including
+   three-hour or shorter intervals; retain existing persisted clock/timezone fields.
+2. SATISFIED: activation chooses the next aligned clock slot at or after now.
+   For example, three hours from 06:00 yields 06:00, 09:00, 12:00 and 15:00.
+3. SATISFIED: later dispatches advance from the saved scheduled instant, not actual
+   dispatch time. Skip expired slots with one next due time; no missed-run burst.
+4. SATISFIED: retain a running interval across midnight and unchanged saves;
+   changing frequency/start clock reanchors future slots. Avoid repeating a slot
+   already dispatched when settings change at that instant.
+5. SATISFIED: daily schedules keep their existing Eastern wall-clock/DST behavior.
+   Other intervals use elapsed seconds after their initial Eastern anchor, including
+   through DST and midnight, rather than resetting into a daily operating window.
+   A blank start time retains the existing dispatch-based cadence.
+6. SATISFIED: card describes the interval and start clock, with its next run;
+   source permissions, recycle/gear actions and settings storage are retained.
+
+Coverage matrix (authored, not executed):
+
+| Contract | Status | Test names |
+| --- | --- | --- |
+| First aligned slot before/at/after start | COVERED | aligns the first interval to its Eastern start time before or after that clock time (three cases) |
+| Late dispatch and missed slots | COVERED | keeps later intervals aligned when a scheduled run is dispatched late; skips missed interval slots without shifting the next slot or queuing catch-up work |
+| Continuous interval across midnight; unchanged save | COVERED | preserves a running interval across midnight and unchanged settings saves |
+| Changed clock/frequency and same-slot safety | COVERED | reanchors future intervals when the chosen start time or frequency changes; does not repeat an anchored slot when the frequency changes just after dispatch |
+| Three-hour HTTP save → stored settings → status read | COVERED | round trips a three-hour frequency and Eastern start time through admin HTTP |
+| Blank-time compatibility | COVERED | uses dispatch-based interval cadence when no start time is selected |
+| Visible field, card description and save payload | COVERED | shows and saves a start time for a three-hour frequency; exposes queued build progress and existing scheduling controls inside Game Imports |
+
+The endpoint × verb authorization/scope matrix above remains applicable, including
+member/guest rejection and super-admin mutation/status reads. Frontend checklist:
+source-specific field always shown, interval/start summary, settings hydration and
+request payload asserted; no new timers, global state or external requests. Test
+fixtures retain fixed clocks and mocked fetch. Counts: PHP 75, admin-hub JS 133,
+pages JS 156 unchanged. Only manual diff and whitespace checks performed; tests,
+builds, browser checks and production operations were not run. No migration
+required.

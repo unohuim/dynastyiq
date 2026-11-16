@@ -158,7 +158,9 @@ class AdminImportSchedules
                 $now = CarbonImmutable::now();
                 $attributes['next_due_at'] = null;
                 if ($enabled) {
-                    if ($seconds === 86400 && $time) {
+                    if ($sourceKey === 'nhl-schedule-snapshots' && $seconds !== 86400 && $time) {
+                        $attributes['next_due_at'] = $this->initialScheduleIntervalDue($row, $seconds, $time, $now);
+                    } elseif ($seconds === 86400 && $time) {
                         $localNow = $now->setTimezone($attributes['timezone']);
                         $anchor = CarbonImmutable::parse($localNow->toDateString() . ' ' . $time, $attributes['timezone']);
                         $ranToday = $row->last_dispatched_at?->setTimezone($attributes['timezone'])->isSameDay($localNow);
@@ -220,9 +222,55 @@ class AdminImportSchedules
         return $query->exists();
     }
 
+    /** Align a newly enabled or edited interval to its chosen Eastern start time. */
+    private function initialScheduleIntervalDue(
+        AdminImportSchedule $schedule,
+        int $seconds,
+        string $time,
+        CarbonImmutable $now,
+    ): CarbonImmutable {
+        if (
+            $schedule->enabled && $schedule->next_due_at !== null
+            && (int) $schedule->interval_seconds === $seconds
+            && substr((string) $schedule->daily_start_time, 0, 5) === substr($time, 0, 5)
+        ) {
+            return $schedule->next_due_at->toImmutable();
+        }
+        $anchor = $this->scheduleIntervalAnchor($time, $now);
+        $steps = max(0, (int) ceil(($now->timestamp - $anchor->timestamp) / max(60, $seconds)));
+        $candidate = $anchor->addSeconds($steps * $seconds);
+        if ($schedule->last_dispatched_at !== null && $candidate->lte($schedule->last_dispatched_at)) {
+            $additional = (int) floor(($schedule->last_dispatched_at->timestamp - $candidate->timestamp) / max(60, $seconds)) + 1;
+            $candidate = $candidate->addSeconds($additional * $seconds);
+        }
+        return $candidate;
+    }
+
+    /** Keep the configured clock local while interval arithmetic uses UTC instants. */
+    private function scheduleIntervalAnchor(string $time, CarbonImmutable $now): CarbonImmutable
+    {
+        $localDate = $now->setTimezone('America/Toronto')->toDateString();
+        return CarbonImmutable::parse($localDate.' '.$time, 'America/Toronto')->utc();
+    }
+
     /** Persist the dispatch timestamp and calculate the lane's next due time. */
     public function markDispatched(AdminImportSchedule $schedule, CarbonImmutable $now): void
     {
+        if (
+            $schedule->source_key === 'nhl-schedule-snapshots'
+            && $schedule->interval_seconds !== 86400 && $schedule->daily_start_time
+        ) {
+            $due = $schedule->next_due_at?->toImmutable()
+                ?? $this->scheduleIntervalAnchor($schedule->daily_start_time, $now);
+            $seconds = max(60, (int) $schedule->interval_seconds);
+            $steps = max(0, (int) floor(($now->timestamp - $due->timestamp) / $seconds) + 1);
+            $schedule->update([
+                'last_dispatched_at' => $now,
+                'next_due_at' => $due->addSeconds($steps * $seconds),
+            ]);
+            return;
+        }
+
         if (in_array($schedule->source_key, ['contracts', 'fantrax', 'nhl-schedule-snapshots'], true)
             && $schedule->interval_seconds === 86400 && $schedule->daily_start_time) {
             $timezone = $schedule->source_key === 'nhl-schedule-snapshots' ? 'America/Toronto'
