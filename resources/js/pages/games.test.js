@@ -1227,7 +1227,7 @@ describe('weekly Schedule page', () => {
         mount();
         document.querySelectorAll('[role=tab]')[1].click();
         await nextTick();
-        const row = document.querySelector('tbody tr');
+        const row = [...document.querySelectorAll('tbody tr')].find(candidate => candidate.querySelector('th').textContent === 'MTL');
         expect(row.querySelectorAll('a')).toHaveLength(0);
         expect(row.textContent).toContain('MTL');
         expect(row.lastElementChild.textContent).toBe('0');
@@ -1281,6 +1281,54 @@ describe('weekly Schedule page', () => {
         expect(document.querySelector('main').textContent).toContain('No remaining games available for this season.');
         expect(document.querySelector('main').textContent).not.toContain('No games available for this week.');
         expect(document.querySelectorAll('tbody tr')).toHaveLength(2);
+    });
+
+    it('defaults to numeric descending off-night totals and breaks ties alphabetically', async () => {
+        const first = state.schedule.off_nights.teams[0];
+        state.schedule.off_nights.teams = [
+            { ...first, id: 3, abbrev: 'VAN', off_night_gp: 12 },
+            { ...first, id: 4, abbrev: 'UTA', off_night_gp: 100 },
+            { ...first, id: 5, abbrev: 'BOS', off_night_gp: 12 },
+            { ...first, id: 6, abbrev: 'MTL', off_night_gp: 0 },
+        ];
+        const original = state.schedule.off_nights.teams.map(team => team.abbrev);
+        mount();
+        document.querySelectorAll('[role=tab]')[1].click();
+        await nextTick();
+        expect([...document.querySelectorAll('tbody th')].map(cell => cell.textContent)).toEqual(['UTA', 'BOS', 'VAN', 'MTL']);
+        expect(document.querySelector('th[aria-sort]').getAttribute('aria-sort')).toBe('descending');
+        expect(document.querySelector('th[aria-sort] svg').classList.contains('rotate-180')).toBe(false);
+        expect(state.schedule.off_nights.teams.map(team => team.abbrev)).toEqual(original);
+        expect(visit).not.toHaveBeenCalled();
+    });
+
+    it('toggles off-night sort direction retains it between tabs and reorders changed counts', async () => {
+        state.schedule.off_nights.teams[0].off_night_gp = 2;
+        state.schedule.off_nights.teams[1].off_night_gp = 10;
+        mount();
+        document.querySelectorAll('[role=tab]')[1].click();
+        await nextTick();
+        document.querySelector('[aria-label="Sort total ascending"]').click();
+        await nextTick();
+        expect(document.querySelector('tbody th').textContent).toBe('MTL');
+        expect(document.querySelector('th[aria-sort]').getAttribute('aria-sort')).toBe('ascending');
+        expect(document.querySelector('th[aria-sort] svg').classList.contains('rotate-180')).toBe(true);
+        document.querySelectorAll('[role=tab]')[0].click();
+        await nextTick();
+        const next = document.querySelector('[aria-label="Next week"]');
+        expect(next.classList.contains('h-7')).toBe(true);
+        expect(next.querySelector('svg').classList.contains('h-3')).toBe(true);
+        document.querySelectorAll('[role=tab]')[1].click();
+        await nextTick();
+        expect(document.querySelector('th[aria-sort]').getAttribute('aria-sort')).toBe('ascending');
+        state.schedule.off_nights.teams[0].off_night_gp = 20;
+        await nextTick();
+        expect(document.querySelector('tbody th').textContent).toBe('TOR');
+        document.querySelector('[aria-label="Sort total descending"]').click();
+        await nextTick();
+        expect(document.querySelector('tbody th').textContent).toBe('MTL');
+        expect(document.querySelector('th[aria-sort]').getAttribute('aria-sort')).toBe('descending');
+        expect(visit).not.toHaveBeenCalled();
     });
 
 });

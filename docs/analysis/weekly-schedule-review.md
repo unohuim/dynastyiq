@@ -98,7 +98,7 @@ The existing fresh-install guard is retained.
 | File | `it(...)` declarations |
 | --- | ---: |
 | tests/Feature/NhlScheduleTest.php | 43 |
-| resources/js/pages/games.test.js | 147 |
+| resources/js/pages/games.test.js | 149 |
 
 ## Verification
 
@@ -288,3 +288,35 @@ global state. The existing endpoint/verb auth-scope matrix remains applicable;
 no backend or permission changes. Frontend file retains 147 test declarations.
 No migration required. Static diff/whitespace review only: tests, builds, browser
 checks and production commands were not run.
+
+
+## Compact date controls and sortable Off Nights totals
+
+Files changed: `resources/js/pages/Tools/Schedule.vue`,
+`resources/js/pages/games.test.js`, `docs/architecture/ui/InertiaAppShell.yaml`,
+and this review document.
+
+1. SATISFIED: week buttons reduce from 44px to 28px, with 12px icons, 11px
+   This Week text, smaller padding and gaps. Backend URLs and disabled states stay.
+2. SATISFIED: default numeric descending Total; click toggles ascending/descending.
+3. SATISFIED: small down/up arrow, aria-sort and action label reflect the direction;
+   keyboard activation uses a native button and rotation respects reduced motion.
+4. SATISFIED: alphabetical ties, unchanged incoming rows, retained direction across
+   tabs, reactive ordering after count changes, and no request on sorting.
+
+Coverage matrix (authored, not executed):
+
+| Contract | Status | Test name |
+| --- | --- | --- |
+| Numeric descending, ties, immutable input, no request | COVERED | defaults to numeric descending off-night totals and breaks ties alphabetically |
+| Toggle, arrow/ARIA, retained direction, updated counts, date sizes | COVERED | toggles off-night sort direction retains it between tabs and reorders changed counts |
+| Week navigation and existing controls | COVERED | requests the selected week while retaining the current table during loading; uses the previous-week URL and enables This Week for a historical selection |
+
+Frontend checklist: computed sorting copies supplied rows; mounted-only state;
+DOM order, indicators, action, transitions, count updates and navigation classes
+asserted. Controlled fixtures, no timers, randomness or external requests.
+The endpoint/verb authorization and scope matrix above remains unchanged: this
+change introduces no endpoints, writes, payload fields or permission changes.
+Frontend file: 149 test declarations. No migration required.
+Static diff review and whitespace checks only; tests, CI, builds and browser checks
+were not run. No production operations performed.

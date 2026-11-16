@@ -1,12 +1,17 @@
 <script setup>
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import { router } from '@inertiajs/vue3';
 
-defineProps({ schedule: { type: Object, required: true } });
+const props = defineProps({ schedule: { type: Object, required: true } });
 const activeTab = ref('weekly');
 const tabs = [{ key: 'weekly', label: 'Weekly' }, { key: 'off-nights', label: 'Off Nights' }];
 const loading = ref(false);
 const error = ref('');
+const totalsDescending = ref(true);
+const offNightTeams = computed(() => [...props.schedule.off_nights.teams].sort((a, b) => {
+    const difference = totalsDescending.value ? b.off_night_gp - a.off_night_gp : a.off_night_gp - b.off_night_gp;
+    return difference || (a.abbrev || a.name).localeCompare(b.abbrev || b.name, 'en', { sensitivity: 'base' });
+}));
 
 function changeTab(event, index) {
     const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1
@@ -37,13 +42,13 @@ function navigate(url) {
                 <h1 class="mt-1 text-2xl font-semibold tracking-tight text-gray-900">Schedule</h1>
                 <p class="mt-1 text-sm text-gray-600">{{ activeTab === 'weekly' ? schedule.label : schedule.off_nights.label }}</p>
             </div>
-            <nav v-if="activeTab === 'weekly'" aria-label="Schedule week" class="flex items-center gap-1 rounded-lg border border-gray-200 bg-white p-1">
-                <button type="button" aria-label="Previous week" :disabled="loading" class="flex h-11 w-11 items-center justify-center rounded-md text-gray-600 transition-colors duration-150 hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:opacity-40 motion-reduce:transition-none" @click="navigate(schedule.previous_url)">
-                    <svg aria-hidden="true" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m15 18-6-6 6-6" /></svg>
+            <nav v-if="activeTab === 'weekly'" aria-label="Schedule week" class="flex items-center gap-0 rounded-md border border-gray-200 bg-white p-0.5">
+                <button type="button" aria-label="Previous week" :disabled="loading" class="flex h-7 w-7 items-center justify-center rounded-md text-gray-600 transition-colors duration-150 hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:opacity-40 motion-reduce:transition-none" @click="navigate(schedule.previous_url)">
+                    <svg aria-hidden="true" class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m15 18-6-6 6-6" /></svg>
                 </button>
-                <button type="button" :disabled="loading || schedule.is_current_week" class="h-11 rounded-md px-3 text-sm font-medium text-gray-700 transition-colors duration-150 hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:text-gray-400 motion-reduce:transition-none" @click="navigate(schedule.current_url)">This Week</button>
-                <button type="button" aria-label="Next week" :disabled="loading" class="flex h-11 w-11 items-center justify-center rounded-md text-gray-600 transition-colors duration-150 hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:opacity-40 motion-reduce:transition-none" @click="navigate(schedule.next_url)">
-                    <svg aria-hidden="true" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m9 18 6-6-6-6" /></svg>
+                <button type="button" :disabled="loading || schedule.is_current_week" class="h-7 rounded px-2 text-[11px] font-medium text-gray-700 transition-colors duration-150 hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:text-gray-400 motion-reduce:transition-none" @click="navigate(schedule.current_url)">This Week</button>
+                <button type="button" aria-label="Next week" :disabled="loading" class="flex h-7 w-7 items-center justify-center rounded-md text-gray-600 transition-colors duration-150 hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:opacity-40 motion-reduce:transition-none" @click="navigate(schedule.next_url)">
+                    <svg aria-hidden="true" class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m9 18 6-6-6-6" /></svg>
                 </button>
             </nav>
         </header>
@@ -105,11 +110,11 @@ function navigate(url) {
                     <thead>
                         <tr class="border-b border-gray-200 bg-gray-50 text-xs text-gray-600">
                             <th scope="col" class="px-3 py-2">Team</th>
-                            <th scope="col" class="px-3 py-2 text-right">Total</th>
+                            <th scope="col" class="px-3 py-1 text-right" :aria-sort="totalsDescending ? 'descending' : 'ascending'"><button type="button" class="inline-flex min-h-6 items-center gap-1 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500" :aria-label="totalsDescending ? 'Sort total ascending' : 'Sort total descending'" @click="totalsDescending = !totalsDescending">Total<svg aria-hidden="true" class="h-3 w-3 transition-transform duration-150 motion-reduce:transition-none" :class="totalsDescending ? '' : 'rotate-180'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 5v14m-5-5 5 5 5-5" /></svg></button></th>
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-gray-100">
-                        <tr v-for="team in schedule.off_nights.teams" :key="team.id">
+                        <tr v-for="team in offNightTeams" :key="team.id">
                             <th scope="row" class="px-3 py-1.5 font-semibold" :title="team.name">{{ team.abbrev || team.name }}</th>
                             <td class="px-3 py-1.5 text-right font-semibold tabular-nums text-gray-900">{{ team.off_night_gp }}</td>
                         </tr>
