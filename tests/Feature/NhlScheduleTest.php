@@ -313,3 +313,71 @@ it('uses each dates own season population in a week crossing September first', f
         ->and($schedule['days'][1]['league_teams'])->toBe(4)
         ->and($schedule['days'][1]['is_off_night'])->toBeTrue();
 });
+
+
+it('counts off nights across the remaining season rather than the selected week', function (): void {
+    ($this->league)();
+    ($this->game)(2026023000, '2026-11-18');
+    ($this->game)(2026023001, '2026-12-23');
+    ($this->game)(2026023002, '2027-04-07');
+    $schedule = ($this->read)();
+    $remaining = $schedule['off_nights'];
+    expect($remaining['season_id'])->toBe('20262027')->and($remaining['from_date'])->toBe('2026-11-18')
+        ->and($remaining['game_count'])->toBe(3)->and($remaining['teams'])->toHaveCount(32)
+        ->and(($this->row)($remaining, 'TOR')['off_night_gp'])->toBe(3)
+        ->and(array_column(($this->row)($remaining, 'TOR')['games'], 'date'))->toBe(['2026-11-18', '2026-12-23', '2027-04-07'])
+        ->and(($this->row)($remaining, 'BOS')['off_night_gp'])->toBe(0)
+        ->and(($this->row)($schedule, 'TOR')['total_gp'])->toBe(1);
+});
+
+it('keeps remaining off-night data identical when navigating historical or future weeks', function (): void {
+    ($this->league)();
+    ($this->game)(2026023000, '2026-12-23');
+    $current = ($this->read)()['off_nights'];
+    expect(($this->read)(['week' => '2026-10-01'])['off_nights'])->toBe($current)
+        ->and(($this->read)(['week' => '2030-11-18'])['off_nights'])->toBe($current);
+});
+
+it('excludes past completed cancelled postponed and other-season games from remaining off nights', function (): void {
+    ($this->league)();
+    foreach ([
+        ['2026-11-17', []], ['2026-11-18', ['game_state' => 'OFF']],
+        ['2026-11-18', ['game_state' => 'FINAL']], ['2026-11-19', ['game_state' => 'CNCL']],
+        ['2026-11-20', ['game_schedule_state' => 'PPD']],
+        ['2027-11-18', ['season_id' => '20272028']],
+        ['2026-11-18', ['game_state' => 'LIVE']], ['2026-11-23', []],
+    ] as $offset => [$date, $extra]) {
+        ($this->game)(2026023000 + $offset, $date, $extra);
+    }
+    $remaining = ($this->read)()['off_nights'];
+    expect($remaining['game_count'])->toBe(2)
+        ->and(($this->row)($remaining, 'TOR')['off_night_gp'])->toBe(2)
+        ->and(array_column(($this->row)($remaining, 'TOR')['games'], 'date'))->toBe(['2026-11-18', '2026-11-23']);
+});
+
+it('applies the inclusive off-night cutoff to each future full league slate', function (): void {
+    $ids = ($this->league)();
+    ($this->slate)($ids, 8, '2026-12-22', 2026023000);
+    ($this->slate)($ids, 9, '2026-12-23', 2026024000);
+    $remaining = ($this->read)()['off_nights'];
+    expect($remaining['game_count'])->toBe(17)
+        ->and(($this->row)($remaining, 'BOS')['off_night_gp'])->toBe(1)
+        ->and(array_column(($this->row)($remaining, 'BOS')['games'], 'date'))->toBe(['2026-12-22'])
+        ->and(collect($remaining['teams'])->sum('off_night_gp'))->toBe(16);
+});
+
+it('retains completed games in todays slate classification without counting them as remaining', function (): void {
+    $ids = ($this->league)();
+    ($this->slate)($ids, 9, '2026-11-18', 2026023000);
+    NhlGame::where('nhl_game_id', 2026023000)->update(['game_state' => 'FINAL']);
+    $remaining = ($this->read)()['off_nights'];
+    expect($remaining['game_count'])->toBe(8)
+        ->and(collect($remaining['teams'])->sum('off_night_gp'))->toBe(0);
+});
+
+it('retains zero-count teams when no uncompleted games remain this season', function (): void {
+    ($this->league)();
+    $remaining = ($this->read)()['off_nights'];
+    expect($remaining['game_count'])->toBe(0)->and($remaining['teams'])->toHaveCount(32)
+        ->and(collect($remaining['teams'])->sum('off_night_gp'))->toBe(0);
+});

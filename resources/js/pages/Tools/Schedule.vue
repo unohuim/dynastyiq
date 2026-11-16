@@ -2,7 +2,7 @@
 import { ref } from 'vue';
 import { router } from '@inertiajs/vue3';
 
-const props = defineProps({ schedule: { type: Object, required: true } });
+defineProps({ schedule: { type: Object, required: true } });
 const activeTab = ref('weekly');
 const tabs = [{ key: 'weekly', label: 'Weekly' }, { key: 'off-nights', label: 'Off Nights' }];
 const loading = ref(false);
@@ -16,11 +16,6 @@ function changeTab(event, index) {
     event.preventDefault();
     activeTab.value = tabs[next].key;
     event.currentTarget.parentElement.querySelectorAll('[role=tab]')[next].focus();
-}
-
-function offNightGames(team) {
-    return props.schedule.days.filter(day => day.is_off_night).flatMap(day =>
-        (team.days[day.date] || []).filter(game => !game.status).map(game => ({ ...game, date: day.date, label: `${day.label} ${day.display_date}` })));
 }
 
 function navigate(url) {
@@ -40,9 +35,9 @@ function navigate(url) {
             <div>
                 <p class="text-xs font-medium uppercase tracking-wide text-gray-500">Tools</p>
                 <h1 class="mt-1 text-2xl font-semibold tracking-tight text-gray-900">Schedule</h1>
-                <p class="mt-1 text-sm text-gray-600">{{ schedule.label }}</p>
+                <p class="mt-1 text-sm text-gray-600">{{ activeTab === 'weekly' ? schedule.label : schedule.off_nights.label }}</p>
             </div>
-            <nav aria-label="Schedule week" class="flex items-center gap-1 rounded-lg border border-gray-200 bg-white p-1">
+            <nav v-if="activeTab === 'weekly'" aria-label="Schedule week" class="flex items-center gap-1 rounded-lg border border-gray-200 bg-white p-1">
                 <button type="button" aria-label="Previous week" :disabled="loading" class="flex h-11 w-11 items-center justify-center rounded-md text-gray-600 transition-colors duration-150 hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:opacity-40 motion-reduce:transition-none" @click="navigate(schedule.previous_url)">
                     <svg aria-hidden="true" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m15 18-6-6 6-6" /></svg>
                 </button>
@@ -107,19 +102,21 @@ function navigate(url) {
             <p class="mb-3 text-sm text-gray-600">Off nights: 50% or fewer league teams playing that day (8 or fewer games in a 32-team league).</p>
             <div class="max-w-full rounded-lg border border-gray-200 bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500" role="region" aria-label="Off-night NHL team schedule" tabindex="0">
                 <table class="w-full border-collapse text-left text-sm">
-                    <caption class="sr-only">{{ schedule.label }}. Each team's off-night games and count.</caption>
-                    <thead><tr class="border-b border-gray-200 bg-gray-50 text-xs text-gray-600"><th scope="col" class="px-3 py-3">Team</th><th scope="col" class="px-3 py-3">Off-night games</th><th scope="col" class="px-3 py-3 text-center">Total</th></tr></thead>
+                    <caption class="sr-only">{{ schedule.off_nights.label }}. Each team's off-night games and count.</caption>
+                    <thead><tr class="border-b border-gray-200 bg-gray-50 text-xs text-gray-600"><th scope="col" class="px-3 py-3">Team</th><th scope="col" class="px-3 py-3">Remaining off-night games</th><th scope="col" class="px-3 py-3 text-center">Total</th></tr></thead>
                     <tbody class="divide-y divide-gray-100">
-                        <tr v-for="team in schedule.teams" :key="team.id">
+                        <tr v-for="team in schedule.off_nights.teams" :key="team.id">
                             <th scope="row" class="px-3 py-2"><div class="flex min-h-10 items-center gap-2"><img v-if="team.logo" :src="team.logo" alt="" loading="lazy" class="h-8 w-8 shrink-0 object-contain" /><span :title="team.name">{{ team.abbrev || team.name }}</span></div></th>
-                            <td class="px-3 py-2"><ul v-if="offNightGames(team).length" class="flex flex-wrap gap-x-5 gap-y-2"><li v-for="game in offNightGames(team)" :key="game.id"><a :href="game.href" class="inline-flex min-h-10 flex-col justify-center rounded text-gray-800 hover:text-indigo-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"><span class="font-medium">{{ game.label }}</span><span class="text-xs text-gray-500">{{ game.venue === 'home' ? 'vs' : '@' }} {{ game.opponent }}</span></a></li></ul><span v-else class="text-gray-400">—</span></td>
+                            <td class="px-3 py-2"><ul v-if="team.games.length" class="flex flex-wrap gap-x-5 gap-y-2"><li v-for="game in team.games" :key="game.id"><a :href="game.href" class="inline-flex min-h-10 flex-col justify-center rounded text-gray-800 hover:text-indigo-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"><span class="font-medium">{{ game.label }}</span><span class="text-xs text-gray-500">{{ game.venue === 'home' ? 'vs' : '@' }} {{ game.opponent }}</span></a></li></ul><span v-else class="text-gray-400">—</span></td>
                             <td class="px-3 py-2 text-center font-semibold tabular-nums text-gray-900">{{ team.off_night_gp }}</td>
                         </tr>
                     </tbody>
                 </table>
             </div>
+            <p v-if="!schedule.off_nights.game_count" class="mt-4 text-sm text-gray-500">No remaining games available for this season.</p>
         </section>
-        <p v-if="!schedule.teams.length || !schedule.game_count" class="mt-4 text-sm text-gray-500">No games available for this week.</p>
-        <p class="mt-3 text-xs text-gray-500">{{ schedule.teams.length }} teams · {{ schedule.game_count }} games · All times Eastern · @ Away · vs Home</p>
+        <p v-if="activeTab === 'weekly' && (!schedule.teams.length || !schedule.game_count)" class="mt-4 text-sm text-gray-500">No games available for this week.</p>
+        <p v-if="activeTab === 'weekly'" class="mt-3 text-xs text-gray-500">{{ schedule.teams.length }} teams · {{ schedule.game_count }} games · All times Eastern · @ Away · vs Home</p>
+        <p v-else class="mt-3 text-xs text-gray-500">{{ schedule.off_nights.teams.length }} teams · {{ schedule.off_nights.game_count }} remaining games · @ Away · vs Home</p>
     </main>
 </template>

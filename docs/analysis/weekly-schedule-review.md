@@ -1,5 +1,10 @@
 # Tools Schedule
 
+Current scope: Weekly uses the selected week. Off Nights independently covers the
+remaining current season from today in America/Toronto, including uncompleted
+live games. Earlier weekly Off Nights descriptions below are superseded by the
+Remaining-season correction section.
+
 ## Files changed
 
 - `app/Http/Controllers/NhlScheduleController.php`
@@ -91,8 +96,8 @@ The existing fresh-install guard is retained.
 
 | File | `it(...)` declarations |
 | --- | ---: |
-| tests/Feature/NhlScheduleTest.php | 37 |
-| resources/js/pages/games.test.js | 146 |
+| tests/Feature/NhlScheduleTest.php | 43 |
+| resources/js/pages/games.test.js | 147 |
 
 ## Verification
 
@@ -187,3 +192,66 @@ The frontend file retains 146 test declarations. No new test files, global state
 external requests or uncontrolled timing. Static diff review and whitespace checks
 only; tests, builds and browser checks were not run. The human should visually
 check 350px, 420px and desktop widths, including postponed/cancelled games.
+
+
+## Remaining-season correction
+
+### Files changed
+
+- `app/Http/Controllers/NhlScheduleController.php`
+- `resources/js/pages/Tools/Schedule.vue`
+- `tests/Feature/NhlScheduleTest.php`
+- `resources/js/pages/games.test.js`
+- `docs/architecture/ui/InertiaAppShell.yaml`
+- `docs/ARCHITECTURE_INVENTORY.md`
+- This review document.
+
+### Coverage matrix
+
+COVERED means authored assertions, not executed tests.
+
+| Contract | Status | Test names |
+| --- | --- | --- |
+| Today through current season, all teams and zero counts | COVERED | counts off nights across the remaining season rather than the selected week; retains zero-count teams when no uncompleted games remain this season |
+| Independent of selected week or selected season | COVERED | keeps remaining off-night data identical when navigating historical or future weeks |
+| Past/final/cancelled/postponed/next-season excluded | COVERED | excludes past completed cancelled postponed and other-season games from remaining off nights |
+| Full-date inclusive league cutoff and completed-today classification | COVERED | applies the inclusive off-night cutoff to each future full league slate; retains completed games in todays slate classification without counting them as remaining |
+| Separate season heading, no week controls, dates and counts | COVERED | defaults to Weekly and switches to Off Nights without a request; shows server-provided remaining off-night counts independently of weekly games; keeps remaining-season off nights unchanged after browsing a different week |
+| Season empty state and retained zero rows | COVERED | shows remaining-season empty state instead of the selected weeks empty state |
+
+### Requirements checklist
+
+1. SATISFIED: all current-season teams receive a remaining-season count.
+2. SATISFIED: begin today Eastern, exclude past and completed games, include live.
+3. SATISFIED: use full daily slate, not only still-upcoming games, for the 50% cutoff.
+4. SATISFIED: selected Weekly dates cannot change the Off Nights period/population.
+5. SATISFIED: heading, dates, totals and empty state match the season period.
+6. SATISFIED: existing mobile sizing, routes, authorization and game links retained.
+7. SATISFIED: no migration, new abstraction, dependency or operational changes.
+
+### Endpoint × verb auth/scope
+
+| Endpoint / verb | Scope | Tests |
+| --- | --- | --- |
+| GET /tools/schedule | Guests | allows guests to view the schedule in the shared shell |
+| GET /tools/schedule | Members without admin role | allows authenticated members without an admin role to view the same schedule |
+| GET /tools/schedule | Validated weekly input | rejects malformed impossible and non-scalar week dates |
+| GET /tools/schedule | Off Nights bound to today's season, independent of week input | keeps remaining off-night data identical when navigating historical or future weeks; excludes past completed cancelled postponed and other-season games from remaining off nights |
+
+No new mutation endpoint or stored derived fields. Derived read tests create stored
+schedule facts, then exercise the actual HTTP response. Organization/owner scope
+is not applicable to this public NHL schedule.
+
+### Frontend checklist and counts
+
+- Authored: local tab switching, keyboard focus, dates/counts from independent
+  payload, season heading, absent week controls, season empty state, unchanged
+  off-night data after a weekly visit, return to the weekly nine-column grid.
+- Deterministic fixtures, mocked router, no external calls, randomness or timers.
+- Backend file: 43 `it(...)` declarations. Frontend file: 147.
+- `git diff --check` and manual scoped-diff review only. Tests, builds, CI,
+  browser checks, migrations and production commands were not run.
+
+The imported schedule still defines available coverage. No external schedule
+fetch, generated future games, prediction runs or league-stat preparation occurs
+when reading either tab. No migration required.

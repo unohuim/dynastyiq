@@ -1094,6 +1094,13 @@ describe('weekly Schedule page', () => {
                     opponent: index ? 'MTL' : 'TOR', venue: index ? 'home' : 'away', time: '7:00 PM', status: null }] : []])),
             })),
         } });
+        state.schedule.off_nights = {
+            label: 'Remaining 2026–27 season · From Nov 18, 2026', game_count: 1,
+            teams: state.schedule.teams.map(team => ({ ...team, games: [{
+                id: 99, href: '/games/99', date: '2026-11-23', label: 'Mon Nov 23',
+                opponent: team.abbrev === 'MTL' ? 'TOR' : 'MTL', venue: 'home',
+            }] })),
+        };
         visit = vi.spyOn(inertia.router, 'get').mockImplementation(() => {});
     });
     afterEach(() => { app?.unmount(); document.body.innerHTML = ''; vi.restoreAllMocks(); });
@@ -1200,13 +1207,16 @@ describe('weekly Schedule page', () => {
         expect(document.querySelector('[role=tabpanel]').id).toBe(tabs[1].getAttribute('aria-controls'));
         expect(document.querySelector('main').textContent).toContain('50% or fewer');
         expect(document.querySelectorAll('tbody tr')).toHaveLength(2);
-        expect(document.querySelector('tbody a').textContent).toContain('Mon Nov 16');
+        expect(document.querySelector('tbody a').textContent).toContain('Mon Nov 23');
+        expect(document.querySelector('[aria-label="Schedule week"]')).toBeNull();
+        expect(document.querySelector('header').textContent).toContain('Remaining 2026–27 season');
         expect(document.querySelector('tbody tr').lastElementChild.textContent).toBe('1');
         expect(visit).not.toHaveBeenCalled();
     });
 
-    it('keeps zero-count teams and omits postponed and busy-day games from off-night links', async () => {
-        state.schedule.teams[0].off_night_gp = 0;
+    it('shows server-provided remaining off-night counts independently of weekly games', async () => {
+        state.schedule.off_nights.teams[0].off_night_gp = 0;
+        state.schedule.off_nights.teams[0].games = [];
         state.schedule.teams[0].days['2026-11-16'][0].status = 'Postponed';
         state.schedule.teams[0].days['2026-11-17'] = [{ id: 8, href: '/games/8', opponent: 'BOS', venue: 'home', status: null }];
         mount();
@@ -1230,9 +1240,11 @@ describe('weekly Schedule page', () => {
         }
     });
 
-    it('preserves Off Nights across week navigation and renders updated counts', async () => {
+    it('keeps remaining-season off nights unchanged after browsing a different week', async () => {
         mount();
         document.querySelectorAll('[role=tab]')[1].click();
+        await nextTick();
+        document.querySelectorAll('[role=tab]')[0].click();
         await nextTick();
         document.querySelector('[aria-label="Next week"]').click();
         expect(visit.mock.calls[0][2].preserveState).toBe(true);
@@ -1241,13 +1253,27 @@ describe('weekly Schedule page', () => {
             teams: state.schedule.teams.map(team => ({ ...team, off_night_gp: 0 })),
         };
         await nextTick();
+        document.querySelectorAll('[role=tab]')[1].click();
+        await nextTick();
         expect(document.querySelector('[role=tabpanel]').id).toBe('schedule-panel-off-nights');
-        expect(document.querySelector('caption').textContent).toContain('Nov 23');
-        expect(document.querySelectorAll('tbody a')).toHaveLength(0);
-        expect(document.querySelector('tbody tr').lastElementChild.textContent).toBe('0');
+        expect(document.querySelector('caption').textContent).toContain('Remaining 2026–27 season');
+        expect(document.querySelector('tbody a').textContent).toContain('Mon Nov 23');
+        expect(document.querySelector('tbody tr').lastElementChild.textContent).toBe('1');
         document.querySelectorAll('[role=tab]')[0].click();
         await nextTick();
         expect(document.querySelectorAll('thead th')).toHaveLength(9);
+    });
+
+    it('shows remaining-season empty state instead of the selected weeks empty state', async () => {
+        state.schedule.game_count = 0;
+        state.schedule.off_nights.game_count = 0;
+        state.schedule.off_nights.teams = state.schedule.off_nights.teams.map(team => ({ ...team, games: [], off_night_gp: 0 }));
+        mount();
+        document.querySelectorAll('[role=tab]')[1].click();
+        await nextTick();
+        expect(document.querySelector('main').textContent).toContain('No remaining games available for this season.');
+        expect(document.querySelector('main').textContent).not.toContain('No games available for this week.');
+        expect(document.querySelectorAll('tbody tr')).toHaveLength(2);
     });
 
 });

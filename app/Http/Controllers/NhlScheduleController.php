@@ -7,6 +7,7 @@ namespace App\Http\Controllers;
 use App\Models\NhlTeam;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -23,7 +24,8 @@ class NhlScheduleController extends Controller
             ->startOfWeek(CarbonImmutable::MONDAY)->startOfDay();
         $end = $start->addDays(6);
         $seasons = array_unique([$this->seasonId($start), $this->seasonId($end)]);
-        $seasonGames = DB::table('nhl_games')->whereIn('season_id', $seasons)->whereIn('game_type', [1, 2, 3]);
+        $currentSeason = $this->seasonId($today);
+        $seasonGames = DB::table('nhl_games')->whereIn('season_id', array_unique([...$seasons, $currentSeason]))->whereIn('game_type', [1, 2, 3]);
         $home = (clone $seasonGames)->whereNotNull('home_team_id')->selectRaw(
             'season_id, home_team_id AS nhl_id, home_team_abbrev AS abbrev, home_team_common_name AS common_name, home_team_place_name AS place_name'
         );
@@ -32,8 +34,8 @@ class NhlScheduleController extends Controller
         );
         $seasonParticipants = DB::query()->fromSub($home->union($away), 'participants')->orderBy('nhl_id')->get();
         $leagueSizes = $seasonParticipants->groupBy('season_id')->map(fn ($rows): int => $rows->unique('nhl_id')->count());
-        $participants = $seasonParticipants->unique('nhl_id');
-        $references = NhlTeam::query()->whereIn('nhl_id', $participants->pluck('nhl_id'))
+        $participants = $seasonParticipants->whereIn('season_id', $seasons)->unique('nhl_id');
+        $references = NhlTeam::query()->whereIn('nhl_id', $seasonParticipants->pluck('nhl_id'))
             ->get(['nhl_id', 'abbrev', 'full_name', 'common_name', 'place_name'])->keyBy('nhl_id');
         $days = collect(range(0, 6))->map(fn (int $offset): array => [
             'date' => $start->addDays($offset)->toDateString(),
@@ -101,7 +103,66 @@ class NhlScheduleController extends Controller
             'next_url' => route('tools.schedule', ['week' => $start->addWeek()->toDateString()]),
             'current_url' => route('tools.schedule'),
             'game_count' => $gameCount,
+            'off_nights' => $this->remainingOffNights($today, $seasonParticipants->where('season_id', $currentSeason)->unique('nhl_id'), $references),
         ]]);
+    }
+
+    /** Count remaining current-season off-night games independently of the weekly view. */
+    private function remainingOffNights(CarbonImmutable $today, Collection $participants, Collection $references): array
+    {
+        $season = $this->seasonId($today);
+        $teams = [];
+        foreach ($participants as $team) {
+            $reference = $references->get($team->nhl_id);
+            $abbrev = $reference?->abbrev ?: $team->abbrev;
+            $name = $reference?->full_name ?: trim(($reference?->place_name ?: $team->place_name).' '.($reference?->common_name ?: $team->common_name));
+            $teams[(int) $team->nhl_id] = [
+                'id' => (int) $team->nhl_id, 'abbrev' => $abbrev, 'name' => $name ?: $abbrev ?: 'Team '.$team->nhl_id,
+                'logo' => $abbrev ? 'https://assets.nhle.com/logos/nhl/svg/'.$abbrev.'_light.svg' : null,
+                'games' => [], 'off_night_gp' => 0,
+            ];
+        }
+        $games = DB::table('nhl_games')->where('season_id', $season)->whereIn('game_type', [1, 2, 3])
+            ->where('game_date', '>=', $today->toDateString())
+            ->orderBy('game_date')->orderBy('start_time_utc')->orderBy('nhl_game_id')
+            ->get(['nhl_game_id', 'game_date', 'start_time_utc', 'game_state', 'game_schedule_state',
+                'home_team_id', 'home_team_abbrev', 'away_team_id', 'away_team_abbrev'])
+            ->reject(fn ($game): bool => $this->isInactive($game));
+        $gameCount = 0;
+        foreach ($games->groupBy('game_date') as $date => $slate) {
+            // Completed games still belong to the day's league slate, but not its remaining games.
+            $playing = $slate->pluck('home_team_id')->merge($slate->pluck('away_team_id'))->filter()->unique()->count();
+            $isOffNight = count($teams) > 0 && $playing * 2 <= count($teams);
+            foreach ($slate as $game) {
+                if (in_array(strtoupper((string) $game->game_state), ['FINAL', 'OFF'], true)) {
+                    continue;
+                }
+                $gameCount++;
+                if (! $isOffNight) {
+                    continue;
+                }
+                foreach (['home' => 'away', 'away' => 'home'] as $side => $opponent) {
+                    $id = (int) $game->{$side.'_team_id'};
+                    if (! isset($teams[$id])) {
+                        continue;
+                    }
+                    $opponentAbbrev = $teams[(int) $game->{$opponent.'_team_id'}]['abbrev'] ?? $game->{$opponent.'_team_abbrev'};
+                    $teams[$id]['games'][] = [
+                        'id' => (int) $game->nhl_game_id, 'href' => route('games.show', ['nhlGameId' => $game->nhl_game_id]),
+                        'date' => $date, 'label' => CarbonImmutable::parse($date)->format('D M j'),
+                        'venue' => $side, 'opponent' => $opponentAbbrev ?: 'TBD',
+                    ];
+                    $teams[$id]['off_night_gp']++;
+                }
+            }
+        }
+
+        return [
+            'season_id' => $season, 'from_date' => $today->toDateString(),
+            'label' => 'Remaining '.substr($season, 0, 4).'–'.substr($season, 6, 2).' season · From '.$today->format('M j, Y'),
+            'teams' => collect($teams)->sortBy('abbrev', SORT_NATURAL | SORT_FLAG_CASE)->values()->all(),
+            'game_count' => $gameCount,
+        ];
     }
 
     /** Exclude postponed and cancelled games from slate activity and GP. */
