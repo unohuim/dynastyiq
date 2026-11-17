@@ -96,8 +96,9 @@ class VerifyNhlHtmlPlayByPlay
             ->orderBy('sort_order')
             ->get();
 
-        $htmlToiShifts = $this->htmlToiShifts($gameId, $reportUrls);
-        $mismatches = $this->compareAndEnrich($gameId, $apiEvents, $htmlEvents, $sourceUrl, $htmlToiShifts);
+        $context = $this->comparisonContext($gameId, $apiEvents, $htmlEvents);
+        $htmlToiShifts = $this->htmlToiShifts($reportUrls, $context);
+        $mismatches = $this->compareAndEnrich($apiEvents, $htmlEvents, $sourceUrl, $htmlToiShifts, $context);
 
         if ($mismatches === []) {
             $this->persistValidation($gameId, NhlGameValidation::STATUS_APPROVED, []);
@@ -114,17 +115,19 @@ class VerifyNhlHtmlPlayByPlay
      * @param \Illuminate\Support\Collection<int,PlayByPlay> $apiEvents
      * @param array<int,array<string,mixed>> $htmlEvents
      * @param array<int,array<string,mixed>> $htmlToiShifts
+     * @param array<string,mixed> $context Game-local indexes, never shared across calls.
      * @return array<int,array<string,mixed>>
      */
     private function compareAndEnrich(
-        int $gameId,
         \Illuminate\Support\Collection $apiEvents,
         array $htmlEvents,
         string $sourceUrl,
-        array $htmlToiShifts
+        array $htmlToiShifts,
+        array $context
     ): array {
         $mismatches = [];
         $matchedApiEventKeys = [];
+        $positions = [];
 
         foreach ($htmlEvents as $htmlEvent) {
             $apiEvent = $this->matchApiEvent($apiEvents, $htmlEvent, $matchedApiEventKeys);
@@ -143,21 +146,24 @@ class VerifyNhlHtmlPlayByPlay
                 continue;
             }
 
-            $resolvedHtmlPlayers = $this->resolvedHtmlOnIcePlayers($gameId, $htmlEvent);
+            $resolvedHtmlPlayers = $this->resolvedHtmlOnIcePlayers($htmlEvent, $context);
 
-            $this->upsertPositions($apiEvent, $resolvedHtmlPlayers);
+            $this->collectPositions($apiEvent, $resolvedHtmlPlayers, $context, $positions);
             $onIceMismatch = $this->onIceMismatch(
                 $apiEvent,
                 $htmlEvent,
                 $resolvedHtmlPlayers,
                 $sourceUrl,
-                $htmlToiShifts
+                $htmlToiShifts,
+                $context
             );
 
             if ($onIceMismatch !== null) {
                 $mismatches[] = $onIceMismatch;
             }
         }
+
+        $this->writePositions($positions);
 
         return $mismatches;
     }
@@ -360,44 +366,40 @@ class VerifyNhlHtmlPlayByPlay
     }
 
     /**
-     * Store player-position rows for linked unit shifts when HTML exposes player identity.
+     * Collect each linked shift/player once; the last matching HTML position wins.
      *
-     * @param \Illuminate\Support\Collection<int,array{player_id:int,nhl_player_id:int,position_code:string|null,sweater_number:int|null,team_abbrev:string|null,side:string|null,text:string|null}> $players
+     * @param array<string,mixed> $context
+     * @param array<string,array<string,mixed>> $positions
      */
-    private function upsertPositions(PlayByPlay $apiEvent, \Illuminate\Support\Collection $players): void
+    private function collectPositions(PlayByPlay $apiEvent, \Illuminate\Support\Collection $players, array $context, array &$positions): void
     {
-        if ($players->isEmpty()) {
-            return;
-        }
-
         foreach ($players as $player) {
             if (empty($player['position_code'])) {
                 continue;
             }
-
             $playerId = (int) $player['player_id'];
-
-            $unitShiftId = DB::table('event_unit_shifts as eus')
-                ->join('nhl_unit_shifts as us', 'us.id', '=', 'eus.unit_shift_id')
-                ->join('nhl_unit_players as up', 'up.unit_id', '=', 'us.unit_id')
-                ->where('eus.event_id', $apiEvent->id)
-                ->where('up.player_id', $playerId)
-                ->value('us.id');
-
-            if (! $unitShiftId) {
+            $shiftId = $context['position_shifts'][$apiEvent->id][$playerId] ?? null;
+            if ($shiftId === null) {
                 continue;
             }
+            $positions[$shiftId.':'.$playerId] = [
+                'unit_shift_id' => $shiftId, 'player_id' => $playerId, 'position_code' => $player['position_code'],
+            ];
+        }
+    }
 
-            DB::table('nhl_unit_shift_players')->updateOrInsert(
-                [
-                    'unit_shift_id' => (int) $unitShiftId,
-                    'player_id' => (int) $playerId,
-                ],
-                [
-                    'position_code' => $player['position_code'],
-                    'updated_at' => now(),
-                    'created_at' => now(),
-                ]
+    /**
+     * Bulk update natural keys without replacing row identities or creation timestamps.
+     *
+     * @param array<string,array<string,mixed>> $positions
+     */
+    private function writePositions(array $positions): void
+    {
+        $now = now();
+        foreach (array_chunk(array_values($positions), 100) as $chunk) {
+            $rows = array_map(fn (array $row): array => [...$row, 'created_at' => $now, 'updated_at' => $now], $chunk);
+            DB::table('nhl_unit_shift_players')->upsert(
+                $rows, ['unit_shift_id', 'player_id'], ['position_code', 'updated_at']
             );
         }
     }
@@ -408,6 +410,7 @@ class VerifyNhlHtmlPlayByPlay
      * @param array<string,mixed> $htmlEvent
      * @param \Illuminate\Support\Collection<int,array{player_id:int,nhl_player_id:int,position_code:string|null,sweater_number:int|null,team_abbrev:string|null,side:string|null,text:string|null}> $resolvedHtmlPlayers
      * @param array<int,array<string,mixed>> $htmlToiShifts
+     * @param array<string,mixed> $context
      * @return array<string,mixed>|null
      */
     private function onIceMismatch(
@@ -415,7 +418,8 @@ class VerifyNhlHtmlPlayByPlay
         array $htmlEvent,
         \Illuminate\Support\Collection $resolvedHtmlPlayers,
         string $sourceUrl,
-        array $htmlToiShifts
+        array $htmlToiShifts,
+        array $context
     ): ?array {
         if ($this->skipsOnIceComparison($apiEvent)) {
             return null;
@@ -448,7 +452,7 @@ class VerifyNhlHtmlPlayByPlay
             return null;
         }
 
-        $linkedPlayers = $this->linkedOnIcePlayers($apiEvent);
+        $linkedPlayers = $context['event_players'][$apiEvent->id] ?? collect();
         $linkedIds = $linkedPlayers
             ->pluck('nhl_player_id')
             ->map(fn ($id): int => (int) $id)
@@ -462,7 +466,7 @@ class VerifyNhlHtmlPlayByPlay
             return null;
         }
 
-        if ($this->isExactBoundaryOnIceMismatch($apiEvent, $htmlIds, $linkedIds)) {
+        if ($this->isExactBoundaryOnIceMismatch($apiEvent, $htmlIds, $linkedIds, $context)) {
             return null;
         }
 
@@ -495,8 +499,9 @@ class VerifyNhlHtmlPlayByPlay
      *
      * @param array<int,int> $htmlIds
      * @param array<int,int> $linkedIds
+     * @param array<string,mixed> $context
      */
-    private function isExactBoundaryOnIceMismatch(PlayByPlay $apiEvent, array $htmlIds, array $linkedIds): bool
+    private function isExactBoundaryOnIceMismatch(PlayByPlay $apiEvent, array $htmlIds, array $linkedIds, array $context): bool
     {
         $eventSecond = $apiEvent->seconds_in_game;
 
@@ -513,19 +518,7 @@ class VerifyNhlHtmlPlayByPlay
             return false;
         }
 
-        $boundaryPlayerIds = DB::table('nhl_unit_shifts as us')
-            ->join('nhl_unit_players as up', 'up.unit_id', '=', 'us.unit_id')
-            ->join('players', 'players.id', '=', 'up.player_id')
-            ->where('us.nhl_game_id', $apiEvent->nhl_game_id)
-            ->where(function ($query) use ($eventSecond): void {
-                $query->where('us.start_game_seconds', (int) $eventSecond)
-                    ->orWhere('us.end_game_seconds', (int) $eventSecond);
-            })
-            ->pluck('players.nhl_id')
-            ->map(fn ($id): int => (int) $id)
-            ->unique()
-            ->values()
-            ->all();
+        $boundaryPlayerIds = array_keys($context['boundary_players'][(int) $eventSecond] ?? []);
 
         return $boundaryPlayerIds !== [] && array_diff($differentPlayerIds, $boundaryPlayerIds) === [];
     }
@@ -608,120 +601,80 @@ class VerifyNhlHtmlPlayByPlay
     }
 
     /**
-     * Return linked shiftchart/unit players for one imported API event.
+     * Load game-local evidence once; keep all indexes local to this verification call.
      *
-     * @return \Illuminate\Support\Collection<int,array<string,mixed>>
+     * @param \Illuminate\Support\Collection<int,PlayByPlay> $apiEvents
+     * @param array<int,array<string,mixed>> $htmlEvents
+     * @return array<string,mixed>
      */
-    private function linkedOnIcePlayers(PlayByPlay $apiEvent): \Illuminate\Support\Collection
+    private function comparisonContext(int $gameId, \Illuminate\Support\Collection $apiEvents, array $htmlEvents): array
     {
-        return DB::table('event_unit_shifts as eus')
-            ->join('nhl_unit_shifts as us', 'us.id', '=', 'eus.unit_shift_id')
+        $game = DB::table('nhl_games')->where('nhl_game_id', $gameId)
+            ->first(['home_team_id', 'home_team_abbrev', 'away_team_id', 'away_team_abbrev']);
+        $teamIds = $game === null ? [] : [
+            strtoupper((string) $game->home_team_abbrev) => (int) $game->home_team_id,
+            strtoupper((string) $game->away_team_abbrev) => (int) $game->away_team_id,
+        ];
+        $boxscores = DB::table('nhl_boxscores')->where('nhl_game_id', $gameId)
+            ->get(['nhl_team_id', 'sweater_number', 'nhl_player_id']);
+        $jerseys = $boxscores->keyBy(fn (object $row): string => ((int) $row->nhl_team_id).':'.((int) $row->sweater_number));
+        $explicitIds = collect($htmlEvents)->flatMap(fn (array $event) => $this->htmlIdentityCandidates($event))
+            ->pluck('nhl_player_id')->map(fn ($id): int => (int) $id);
+        $playerIds = DB::table('players')->whereIn('nhl_id', $boxscores->pluck('nhl_player_id')->merge($explicitIds)->filter()->unique())
+            ->pluck('id', 'nhl_id');
+        $shiftPlayers = DB::table('nhl_unit_shifts as us')
             ->join('nhl_units as units', 'units.id', '=', 'us.unit_id')
             ->join('nhl_unit_players as up', 'up.unit_id', '=', 'units.id')
-            ->join('players', 'players.id', '=', 'up.player_id')
-            ->where('eus.event_id', $apiEvent->id)
-            ->orderBy('us.team_id')
-            ->orderBy('units.unit_type')
-            ->orderBy('players.nhl_id')
-            ->get([
-                'eus.event_id',
-                'eus.unit_shift_id',
-                'us.nhl_game_id',
-                'us.period',
-                'us.start_time',
-                'us.end_time',
-                'us.start_game_seconds',
-                'us.end_game_seconds',
-                'us.seconds',
-                'us.team_id',
-                'us.team_abbrev',
-                'units.id as unit_id',
-                'units.unit_type',
-                'up.player_id',
-                'players.nhl_id as nhl_player_id',
-                'players.full_name',
-                'players.position',
-                'players.team_abbrev as player_team_abbrev',
-            ])
+            ->join('players', 'players.id', '=', 'up.player_id')->where('us.nhl_game_id', $gameId)
+            ->orderBy('us.team_id')->orderBy('units.unit_type')->orderBy('players.nhl_id')
+            ->get(['us.id as unit_shift_id', 'us.nhl_game_id', 'us.period', 'us.start_time', 'us.end_time',
+                'us.start_game_seconds', 'us.end_game_seconds', 'us.seconds', 'us.team_id', 'us.team_abbrev',
+                'units.id as unit_id', 'units.unit_type', 'up.player_id', 'players.nhl_id as nhl_player_id',
+                'players.full_name', 'players.position', 'players.team_abbrev as player_team_abbrev'])
             ->map(fn (object $row): array => (array) $row);
+        $byShift = $shiftPlayers->groupBy('unit_shift_id');
+        $boundaries = [];
+        foreach ($shiftPlayers as $player) {
+            foreach (['start_game_seconds', 'end_game_seconds'] as $edge) {
+                if (! empty($player['nhl_player_id'])) {
+                    $boundaries[(int) $player[$edge]][(int) $player['nhl_player_id']] = true;
+                }
+            }
+        }
+        $links = DB::table('event_unit_shifts as eus')->join('nhl_unit_shifts as us', 'us.id', '=', 'eus.unit_shift_id')
+            ->where('us.nhl_game_id', $gameId)->whereIn('eus.event_id', $apiEvents->pluck('id'))
+            ->orderBy('eus.unit_shift_id')->orderBy('eus.id')->get(['eus.event_id', 'eus.unit_shift_id']);
+        $eventPlayers = [];
+        $positionShifts = [];
+        foreach ($links as $link) {
+            foreach ($byShift->get($link->unit_shift_id, collect()) as $player) {
+                $eventPlayers[$link->event_id][] = ['event_id' => (int) $link->event_id, ...$player];
+                $positionShifts[$link->event_id][(int) $player['player_id']] ??= (int) $link->unit_shift_id;
+            }
+        }
+        foreach ($eventPlayers as &$players) {
+            $players = collect($players)->sortBy([['team_id', 'asc'], ['unit_type', 'asc'], ['nhl_player_id', 'asc']])->values();
+        }
+        unset($players);
+
+        return ['game' => $game, 'boxscores' => $boxscores, 'team_ids' => $teamIds, 'jerseys' => $jerseys,
+            'player_ids' => $playerIds, 'event_players' => $eventPlayers, 'position_shifts' => $positionShifts,
+            'boundary_players' => $boundaries];
     }
 
     /**
      * Resolve HTML on-ice jersey/position rows to local player IDs.
      *
      * @param array<string,mixed> $htmlEvent
+     * @param array<string,mixed> $context
      * @return \Illuminate\Support\Collection<int,array{player_id:int,nhl_player_id:int,position_code:string|null,sweater_number:int|null,team_abbrev:string|null,side:string|null,text:string|null}>
      */
-    private function resolvedHtmlOnIcePlayers(int $gameId, array $htmlEvent): \Illuminate\Support\Collection
+    private function resolvedHtmlOnIcePlayers(array $htmlEvent, array $context): \Illuminate\Support\Collection
     {
         $htmlPlayers = $this->htmlIdentityCandidates($htmlEvent);
-
-        if ($htmlPlayers->isEmpty()) {
-            return collect();
-        }
-
-        $game = DB::table('nhl_games')
-            ->where('nhl_game_id', $gameId)
-            ->first(['home_team_id', 'home_team_abbrev', 'away_team_id', 'away_team_abbrev']);
-
-        $teamIdsByAbbrev = [];
-
-        if ($game !== null) {
-            $teamIdsByAbbrev[strtoupper((string) $game->home_team_abbrev)] = (int) $game->home_team_id;
-            $teamIdsByAbbrev[strtoupper((string) $game->away_team_abbrev)] = (int) $game->away_team_id;
-        }
-
-        $jerseyKeys = $htmlPlayers
-            ->filter(fn (array $player): bool => empty($player['nhl_player_id']) && ! empty($player['team_abbrev']) && ! empty($player['sweater_number']))
-            ->map(function (array $player) use ($teamIdsByAbbrev): ?array {
-                $teamId = $teamIdsByAbbrev[strtoupper((string) $player['team_abbrev'])] ?? null;
-
-                return $teamId !== null ? [
-                    'team_id' => $teamId,
-                    'sweater_number' => (int) $player['sweater_number'],
-                ] : null;
-            })
-            ->filter()
-            ->values();
-
-        $nhlIdsByJersey = collect();
-
-        if ($jerseyKeys->isNotEmpty()) {
-            $nhlIdsByJersey = DB::table('nhl_boxscores')
-                ->where('nhl_game_id', $gameId)
-                ->whereIn('nhl_team_id', $jerseyKeys->pluck('team_id')->unique()->all())
-                ->whereIn('sweater_number', $jerseyKeys->pluck('sweater_number')->unique()->all())
-                ->get(['nhl_team_id', 'sweater_number', 'nhl_player_id'])
-                ->keyBy(fn (object $row): string => ((int) $row->nhl_team_id).':'.((int) $row->sweater_number));
-        }
-
-        $nhlIds = $htmlPlayers
-            ->map(function (array $player) use ($teamIdsByAbbrev, $nhlIdsByJersey): ?int {
-                if (! empty($player['nhl_player_id'])) {
-                    return (int) $player['nhl_player_id'];
-                }
-
-                $teamId = $teamIdsByAbbrev[strtoupper((string) ($player['team_abbrev'] ?? ''))] ?? null;
-
-                if ($teamId === null || empty($player['sweater_number'])) {
-                    return null;
-                }
-
-                $row = $nhlIdsByJersey->get($teamId.':'.((int) $player['sweater_number']));
-
-                return $row !== null ? (int) $row->nhl_player_id : null;
-            })
-            ->filter()
-            ->unique()
-            ->values();
-
-        if ($nhlIds->isEmpty()) {
-            return collect();
-        }
-
-        $playerIdsByNhlId = DB::table('players')
-            ->whereIn('nhl_id', $nhlIds->all())
-            ->pluck('id', 'nhl_id');
+        $teamIdsByAbbrev = $context['team_ids'];
+        $nhlIdsByJersey = $context['jerseys'];
+        $playerIdsByNhlId = $context['player_ids'];
 
         return $htmlPlayers
             ->map(function (array $player) use ($teamIdsByAbbrev, $nhlIdsByJersey, $playerIdsByNhlId): ?array {
@@ -772,13 +725,12 @@ class VerifyNhlHtmlPlayByPlay
      * Parse TV/TH report shift windows for the game.
      *
      * @param array<string,string> $reportUrls
+     * @param array<string,mixed> $context
      * @return array<int,array<string,mixed>>
      */
-    private function htmlToiShifts(int $gameId, array $reportUrls): array
+    private function htmlToiShifts(array $reportUrls, array $context): array
     {
-        $game = DB::table('nhl_games')
-            ->where('nhl_game_id', $gameId)
-            ->first(['home_team_id', 'home_team_abbrev', 'away_team_id', 'away_team_abbrev']);
+        $game = $context['game'];
 
         if ($game === null) {
             return [];
@@ -788,9 +740,7 @@ class VerifyNhlHtmlPlayByPlay
             (int) $game->away_team_id => strtoupper((string) $game->away_team_abbrev),
             (int) $game->home_team_id => strtoupper((string) $game->home_team_abbrev),
         ];
-        $nhlIdsByTeamSweater = DB::table('nhl_boxscores')
-            ->where('nhl_game_id', $gameId)
-            ->get(['nhl_team_id', 'sweater_number', 'nhl_player_id'])
+        $nhlIdsByTeamSweater = $context['boxscores']
             ->mapWithKeys(function (object $row) use ($teamAbbrevsById): array {
                 $team = $teamAbbrevsById[(int) $row->nhl_team_id] ?? null;
                 $sweater = (int) $row->sweater_number;

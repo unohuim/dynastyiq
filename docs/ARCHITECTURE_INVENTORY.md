@@ -493,6 +493,13 @@ Cross-list dragging, rich board interactions, or server-ranked lists where manua
 **Purpose:**
 Compare imported API play-by-play against the official NHL HTML play-by-play report, persist reviewable source mismatches, and enrich linked unit shifts with contextual player positions. Penalty-shot attempts are skipped for normal on-ice mismatch reporting because the HTML report exposes shooter-goalie participants while shiftcharts expose normal shift-window skaters. Right-rail payload availability and HTML play-by-play report availability are stored as separate source status rows.
 
+Verification reads game-local jersey, membership, event-link and boundary evidence
+in batches and resolves comparisons in memory. Deduplicated position updates use
+bounded natural-key upserts, preserving row IDs and creation timestamps under
+the existing game transaction/cancellation fence. This applies to subsequent
+verification calls without relocating queued jobs or changing their timeouts.
+Authority: `docs/architecture/imports/NhlGameDataImportServices.yaml`.
+
 **When to Use:**
 After API PBP rows are imported and linked to unit shifts, when source verification or shift-level position enrichment is needed.
 
