@@ -329,6 +329,8 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                     ->controller(\App\Http\Controllers\Admin\NhlGamePredictionController::class)->group(function () {
                         Route::get('/', 'index')->name('index');
                         Route::post('/runs', 'store')->name('runs.store');
+                        Route::get('/automation', 'automation')->name('automation.show');
+                        Route::put('/automation', 'updateAutomation')->name('automation.update');
                         Route::get('/games/{game}/revisions', 'revisions')->whereNumber('game')->name('revisions');
                         Route::get('/revisions/{revision}', 'show')->whereNumber('revision')->name('show');
                     });

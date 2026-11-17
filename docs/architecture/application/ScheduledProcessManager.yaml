@@ -1,6 +1,10 @@
 name: Scheduled Process Manager
 type: Persistent Scheduling Abstraction
 location:
+  - app/Events/NhlPregameContextDayCompleted.php
+  - app/Listeners/QueueNhlGamePredictions.php
+  - app/Services/NhlGamePredictionHistory.php
+  - resources/js/pages/Admin/GamePredictions.vue
   - app/Models/ScheduledProcess.php
   - app/Services/ScheduledProcessManager.php
   - app/Services/NhlPregameContextOrchestrator.php
@@ -18,13 +22,14 @@ purpose: Centralize due-process decisions in persisted settings while migrating 
 when_to_use:
   - Managing automatic NHL game discovery timing and scope.
   - Managing model-specific automatic pregame-context updates.
+  - Managing the approved automatic current-day prediction trigger.
   - Migrating another scheduled process after explicit approval.
 when_not_to_use:
   - Replacing all existing provider-import schedules at once.
   - Performing heavy work inside the scheduler tick.
   - Accepting arbitrary command names or executable settings from HTTP.
 rules:
-  - scheduled_processes is global super-admin-managed operational data, not tenant data. Allowlisted processes include NHL game discovery and model-keyed pregame-context updates; provider schedules remain in admin_import_schedules.
+  - scheduled_processes is global super-admin-managed operational data, not tenant data. Allowlisted processes include NHL game discovery, model-keyed pregame-context updates and current-day game predictions; provider schedules remain in admin_import_schedules.
   - Laravel calls the manager every minute; enabled state and due times are authoritative in the database. A dispatch lock and locked schedule row suppress overlapping ticks. Dispatch at most one occurrence per process per tick; missed intervals must not create catch-up bursts.
   - Discovery starts at the persisted America/Toronto wall-clock time with a default 24-hour frequency. Daily schedules preserve local time across DST; other frequencies advance from actual dispatch time. Initial schedules wait for today's start time; an already overdue next_due_at remains due.
   - Discovery defaults to the previous three calendar dates, excluding today. Start time, integer frequency hours, and integer days back are validated server-side; the enable toggle saves independently and immediately.
@@ -37,8 +42,16 @@ rules:
   - Settings reads and writes reuse authenticated super-admin and lifecycle middleware. Saving settings must not dispatch work. The Games Import Pipeline header exposes the existing recycle icon toggle and a settings slide-over.
   - NHL game processing is event-driven through GamesDiscovered after all discovery dates commit. It is not a separately timed scheduled process. Existing slot, claim, stage and per-game locking safeguards remain owned by the NHL import orchestrator.
   - The former direct nhl:discover and nhl:process schedules are removed only when this manager is deployed; all other scheduler entries remain unchanged. Manual commands remain available.
+  - Prediction automation persists one settings row, is disabled until saved and enabled, and selects exactly one trigger mode. Defaults are a 24-hour interval starting at 06:00 America/Toronto. Existing timing rules govern daily DST and sub-day dispatches. Settings reads do not create rows; settings writes never dispatch. Mode/timing/enable changes reset the next due decision without deleting prior event evidence.
+  - Time mode admits today's stored upcoming games through the shared prediction-run pathway on projections. Event mode ignores scheduler due times and consumes NhlPregameContextDayCompleted through a queued projections listener after commit. No automation recalculates started, final, past or future games. Manual date/range behavior remains unchanged.
+  - The context loader emits at-least-once current-day readiness notifications after its transaction and loader lock. A date is ready only after its selected games are complete without exclusions, its context and league stages are complete, and any separately required comparison stage is complete. Historical dates and unrelated models cannot trigger today's forecasts. The listener rechecks the default model, source-run readiness, both teams' current-version snapshots and player coverage for every upcoming game before admission.
+  - Serialize automation settings and dispatch evidence with a row lock. Shared admission locks games in stable order and delays automatic work when manual items or API preparation leases are active. Busy timer occurrences retain their due time; busy event deliveries release for retry until day end. Duplicate or older context notifications for an already admitted date/run are ignored, including after settings edits. A later context build may produce a new revision once prior work finishes.
+  - Both triggers create normal durable run/game items through NhlGamePredictionHistory, retain latest successful predictions and immutable revisions, freeze trigger evidence beside the algorithm/model definition, and publish batches only after the admission transaction commits. Publication failures mark admitted items failed rather than leaving them queued. No prediction formula, confidence calculation or partner payload contract changes.
 public_interface:
   - ScheduledProcessManager::tick()
+  - GET /admin/game-predictions/automation
+  - PUT /admin/game-predictions/automation
+  - NhlPregameContextDayCompleted
   - processes:dispatch-due
   - GET /admin/scheduled-processes/nhl-game-discovery
   - PUT /admin/scheduled-processes/nhl-game-discovery

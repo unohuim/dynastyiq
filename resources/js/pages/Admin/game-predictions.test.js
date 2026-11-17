@@ -7,6 +7,7 @@ describe('Operational Game Predictions', () => {
     let app;
     let list;
     let fetcher;
+    let automationSettings;
     const revision = { id: 4, source: 'api', prediction_available: true, is_canonical: true, away_goals: 2.2,
         home_goals: 3.1, total_goals: 5.3, winner: 'TOR', win_probability: .61, confidence: 67, public_confidence_score: 65.5, days_away: 0, qualified: true, predicted_at: '2026-10-22T15:00:00Z' };
     const settle = async () => { for (let i = 0; i < 15; i++) await Promise.resolve(); await nextTick(); };
@@ -26,7 +27,15 @@ describe('Operational Game Predictions', () => {
         list = { games: [{ nhl_game_id: 1, date: '2026-10-22', away: 'BOS', home: 'TOR', actual_away: null, actual_home: null,
             revision: { ...revision }, work: null }], runs: [{ id: 7, start_date: '2026-10-21', end_date: '2026-10-22', status: 'completed' }],
         run: null, current_page: 1, last_page: 1, total: 1 };
+        automationSettings = { enabled: false, start_time: '06:00', frequency_hours: 24, settings: { trigger_mode: 'time' } };
         fetcher = vi.fn(async (url, options) => {
+            if (url.endsWith('/automation')) {
+                if (options?.method === 'PUT') {
+                    const posted = JSON.parse(options.body);
+                    automationSettings = { ...posted, settings: { trigger_mode: posted.trigger_mode } };
+                }
+                return { ok: true, json: async () => structuredClone(automationSettings) };
+            }
             const payload = options?.method === 'POST' ? { run_id: 8, total_games: 1 }
                 : url.includes('/games/') ? { revisions: [{ ...revision }], current_page: 1, last_page: 1, total: 1 }
                 : url.includes('/revisions/') ? { payload: { prediction: { score: 'saved' } }, evidence: { stack: 'Default' } } : list;
@@ -346,6 +355,132 @@ describe('Operational Game Predictions', () => {
         await mount();
         expect(document.querySelector('[data-public-confidence]').textContent).toBe('0.00%');
         expect(document.querySelector('[data-days-away]').textContent).toBe('0');
+    });
+
+    it('opens automation from the top right gear without starting a prediction', async () => {
+        await mount();
+        document.querySelector('[aria-label="Configure prediction automation"]').click(); await settle();
+        expect(document.querySelector('[role=dialog]').textContent).toContain('Prediction automation');
+        expect(fetcher.mock.calls.some(([url]) => url.endsWith('/automation'))).toBe(true);
+        expect(fetcher.mock.calls.some(([, options]) => options.method === 'POST')).toBe(false);
+        expect(document.querySelector('section[aria-label="Game Predictions"]').hasAttribute('inert')).toBe(true);
+    });
+
+    it('shows disabled daily six AM defaults and an always visible start time in time mode', async () => {
+        await mount(); document.querySelector('[aria-label="Configure prediction automation"]').click(); await settle();
+        expect(document.querySelector('[role=switch]').checked).toBe(false);
+        expect(document.querySelector('#prediction-trigger-mode').value).toBe('time');
+        expect(document.querySelector('input[type=time]').value).toBe('06:00');
+        expect(document.querySelector('input[type=number]').value).toBe('24');
+        await input(document.querySelector('input[type=number]'), '3');
+        expect(document.querySelector('input[type=time]')).not.toBeNull();
+    });
+
+    it('switches to event mode instead of combining triggers and preserves timing edits', async () => {
+        await mount(); document.querySelector('[aria-label="Configure prediction automation"]').click(); await settle();
+        await input(document.querySelector('input[type=time]'), '08:15');
+        await input(document.querySelector('#prediction-trigger-mode'), 'event');
+        expect(document.querySelector('input[type=time]')).toBeNull();
+        expect(document.querySelector('input[type=number]')).toBeNull();
+        expect(document.querySelector('[role=dialog]').textContent).toContain("today's pregame context");
+        await input(document.querySelector('#prediction-trigger-mode'), 'time');
+        expect(document.querySelector('input[type=time]').value).toBe('08:15');
+    });
+
+    it('saves the master toggle trigger and timing with CSRF through the settings endpoint', async () => {
+        await mount(); document.querySelector('[aria-label="Configure prediction automation"]').click(); await settle();
+        document.querySelector('[role=switch]').click(); await settle();
+        await input(document.querySelector('#prediction-trigger-mode'), 'event');
+        button('Save settings').click(); await settle();
+        const call = fetcher.mock.calls.find(([, options]) => options.method === 'PUT');
+        expect(call[0]).toBe('/admin/game-predictions/automation');
+        expect(call[1].headers['X-CSRF-TOKEN']).toBe('test-csrf');
+        expect(JSON.parse(call[1].body)).toEqual({ enabled: true, trigger_mode: 'event', start_time: '06:00', frequency_hours: 24 });
+        expect(document.querySelector('[role=dialog]').textContent).toContain('settings saved');
+    });
+
+    it('retains user settings and shows inline validation after a failed save', async () => {
+        await mount(); document.querySelector('[aria-label="Configure prediction automation"]').click(); await settle();
+        await input(document.querySelector('input[type=time]'), '08:15');
+        fetcher.mockImplementationOnce(async () => ({ ok: false, json: async () => ({ errors: { start_time: ['Choose a valid time.'] } }) }));
+        button('Save settings').click(); await settle();
+        expect(document.querySelector('[role=dialog] [role=alert]').textContent).toBe('Choose a valid time.');
+        expect(document.querySelector('input[type=time]').value).toBe('08:15');
+        expect(button('Save settings').disabled).toBe(false);
+    });
+
+    it('disables saving until settings load and permits a scoped retry', async () => {
+        await mount();
+        fetcher.mockImplementationOnce(async () => ({ ok: false, json: async () => ({ message: 'Settings unavailable.' }) }));
+        document.querySelector('[aria-label="Configure prediction automation"]').click(); await settle();
+        expect(button('Save settings').disabled).toBe(true);
+        expect(document.querySelector('[role=dialog] [role=alert]').textContent).toBe('Settings unavailable.');
+        button('Retry').click(); await settle();
+        expect(button('Save settings').disabled).toBe(false);
+    });
+
+    it('closes with Escape and restores focus and the previous body scrolling', async () => {
+        document.body.style.overflow = 'auto';
+        await mount(); const gear = document.querySelector('[aria-label="Configure prediction automation"]');
+        gear.focus(); gear.click(); await settle();
+        const panel = document.querySelector('[role=dialog]');
+        expect(document.activeElement).toBe(panel);
+        expect(document.body.style.overflow).toBe('hidden');
+        panel.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await settle();
+        expect(gear.getAttribute('aria-expanded')).toBe('false');
+        expect(document.activeElement).toBe(gear);
+        expect(document.body.style.overflow).toBe('auto');
+        document.body.style.overflow = '';
+    });
+
+    it('traps forward and backward keyboard navigation inside the drawer', async () => {
+        await mount(); document.querySelector('[aria-label="Configure prediction automation"]').click(); await settle();
+        const panel = document.querySelector('[role=dialog]');
+        const close = document.querySelector('[aria-label="Close prediction automation"]');
+        const save = button('Save settings');
+        save.focus(); save.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
+        expect(document.activeElement).toBe(close);
+        close.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true }));
+        expect(document.activeElement).toBe(save);
+        expect(panel.getAttribute('aria-modal')).toBe('true');
+    });
+
+    it('blocks duplicate saves and does not dismiss while a save is pending', async () => {
+        await mount(); document.querySelector('[aria-label="Configure prediction automation"]').click(); await settle();
+        let finish;
+        fetcher.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+        button('Save settings').click(); await settle();
+        expect(button('Saving…').disabled).toBe(true);
+        document.querySelector('[role=dialog]').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await settle();
+        expect(document.querySelector('[aria-label="Configure prediction automation"]').getAttribute('aria-expanded')).toBe('true');
+        finish({ ok: true, json: async () => automationSettings }); await settle();
+        expect(fetcher.mock.calls.filter(([, options]) => options.method === 'PUT')).toHaveLength(1);
+    });
+
+    it('keeps the prediction table mounted and stable during automation edits and polling', async () => {
+        await mount(); const row = document.querySelector('tbody tr');
+        document.querySelector('[aria-label="Configure prediction automation"]').click(); await settle();
+        await input(document.querySelector('input[type=time]'), '09:00');
+        await vi.advanceTimersByTimeAsync(5000); await settle();
+        expect(document.querySelector('tbody tr')).toBe(row);
+        expect(document.querySelector('input[type=time]').value).toBe('09:00');
+    });
+
+    it('aborts drawer reads and restores scrolling when the tab unmounts', async () => {
+        await mount(); let signal;
+        fetcher.mockImplementationOnce((_url, options) => { signal = options.signal; return new Promise(() => {}); });
+        document.querySelector('[aria-label="Configure prediction automation"]').click(); await settle();
+        app.unmount(); app = null;
+        expect(signal.aborted).toBe(true);
+        expect(document.body.style.overflow).toBe('');
+    });
+
+    it('uses independent motion transitions and honors reduced motion', async () => {
+        await mount(); document.querySelector('[aria-label="Configure prediction automation"]').click(); await settle();
+        // Vue keeps motion in declarative Transition classes; the rendered panel remains fixed outside the table.
+        expect(document.querySelector('[role=dialog]').className).toContain('fixed');
+        expect(document.querySelector('section[aria-label="Game Predictions"] [role=dialog]')).toBeNull();
+        expect(document.querySelector('[aria-label="Configure prediction automation"]').className).toContain('motion-reduce:transition-none');
     });
 
 });

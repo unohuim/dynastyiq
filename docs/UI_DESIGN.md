@@ -22,6 +22,16 @@ or failure feedback within their existing content region. Those cases must not
 turn routine background refreshes into visible notifications or global overlays.
 
 
+The admin Game Predictions header has a top-right gear opening a Vue-owned
+slide-over for prediction automation. Show a master enabled switch and one trigger
+selector: Time-based or Pregame context completed. Time mode always exposes start
+time in Eastern time and frequency in hours, defaulting to 06:00 and 24 hours;
+event mode replaces those controls with its completion explanation. Saving settings
+never starts predictions. Keep the underlying table mounted and preserve its state.
+Use independent overlay opacity and panel translation transitions, reduced-motion
+support, modal focus trapping/restoration, Escape/overlay dismissal and scoped
+loading, retry, validation and saved feedback. Disable repeated saves while saving.
+
 The admin Game Predictions table shows Internal Conf, Public Conf and Days Away
 for the saved revision. Public Conf replaces the Qualified column. Confidence
 values are percentage ratings; Days Away is the stored integer horizon, including

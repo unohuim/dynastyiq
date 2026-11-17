@@ -578,6 +578,7 @@ class NhlPregameContextOrchestrator
         $run = NhlPregameContextRun::query()->find($runId);
         if (in_array(data_get($run?->options, 'pipeline_version'), ['game_day_batch_v1', self::THREE_STAGE_PIPELINE, self::RESULTS_PIPELINE, self::CHECKPOINT_PIPELINE], true)) {
             $this->loadDayBatch($runId);
+            $this->announceCompletedPredictionDay($runId);
 
             return;
         }
@@ -692,6 +693,36 @@ class NhlPregameContextOrchestrator
             }
         } finally {
             $lock->release();
+        }
+        $this->announceCompletedPredictionDay($runId);
+    }
+
+    /** Identify a fully committed date, including league comparisons and unblocked selected games. */
+    public function isContextDayComplete(int $runId, string $date): bool
+    {
+        $run = NhlPregameContextRun::query()->find($runId);
+        if ($run === null || ! in_array($run->status, ['running', 'pausing', 'paused', 'completed'], true)) {
+            return false;
+        }
+        $games = $run->games()->whereDate('game_date', $date);
+        if (! (clone $games)->exists() || (clone $games)->where('state', '<>', 'complete')->exists()) {
+            return false;
+        }
+        $pipeline = data_get($run->options, 'pipeline_version');
+        if (! in_array($pipeline, ['game_day_batch_v1', self::THREE_STAGE_PIPELINE, self::RESULTS_PIPELINE, self::CHECKPOINT_PIPELINE], true)) {
+            return data_get($run->options, 'league_benchmarks.'.$date) === 'complete';
+        }
+        return $run->days()->whereDate('game_date', $date)->where('context_state', 'complete')->where('league_state', 'complete')
+            ->when($pipeline === self::THREE_STAGE_PIPELINE, fn ($query) => $query->where('comparison_state', 'complete'))->exists();
+    }
+
+    /** At-least-once day notifications never wait for unrelated historical dates to finish. */
+    private function announceCompletedPredictionDay(int $runId): void
+    {
+        $date = now('America/Toronto')->toDateString();
+        $run = NhlPregameContextRun::query()->find($runId);
+        if ($run?->model_run_id !== null && $this->isContextDayComplete($runId, $date)) {
+            \App\Events\NhlPregameContextDayCompleted::dispatch($runId, (int) $run->model_run_id, $date);
         }
     }
 

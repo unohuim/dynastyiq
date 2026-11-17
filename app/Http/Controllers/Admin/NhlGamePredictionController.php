@@ -5,15 +5,12 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
-use App\Jobs\RunNhlGamePredictionJob;
 use App\Services\NhlGamePredictionHistory;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
-use Throwable;
 
 /** Super-admin operational runs and durable revision inspection for the shared default engine. */
 final class NhlGamePredictionController extends Controller
@@ -22,34 +19,46 @@ final class NhlGamePredictionController extends Controller
     public function store(Request $request, NhlGamePredictionHistory $history): JsonResponse
     {
         [$start, $end] = $this->dates($request);
-        $model = app(\App\Services\NhlCustomGameForecast::class)->model();
-        $definition = ['algorithm' => config('nhl-custom-prediction'), 'model_run_id' => $model->id];
-        $games = $this->games($start, $end)->pluck('nhl_game_id');
-        if ($games->isEmpty()) {
-            throw ValidationException::withMessages(['start_date' => 'No stored NHL games were found for these dates.']);
-        }
-        [$runId, $itemIds] = DB::transaction(function () use ($start, $end, $definition, $games, $request): array {
-            // Lineup writes use these same rows; admission and changes cannot race.
-            DB::table('nhl_games')->whereIn('nhl_game_id', $games)->orderBy('nhl_game_id')->lockForUpdate()->get(['nhl_game_id']);
-            $id = DB::table('nhl_game_prediction_runs')->insertGetId([
-                'start_date' => $start, 'end_date' => $end, 'status' => 'queued', 'total_games' => $games->count(),
-                'requested_stack' => json_encode($definition, JSON_THROW_ON_ERROR), 'created_by' => $request->user()->id,
-                'created_at' => now(), 'updated_at' => now(),
+        return response()->json($history->queueRun($start, $end, $request->user()->id), 202);
+    }
+
+    /** Read disabled-by-default automation settings without creating work or changing configuration. */
+    public function automation(\App\Services\ScheduledProcessManager $manager): JsonResponse
+    {
+        return response()->json($manager->predictionSettings());
+    }
+
+    /** Save exactly one trigger mode; changing settings never starts a prediction. */
+    public function updateAutomation(Request $request, \App\Services\ScheduledProcessManager $manager): JsonResponse
+    {
+        $data = $request->validate([
+            'enabled' => ['required', 'boolean'], 'trigger_mode' => ['required', 'in:time,event'],
+            'start_time' => ['required_if:trigger_mode,time', 'date_format:H:i'],
+            'frequency_hours' => ['required_if:trigger_mode,time', 'integer', 'between:1,168'],
+        ]);
+        $process = DB::transaction(function () use ($data, $manager): \App\Models\ScheduledProcess {
+            // The unique key handles concurrent first saves without overwriting existing settings.
+            DB::table('scheduled_processes')->insertOrIgnore([
+                'key' => $manager::NHL_PREDICTIONS, 'enabled' => false, 'start_time' => '06:00',
+                'timezone' => 'America/Toronto', 'frequency_hours' => 24,
+                'settings' => json_encode(['trigger_mode' => 'time'], JSON_THROW_ON_ERROR), 'created_at' => now(), 'updated_at' => now(),
             ]);
-            DB::table('nhl_game_prediction_run_games')->insert($games->map(fn ($gameId): array => [
-                'run_id' => $id, 'nhl_game_id' => $gameId, 'status' => 'queued', 'created_at' => now(), 'updated_at' => now(),
-            ])->all());
-            return [$id, DB::table('nhl_game_prediction_run_games')->where('run_id', $id)->pluck('id')];
-        });
-        try {
-            Bus::batch($itemIds->map(fn ($id) => new RunNhlGamePredictionJob((int) $id))->all())
-                ->name('NHL game predictions #'.$runId)->onQueue('projections')->allowFailures()->dispatch();
-        } catch (Throwable $error) {
-            foreach ($itemIds as $id) {
-                $history->finish((int) $id, 'failed', error: 'Unable to queue prediction: '.mb_substr($error->getMessage(), 0, 1500));
+            $process = \App\Models\ScheduledProcess::query()->where('key', $manager::NHL_PREDICTIONS)->lockForUpdate()->firstOrFail();
+            $settings = $process->settings;
+            $changedMode = ($settings['trigger_mode'] ?? 'time') !== $data['trigger_mode'];
+            $settings['trigger_mode'] = $data['trigger_mode'];
+            $process->fill(['enabled' => $data['enabled'], 'settings' => $settings,
+                'start_time' => $data['start_time'] ?? $process->start_time,
+                'frequency_hours' => $data['frequency_hours'] ?? $process->frequency_hours]);
+            if ($changedMode || $process->isDirty(['enabled', 'start_time', 'frequency_hours'])) {
+                $process->next_due_at = null;
             }
-        }
-        return response()->json(['run_id' => $runId, 'total_games' => $games->count()], 202);
+            $process->save();
+
+            return $process->fresh();
+        });
+
+        return response()->json($process);
     }
 
     /** Latest successful canonical predictions stay visible even while a replacement is queued or fails. */

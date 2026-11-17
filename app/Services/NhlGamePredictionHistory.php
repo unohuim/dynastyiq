@@ -4,12 +4,72 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Jobs\RunNhlGamePredictionJob;
 use Carbon\CarbonImmutable;
+use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
+use Throwable;
 
 /** Append immutable default-path calculations and expose compact admin comparison rows. */
 final class NhlGamePredictionHistory
 {
+    /** Admit manual or automatic work through the same durable run and publication pathway.
+     * @param array<string,mixed> $automation Internal trigger evidence; empty for manual runs.
+     * @return array{run_id:int,total_games:int}|null Null means no automatic work or an active overlap.
+     */
+    public function queueRun(string $start, string $end, ?int $createdBy, array $automation = []): ?array
+    {
+        $model = app(NhlCustomGameForecast::class)->model();
+        $definition = ['algorithm' => config('nhl-custom-prediction'), 'model_run_id' => $model->id];
+        if ($automation !== []) {
+            $definition['automation'] = $automation;
+        }
+        return DB::transaction(function () use ($start, $end, $createdBy, $automation, $definition): ?array {
+            $games = DB::table('nhl_games')->whereBetween('game_date', [$start, $end])->whereIn('game_type', [1, 2, 3])
+                ->when($automation !== [], fn ($query) => $query->whereIn('game_state', ['FUT', 'PRE']))
+                ->orderBy('nhl_game_id')->lockForUpdate()->pluck('nhl_game_id');
+            if ($games->isEmpty()) {
+                if ($automation !== []) {
+                    return null;
+                }
+                throw ValidationException::withMessages(['start_date' => 'No stored NHL games were found for these dates.']);
+            }
+            if ($automation !== []) {
+                $active = DB::table('nhl_game_prediction_run_games')->whereIn('nhl_game_id', $games)
+                    ->whereIn('status', ['queued', 'running'])->exists();
+                $apiActive = $games->contains(fn ($id): bool => collect(Cache::get('nhl:prediction-input-writers:'.$id, []))
+                    ->contains(fn ($expires): bool => $expires > now()->timestamp));
+                if ($active || $apiActive) {
+                    return null;
+                }
+            }
+            $runId = DB::table('nhl_game_prediction_runs')->insertGetId([
+                'start_date' => $start, 'end_date' => $end, 'status' => 'queued', 'total_games' => $games->count(),
+                'requested_stack' => json_encode($definition, JSON_THROW_ON_ERROR), 'created_by' => $createdBy,
+                'created_at' => now(), 'updated_at' => now(),
+            ]);
+            DB::table('nhl_game_prediction_run_games')->insert($games->map(fn ($id): array => [
+                'run_id' => $runId, 'nhl_game_id' => $id, 'status' => 'queued', 'created_at' => now(), 'updated_at' => now(),
+            ])->all());
+            $itemIds = DB::table('nhl_game_prediction_run_games')->where('run_id', $runId)->pluck('id');
+            DB::afterCommit(function () use ($itemIds, $runId): void {
+                try {
+                    Bus::batch($itemIds->map(fn ($id) => new RunNhlGamePredictionJob((int) $id))->all())
+                        ->name('NHL game predictions #'.$runId)->onQueue('projections')->allowFailures()->dispatch();
+                } catch (Throwable $error) {
+                    foreach ($itemIds as $id) {
+                        $this->finish((int) $id, 'failed', error: 'Unable to queue prediction: '.mb_substr($error->getMessage(), 0, 1500));
+                    }
+                    report($error);
+                }
+            });
+
+            return ['run_id' => $runId, 'total_games' => $games->count()];
+        });
+    }
+
     /** Read the latest published prediction for one game without refreshing any dependencies.
      * @return array<string,mixed>|null
      */

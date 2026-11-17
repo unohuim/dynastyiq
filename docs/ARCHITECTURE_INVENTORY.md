@@ -4488,3 +4488,14 @@ refreshes, final-game updates and season rollups queue worker refreshes. Warm
 navigation requests schedule props only; loaded weeks have a short mounted-only
 browser cache. Missing known views queue preparation and retain previous totals.
 Authority: `docs/architecture/ui/NhlScheduleSnapshots.yaml`.
+
+### Game Predictions automation
+
+The existing Scheduled Process Manager now owns optional current-day prediction
+automation. A top-right gear in Game Predictions opens a Vue slide-over with a
+master toggle and mutually exclusive time/event trigger. Defaults are disabled,
+daily at 06:00 Eastern. Existing scheduled-process settings store configuration;
+no new table is required. Committed pregame-day notifications can admit the same
+default-engine run jobs as manual requests, with readiness, overlap and duplicate
+checks. Canonical policy: `architecture/application/ScheduledProcessManager.yaml`;
+revision ownership: `architecture/stats/NhlGamePredictionHistory.yaml`.

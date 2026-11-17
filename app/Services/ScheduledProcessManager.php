@@ -16,6 +16,8 @@ use Throwable;
 /** Decide which allowlisted processes are due; never perform their heavy work. */
 class ScheduledProcessManager
 {
+    public const NHL_PREDICTIONS = 'nhl-game-predictions';
+
     public const NHL_DISCOVERY = 'nhl-game-discovery';
     public const NHL_PREGAME_CONTEXT_PREFIX = 'nhl-pregame-context-model-';
 
@@ -70,10 +72,105 @@ class ScheduledProcessManager
                 report($exception);
             }
 
+            $this->dispatchDuePredictions();
             $this->dispatchDuePregameContextUpdates();
         } finally {
             $lock->release();
         }
+    }
+
+    /** Unsaved automation is disabled; merely reading its defaults never creates or queues work. */
+    public function predictionSettings(): ScheduledProcess
+    {
+        return ScheduledProcess::query()->where('key', self::NHL_PREDICTIONS)->first() ?? new ScheduledProcess([
+            'key' => self::NHL_PREDICTIONS, 'enabled' => false, 'start_time' => '06:00',
+            'timezone' => 'America/Toronto', 'frequency_hours' => 24, 'settings' => ['trigger_mode' => 'time'],
+        ]);
+    }
+
+    /** Admit only today's due time-based occurrence; event mode never runs on a timer. */
+    private function dispatchDuePredictions(): void
+    {
+        try {
+            DB::transaction(function (): void {
+                $process = ScheduledProcess::query()->where('key', self::NHL_PREDICTIONS)->lockForUpdate()->first();
+                $now = CarbonImmutable::now('UTC');
+                if ($process === null || ! $process->enabled || ($process->settings['trigger_mode'] ?? 'time') !== 'time'
+                    || ! $this->due($process, $now)) {
+                    return;
+                }
+                $date = $now->setTimezone($process->timezone)->toDateString();
+                $run = app(NhlGamePredictionHistory::class)->queueRun($date, $date, null, ['trigger_mode' => 'time']);
+                if ($run === null && $this->upcomingGames($date)->exists()) {
+                    return; // Active work delays admission without consuming the occurrence.
+                }
+                $process->update(['last_dispatched_at' => $now, 'next_due_at' => $this->nextDue($process, $now), 'last_error' => null]);
+            });
+        } catch (Throwable $error) {
+            ScheduledProcess::query()->where('key', self::NHL_PREDICTIONS)
+                ->update(['last_error' => mb_substr($error->getMessage(), 0, 1000)]);
+            report($error);
+        }
+    }
+
+    /** React to a committed context day; false asks the listener to retry active overlaps. */
+    public function predictCompletedContextDay(\App\Events\NhlPregameContextDayCompleted $event): bool
+    {
+        return DB::transaction(function () use ($event): bool {
+            $process = ScheduledProcess::query()->where('key', self::NHL_PREDICTIONS)->lockForUpdate()->first();
+            $today = CarbonImmutable::now('America/Toronto')->toDateString();
+            if ($process === null || ! $process->enabled || ($process->settings['trigger_mode'] ?? 'time') !== 'event'
+                || $event->gameDate !== $today) {
+                return true;
+            }
+            $model = app(NhlCustomGameForecast::class)->model();
+            $sourceModelId = \App\Models\NhlPregameContextRun::query()->whereKey($event->runId)->value('model_run_id');
+            if ((int) $model->id !== $event->modelRunId || (int) $sourceModelId !== $event->modelRunId) {
+                return true;
+            }
+            if (! app(NhlPregameContextOrchestrator::class)->isContextDayComplete($event->runId, $today)) {
+                return true;
+            }
+            $settings = $process->settings;
+            if (($settings['last_context_date'] ?? null) === $today
+                && (int) ($settings['last_context_run_id'] ?? 0) >= $event->runId) {
+                return true;
+            }
+            $games = $this->upcomingGames($today)->get(['nhl_game_id', 'home_team_id', 'away_team_id']);
+            if ($games->isEmpty()) {
+                return true;
+            }
+            foreach ($games as $game) {
+                $teams = DB::table('nhl_team_game_pregame_contexts')->where('nhl_game_id', $game->nhl_game_id)
+                    ->where('model_run_id', $model->id)->where('context_version', NhlPregameContextBuilder::VERSION)
+                    ->whereIn('nhl_team_id', [$game->home_team_id, $game->away_team_id])->distinct()->count('nhl_team_id');
+                $players = DB::table('nhl_player_game_pregame_contexts')->where('nhl_game_id', $game->nhl_game_id)
+                    ->where('model_run_id', $model->id)->where('context_version', NhlPregameContextBuilder::VERSION)
+                    ->whereIn('nhl_team_id', [$game->home_team_id, $game->away_team_id])->distinct()->count('nhl_team_id');
+                $sourceRunId = DB::table('nhl_team_game_pregame_contexts')->where('nhl_game_id', $game->nhl_game_id)
+                    ->where('model_run_id', $model->id)->where('context_version', NhlPregameContextBuilder::VERSION)->max('run_id');
+                if ($teams !== 2 || $players !== 2 || $sourceRunId === null
+                    || ! app(NhlPregameContextOrchestrator::class)->isContextDayComplete((int) $sourceRunId, $today)) {
+                    return true; // A later completed context day will recheck the full slate.
+                }
+            }
+            $run = app(NhlGamePredictionHistory::class)->queueRun($today, $today, null,
+                ['trigger_mode' => 'event', 'context_run_id' => $event->runId]);
+            if ($run === null) {
+                return false;
+            }
+            $settings['last_context_date'] = $today;
+            $settings['last_context_run_id'] = $event->runId;
+            $process->update(['settings' => $settings, 'last_dispatched_at' => now(), 'last_error' => null]);
+
+            return true;
+        });
+    }
+
+    /** Scope automatic work to stored games that have not started. */
+    private function upcomingGames(string $date): \Illuminate\Database\Query\Builder
+    {
+        return DB::table('nhl_games')->where('game_date', $date)->whereIn('game_type', [1, 2, 3])->whereIn('game_state', ['FUT', 'PRE']);
     }
 
     /** Dispatch due model context refreshes through their existing bounded run pipeline. */

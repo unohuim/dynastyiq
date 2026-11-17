@@ -3161,3 +3161,16 @@ identifies a completed empty missing-work selection. Updates keep the existing
 weekly display and `off:YYYYYYYY:YYYY-MM-DD` for one season's remaining off-night
 totals as of an Eastern calendar date. These are replaceable derived displays;
 `nhl_games` remains the schedule source.
+
+## Game prediction automation trigger mode
+
+Persisted under `scheduled_processes.settings.trigger_mode` for the allowlisted
+`nhl-game-predictions` process:
+
+- `time`: the configured Eastern start time and frequency determine admission.
+- `event`: committed current-day pregame completion determines admission.
+
+Exactly one mode is selected. The existing `enabled` boolean governs both modes.
+The default configuration is disabled, `time`, 06:00 America/Toronto, every 24 hours.
+Internal `last_context_date` and `last_context_run_id` settings record the last
+admitted completion notification. These are dispatch evidence, not new lifecycle states.
