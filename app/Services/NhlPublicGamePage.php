@@ -94,6 +94,7 @@ final class NhlPublicGamePage
             foreach (['away', 'home'] as $side) {
                 $lineup = $saved['anticipated_lineups'][$side];
                 $current[$side] = ['lineup' => $lineup, 'display_lineup' => $lineup,
+                    'injuries' => app(NhlAvailabilityPayload::class)->injuries((string) $game->{$side.'_team_abbrev'})['injuries'],
                     'is_projected' => ($lineup['prediction_source'] ?? '') !== 'anticipated_lineup',
                     'predictions' => array_map(fn ($player): array => [...$player,
                         'game_projected_toi_seconds' => $player['toi_seconds'] ?? null], $saved['teams'][$side]['roster'] ?? [])];

@@ -112,7 +112,7 @@ permissions. No tenant/owner boundary, route name or authorization rule changes.
 
 ## Per-file test count and checks
 
-- `tests/Feature/NhlLineupInjurySafetyTest.php`: 38 `it(...)` declarations, plus
+- `tests/Feature/NhlLineupInjurySafetyTest.php`: 41 `it(...)` declarations, plus
   parameterized evidence and authorization cases.
 - `resources/js/pages/games.test.js`: 164 `it`/`it.each` declarations; the existing
   selected-revision request test was extended rather than duplicated.
@@ -123,3 +123,32 @@ season syncs, scheduler/queue commands or production prediction reruns.
 No migration required. No production lineup, injury or revision rows were edited.
 After deployment, an API request for an injury-incompatible upcoming saved
 forecast queues its corrected calculation and returns the normal preparing status.
+
+
+## Follow-up: current injuries alongside frozen lineups
+
+Changed only `app/Services/NhlPublicGamePage.php`,
+`tests/Feature/NhlLineupInjurySafetyTest.php`,
+`docs/architecture/ui/NhlPublicGamePage.yaml` and this review document.
+
+The saved-prediction Lineups branch now attaches current team injuries using the
+existing `NhlAvailabilityPayload`. Injury lists remain independent of the frozen
+calculated participants and do not modify the saved revision or engine inputs.
+No new endpoint, authorization, frontend component or schema changes.
+
+| Contract | Authored coverage | Test name |
+| --- | --- | --- |
+| Saved revision → HTTP read includes excluded players' injuries and retains the stored payload | COVERED | includes current excluded players in Injuries beside the saved prediction lineup through HTTP |
+| Healthy teams return explicit empty collections | COVERED | returns explicit empty injury lists for both healthy teams in the saved-lineup response |
+| Correct side and current availability independent of frozen participants | COVERED | keeps each teams current injuries separate from its frozen prediction participants |
+
+1. SATISFIED: attach each team's existing current injury payload to the saved-lineup response.
+2. SATISFIED: retain frozen participants, calculations and immutable revisions.
+3. SATISFIED: author HTTP regression cases for populated, empty and team-specific lists.
+
+The endpoint is the existing public GET /games/{game}/details; the three new HTTP
+cases cover allowed guest reads. There is no permission, tenant or owner change.
+Frontend changes: none. The full test file now has 41 `it(...)` declarations.
+Checks: source review and `git diff --check`; tests/CI/builds not run.
+No migration required. No production operations performed. Commit and push were
+authorized separately after the implementation review.

@@ -410,3 +410,37 @@ it('does not let an older injury-incompatible manual observation outrank a healt
     });
     expect(NhlCurrentLineup::where('team_abbrev', 'COL')->first()->nhl_lineup_observation_id)->toBe($healthyId);
 });
+
+it('includes current excluded players in Injuries beside the saved prediction lineup through HTTP', function (): void {
+    ($this->out)(1); ($this->out)(13);
+    $payload = ($this->savedPayload)();
+    foreach ([0 => 19, 12 => 20] as $index => $replacement) {
+        $payload['teams']['away']['roster'][$index]['nhl_player_id'] = $this->players['COL'][$replacement]->nhl_id;
+        $payload['teams']['away']['roster'][$index]['player_name'] = $this->players['COL'][$replacement]->full_name;
+    }
+    $saved = ($this->save)($payload);
+    $revisionId = $saved['meta']['prediction_revision_id'];
+    $this->assertDatabaseHas('nhl_game_prediction_revisions', ['id' => $revisionId]);
+    $before = DB::table('nhl_game_prediction_revisions')->where('id', $revisionId)->value('payload');
+    $read = $this->getJson('/games/2026020346/details?section=lineups&prediction_revision_id='.$revisionId)->assertOk()
+        ->assertJsonCount(2, 'data.away.injuries')->assertJsonCount(0, 'data.home.injuries');
+    expect(collect($read->json('data.away.injuries'))->pluck('nhl_player_id')->all())
+        ->toContain($this->players['COL'][1]->nhl_id, $this->players['COL'][13]->nhl_id);
+    expect(collect($read->json('data.away.display_lineup.players'))->pluck('nhl_player_id')->all())
+        ->not->toContain($this->players['COL'][1]->nhl_id, $this->players['COL'][13]->nhl_id);
+    expect(DB::table('nhl_game_prediction_revisions')->where('id', $revisionId)->value('payload'))->toBe($before);
+});
+
+it('returns explicit empty injury lists for both healthy teams in the saved-lineup response', function (): void {
+    ($this->save)(($this->savedPayload)());
+    $this->getJson('/games/2026020346/details?section=lineups')->assertOk()
+        ->assertJsonPath('data.away.injuries', [])->assertJsonPath('data.home.injuries', []);
+});
+
+it('keeps each teams current injuries separate from its frozen prediction participants', function (): void {
+    ($this->save)(($this->savedPayload)());
+    ($this->out)(19, [], 'UTA');
+    $this->getJson('/games/2026020346/details?section=lineups')->assertOk()
+        ->assertJsonCount(0, 'data.away.injuries')->assertJsonCount(1, 'data.home.injuries')
+        ->assertJsonPath('data.home.injuries.0.nhl_player_id', $this->players['UTA'][19]->nhl_id);
+});
