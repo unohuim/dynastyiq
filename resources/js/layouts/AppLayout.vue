@@ -16,6 +16,12 @@ const schedulePage = computed(() => page.component === 'Tools/Schedule');
 const shell = computed(() => page.props.shell);
 const user = computed(() => page.props.auth?.user);
 const drawer = ref(null);
+const drawerMode = ref(null);
+const toolsSheet = computed(() => drawerMode.value === 'tools');
+const toolPending = ref(null);
+const toolFailure = ref(null);
+let toolCancelToken;
+let toolAttempt = 0;
 const newsOpen = ref(false);
 const toolsOpen = ref(false);
 const mobileNewsOpen = ref(false);
@@ -52,7 +58,59 @@ const onToast = event => notify(event.detail);
 
 function openDrawer(mode, event) {
     opener = event?.currentTarget ?? document.activeElement;
+    drawerMode.value = mode;
     drawer.value = mode;
+}
+
+/** Cancel only this explicit navigation attempt, retaining existing page content. */
+function closeDrawer() {
+    toolAttempt++;
+    toolCancelToken?.cancel();
+    toolCancelToken = null;
+    toolPending.value = null;
+    toolFailure.value = null;
+    drawer.value = null;
+}
+
+/** Keep native modified-link behavior; ordinary taps get immediate scoped feedback. */
+function visitTool(link, event) {
+    if (event && (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)) return;
+    event?.preventDefault();
+    if (toolPending.value) return;
+    const attempt = ++toolAttempt;
+    toolPending.value = link;
+    toolFailure.value = null;
+    const fail = () => {
+        if (attempt === toolAttempt) {
+            toolCancelToken = null;
+            toolPending.value = null;
+            toolFailure.value = link;
+        }
+        return false;
+    };
+    try {
+        router.visit(link.href, {
+            onCancelToken: token => {
+                if (attempt === toolAttempt) toolCancelToken = token;
+                else token.cancel();
+            },
+            onSuccess: () => {
+                if (attempt !== toolAttempt) return;
+                toolCancelToken = null;
+                toolPending.value = null;
+                drawer.value = null;
+            },
+            onError: fail,
+            onHttpException: fail,
+            onNetworkError: fail,
+            onCancel: fail,
+            onFinish: () => {
+                if (attempt === toolAttempt && toolPending.value) fail();
+            },
+        });
+    } catch {
+        fail();
+    }
 }
 
 function restoreFocus(event) {
@@ -73,6 +131,11 @@ function reconnect() {
 
 watch(() => page.url, url => {
     drawer.value = new URL(url, 'https://dynastyiq.invalid').searchParams.get('drawer') === 'account' && user.value ? 'account' : null;
+    if (drawer.value) drawerMode.value = drawer.value;
+    toolAttempt++;
+    toolCancelToken = null;
+    toolPending.value = null;
+    toolFailure.value = null;
     newsOpen.value = false;
     toolsOpen.value = false;
     mobileNewsOpen.value = false;
@@ -86,6 +149,7 @@ onMounted(() => {
 });
 onBeforeUnmount(() => {
     mounted = false;
+    closeDrawer();
     disconnect?.();
     window.removeEventListener('toast', onToast);
     timers.forEach(clearTimeout);
@@ -196,16 +260,28 @@ onBeforeUnmount(() => {
                 </li>
             </ul>
         </nav>
-        <DialogRoot :open="!!drawer" @update:open="open => { if (!open) drawer = null; }">
+        <DialogRoot :open="!!drawer" @update:open="open => { if (!open) closeDrawer(); }">
             <DialogPortal force-mount>
                 <div class="pointer-events-none fixed inset-x-0 top-0 z-50 h-[100dvh] overflow-hidden">
                     <Transition enter-active-class="transition-opacity duration-200 motion-reduce:transition-none" leave-active-class="transition-opacity duration-150 motion-reduce:transition-none" enter-from-class="opacity-0" leave-to-class="opacity-0"><DialogOverlay v-if="drawer" force-mount class="pointer-events-auto absolute inset-0 bg-gray-950/35" /></Transition>
-                    <Transition enter-active-class="transition-transform duration-500 ease-out motion-reduce:transition-none" leave-active-class="transition-transform duration-300 ease-in motion-reduce:transition-none" enter-from-class="translate-x-full" leave-to-class="translate-x-full">
-                        <DialogContent v-if="drawer && shell" :id="drawer === 'tools' ? 'tools-navigation-panel' : undefined" force-mount class="pointer-events-auto absolute right-0 top-0 flex h-full min-h-0 w-full max-w-md flex-col overflow-hidden bg-white shadow-2xl" @close-auto-focus="restoreFocus">
-                            <header class="flex shrink-0 items-center justify-between border-b border-gray-200 px-5 py-4"><div><DialogTitle class="text-lg font-semibold">{{ drawer === 'account' ? 'Account' : drawer === 'tools' ? 'Tools' : 'Navigation' }}</DialogTitle><DialogDescription class="mt-1 text-xs text-gray-500">{{ drawer === 'account' ? user?.name : 'Explore DynastyIQ' }}</DialogDescription></div><button type="button" aria-label="Close menu" class="rounded-lg p-3 text-xl text-gray-500 hover:bg-gray-100" @click="drawer = null">×</button></header>
+                    <Transition enter-active-class="transition-transform duration-500 ease-out motion-reduce:transition-none" leave-active-class="transition-transform duration-300 ease-in motion-reduce:transition-none" :enter-from-class="toolsSheet ? 'translate-y-full md:translate-y-0 md:translate-x-full' : 'translate-x-full'" :leave-to-class="toolsSheet ? 'translate-y-full md:translate-y-0 md:translate-x-full' : 'translate-x-full'">
+                        <DialogContent v-if="drawer && shell" :id="drawer === 'tools' ? 'tools-navigation-panel' : undefined" force-mount class="pointer-events-auto absolute flex min-h-0 w-full flex-col overflow-hidden shadow-2xl" :class="toolsSheet ? 'inset-x-0 bottom-0 h-[50dvh] rounded-t-3xl border border-b-0 border-slate-600 bg-slate-900 text-slate-100 ring-1 ring-sky-400/20 md:inset-x-auto md:right-0 md:top-0 md:h-full md:max-w-md md:rounded-none' : 'right-0 top-0 h-full max-w-md bg-white'" @close-auto-focus="restoreFocus">
+                            <div v-if="toolsSheet" aria-hidden="true" class="mx-auto mt-3 h-1 w-10 shrink-0 rounded-full bg-slate-500" />
+                            <header class="flex shrink-0 items-center justify-between border-b px-5 py-4" :class="toolsSheet ? 'border-slate-700' : 'border-gray-200'"><div><DialogTitle class="text-lg font-semibold">{{ drawer === 'account' ? 'Account' : drawer === 'tools' ? 'Tools' : 'Navigation' }}</DialogTitle><DialogDescription class="mt-1 text-xs" :class="toolsSheet ? 'text-slate-400' : 'text-gray-500'">{{ drawer === 'account' ? user?.name : toolsSheet ? 'Schedules and line combinations' : 'Explore DynastyIQ' }}</DialogDescription></div><button type="button" aria-label="Close menu" class="rounded-lg p-3 text-xl transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 motion-reduce:transition-none" :class="toolsSheet ? 'text-slate-300 hover:bg-slate-800' : 'text-gray-500 hover:bg-gray-100'" @click="closeDrawer">×</button></header>
                             <div class="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain px-3 pt-5 pb-[calc(3rem+env(safe-area-inset-bottom))]">
                                 <AccountPanel v-if="drawer === 'account' && user" :shell="shell" @notify="notify" />
-                                <nav v-else :aria-label="drawer === 'tools' ? 'Tools navigation' : 'All navigation'" class="space-y-1"><template v-if="drawer !== 'tools'"><a v-for="link in [...mobileLinks, ...shell.news]" :key="link.href" :href="link.href" :aria-current="link.active ? 'page' : undefined" class="block rounded-lg px-3 py-3 text-sm hover:bg-gray-100" :class="link.active ? 'font-semibold text-indigo-700' : 'text-gray-700'">{{ link.label }}</a></template><p v-if="toolLinks.length && drawer !== 'tools'" class="px-3 pt-4 pb-1 text-xs font-semibold uppercase tracking-wide text-gray-500">Tools</p><a v-for="link in toolLinks" :key="link.href" :href="link.href" :aria-current="link.active ? 'page' : undefined" class="block rounded-lg px-3 py-3 text-sm text-gray-700 hover:bg-gray-100">{{ link.label }}</a><a v-if="user && drawer !== 'tools'" :href="shell.profile_url" class="block rounded-lg border-t border-gray-200 px-3 py-3 text-sm hover:bg-gray-100">Profile</a></nav>
+                                <nav v-else-if="toolsSheet" aria-label="Tools navigation" :aria-busy="!!toolPending" class="space-y-3 px-2">
+                                    <a v-for="link in toolLinks" :key="link.href" :href="link.href" :aria-current="link.active ? 'page' : undefined" :aria-disabled="toolPending ? 'true' : undefined" class="group flex min-h-20 items-center gap-4 rounded-2xl border px-4 py-3 transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 motion-reduce:transition-none" :class="toolPending?.href === link.href || link.active ? 'border-sky-400/60 bg-sky-400/10' : 'border-slate-700 bg-slate-800/70 hover:border-slate-500 hover:bg-slate-800'" @click="visitTool(link, $event)">
+                                        <span aria-hidden="true" class="flex size-11 shrink-0 items-center justify-center rounded-xl bg-sky-400/10 text-sky-300">
+                                            <svg class="size-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path v-if="link.href.endsWith('/schedule')" stroke-linecap="round" stroke-linejoin="round" d="M8 3v4m8-4v4M4 10h16M5 5h14a1 1 0 0 1 1 1v14H4V6a1 1 0 0 1 1-1Zm3 9h2m4 0h2m-8 3h2" /><path v-else stroke-linecap="round" stroke-linejoin="round" d="M5 6h14M5 12h14M5 18h14M8 3v6m8 0v6M8 15v6" /></svg>
+                                        </span>
+                                        <span class="min-w-0 flex-1"><span class="block text-base font-semibold text-white">{{ link.label }}</span><span :role="toolPending?.href === link.href ? 'status' : undefined" class="mt-1 block text-xs text-slate-400">{{ toolPending?.href === link.href ? `Opening ${link.label}…` : link.href.endsWith('/schedule') ? 'Plan your week and off nights' : 'Explore the latest line combinations' }}</span></span>
+                                        <svg v-if="toolPending?.href === link.href" aria-hidden="true" class="size-5 shrink-0 animate-spin text-sky-300 motion-reduce:animate-none" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2" class="opacity-20" /><path d="M12 3a9 9 0 0 1 9 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg>
+                                        <svg v-else aria-hidden="true" class="size-5 shrink-0 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="m9 6 6 6-6 6" /></svg>
+                                    </a>
+                                    <div class="min-h-12 text-sm"><div v-if="toolFailure" class="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-red-400/30 bg-red-400/5 px-3 py-2"><p role="alert" class="text-red-200">Unable to open {{ toolFailure.label }}.</p><button type="button" class="rounded px-2 py-1 font-medium text-sky-300 hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400" @click="visitTool(toolFailure)">Retry</button></div></div>
+                                </nav>
+                                <nav v-else aria-label="All navigation" class="space-y-1"><template v-if="drawer !== 'tools'"><a v-for="link in [...mobileLinks, ...shell.news]" :key="link.href" :href="link.href" :aria-current="link.active ? 'page' : undefined" class="block rounded-lg px-3 py-3 text-sm hover:bg-gray-100" :class="link.active ? 'font-semibold text-indigo-700' : 'text-gray-700'">{{ link.label }}</a></template><p v-if="toolLinks.length && drawer !== 'tools'" class="px-3 pt-4 pb-1 text-xs font-semibold uppercase tracking-wide text-gray-500">Tools</p><a v-for="link in toolLinks" :key="link.href" :href="link.href" :aria-current="link.active ? 'page' : undefined" class="block rounded-lg px-3 py-3 text-sm text-gray-700 hover:bg-gray-100">{{ link.label }}</a><a v-if="user && drawer !== 'tools'" :href="shell.profile_url" class="block rounded-lg border-t border-gray-200 px-3 py-3 text-sm hover:bg-gray-100">Profile</a></nav>
                             </div>
                         </DialogContent>
                     </Transition>

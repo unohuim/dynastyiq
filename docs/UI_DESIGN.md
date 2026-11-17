@@ -676,3 +676,24 @@ The discovery Process menu includes Rebuild On-Ice Stats alongside fact-processi
 - Goalies Adv includes GSAx and omits the redundant GA/GP column; the existing slice control remains available. Skaters Adv includes G−xG (individual goals above expected) and HDSAT.
 - GSAx and G−xG display signed goal values to two decimals, with an em dash for unavailable scoring coverage. HDSAT remains a counting stat and follows the selected slice.
 - Skaters, Goalies, Prospects and Teams navigation must show visible loading feedback immediately. Preserved player-report transitions use the compact status/spinner while retaining their existing content; full category transitions and deferred initial loads retain existing skeletons. Page busy state is exposed accessibly and motion respects reduced-motion settings.
+
+### Mobile Tools bottom sheet
+
+On mobile, the bottom navigation's Tools button opens a graphite bottom sheet
+occupying half the dynamic viewport height. Use rounded top corners, a subtle
+highlighted border/ring, shadow and a small handle so the sheet's boundary remains
+visible even with no options. Schedule and Lines use generous icon-led tap targets,
+short secondary descriptions and chevrons. Keep safe-area spacing and scroll long
+content inside the fixed-height sheet. Desktop Tools retains its dropdown; account
+and member navigation retain their existing side-drawer presentation.
+
+Use the existing accessible dialog, including modal focus handling, Escape,
+outside-tap dismissal and opener focus restoration. Animate its vertical translation
+separately from overlay opacity and honor reduced motion. An explicit Schedule or
+Lines tap immediately highlights that option, replaces its secondary description
+with Opening Schedule… or Opening Lines…, and shows a reduced-motion-aware spinner
+without changing the sheet height. Keep the sheet and underlying page mounted until
+navigation succeeds; suppress duplicate taps. Navigation errors remain inside the
+sheet with Retry and preserved links. Closing or unmounting cancels that attempt;
+late callbacks cannot change a later attempt. Preserve native modified-link behavior.
+These are user-initiated navigation states; automatic feed updates remain silent.

@@ -4499,3 +4499,11 @@ no new table is required. Committed pregame-day notifications can admit the same
 default-engine run jobs as manual requests, with readiness, overlap and duplicate
 checks. Canonical policy: `architecture/application/ScheduledProcessManager.yaml`;
 revision ownership: `architecture/stats/NhlGamePredictionHistory.yaml`.
+
+### Mobile Tools navigation
+
+`resources/js/layouts/AppLayout.vue` retains the shared accessible dialog while
+presenting mobile Tools as a half-height bottom sheet. Its Schedule and Lines
+links use local Inertia visit feedback, duplicate protection, retry and cancellation.
+Desktop Tools remains a dropdown. Visual authority lives in `UI_DESIGN.md`;
+behavior belongs to `architecture/ui/InertiaAppShell.yaml`.
