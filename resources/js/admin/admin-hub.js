@@ -2668,7 +2668,9 @@ export default function adminHub(options = {}) {
             if (!['discover', 'process'].includes(run?.action)) return false;
             const status = ['pausing', 'paused', 'cancelling', 'cancelled'].includes(run.status) ? run.status : (run.stored_status ?? run.status);
             if (action === 'pause') return ['queued', 'running'].includes(status);
-            if (action === 'resume') return status === 'paused';
+            if (action === 'resume') return status === 'paused'
+                || (status === 'failed' && run.action === 'process' && run?.payload?.process_scope === 'on_ice'
+                    && !run.payload.on_ice_completed_at);
             return ['queued', 'running', 'pausing', 'paused', 'cancelling'].includes(status);
         },
 

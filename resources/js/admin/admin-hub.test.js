@@ -408,6 +408,51 @@ describe('game import run controls', () => {
         expect(hub.canControlGameImportRun(run, 'pause')).toBe(false);
     });
 
+    it('offers Resume for a failed on-ice run while leaving other failed scopes unchanged', async () => {
+        const hub = (await loadAdminHub())();
+        const run = { id: 7, action: 'process', status: 'failed', payload: { process_scope: 'on_ice' } };
+        expect(hub.canControlGameImportRun(run, 'resume')).toBe(true);
+        expect(hub.canControlGameImportRun(run, 'pause')).toBe(false);
+        expect(hub.canControlGameImportRun(run, 'cancel')).toBe(false);
+        for (const scope of ['shots', 'faceoffs', 'refs_staff']) {
+            expect(hub.canControlGameImportRun({ ...run, payload: { process_scope: scope } }, 'resume')).toBe(false);
+        }
+        expect(hub.canControlGameImportRun({ ...run, action: 'discover' }, 'resume')).toBe(false);
+        expect(hub.canControlGameImportRun({ ...run, status: 'cancelled' }, 'resume')).toBe(false);
+    });
+
+    it('uses authoritative failed status for recovery and hides Resume after finalization', async () => {
+        const hub = (await loadAdminHub())();
+        const run = { id: 7, action: 'process', status: 'completed', stored_status: 'failed', payload: { process_scope: 'on_ice' } };
+        expect(hub.canControlGameImportRun(run, 'resume')).toBe(true);
+        run.payload.on_ice_completed_at = '2026-11-17T05:00:00Z';
+        expect(hub.canControlGameImportRun(run, 'resume')).toBe(false);
+    });
+
+    it('resumes failed on-ice work through the existing control endpoint and refreshes its progress', async () => {
+        const hub = (await loadAdminHub())();
+        hub.sendGameImportRequest = vi.fn().mockResolvedValue({ run: { id: 7, status: 'running' } });
+        hub.loadGameImports = vi.fn().mockResolvedValue();
+        await hub.controlGameImportRun({ id: 7, action: 'process', status: 'failed', payload: { process_scope: 'on_ice' } }, 'resume');
+        expect(hub.sendGameImportRequest).toHaveBeenCalledWith('/admin/nhl-game-imports/7/resume', {});
+        expect(hub.loadGameImports).toHaveBeenCalledWith({ background: true });
+        expect(hub.gameImports.controllingRuns).toEqual({});
+    });
+
+    it('keeps failed-run recovery retryable after an HTTP error and blocks duplicate presses', async () => {
+        const hub = (await loadAdminHub())();
+        const run = { id: 7, action: 'process', status: 'failed', payload: { process_scope: 'on_ice' } };
+        hub.sendGameImportRequest = vi.fn().mockRejectedValue(new Error('Wait for active work'));
+        await hub.controlGameImportRun(run, 'resume');
+        expect(hub.gameImports.error).toBe('Wait for active work');
+        expect(hub.gameImports.controllingRuns).toEqual({});
+        expect(hub.canControlGameImportRun(run, 'resume')).toBe(true);
+        hub.gameImports.controllingRuns[7] = 'resume';
+        hub.sendGameImportRequest.mockClear();
+        await hub.controlGameImportRun(run, 'resume');
+        expect(hub.sendGameImportRequest).not.toHaveBeenCalled();
+    });
+
     it('waits for claimed jobs to drain before offering Resume', async () => {
         const hub = (await loadAdminHub())();
         expect(hub.canControlGameImportRun({ action: 'discover', status: 'pausing' }, 'resume')).toBe(false);

@@ -13,6 +13,7 @@ use App\Jobs\NhlDiscoveryJob;
 use App\Jobs\RefreshNhlGameContextJob;
 use App\Models\NhlGameImportRun;
 use Closure;
+use Illuminate\Bus\Batch;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -171,12 +172,15 @@ class NhlGameImportRunControl
     public function resume(int $runId): NhlGameImportRun
     {
         $resumedBatch = false;
-        $run = $this->metadataTransaction(function () use ($runId): NhlGameImportRun {
+        $recoverOnIce = false;
+        $run = $this->metadataTransaction(function () use ($runId, &$recoverOnIce): NhlGameImportRun {
             $run = $this->controllable($runId);
             $payload = $run->payload ?? [];
-            if (! in_array($run->status, ['pausing', 'paused'], true) || $this->active($payload) !== []
+            $recoverOnIce = $run->status === 'failed' && $run->action === 'process'
+                && ($payload['process_scope'] ?? null) === 'on_ice' && empty($payload['on_ice_completed_at']);
+            if ((! in_array($run->status, ['pausing', 'paused'], true) && ! $recoverOnIce) || $this->active($payload) !== []
                 || ! empty($payload['run_control']['resume_pending'])) {
-                throw ValidationException::withMessages(['run' => 'Wait until claimed work finishes before resuming a paused run.']);
+                throw ValidationException::withMessages(['run' => 'Resume requires a paused run or failed on-ice run, with all claimed work finished.']);
             }
             $payload['run_control']['active'] = [];
             $payload['run_control']['generation'] = (string) Str::uuid();
@@ -190,7 +194,7 @@ class NhlGameImportRunControl
                 $this->progressForGeneration($run, 'paused')->where('status', 'running')
                     ->update(['status' => 'scheduled', 'updated_at' => now()]);
             });
-            $run = $this->metadataTransaction(function () use ($runId, $generation, &$resumedBatch): NhlGameImportRun {
+            $run = $this->metadataTransaction(function () use ($runId, $generation, $recoverOnIce, &$resumedBatch): NhlGameImportRun {
                 $run = $this->controllable($runId);
                 if ($run->status !== 'paused' || $this->generation($run) !== $generation
                     || empty($run->payload['run_control']['resume_pending']) || $this->signalled($runId, $generation)) {
@@ -200,16 +204,16 @@ class NhlGameImportRunControl
                 unset($payload['run_control']['resume_pending']);
                 $run->update(['status' => 'running', 'payload' => $payload]);
                 // Only batch metadata and queue admission remain under this short parent lock.
-                $resumedBatch = $this->resumeBatch($run);
+                $resumedBatch = $recoverOnIce ? $this->recoverOnIceBatch($run) : $this->resumeBatch($run);
                 return $run;
             }, false);
         } catch (Throwable $exception) {
-            $this->metadataTransaction(function () use ($runId, $generation): void {
+            $this->metadataTransaction(function () use ($runId, $generation, $recoverOnIce): void {
                 $current = $this->controllable($runId);
                 if ($this->generation($current) === $generation && $current->status === 'paused') {
                     $payload = $current->payload ?? [];
                     unset($payload['run_control']['resume_pending']);
-                    $current->update(['payload' => $payload]);
+                    $current->update(['payload' => $payload, 'status' => $recoverOnIce ? 'failed' : 'paused']);
                 }
             });
             throw $exception;
@@ -224,7 +228,7 @@ class NhlGameImportRunControl
                 NhlDiscoveryJob::dispatch($run->start_date, $run->end_date, $runId);
             }
         } elseif ($resumedBatch) {
-            // The original batch retains its callbacks and queue.
+            // Scoped work is owned by either the retained batch or its explicit recovery replacement.
         } else {
             app(NhlImportOrchestrator::class)->fillActiveGameSlotsForRun($runId);
         }
@@ -327,6 +331,42 @@ class NhlGameImportRunControl
             throw ValidationException::withMessages(['run' => 'This batch is unavailable or has failed. Cancel this run and rerun it.']);
         }
         $batch->add($jobs);
+        return true;
+    }
+
+    /** Replace only a failed on-ice batch, keeping durable results and normal finalization. */
+    private function recoverOnIceBatch(NhlGameImportRun $run): bool
+    {
+        $payload = $run->payload ?? [];
+        $ids = array_values(array_unique(array_map('intval', $payload['on_ice_game_ids'] ?? [])));
+        $unfinished = array_values(array_filter($ids, fn (int $id): bool => ! isset($payload['run_control']['completed']['on_ice:'.$id])));
+        $runId = $run->id;
+        $generation = $this->generation($run);
+        $jobs = array_map(static function (int $id) use ($runId, $generation): \App\Jobs\RebuildNhlOnIceStatsJob {
+            // The parent is already locked: stamp its known generation without one read per job.
+            $job = new \App\Jobs\RebuildNhlOnIceStatsJob($id);
+            $job->runId = $runId;
+            $job->runGeneration = $generation;
+            return $job;
+        }, $unfinished);
+        $batch = Bus::batch($jobs)->onQueue('games-processing')->name('NHL:OnIceStats:'.$runId)
+            ->then(static function (Batch $batch) use ($runId): void {
+                app(NhlGameImportRebuilder::class)->finishOnIceRun($runId, $batch->id);
+            })
+            ->catch(static function (Batch $batch, Throwable $exception) use ($runId): void {
+                $current = NhlGameImportRun::query()->find($runId);
+                $control = app(NhlGameImportRunControl::class);
+                if ($control->acceptsBatchCallback($current, 'on_ice_batch_id', $batch->id)) {
+                    $control->saveWorkerRun($current, ['status' => 'failed', 'last_error' => mb_substr($exception->getMessage(), 0, 1000)]);
+                }
+            })->dispatch();
+        $payload['on_ice_batch_id'] = $batch->id;
+        $payload['on_ice_failed_game_ids'] = [];
+        $run->update(['payload' => $payload, 'last_error' => null, 'queued_jobs' => count($jobs)]);
+        if ($jobs === []) {
+            app(NhlGameImportRebuilder::class)->finishOnIceRun($runId, $batch->id);
+        }
+
         return true;
     }
 

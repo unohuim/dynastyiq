@@ -978,6 +978,13 @@ Resume and explicit reruns rotate the generation;
 worker updates must not revive a cancelled run or cross generations. These controls
 apply to discovery and game-processing runs, not unrelated orchestration actions.
 
+Failed `process` runs scoped to `on_ice` can explicitly Resume after live claims
+drain, unless on-ice completion has already been recorded. Recovery rotates the
+generation, retains completed checkpoints, replaces the failed batch with only
+unfinished games, and clears current error indicators after queue admission.
+Other failed scopes and explicitly Cancelled runs retain their existing rerun
+rules; no additional lifecycle value is introduced.
+
 `nhl_game_import_runs.payload.overlap_excluded_games` maps a game ID to its
 owning Full run ID when discovery or stage admission excludes duplicate work.
 Existing duplicate pending stages use `skipped`; completed stages remain intact.

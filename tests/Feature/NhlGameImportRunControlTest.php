@@ -475,6 +475,185 @@ describe('scoped on-ice rebuilds', function (): void {
         expect($this->run->fresh()->status)->toBe('running');
     });
 
+    it('resumes failed on-ice work through HTTP with only unfinished games and reads preserved progress', function (): void {
+        ($this->onIceRun)('failed', ['on_ice:2026020001' => true]);
+        $payload = $this->run->payload;
+        $payload['on_ice_game_ids'] = [2026020001, 2026020002];
+        $payload['on_ice_failed_game_ids'] = [2026020002];
+        $payload['on_ice_skipped_game_count'] = 211;
+        $this->run->update(['payload' => $payload, 'last_error' => 'Previous timeout']);
+        $this->actingAs($this->admin)->postJson(($this->url)('resume'))->assertOk()->assertJsonPath('run.status', 'running');
+        $current = $this->run->fresh();
+        expect($current->payload['run_control']['completed'])->toBe(['on_ice:2026020001' => true])
+            ->and($current->payload['on_ice_game_ids'])->toBe([2026020001, 2026020002])
+            ->and($current->payload['on_ice_skipped_game_count'])->toBe(211)
+            ->and($current->payload['on_ice_failed_game_ids'])->toBe([])
+            ->and($current->last_error)->toBeNull()->and((int) $current->queued_jobs)->toBe(1)
+            ->and($current->payload['on_ice_batch_id'])->not->toBe('on-ice-fixture');
+        Bus::assertBatched(fn ($batch): bool => $batch->jobs->count() === 1
+            && $batch->jobs->first() instanceof \App\Jobs\RebuildNhlOnIceStatsJob
+            && $batch->jobs->first()->nhlGameId === 2026020002
+            && $batch->jobs->first()->runGeneration === $this->control->generationFor($current->id)
+            && $batch->options['queue'] === 'games-processing'
+            && ! empty($batch->options['then']) && ! empty($batch->options['catch']));
+        $read = $this->getJson(route('admin.nhl-game-imports.status'))->assertOk();
+        $row = collect($read->json('runs'))->firstWhere('id', $current->id);
+        expect($row['progress']['completed_stage_rows'])->toBe(1)
+            ->and($row['progress']['total_stage_rows'])->toBe(2)->and($row['progress']['failed_stage_rows'])->toBe(0);
+        Bus::assertNotDispatched(\App\Jobs\NhlDiscoveryJob::class);
+        Bus::assertNotDispatched(\App\Jobs\ImportPbpNhlJob::class);
+        Bus::assertNotDispatched(\App\Jobs\SeasonSumJob::class);
+    });
+
+    it('keeps failed on-ice Resume restricted to super-admins', function (bool $member): void {
+        ($this->onIceRun)('failed');
+        if ($member) {
+            $this->actingAs(User::factory()->create());
+        }
+        $this->postJson(($this->url)('resume'))->assertStatus($member ? 403 : 401);
+        expect($this->run->fresh()->status)->toBe('failed');
+        Bus::assertNothingBatched();
+    })->with([false, true]);
+
+    it('waits for live claims before recovering failed on-ice work', function (): void {
+        ($this->onIceRun)();
+        $this->control->claim($this->run->id, 'initial', 'on_ice:2026020001', 600);
+        $this->run->refresh()->update(['status' => 'failed']);
+        $this->actingAs($this->admin)->postJson(($this->url)('resume'))->assertUnprocessable();
+        expect($this->run->fresh()->status)->toBe('failed')->and($this->control->generationFor($this->run->id))->toBe('initial');
+        Bus::assertNothingBatched();
+    });
+
+    it('clears expired claims while preserving failed-run game checkpoints', function (): void {
+        ($this->onIceRun)('failed', ['on_ice:2026020001' => true]);
+        $payload = $this->run->payload;
+        $payload['on_ice_game_ids'][] = 2026020002;
+        $payload['run_control']['active']['expired'] = ['key' => 'on_ice:2026020002', 'expires' => now()->timestamp - 1];
+        $this->run->update(['payload' => $payload]);
+        $this->control->resume($this->run->id);
+        expect($this->run->fresh()->payload['run_control']['active'])->toBe([])
+            ->and($this->run->fresh()->payload['run_control']['completed'])->toBe(['on_ice:2026020001' => true]);
+    });
+
+    it('fences old queued work and old failure callbacks after recovery', function (): void {
+        ($this->onIceRun)('failed');
+        $oldJob = new \App\Jobs\RebuildNhlOnIceStatsJob(2026020001, $this->run->id);
+        $this->control->resume($this->run->id);
+        $called = false;
+        (new ControlNhlGameImportRun())->handle($oldJob, function () use (&$called): void { $called = true; });
+        $oldJob->failed(new \RuntimeException('Late old timeout'));
+        expect($called)->toBeFalse()->and($this->run->fresh()->status)->toBe('running')
+            ->and($this->run->fresh()->last_error)->toBeNull()
+            ->and($this->control->acceptsBatchCallback($this->run->fresh(), 'on_ice_batch_id', 'on-ice-fixture'))->toBeFalse();
+    });
+
+    it('rejects a duplicate failed-run Resume after the first recovery is published', function (): void {
+        ($this->onIceRun)('failed');
+        $this->actingAs($this->admin)->postJson(($this->url)('resume'))->assertOk();
+        $generation = $this->control->generationFor($this->run->id);
+        $this->postJson(($this->url)('resume'))->assertUnprocessable();
+        expect($this->control->generationFor($this->run->id))->toBe($generation);
+        Bus::assertBatchCount(1);
+    });
+
+    it('retains newly completed checkpoints if recovered work fails and is resumed again', function (): void {
+        ($this->onIceRun)('failed');
+        $payload = $this->run->payload;
+        $payload['on_ice_game_ids'][] = 2026020002;
+        $this->run->update(['payload' => $payload]);
+        $this->control->resume($this->run->id);
+        $current = $this->run->fresh();
+        $payload = $current->payload;
+        $payload['run_control']['completed']['on_ice:2026020001'] = true;
+        $current->update(['status' => 'failed', 'payload' => $payload]);
+        $this->control->resume($current->id);
+        Bus::assertBatchCount(2);
+        Bus::assertBatched(fn ($batch): bool => $batch->jobs->count() === 1 && $batch->jobs->first()->nhlGameId === 2026020002);
+        expect($this->run->fresh()->payload['run_control']['completed'])->toBe(['on_ice:2026020001' => true]);
+    });
+
+    it('leaves a failed on-ice run retryable if fresh batch dispatch fails', function (): void {
+        ($this->onIceRun)('failed', ['on_ice:2026020001' => true]);
+        $payload = $this->run->payload;
+        $payload['on_ice_game_ids'][] = 2026020002;
+        $payload['on_ice_failed_game_ids'] = [2026020002];
+        $this->run->update(['payload' => $payload, 'last_error' => 'Previous timeout']);
+        Bus::shouldReceive('batch')->once()->andThrow(new \RuntimeException('Queue unavailable'));
+        expect(fn () => $this->control->resume($this->run->id))->toThrow(\RuntimeException::class, 'Queue unavailable');
+        $current = $this->run->fresh();
+        expect($current->status)->toBe('failed')->and($current->last_error)->toBe('Previous timeout')
+            ->and($current->payload['on_ice_batch_id'])->toBe('on-ice-fixture')
+            ->and($current->payload['on_ice_failed_game_ids'])->toBe([2026020002])
+            ->and(data_get($current->payload, 'run_control.resume_pending', false))->toBeFalse()
+            ->and($current->payload['run_control']['completed'])->toBe(['on_ice:2026020001' => true]);
+    });
+
+    it('keeps cancellation authoritative during failed-run recovery preparation', function (): void {
+        ($this->onIceRun)('failed');
+        ($this->progress)('running');
+        $interrupted = false;
+        DB::listen(function (\Illuminate\Database\Events\QueryExecuted $query) use (&$interrupted): void {
+            if ($interrupted || ! str_contains($query->sql, 'update "nhl_import_progress"')) {
+                return;
+            }
+            $interrupted = true;
+            $this->control->cancel($this->run->id);
+        });
+        $this->actingAs($this->admin)->postJson(($this->url)('resume'))->assertUnprocessable();
+        expect($interrupted)->toBeTrue()->and($this->run->fresh()->status)->toBe('cancelled');
+        Bus::assertNothingBatched();
+    });
+
+    it('finalizes recovered checkpoints exactly once without rebuilding completed games', function (): void {
+        ($this->seedOnIceGame)();
+        ($this->onIceRun)('failed', ['on_ice:2026020001' => true]);
+        $this->control->resume($this->run->id);
+        $current = $this->run->fresh();
+        app(\App\Services\NhlGameImportRebuilder::class)->finishOnIceRun($current->id, $current->payload['on_ice_batch_id']);
+        expect($this->run->fresh()->status)->toBe('completed')
+            ->and($this->run->fresh()->payload['on_ice_season_sync_run_ids'])->toHaveCount(1);
+        Bus::assertBatched(fn ($batch): bool => $batch->jobs->isEmpty());
+        Bus::assertDispatchedTimes(\App\Jobs\SeasonSumJob::class, 1);
+    });
+
+    it('does not recover a failed on-ice run whose completion and sync were already recorded', function (): void {
+        ($this->onIceRun)('failed', ['on_ice:2026020001' => true]);
+        $payload = $this->run->payload;
+        $payload['on_ice_completed_at'] = now()->toIso8601String();
+        $this->run->update(['payload' => $payload]);
+        $this->actingAs($this->admin)->postJson(($this->url)('resume'))->assertUnprocessable();
+        Bus::assertNothingBatched();
+        Bus::assertNotDispatched(\App\Jobs\SeasonSumJob::class);
+    });
+
+    it('does not grant failed-run recovery to other process scopes', function (string $scope): void {
+        $this->run->update(['action' => 'process', 'status' => 'failed', 'payload' => ['process_scope' => $scope]]);
+        $this->actingAs($this->admin)->postJson(($this->url)('resume'))->assertUnprocessable();
+        expect($this->run->fresh()->status)->toBe('failed');
+        Bus::assertNothingBatched();
+    })->with(['shots', 'faceoffs', 'refs_staff']);
+
+    it('stamps recovery jobs from the locked generation without a parent read per game', function (): void {
+        ($this->onIceRun)('failed');
+        $payload = $this->run->payload;
+        $payload['on_ice_game_ids'] = range(2026020001, 2026020050);
+        $this->run->update(['payload' => $payload]);
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        try {
+            $this->control->resume($this->run->id);
+            $reads = collect(DB::getQueryLog())->filter(fn (array $query): bool =>
+                str_starts_with(strtolower($query['query']), 'select') && str_contains($query['query'], 'nhl_game_import_runs'))->count();
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+        expect($reads)->toBeLessThanOrEqual(8);
+        $generation = $this->control->generationFor($this->run->id);
+        Bus::assertBatched(fn ($batch): bool => $batch->jobs->count() === 50
+            && $batch->jobs->every(fn ($job): bool => $job->runId === $this->run->id && $job->runGeneration === $generation));
+    });
+
     it('does not queue season sync while an on-ice game remains unfinished', function (): void {
         ($this->seedOnIceGame)();
         ($this->onIceRun)();
