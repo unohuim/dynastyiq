@@ -35,9 +35,11 @@ Tools → Lines at `/tools/lines` lists current-season teams as accordions with
 their own latest completed game's EV, PP and PK combinations. It reads prepared
 strength summaries and memberships, ranking shared TOI and skipping groups that
 reuse selected players within a strength. EV shows up to four forward trios and
-three defensive pairs; PP and PK show up to two forward and defensive groups.
-Full special-teams units are split by stored position, summing repeated subgroups
-across changes to their other members. Missing latest-game data remains unavailable.
+three defensive pairs; PP and PK show up to two complete units each (five PP
+skaters, three or four PK skaters). Display positions prioritize the game's busiest
+faceoff taker at center, listed wings, and defensemen in back spots; extra forwards
+fill remaining back spots. Names use first initial and surname with full-name
+hover titles. Missing latest-game data remains unavailable.
 Authority: `docs/architecture/stats/NhlStrengthOnIceStats.yaml` and
 `docs/architecture/ui/InertiaAppShell.yaml`.
 

@@ -55,6 +55,11 @@ class NhlTeamLines
             ->whereIn('up.unit_id', $summaries->pluck('unit_id')->unique())->orderBy('p.id')
             ->get(['up.unit_id', 'p.id', 'p.nhl_id', 'p.full_name', 'p.first_name', 'p.last_name', 'p.position', 'p.pos_type'])
             ->groupBy('unit_id');
+        $faceoffs = DB::table('nhl_boxscores')->whereIn('nhl_game_id', $gameIds)
+            ->get(['nhl_game_id', 'nhl_player_id', 'faceoffs_won', 'faceoffs_lost'])
+            ->groupBy('nhl_game_id')->map(fn (Collection $rows): Collection => $rows->mapWithKeys(
+                fn (object $row): array => [$row->nhl_player_id => (int) $row->faceoffs_won + (int) $row->faceoffs_lost]
+            ));
 
         foreach ($teams as $id => &$team) {
             $reference = $references->get($id);
@@ -66,7 +71,9 @@ class NhlTeamLines
                 $candidates = $summaries->filter(fn (object $row): bool => $team['game'] !== null
                     && (int) $row->nhl_game_id === $team['game']['id'] && $row->strength === $strength
                     && ($row->team_id !== null ? (int) $row->team_id === $id : $row->team_abbrev === $team['abbrev']));
-                $team['strengths'][$strength] = $this->selectLines($candidates, $members, $strength);
+                $team['strengths'][$strength] = $this->selectLines(
+                    $candidates, $members, $strength, $faceoffs->get($team['game']['id'] ?? 0, collect())
+                );
             }
         }
         unset($team);
@@ -75,7 +82,7 @@ class NhlTeamLines
     }
 
     /** Greedily retain the highest-TOI groups without reusing players within a strength. */
-    private function selectLines(Collection $rows, Collection $members, string $strength): array
+    private function selectLines(Collection $rows, Collection $members, string $strength, Collection $faceoffs): array
     {
         $combinations = [];
         foreach ($rows as $row) {
@@ -84,43 +91,38 @@ class NhlTeamLines
                 || strtoupper((string) $player->position) === 'G')) {
                 continue;
             }
-            if ($strength === 'EV' && $players->count() !== ($row->unit_type === 'F' ? 3 : 2)) {
-                continue;
-            }
-            if (in_array($row->unit_type, ['PP', 'PK'], true)) {
-                if ($row->unit_type !== $strength || $players->contains(fn (object $player): bool => $this->playerType($player) === null)) {
+            if ($strength === 'EV') {
+                if (! in_array($row->unit_type, ['F', 'D'], true)
+                    || $players->count() !== ($row->unit_type === 'F' ? 3 : 2)) {
                     continue;
                 }
-                $groups = $players->groupBy(fn (object $player): string => (string) $this->playerType($player));
             } else {
-                $groups = collect([$row->unit_type => $players]);
+                if ($row->unit_type !== $strength || ! in_array($players->count(), $strength === 'PP' ? [5] : [3, 4], true)) {
+                    continue;
+                }
             }
-            foreach ($groups as $type => $group) {
-                $ids = $group->pluck('id')->map(fn ($id): int => (int) $id)->all();
-                $key = $type.':'.implode(',', $ids);
-                $combinations[$key] ??= [
-                    'unit_id' => (int) $row->unit_id, 'type' => $type, 'toi_seconds' => 0,
-                    'players' => $group->map(fn (object $player): array => [
-                        'id' => (int) $player->id, 'nhl_id' => $player->nhl_id,
-                        'name' => $player->full_name ?: trim($player->first_name.' '.$player->last_name),
-                    ])->values()->all(),
-                ];
-                $combinations[$key]['toi_seconds'] += (int) $row->toi;
-                $combinations[$key]['unit_id'] = min($combinations[$key]['unit_id'], (int) $row->unit_id);
-            }
+            $type = $strength === 'EV' ? $row->unit_type : 'units';
+            $key = $type.':'.$players->pluck('id')->implode(',');
+            $combinations[$key] ??= [
+                'unit_id' => (int) $row->unit_id, 'type' => $type, 'toi_seconds' => 0, 'members' => $players,
+            ];
+            $combinations[$key]['toi_seconds'] += (int) $row->toi;
+            $combinations[$key]['unit_id'] = min($combinations[$key]['unit_id'], (int) $row->unit_id);
         }
         usort($combinations, fn (array $a, array $b): int => $b['toi_seconds'] <=> $a['toi_seconds'] ?: $a['unit_id'] <=> $b['unit_id']);
-        $limits = $strength === 'EV' ? ['F' => 4, 'D' => 3] : ['F' => 2, 'D' => 2];
-        $selected = ['F' => [], 'D' => []];
+        $limits = $strength === 'EV' ? ['F' => 4, 'D' => 3] : ['units' => 2];
+        $selected = array_fill_keys(array_keys($limits), []);
         $used = [];
         foreach ($combinations as $combination) {
             $type = $combination['type'];
-            $ids = array_column($combination['players'], 'id');
+            $ids = $combination['members']->pluck('id')->all();
             if (count($selected[$type]) >= $limits[$type] || array_intersect($ids, $used) !== []) {
                 continue;
             }
             $seconds = $combination['toi_seconds'];
             $combination['toi'] = sprintf('%d:%02d', intdiv($seconds, 60), $seconds % 60);
+            $combination['players'] = $this->positionPlayers($combination['members'], $type, $faceoffs);
+            unset($combination['members']);
             $selected[$type][] = $combination;
             $used = array_merge($used, $ids);
         }
@@ -128,7 +130,73 @@ class NhlTeamLines
         return $selected;
     }
 
-    /** Use stored position types to split full special-teams units without inventing roles. */
+    /** Infer display spots without changing unit membership or claiming verified shift roles. */
+    private function positionPlayers(Collection $members, string $type, Collection $faceoffs): array
+    {
+        $layouts = match (true) {
+            $type === 'D' => [['LD', 'RD']],
+            $type === 'F' => [['LW', 'C', 'RW']],
+            $members->count() === 5 => [['LW', 'C', 'RW', 'LD', 'RD']],
+            $members->count() === 4 => [['LW', 'C', 'LD', 'RD'], ['C', 'RW', 'LD', 'RD']],
+            default => [['C', 'LD', 'RD']],
+        };
+        $best = [];
+        $bestScore = [-1, -1, -1];
+        foreach ($layouts as $slots) {
+            foreach ($this->permutations($members->values()->all()) as $players) {
+                $score = [0, 0, 0];
+                foreach ($slots as $index => $slot) {
+                    $player = $players[$index];
+                    $positions = preg_split('/[^A-Z]+/', strtoupper((string) $player->position), -1, PREG_SPLIT_NO_EMPTY);
+                    if ($slot === 'C') {
+                        $score[0] = (int) $faceoffs->get($player->nhl_id, 0);
+                    }
+                    if (in_array($slot, ['LD', 'RD'], true)) {
+                        $score[1] += $this->playerType($player) === 'D' ? 1 : 0;
+                    }
+                    $eligible = match ($slot) {
+                        'LW' => ['L', 'LW'], 'RW' => ['R', 'RW'], 'C' => ['C'], default => ['D'],
+                    };
+                    $score[2] += array_intersect($positions, $eligible) !== [] ? 1 : 0;
+                }
+                if ($score > $bestScore) {
+                    $bestScore = $score;
+                    $best = [];
+                    foreach ($slots as $index => $slot) {
+                        $player = $players[$index];
+                        $name = trim((string) ($player->full_name ?: $player->first_name.' '.$player->last_name));
+                        $parts = preg_split('/\s+/u', $name, 2);
+                        $first = trim((string) ($player->first_name ?: $parts[0]));
+                        $last = trim((string) ($player->last_name ?: ($parts[1] ?? '')));
+                        $best[] = [
+                            'id' => (int) $player->id, 'nhl_id' => $player->nhl_id, 'name' => $name,
+                            'short_name' => $last !== '' ? trim(mb_substr($first, 0, 1).' '.$last) : $name, 'slot' => $slot,
+                        ];
+                    }
+                }
+            }
+        }
+
+        return $best;
+    }
+
+    /** Enumerate at most five skaters with stable source-ID ties. */
+    private function permutations(array $players): \Generator
+    {
+        if ($players === []) {
+            yield [];
+            return;
+        }
+        foreach ($players as $index => $player) {
+            $remaining = $players;
+            unset($remaining[$index]);
+            foreach ($this->permutations(array_values($remaining)) as $tail) {
+                yield [$player, ...$tail];
+            }
+        }
+    }
+
+    /** Use position type, then listed positions, when choosing defensive display spots. */
     private function playerType(object $player): ?string
     {
         $type = strtoupper((string) $player->pos_type);

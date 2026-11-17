@@ -5,6 +5,8 @@ defineProps({ lines: { type: Object, required: true } });
 const expanded = ref(new Set());
 const strengths = [{ key: 'EV', label: 'Even Strength' }, { key: 'PP', label: 'Power Play' }, { key: 'PK', label: 'Penalty Kill' }];
 const groups = [{ key: 'F', label: 'Forwards', emptyLabel: 'forward' }, { key: 'D', label: 'Defense', emptyLabel: 'defensive' }];
+const unitGroups = [{ key: 'units', label: 'Units', emptyLabel: 'unit' }];
+const spotColumns = { LW: 'col-start-1 col-span-2', C: 'col-start-3 col-span-2', RW: 'col-start-5 col-span-2', LD: 'col-start-2 col-span-2', RD: 'col-start-4 col-span-2' };
 
 function toggle(id) {
     const next = new Set(expanded.value);
@@ -47,13 +49,20 @@ function toggle(id) {
                                 <div class="grid gap-4 lg:grid-cols-3">
                                     <section v-for="strength in strengths" :key="strength.key" :aria-label="`${team.abbrev} ${strength.label}`" class="min-w-0 rounded-md border border-gray-200">
                                         <h3 class="border-b border-gray-200 bg-gray-50 px-3 py-2 text-xs font-medium text-gray-700">{{ strength.label }} <span class="ml-1 text-[10px] text-gray-500">{{ strength.key }}</span></h3>
-                                        <div v-for="group in groups" :key="group.key" class="px-3 py-2">
+                                        <div v-for="group in strength.key === 'EV' ? groups : unitGroups" :key="group.key" class="px-3 py-2">
                                             <h4 class="mb-1 text-[10px] font-medium uppercase tracking-wide text-gray-500">{{ group.label }}</h4>
                                             <ol v-if="team.strengths[strength.key][group.key].length" class="divide-y divide-gray-100">
-                                                <li v-for="(line, index) in team.strengths[strength.key][group.key]" :key="line.unit_id" class="flex items-start gap-2 py-2 text-xs">
-                                                    <span class="w-4 shrink-0 text-gray-400">{{ group.key }}{{ index + 1 }}</span>
-                                                    <span class="min-w-0 flex-1 leading-5 text-gray-800"><template v-for="(player, playerIndex) in line.players" :key="player.id"><span v-if="playerIndex" aria-hidden="true" class="mx-1 text-gray-400">·</span><span>{{ player.name }}</span></template></span>
-                                                    <span class="shrink-0 pt-0.5 tabular-nums text-gray-600" :aria-label="`${line.toi} shared time on ice`">{{ line.toi }}</span>
+                                                <li v-for="(line, index) in team.strengths[strength.key][group.key]" :key="line.unit_id" class="py-2 text-xs">
+                                                    <div class="mb-2 flex items-center justify-between gap-2">
+                                                        <span class="text-[10px] text-gray-400">{{ group.key === 'units' ? strength.key : group.key }}{{ index + 1 }}</span>
+                                                        <span class="tabular-nums text-gray-600" :aria-label="`${line.toi} shared time on ice`">{{ line.toi }}</span>
+                                                    </div>
+                                                    <div class="grid grid-cols-6 gap-x-1 gap-y-2" title="Display positions inferred from game faceoffs and listed positions">
+                                                        <span v-for="player in line.players" :key="player.id" :data-slot="player.slot" :title="player.name" class="min-w-0 text-center" :class="[spotColumns[player.slot], ['LD', 'RD'].includes(player.slot) && group.key !== 'D' ? 'row-start-2' : 'row-start-1']">
+                                                            <span class="block text-[9px] text-gray-400">{{ player.slot }}</span>
+                                                            <span class="block truncate text-[11px] leading-5 text-gray-800">{{ player.short_name }}</span>
+                                                        </span>
+                                                    </div>
                                                 </li>
                                             </ol>
                                             <p v-else class="py-2 text-xs text-gray-500">No {{ group.emptyLabel }} combinations available.</p>

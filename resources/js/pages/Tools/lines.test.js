@@ -16,22 +16,22 @@ describe('latest team lines tool', () => {
     beforeEach(() => {
         document.body.innerHTML = '<div id="lines-test"></div>';
         vi.stubGlobal('fetch', vi.fn());
-        const line = (id, names, toi = '10:23') => ({
+        const line = (id, names, toi = '10:23', slots = ['LW', 'C', 'RW', 'LD', 'RD']) => ({
             unit_id: id, toi, toi_seconds: 623,
-            players: names.map((name, index) => ({ id: id * 10 + index, name, nhl_id: 9000000 + id * 10 + index })),
+            players: names.map((name, index) => ({ id: id * 10 + index, name, short_name: `${name[0]} ${name.split(' ').slice(1).join(' ')}`, slot: slots[index], nhl_id: 9000000 + id * 10 + index })),
         });
         state = reactive({ lines: { season_id: '20262027', teams: [
             { id: 10, abbrev: 'TOR', name: 'Toronto Maple Leafs', logo: '/TOR.svg',
                 game: { id: 100, date: '2026-11-17', date_label: 'Tue Nov 17', opponent: 'MTL', venue: 'home', href: '/games/100' },
                 strengths: {
-                    EV: { F: [line(1, ['Forward One', 'Forward Two', 'Forward Three']), line(2, ['Forward Four', 'Forward Five', 'Forward Six'], '8:01')], D: [line(3, ['Defense One', 'Defense Two'])] },
-                    PP: { F: [line(4, ['Forward One', 'Forward Two', 'Forward Three', 'Forward Four'])], D: [line(5, ['Defense One'])] },
-                    PK: { F: [line(6, ['Forward Five', 'Forward Six'])], D: [line(7, ['Defense Two', 'Defense Three'])] },
+                    EV: { F: [line(1, ['Forward One', 'Forward Two', 'Forward Three']), line(2, ['Forward Four', 'Forward Five', 'Forward Six'], '8:01')], D: [line(3, ['Defense One', 'Defense Two'], '10:23', ['LD', 'RD'])] },
+                    PP: { units: [line(4, ['Forward One', 'Forward Two', 'Forward Three', 'Forward Four', 'Defense One'])] },
+                    PK: { units: [line(6, ['Forward Five', 'Forward Six', 'Defense Two', 'Defense Three'], '2:00', ['C', 'RW', 'LD', 'RD'])] },
                 },
             },
             { id: 8, abbrev: 'MTL', name: 'Montreal Canadiens', logo: '/MTL.svg',
                 game: { id: 100, date: '2026-11-17', date_label: 'Tue Nov 17', opponent: 'TOR', venue: 'away', href: '/games/100' },
-                strengths: { EV: { F: [], D: [] }, PP: { F: [], D: [] }, PK: { F: [], D: [] } },
+                strengths: { EV: { F: [], D: [] }, PP: { units: [] }, PK: { units: [] } },
             },
         ] } });
     });
@@ -133,9 +133,9 @@ describe('latest team lines tool', () => {
         expect(panel(10).querySelector('[aria-label="TOR Power Play"]')).not.toBeNull();
     });
 
-    it('separates forward and defensive groups within each strength', () => {
+    it('separates EV positions but keeps PP and PK as complete units', () => {
         mount();
-        expect([...panel(10).querySelectorAll('h4')].map(node => node.textContent)).toEqual(['Forwards', 'Defense', 'Forwards', 'Defense', 'Forwards', 'Defense']);
+        expect([...panel(10).querySelectorAll('h4')].map(node => node.textContent)).toEqual(['Forwards', 'Defense', 'Units', 'Units']);
     });
 
     it('preserves the supplied TOI order and sequential line ranks', () => {
@@ -143,7 +143,7 @@ describe('latest team lines tool', () => {
         const rows = panel(10).querySelector('[aria-label="TOR Even Strength"] ol').querySelectorAll('li');
         expect(rows).toHaveLength(2);
         expect(rows[0].textContent).toContain('F1');
-        expect(rows[0].textContent).toContain('Forward One');
+        expect(rows[0].textContent).toContain('F One');
         expect(rows[0].textContent).toContain('10:23');
         expect(rows[1].textContent).toContain('F2');
         expect(rows[1].textContent).toContain('8:01');
@@ -153,20 +153,21 @@ describe('latest team lines tool', () => {
         mount();
         const row = panel(10).querySelector('[aria-label="TOR Even Strength"]').querySelectorAll('ol')[1].querySelector('li');
         expect(row.textContent).toContain('D1');
-        expect(row.textContent).toContain('Defense One');
+        expect(row.textContent).toContain('D One');
     });
 
-    it('displays four-forward PP groups without truncating a player', () => {
+    it('displays the complete five-player PP unit in one group', () => {
         mount();
         const text = panel(10).querySelector('[aria-label="TOR Power Play"] ol').textContent;
-        ['Forward One', 'Forward Two', 'Forward Three', 'Forward Four'].forEach(name => expect(text).toContain(name));
+        ['F One', 'F Two', 'F Three', 'F Four', 'D One'].forEach(name => expect(text).toContain(name));
     });
 
-    it('displays a one-defenseman power-play group', () => {
+    it('places the extra forward beside the defenseman in PP back spots', () => {
         mount();
         const section = panel(10).querySelector('[aria-label="TOR Power Play"]');
-        expect(section.querySelectorAll('ol')[1].textContent).toContain('Defense One');
-        expect(section.querySelectorAll('ol')[1].querySelectorAll('li')).toHaveLength(1);
+        expect(section.querySelectorAll('ol')).toHaveLength(1);
+        expect(section.querySelector('[data-slot="LD"]').textContent).toContain('F Four');
+        expect(section.querySelector('[data-slot="RD"]').textContent).toContain('D One');
     });
 
     it('shows shared TOI with a descriptive accessible label', () => {
@@ -186,6 +187,7 @@ describe('latest team lines tool', () => {
         expect(panel(8).querySelectorAll('ol')).toHaveLength(0);
         expect(panel(8).textContent).toContain('No forward combinations available.');
         expect(panel(8).textContent).toContain('No defensive combinations available.');
+        expect(panel(8).textContent).toContain('No unit combinations available.');
         expect(panel(8).textContent).not.toContain('Forward One');
     });
 
@@ -219,7 +221,7 @@ describe('latest team lines tool', () => {
         state.lines.teams[0].strengths.EV.F[0].players[0].name = '<img src=x onerror=bad()> Forward';
         mount();
         expect(toggle(10).textContent).toContain('<script>team()</script>');
-        expect(panel(10).textContent).toContain('<img src=x onerror=bad()> Forward');
+        expect(panel(10).querySelector('[title="<img src=x onerror=bad()> Forward"]')).not.toBeNull();
         expect(document.querySelector('script, img[onerror]')).toBeNull();
     });
 
@@ -228,5 +230,58 @@ describe('latest team lines tool', () => {
         mount();
         expect(toggle(10).querySelector('img').getAttribute('alt')).toBe('');
         expect(toggle(8).querySelector('img')).toBeNull();
+    });
+
+    it('shows abbreviated player names with the full name on hover', () => {
+        const player = state.lines.teams[0].strengths.EV.F[0].players[0];
+        player.name = 'Macklin Celebrini';
+        player.short_name = 'M Celebrini';
+        mount();
+        const spot = panel(10).querySelector('[title="Macklin Celebrini"]');
+        expect(spot.textContent).toContain('M Celebrini');
+        expect(panel(10).textContent).not.toContain('Macklin Celebrini');
+    });
+
+    it('renders supplied center and wing spots in distinct grid columns', () => {
+        mount();
+        const section = panel(10).querySelector('[aria-label="TOR Even Strength"]');
+        expect(section.querySelector('[data-slot="LW"]').classList.contains('col-start-1')).toBe(true);
+        expect(section.querySelector('[data-slot="C"]').classList.contains('col-start-3')).toBe(true);
+        expect(section.querySelector('[data-slot="RW"]').classList.contains('col-start-5')).toBe(true);
+        expect(section.querySelector('[data-slot="C"]').textContent).toContain('F Two');
+    });
+
+    it('uses the second row for special-team back spots and the first for EV defensive pairs', () => {
+        mount();
+        expect(panel(10).querySelector('[aria-label="TOR Power Play"] [data-slot="LD"]').classList.contains('row-start-2')).toBe(true);
+        expect(panel(10).querySelector('[aria-label="TOR Even Strength"] [data-slot="LD"]').classList.contains('row-start-1')).toBe(true);
+    });
+
+    it('keeps a five-forward power-play unit intact in all five display spots', () => {
+        const back = state.lines.teams[0].strengths.PP.units[0].players[4];
+        back.name = 'Forward Seven';
+        back.short_name = 'F Seven';
+        mount();
+        const section = panel(10).querySelector('[aria-label="TOR Power Play"]');
+        expect(section.querySelectorAll('[data-slot]')).toHaveLength(5);
+        expect(section.querySelector('[data-slot="RD"]').textContent).toContain('F Seven');
+        expect(section.textContent).toContain('PP1');
+        expect([...section.querySelectorAll('h4')].map(node => node.textContent)).toEqual(['Units']);
+    });
+
+    it('shows four-player PK units without creating a fifth player', () => {
+        mount();
+        const section = panel(10).querySelector('[aria-label="TOR Penalty Kill"]');
+        expect(section.querySelectorAll('[data-slot]')).toHaveLength(4);
+        expect(section.textContent).toContain('PK1');
+        expect(section.querySelector('[data-slot="LW"]')).toBeNull();
+    });
+
+    it('shows three-player PK units with a center and two back spots', () => {
+        const players = state.lines.teams[0].strengths.PK.units[0].players;
+        state.lines.teams[0].strengths.PK.units[0].players = [players[0], players[2], players[3]];
+        mount();
+        const section = panel(10).querySelector('[aria-label="TOR Penalty Kill"]');
+        expect([...section.querySelectorAll('[data-slot]')].map(node => node.dataset.slot)).toEqual(['C', 'LD', 'RD']);
     });
 });

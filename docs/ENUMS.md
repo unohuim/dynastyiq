@@ -618,6 +618,18 @@ These values describe training-only age, S1-to-S2 rate movement, S1-to-S2 opport
 - `PP`: Power-play unit.
 - `PK`: Penalty-kill unit.
 
+### Tools Lines Display Spot
+
+**Location:** `/tools/lines` page payload, `players.*.slot` (derived, not stored).
+
+**Allowed values:** `LW`, `C`, `RW`, `LD`, `RD`.
+
+These are inferred visual spots, not verified shift positions. `C` prioritizes
+the unit member with the most faceoffs taken in that game. Listed wing eligibility
+guides `LW` and `RW`. `LD` and `RD` are back-row spots, preferring defensemen;
+forwards can occupy them on special teams. PP/PK payloads contain complete units
+under `strengths.PP.units` and `strengths.PK.units`; EV retains `F` and `D` groups.
+
 ### NHL Zone Code
 
 **Name:** NHL shift zone code
