@@ -144,7 +144,7 @@ final class NhlGamePredictionHistory
         $payload['meta']['prediction_revision_id'] = (int) $revision->id;
         $payload['meta']['predicted_at'] = \Illuminate\Support\Carbon::parse($revision->predicted_at)->toIso8601String();
 
-        return $payload;
+        return NhlGamePredictionPayload::synchronizePredictionLineups($payload);
     }
 
     /** Summarize a stored calculation with separate confidence and moneyline probability.

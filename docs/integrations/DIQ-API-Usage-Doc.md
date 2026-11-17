@@ -87,6 +87,25 @@ legacy simulator rows use NHL IDs there; lineup-derived rows use DIQ internal ID
 An explicit null NHL ID is never replaced with an internal ID. Null-ID players
 retain their names and eligible fallback projections.
 
+## The lineup used by a prediction
+
+`anticipated_lineups.away` and `anticipated_lineups.home` in a successful prediction
+are the exact selected participant snapshots for that calculation. Match skaters
+by `nhl_player_id` against `teams.{side}.roster`; G1 matches the calculated
+`inputs.{side}_goalie_id`. Healthy G2 may remain labelled backup context and does
+not enter starter simulation. The ordinary `players`, role, line and slot fields
+are retained. `prediction_source` reuses the documented requested-date lineup
+sources; projected/last-known groups are labelled as such rather than attributed
+to the submitted lines. Valid anticipated sources retain manual/provider attribution.
+
+These fields do not perform another live lineup lookup after prediction. On reads
+of older revisions with inconsistent presentation, reconstruct the lineup from
+that revision's own calculated skaters and starter. Do not substitute today's
+lineup or interpret this as a new calculation; the saved revision remains unchanged.
+The separate `/api/nhl/lineups` endpoints still describe current accepted evidence.
+They may report no current lineup while the predictor uses an eligible projected
+roster. For what actually drove a forecast, use its prediction payload.
+
 ## Starter identity after puck drop
 
 The first unique NHL `starter: true` observed after the game leaves FUT/PRE is
@@ -296,6 +315,17 @@ awaiting moderation. The latest **valid saved** manual submission wins for that
 game/team, whether submitted through DynastyIQ or any authorized partner key.
 Save order is server-controlled (observation id breaks timestamp ties); supplied
 publication timestamps or claimed submitter identities cannot change it.
+
+An upcoming-game submission containing a dressed player or goalie reported **out**
+with supported reported/corroborated/confirmed-unavailable evidence returns
+**HTTP 422**, with named reasons in `errors.text`, before saving observations or
+changing the current lineup. This applies to DynastyIQ users and all partner
+clients. Questionable, unknown and suspected-only cases remain eligible. Scratches
+are not dressed participants. Existing identity, membership, exact roster counts,
+duplicates, goalie-slot and unknown-player rules still apply. Previously accepted
+upcoming lineups are checked again on reads/prediction; injury-incompatible evidence
+is not made current simply because it was accepted earlier. Actual NHL participants
+remain authoritative for started/finished games.
 
 Validated manual submissions may target any existing scheduled game, including
 games weeks or a year ahead. Their submission timestamps do not need to fall
@@ -1055,7 +1085,7 @@ nhl-stats:read
 Every successful prediction payload includes `prediction_available`. Consumers
 must check this field before reading prediction or market output.
 
-**Saved predictions are returned first for every game date.** The API reads the
+**Healthy saved predictions are returned first for every game date.** The API reads the
 latest successful saved prediction for that game (highest revision ID), whether
 published by the API or an admin run, and returns it immediately with HTTP 200.
 `meta.predicted_at` is the saved calculation timestamp in ISO 8601 format, not the
@@ -1063,7 +1093,7 @@ request time. `meta.prediction_revision_id` identifies that calculation. Consume
 can use this timestamp to decide when to request the payload again; a later request
 returns a newer revision if a separate prediction run has published one.
 
-This saved read does not consult response-cache freshness, prepare dependencies,
+Except for the injury-safety check below, this saved read does not consult response-cache freshness, prepare dependencies,
 rebuild Matchup or market statistics, recalculate the forecast, or queue refresh
 work. Changed model/lineup evidence and `force_refresh=1` do not delay or replace
 the saved response. Model, goalie and market parameters do not reprice saved
@@ -1071,6 +1101,16 @@ predictions: the published output is returned as it was calculated. Prior failed
 or unavailable attempts do not hide the latest successful revision. Saved scores,
 probabilities, Matchup, `days_away` and public confidence remain frozen; the usual
 public-confidence response mapping still applies. No `is_override` bypass exists.
+
+**Injury-safety exception for an upcoming game:** if a saved prediction includes a
+calculated skater or starter now supported as out for that game, DIQ retains the
+revision but queues a deduplicated replacement and returns **HTTP 202 preparing**
+with the existing Retry-After contract. Do not use the old forecast as a current
+pick. Completed injury imports also initiate this refresh for affected existing
+upcoming forecasts. Repeated polling timestamps alone do not trigger it. This
+exception does not recalculate historical saved games or change healthy saved
+reads. New calculations resolve a complete eligible roster through the existing
+lineup/fallback pathway; an incomplete roster is not silently published.
 
 **When no saved prediction exists:** today/future games retain the existing
 calculation/preparation process below. For dates before today in
@@ -1141,7 +1181,7 @@ endpoint after the indicated delay, using bounded retries. HTTP `202` is pending
 work, not an unqualified pick; it contains no new prediction revision. HTTP `200`
 with `prediction_available: true` contains the published prediction and revision.
 `force_refresh=1` uses this same preparation flow when dependencies are missing.
-An existing successful saved prediction is returned immediately, even if current inputs would need preparation for a separate recalculation.
+An existing healthy successful saved prediction is returned immediately, even if current inputs would need preparation for a separate recalculation. Upcoming injury conflicts follow the injury-safety exception above.
 Queue admission failures remain service errors. This does not create a G8 UI
 control automatically.
 

@@ -92,11 +92,9 @@ final class NhlGameLineupProjectionBuilder
             return [];
         }
 
-        return DB::table('nhl_player_injuries')->where('team_abbrev', $team)
-            ->where('availability', 'out')
-            ->whereIn('evidence_level', ['reported', 'corroborated', 'confirmed_unavailable'])
-            ->whereNotNull('nhl_player_id')->pluck('nhl_player_id')
-            ->map(fn (mixed $id): int => (int) $id)->all();
+        return app(NhlLineupAvailability::class)->blocked((object) [
+            'game_state' => 'FUT', 'game_date' => now('America/Toronto')->toDateString(),
+        ], $team)->pluck('nhl_player_id')->map(fn ($id): int => (int) $id)->all();
     }
 
     /**

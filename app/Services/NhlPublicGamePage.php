@@ -85,6 +85,19 @@ final class NhlPublicGamePage
             $current = ['mode' => 'preview', 'preview_analysis' => $this->previewAnalysis($game, $predictionRevisionId)];
         } elseif ($current === null && $section === 'meetings') {
             $current = ['mode' => 'preview', 'head_to_head' => $this->meetings($game)];
+        } elseif ($current === null && $section === 'lineups'
+            && in_array(strtoupper((string) $game->game_state), ['', 'FUT', 'PRE', 'PPD', 'CNCL'], true)
+            && ($saved = $this->savedLineupPrediction($gameId, $predictionRevisionId)) !== null
+            && app(NhlLineupAvailability::class)->predictionErrors($game, $saved) === []
+            && isset($saved['anticipated_lineups']['away'], $saved['anticipated_lineups']['home'])) {
+            $current = ['mode' => 'preview'];
+            foreach (['away', 'home'] as $side) {
+                $lineup = $saved['anticipated_lineups'][$side];
+                $current[$side] = ['lineup' => $lineup, 'display_lineup' => $lineup,
+                    'is_projected' => ($lineup['prediction_source'] ?? '') !== 'anticipated_lineup',
+                    'predictions' => array_map(fn ($player): array => [...$player,
+                        'game_projected_toi_seconds' => $player['toi_seconds'] ?? null], $saved['teams'][$side]['roster'] ?? [])];
+            }
         } elseif ($current === null) {
             $prepared = Cache::get($this->cacheKey($game));
             if (! is_array($prepared)) {
@@ -115,6 +128,16 @@ final class NhlPublicGamePage
         })];
 
         return ['nhl_game_id' => $gameId, 'mode' => $current['mode'], 'section' => $section, 'data' => $data];
+    }
+
+    /** Pin public lineup presentation to the same canonical revision displayed by the page. */
+    private function savedLineupPrediction(int $gameId, ?int $revisionId): ?array
+    {
+        $revision = DB::table('nhl_game_prediction_revisions')->where('nhl_game_id', $gameId)
+            ->where('is_canonical', true)->where('prediction_available', true)
+            ->when($revisionId !== null, fn ($query) => $query->where('id', $revisionId))->orderByDesc('id')->first();
+
+        return $revision === null ? null : app(NhlGamePredictionHistory::class)->payload($revision);
     }
 
     /** Share strictly prior-date Matchup statistics with the partner API in every game state.
@@ -325,7 +348,9 @@ final class NhlPublicGamePage
     {
         $version = Cache::get('nhl:public-game:version:'.$game->nhl_game_id, 'initial');
 
-        return 'nhl:public-game:v4:'.$game->nhl_game_id.':'.sha1($game->game_state.':'.(string) $game->updated_at.':'.$version);
+        $availability = app(NhlLineupAvailability::class)->evidence($game);
+
+        return 'nhl:public-game:v5:'.$game->nhl_game_id.':'.sha1($game->game_state.':'.(string) $game->updated_at.':'.$version.':'.json_encode($availability, JSON_THROW_ON_ERROR));
     }
 
     /** Read the actual ending, not schedule flags describing which rules are enabled. */
@@ -422,7 +447,7 @@ final class NhlPublicGamePage
             ->where('is_canonical', true)->where('prediction_available', true)->orderByDesc('id')
             ->first(['id', 'payload->market_probabilities as markets', 'payload->prediction->predicted_score as score',
                 'payload->prediction->predicted_total_goals as total_goals', 'predicted_at']);
-        if ($row === null) {
+        if ($row === null || app(NhlLineupAvailability::class)->revisionErrors($game, (int) $row->id) !== []) {
             return null;
         }
         $markets = is_string($row->markets) ? json_decode($row->markets, true, 512, JSON_THROW_ON_ERROR) : $row->markets;
@@ -472,7 +497,8 @@ final class NhlPublicGamePage
             ->where('is_canonical', true)->where('prediction_available', true)
             ->when($revisionId !== null, fn ($query) => $query->where('id', $revisionId))
             ->orderByDesc('id')->first($fields);
-        if ($row === null || ! str_starts_with((string) $row->algorithm_version, 'custom_ev_pp_')
+        if ($row === null || app(NhlLineupAvailability::class)->revisionErrors($game, (int) $row->id) !== []
+            || ! str_starts_with((string) $row->algorithm_version, 'custom_ev_pp_')
             || $row->away_abbrev !== $game->away_team_abbrev || $row->home_abbrev !== $game->home_team_abbrev) {
             return null;
         }
@@ -538,7 +564,7 @@ final class NhlPublicGamePage
             ->where('is_canonical', true)->where('prediction_available', true)
             ->when($predictionRevisionId !== null, fn ($query) => $query->where('id', $predictionRevisionId))->orderByDesc('id')
             ->first(['id', 'predicted_at', 'payload->inputs->sat_model_run_id as model_id', 'payload->inputs->training_season_ids as training_seasons']);
-        if ($revision === null) {
+        if ($revision === null || app(NhlLineupAvailability::class)->revisionErrors($game, (int) $revision->id) !== []) {
             return $empty;
         }
         $cutoff = $game->start_time_utc?->min(now('UTC')) ?? now('UTC');

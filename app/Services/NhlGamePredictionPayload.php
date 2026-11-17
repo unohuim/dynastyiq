@@ -121,9 +121,10 @@ class NhlGamePredictionPayload
             $goalie['goal_adjustment_applied'] = false;
             $goalie['confidence_score'] = $custom['teams'][$venue]['goalie_input_confidence_score'] ?? $goalie['confidence_score'] ?? 50;
             $goalies[$venue] = $goalie;
-            $lineups[$venue] = ($overrides['use_stored_boxscore'] ?? false) ? null
-                : $this->anticipatedLineups->forGameTeam($gameId, $abbrev, false);
             $side = $matchup['sides'][$venue === 'away' ? 0 : 1];
+            $lineups[$venue] = $forecast['input']['teams'][$venue]['lineup'] ?? self::calculatedLineup(
+                $gameId, $abbrev, $side['roster'] ?? [], $goalie, $custom['teams'][$venue]['lineup_source']
+            );
             $teams[$venue] = $this->withDressedRoster($this->teamPayload($side), $lineups[$venue], $goalie);
             $reasons[$venue] = $this->reasonPayload($side);
         }
@@ -845,6 +846,58 @@ class NhlGamePredictionPayload
                 'source_fetched_at' => now()->toIso8601String(),
             ],
         ];
+    }
+
+    /** Derive legacy saved lineup presentation only from that revision's calculated participants. */
+    public static function synchronizePredictionLineups(array $payload): array
+    {
+        foreach (['away', 'home'] as $side) {
+            if (! isset($payload['teams'][$side]['roster'])) {
+                continue;
+            }
+            $team = $payload['teams'][$side];
+            $lineup = $payload['anticipated_lineups'][$side] ?? [];
+            $actualIds = collect($team['roster'])->pluck('nhl_player_id')->map(fn ($id): int => (int) $id)->sort()->values()->all();
+            $displayIds = collect($lineup['players'] ?? [])->whereIn('lineup_role', ['forward', 'defense'])
+                ->pluck('nhl_player_id')->map(fn ($id): int => (int) $id)->sort()->values()->all();
+            $starter = $payload['goalies'][$side] ?? null;
+            $starterId = $payload['inputs'][$side.'_goalie_id'] ?? $starter['nhl_player_id'] ?? null;
+            if ($starterId !== null) {
+                $starter = [...($starter ?? []), 'nhl_player_id' => $starterId];
+            }
+            $displayStarter = collect($lineup['players'] ?? [])->where('lineup_role', 'goalie')->firstWhere('slot_index', 1);
+            if ($actualIds !== $displayIds || (int) ($displayStarter['nhl_player_id'] ?? 0) !== (int) $starterId) {
+                $payload['anticipated_lineups'][$side] = self::calculatedLineup((int) ($payload['game']['nhl_game_id'] ?? 0),
+                    $team['team_abbrev'] ?? '', $team['roster'], $starter, $payload['inputs'][$side.'_lineup_source'] ?? 'projected_roster');
+            }
+        }
+
+        return $payload;
+    }
+
+    /** Preserve exactly calculated identities when older prepared inputs lack a dedicated lineup snapshot. */
+    private static function calculatedLineup(int $gameId, string $team, array $roster, ?array $starter, string $source): array
+    {
+        $slots = [];
+        $counts = ['forward' => 0, 'defense' => 0];
+        $players = [];
+        foreach ($roster as $row) {
+            $role = ($row['position'] ?? '') === 'D' ? 'defense' : 'forward';
+            $offset = $counts[$role]++;
+            $size = $role === 'defense' ? 2 : 3;
+            $line = $row['line_key'] ?? (($role === 'defense' ? 'D' : 'F').(intdiv($offset, $size) + 1));
+            $slots[$line] = ($slots[$line] ?? 0) + 1;
+            $players[] = ['nhl_player_id' => $row['nhl_player_id'], 'player_name' => $row['player_name'] ?? (string) $row['nhl_player_id'],
+                'lineup_role' => $role, 'line_key' => $line, 'slot_index' => $slots[$line], 'position' => $row['position'] ?? 'F'];
+        }
+        if (isset($starter['nhl_player_id'])) {
+            $players[] = ['nhl_player_id' => $starter['nhl_player_id'], 'player_name' => $starter['name'] ?? $starter['player_name'] ?? (string) $starter['nhl_player_id'],
+                'lineup_role' => 'goalie', 'line_key' => 'G', 'slot_index' => 1, 'position' => 'G', 'is_starter' => true];
+        }
+
+        return ['nhl_game_id' => $gameId, 'team_abbrev' => $team, 'prediction_source' => $source,
+            'evidence_status' => $source === 'historical_participants' ? 'official' : 'projected',
+            'players' => $players, 'sources' => [], 'source_count' => 0];
     }
 
     /**

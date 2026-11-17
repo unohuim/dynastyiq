@@ -83,21 +83,26 @@ class NhlStartingGoalieSelector
         if (($locked = $this->lockedStarter($nhlGameId, $teamAbbrev)) !== null) {
             return $locked;
         }
-        $state = mb_strtoupper((string) DB::table('nhl_games')->where('nhl_game_id', $nhlGameId)->value('game_state'));
+        $game = DB::table('nhl_games')->where('nhl_game_id', $nhlGameId)->first();
+        $blocked = $game === null ? [] : app(NhlLineupAvailability::class)->blocked($game, $teamAbbrev)->pluck('nhl_player_id')->map(fn ($id): int => (int) $id)->all();
+        $state = mb_strtoupper((string) ($game->game_state ?? ''));
         if ($state !== '' && ! in_array($state, ['FUT', 'PRE'], true)) {
             return null;
         }
         if ($providedGoalieId !== null && $providedGoalieId !== '') {
+            if (in_array((int) $providedGoalieId, $blocked, true)) {
+                throw \Illuminate\Validation\ValidationException::withMessages(['goalie_id' => 'The selected goalie is reported out for this game.']);
+            }
             return $this->result((int) $providedGoalieId, 'provided', 'projected');
         }
 
-        $observed = $this->observed($nhlGameId, $teamAbbrev);
+        $observed = $this->observed($nhlGameId, $teamAbbrev, $blocked);
         if ($observed !== null) {
             return $observed;
         }
 
         $official = $this->official($nhlGameId, $teamAbbrev);
-        if ($official !== null) {
+        if ($official !== null && ! in_array((int) $official, $blocked, true)) {
             return $this->result($official, 'nhl_boxscore', 'confirmed');
         }
 
@@ -122,7 +127,7 @@ class NhlStartingGoalieSelector
             : NhlGoalieProjectionRefresh::usable(DB::table('nhl_goalie_season_projections'), 'nhl_goalie_season_projections')
                 ->where('target_season_id', $targetSeasonId)
                 ->where('projection_version', $goalieProjectionVersion)
-                ->where('target_team_abbrev', $teamAbbrev)
+                ->where('target_team_abbrev', $teamAbbrev)->whereNotIn('goalie_player_id', $blocked)
                 ->orderByDesc('projected_starts')
                 ->orderByDesc('projected_games')
                 ->value('goalie_player_id');
@@ -136,7 +141,7 @@ class NhlStartingGoalieSelector
 
         $workload = NhlGoalieProjectionRefresh::usable(DB::table('nhl_goalie_workload_projections'), 'nhl_goalie_workload_projections')
             ->where('target_season_id', $targetSeasonId)
-            ->where('target_team_abbrev', $teamAbbrev)
+            ->where('target_team_abbrev', $teamAbbrev)->whereNotIn('goalie_player_id', $blocked)
             ->orderByDesc('projected_starts')
             ->orderByDesc('projected_games')
             ->value('goalie_player_id');
@@ -283,7 +288,7 @@ class NhlStartingGoalieSelector
     }
 
     /** @return array<string,mixed>|null */
-    private function observed(int $nhlGameId, string $teamAbbrev): ?array
+    private function observed(int $nhlGameId, string $teamAbbrev, array $blocked = []): ?array
     {
         if (! Schema::hasTable('nhl_starting_goalie_observations')) {
             return null;
@@ -293,9 +298,10 @@ class NhlStartingGoalieSelector
             ->where('nhl_game_id', $nhlGameId)
             ->where('team_abbrev', $teamAbbrev)
             ->value('game_date');
-        $row = $date === null ? null : $this->rankedObservations(Carbon::parse($date), $nhlGameId)
+        $row = $date === null ? null : $this->rankedObservations(Carbon::parse($date), $nhlGameId, $blocked)
             ->first(fn (NhlStartingGoalieObservation $observation): bool => (int) $observation->nhl_game_id === $nhlGameId
                 && $observation->team_abbrev === $teamAbbrev
+                && ! in_array((int) $observation->nhl_player_id, $blocked, true)
                 && ($observation->nhl_player_id !== null || $observation->provider === 'manual')
                 && in_array($observation->status, ['confirmed', 'expected'], true));
 
@@ -323,7 +329,7 @@ class NhlStartingGoalieSelector
      *
      * @return Collection<int, NhlStartingGoalieObservation>
      */
-    public function rankedObservations(Carbon $date, ?int $nhlGameId = null): Collection
+    public function rankedObservations(Carbon $date, ?int $nhlGameId = null, array $blocked = []): Collection
     {
         $game = $nhlGameId === null ? null : DB::table('nhl_games')->where('nhl_game_id', $nhlGameId)->first();
         $rows = NhlStartingGoalieObservation::query()
@@ -346,7 +352,10 @@ class NhlStartingGoalieSelector
             ->keyBy('nhl_lineup_observation_id');
         // Stable sorting retains descending server observation time/id among
         // eligible reports; provider and confirmation status do not override it.
-        $rows = $rows->filter(function (NhlStartingGoalieObservation $row) use ($currentLineups): bool {
+        $rows = $rows->filter(function (NhlStartingGoalieObservation $row) use ($currentLineups, $blocked): bool {
+            if (in_array((int) $row->nhl_player_id, $blocked, true)) {
+                return false;
+            }
             $lineupId = data_get($row->raw_evidence, 'lineup_observation_id');
             if (! in_array($row->provider, ['public_lineup', 'manual'], true) || ! $lineupId) {
                 return true;

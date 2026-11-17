@@ -102,7 +102,7 @@ async function loadPanel(name, attempt = 0) {
   try {
     const url = new URL(props.detailsUrl, window.location.origin);
     url.searchParams.set('section', name);
-    if (['matchup', 'factors'].includes(name) && game.value.prediction?.revision_id)
+    if (['matchup', 'factors', 'lineups'].includes(name) && game.value.prediction?.revision_id)
       url.searchParams.set('prediction_revision_id', game.value.prediction.revision_id);
     const response = await fetch(url, { headers: { Accept: 'application/json' }, cache: 'no-store', signal: controller.signal });
     if (disposed || generation !== panelGeneration || panelRequests.get(name) !== controller) return;

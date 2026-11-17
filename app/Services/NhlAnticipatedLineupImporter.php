@@ -80,6 +80,10 @@ class NhlAnticipatedLineupImporter
                 ],
             ]);
         }
+        $availabilityErrors = app(NhlLineupAvailability::class)->errors($game, $teamAbbrev, $players);
+        if ($availabilityErrors !== []) {
+            throw \Illuminate\Validation\ValidationException::withMessages(['text' => $availabilityErrors]);
+        }
         $url = route('games.show', ['nhlGameId' => $game->nhl_game_id]);
         $actor = $apiClient !== null ? 'api-client-' . $apiClient->id : 'user-' . $userId;
         $candidate = [
@@ -221,6 +225,14 @@ class NhlAnticipatedLineupImporter
             // Preseason permits cross-team assignments; never recheck historical membership.
             if ((int) ($game->game_type ?? 2) !== 1
                 && $this->players->teamMembershipErrors($normalized, $teamAbbrev) !== []) {
+                $skipped++;
+                continue;
+            }
+            $availabilityErrors = app(NhlLineupAvailability::class)->errors($game, $teamAbbrev, $normalized);
+            if ($availabilityErrors !== []) {
+                if (! empty($candidate['manual_override'])) {
+                    throw \Illuminate\Validation\ValidationException::withMessages(['text' => $availabilityErrors]);
+                }
                 $skipped++;
                 continue;
             }
@@ -479,7 +491,8 @@ class NhlAnticipatedLineupImporter
 
     private function refreshCurrent(int $gameId, int $teamId, string $teamAbbrev): void
     {
-        $gameDate = DB::table('nhl_games')->where('nhl_game_id', $gameId)->value('game_date');
+        $game = DB::table('nhl_games')->where('nhl_game_id', $gameId)->first();
+        $gameDate = $game->game_date ?? null;
         if ($gameDate === null) {
             return;
         }
@@ -495,7 +508,8 @@ class NhlAnticipatedLineupImporter
             ->orderByRaw('COALESCE(provider_published_at, observed_at) DESC')->latest('id')->get();
         $observations = $observations->filter(fn (NhlLineupObservation $observation): bool =>
             $observation->isEligibleForGameDate((string) $gameDate)
-            && $this->players->verifiedLineupIds($observation->players->toArray(), null, $gameType) !== null);
+            && $this->players->verifiedLineupIds($observation->players->toArray(), null, $gameType) !== null
+            && app(NhlLineupAvailability::class)->errors($game, $teamAbbrev, $observation->players->toArray()) === []);
         $forward = $observations->first(fn (NhlLineupObservation $observation): bool =>
             (bool) data_get($observation->raw_evidence, 'manual_override', false)) ?? $observations->first();
         $defense = $forward;

@@ -139,6 +139,34 @@ final class NhlGamePredictionResponseCache
         \App\Models\NhlGame::predictionActivity($gameId, $this->refreshOwner($input), false);
     }
 
+    /** Refresh only existing forecasts affected by a completed material injury update. */
+    public function refreshAvailabilityForTeams(array $teams): void
+    {
+        DB::table('nhl_games')->where('game_date', '>=', now('America/Toronto')->toDateString())
+            ->whereIn('game_state', ['FUT', 'PRE'])
+            ->where(fn ($query) => $query->whereIn('away_team_abbrev', $teams)->orWhereIn('home_team_abbrev', $teams))
+            ->whereExists(fn ($query) => $query->selectRaw('1')->from('nhl_game_prediction_revisions as r')
+                ->whereColumn('r.nhl_game_id', 'nhl_games.nhl_game_id')->where('r.is_canonical', true)->where('r.prediction_available', true))
+            ->orderBy('nhl_game_id')->pluck('nhl_game_id')->each(function ($id): void {
+                try {
+                    if (! $this->refreshAvailability((int) $id)) {
+                        throw new \RuntimeException('Unable to queue injury-corrected prediction for game '.$id.'.');
+                    }
+                    app(NhlPublicGamePage::class)->refreshAfterCommit((int) $id);
+                } catch (Throwable $error) {
+                    report($error);
+                }
+            });
+    }
+
+    /** Queue an injury-driven replacement through the existing deduplicated refresh pathway. */
+    public function refreshAvailability(int $gameId): bool
+    {
+        $input = ['nhl_game_id' => $gameId];
+
+        return $this->queue($gameId, $input, $this->fingerprint($gameId, $input));
+    }
+
     /** @param array<string,mixed> $input */
     private function queue(int $gameId, array $input, string $fingerprint): bool
     {
@@ -181,7 +209,7 @@ final class NhlGamePredictionResponseCache
         ksort($input);
         $game = DB::table('nhl_games')->where('nhl_game_id', $gameId)->first([
             'nhl_game_id', 'season_id', 'game_date', 'start_time_utc', 'home_team_id', 'away_team_id',
-            'game_state', 'away_starter_lock', 'home_starter_lock',
+            'game_state', 'away_team_abbrev', 'home_team_abbrev', 'away_starter_lock', 'home_starter_lock',
         ]);
         abort_if($game === null, 404);
         $forecast = app(NhlCustomGameForecast::class);
@@ -200,6 +228,7 @@ final class NhlGamePredictionResponseCache
         return ['request' => $input, 'game' => $game, 'stack' => null, 'models' => $models,
             'algorithm' => config('nhl-custom-prediction'), 'source' => $source,
             'calculation_date' => now('America/Toronto')->toDateString(),
+            'availability' => app(NhlLineupAvailability::class)->evidence($game),
             'lineups' => $lineups, 'goalies' => $goalies];
     }
 
@@ -208,7 +237,7 @@ final class NhlGamePredictionResponseCache
     {
         ksort($input);
 
-        return 'nhl:game-prediction:pregame-dependencies-v18:' . $gameId . ':' . hash('sha256', json_encode($input, JSON_THROW_ON_ERROR));
+        return 'nhl:game-prediction:pregame-dependencies-v19:' . $gameId . ':' . hash('sha256', json_encode($input, JSON_THROW_ON_ERROR));
     }
 
     /** @param array<string,mixed> $input */

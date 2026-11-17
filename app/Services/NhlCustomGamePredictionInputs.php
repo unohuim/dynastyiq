@@ -485,7 +485,7 @@ class NhlCustomGamePredictionInputs
     /** Resolve existing verified anticipated rosters, then the established projected-roster fallback. */
     public function anticipatedParticipants(object $game, bool $storedBoxscore = false, array $rosterOverrides = []): array
     {
-        $record = ['players' => [], 'starters' => [], 'lineup_sources' => []];
+        $record = ['players' => [], 'starters' => [], 'lineup_sources' => [], 'lineups' => []];
         foreach (['away' => $game->away_team_id, 'home' => $game->home_team_id] as $venue => $team) {
             $abbrev = $game->{$venue.'_team_abbrev'};
             $lineup = app(NhlAnticipatedLineupPayload::class)->forGameTeam((int) $game->nhl_game_id, $abbrev, false);
@@ -494,6 +494,10 @@ class NhlCustomGamePredictionInputs
                 collect($lineup['players'] ?? [])->values()->all(), null, (int) $game->game_type
             );
             $source = 'anticipated_lineup';
+            $availability = app(NhlLineupAvailability::class);
+            if (! $storedBoxscore && ($availability->errors($game, $abbrev, $roster) !== [] || ($ids !== null && count($ids) !== 18))) {
+                $ids = null;
+            }
             if ($storedBoxscore) {
                 $roster = app(NhlGameLineupProjectionBuilder::class)->boxscoreRoster((int) $game->nhl_game_id, (int) $team);
                 $ids = array_column($roster, 'nhl_player_id');
@@ -501,6 +505,10 @@ class NhlCustomGamePredictionInputs
             } elseif (array_key_exists($venue, $rosterOverrides)) {
                 $ids = array_values(array_unique(array_map('intval', $rosterOverrides[$venue])));
                 $source = 'provided_roster';
+                $availabilityErrors = $availability->errors($game, $abbrev, array_map(fn ($id): array => ['nhl_player_id' => $id], $ids));
+                if ($availabilityErrors !== []) {
+                    throw new DomainException(implode(' ', $availabilityErrors));
+                }
             }
             if ($ids === null) {
                 $version = DB::table('nhl_player_toi_projections')->where('target_season_id', $game->season_id)
@@ -509,7 +517,7 @@ class NhlCustomGamePredictionInputs
                 $ids = array_column($roster, 'nhl_player_id');
                 $source = 'projected_roster';
             }
-            if ($ids === [] && ! $storedBoxscore) {
+            if (count($ids) < 18 && ! $storedBoxscore && $source !== 'provided_roster') {
                 $previous = DB::table('nhl_games')->where('start_time_utc', '<', $game->start_time_utc ?: now('UTC'))
                     ->where('game_type', 2)->whereIn('game_state', ['OFF', 'FINAL'])
                     ->where(fn ($q) => $q->where('home_team_id', $team)->orWhere('away_team_id', $team))
@@ -518,11 +526,26 @@ class NhlCustomGamePredictionInputs
                 $ids = array_column($roster, 'nhl_player_id');
                 $source = 'last_known_lineup';
             }
+            if (! $storedBoxscore) {
+                $blocked = $availability->blocked($game, $abbrev)->pluck('nhl_player_id')->all();
+                $ids = array_values(array_diff($ids, $blocked));
+            }
             $players = DB::table('players')->whereIn('nhl_id', $ids)->get(['nhl_id', 'full_name', 'position', 'pos_type'])->keyBy('nhl_id');
             $reported = collect($roster)->keyBy('nhl_player_id');
             if ($ids === []) {
                 throw new DomainException('Resolved lineup identities are required before filling statistical inputs.');
             }
+            $defenseSlots = collect($ids)->filter(function ($id) use ($reported, $players): bool {
+                $role = $reported->get($id)['lineup_role'] ?? null;
+                $player = $players->get($id);
+
+                return $role === 'defense' || ($role === null && ($player?->pos_type ?: $player?->position) === 'D');
+            })->count();
+            if (! $storedBoxscore && (count(array_unique($ids)) !== 18 || $defenseSlots !== 6)) {
+                throw new DomainException('A complete injury-eligible roster of 12 forwards and 6 defensemen is required for '.$abbrev.'.');
+            }
+            $snapshot = [];
+            $slots = [];
             foreach (array_unique($ids) as $id) {
                 $player = $players->get($id);
                 $evidence = (array) $reported->get($id, []);
@@ -530,9 +553,18 @@ class NhlCustomGamePredictionInputs
                 if ((int) $id <= 0 || ($player === null && $evidence === []) || $position === null || in_array($position, ['G', 'goalie'], true)) {
                     throw new DomainException('Resolved skater identity and position evidence are required.');
                 }
+                $role = $evidence['lineup_role'] ?? (in_array($position, ['D', 'defense'], true) ? 'defense' : 'forward');
+                $offset = count(array_filter($snapshot, fn ($p): bool => $p['lineup_role'] === $role));
+                $size = $role === 'defense' ? 2 : 3;
+                $line = $evidence['line_key'] ?? (($role === 'defense' ? 'D' : 'F').(intdiv($offset, $size) + 1));
+                $slots[$line] = ($slots[$line] ?? 0) + 1;
+                $snapshot[] = ['player_id' => $evidence['player_id'] ?? null, 'nhl_player_id' => (int) $id, 'player_name' => $player?->full_name ?? $evidence['player_name'],
+                    'lineup_role' => $role, 'line_key' => $line, 'slot_index' => $evidence['slot_index'] ?? $slots[$line],
+                    'position' => $position, 'resolution_status' => 'resolved',
+                    'power_play_unit' => $evidence['power_play_unit'] ?? null, 'penalty_kill_unit' => $evidence['penalty_kill_unit'] ?? null];
                 $record['players'][(int) $id] = ['id' => (int) $id, 'team' => (int) $team,
                     'name' => $player?->full_name ?? $evidence['player_name'] ?? (string) $id,
-                    'role' => in_array($position, ['D', 'defense'], true) ? 'D' : 'F', 'line_key' => $evidence['line_key'] ?? null];
+                    'role' => in_array($position, ['D', 'defense'], true) ? 'D' : 'F', 'line_key' => $line];
             }
             $record['lineup_sources'][$team] = $source;
             if ($storedBoxscore) {
@@ -542,6 +574,27 @@ class NhlCustomGamePredictionInputs
                 $starter = app(NhlStartingGoalieSelector::class)->select((int) $game->nhl_game_id, $abbrev, (string) $game->season_id);
                 $record['starters'][$team] = $starter['nhl_player_id'] ?? null;
             }
+            $starterId = $record['starters'][$team] ?? null;
+            if ($starterId !== null) {
+                $snapshot[] = ['nhl_player_id' => (int) $starterId,
+                    'player_name' => DB::table('players')->where('nhl_id', $starterId)->value('full_name') ?? (string) $starterId,
+                    'lineup_role' => 'goalie', 'line_key' => 'G', 'slot_index' => 1, 'position' => 'G', 'is_starter' => true];
+            }
+            if (! $storedBoxscore && $source === 'anticipated_lineup') {
+                $backups = collect($roster)->where('lineup_role', 'goalie')
+                    ->filter(fn ($p): bool => (int) ($p['nhl_player_id'] ?? 0) > 0 && (int) $p['nhl_player_id'] !== (int) $starterId
+                        && $availability->errors($game, $abbrev, [$p]) === []);
+                if (($backup = $backups->firstWhere('slot_index', 2) ?? $backups->first()) !== null) {
+                    $snapshot[] = [...$backup, 'line_key' => 'G', 'slot_index' => 2, 'is_starter' => false];
+                }
+            }
+            $record['lineups'][$team] = ['nhl_game_id' => (int) $game->nhl_game_id, 'team_abbrev' => $abbrev,
+                'manual_override' => $source === 'anticipated_lineup' && (bool) ($lineup['manual_override'] ?? false),
+                'first_observed_at' => $source === 'anticipated_lineup' ? ($lineup['first_observed_at'] ?? null) : null,
+                'last_observed_at' => $source === 'anticipated_lineup' ? ($lineup['last_observed_at'] ?? null) : null,
+                'prediction_source' => $source, 'evidence_status' => $source === 'historical_participants' ? 'official' : ($source === 'anticipated_lineup' ? ($lineup['evidence_status'] ?? 'reported') : 'projected'),
+                'players' => $snapshot, 'sources' => $source === 'anticipated_lineup' ? collect($lineup['sources'] ?? [])->values()->all() : [],
+                'source_count' => $source === 'anticipated_lineup' ? ($lineup['source_count'] ?? 0) : 0];
         }
 
         return $record;
@@ -872,6 +925,7 @@ class NhlCustomGamePredictionInputs
                 'context_id' => $context->id === null ? null : (int) $context->id, 'starting_goalie_id' => $record['starters'][$team] ?? null,
                 'goalie_confidence_buckets' => isset($record['starters'][$team])
                     ? ($goalieConfidence[(int) $record['starters'][$team]] ?? []) : null,
+                'lineup' => $record['lineups'][$team] ?? null,
                 'lineup_source' => $record['lineup_sources'][$team] ?? 'historical_participants', 'schedule' => $schedule,
                 'context_provenance' => ['game_id' => isset($context->nhl_game_id) ? (int) $context->nhl_game_id : null,
                     'source_cutoff_at' => $context->source_cutoff_at],

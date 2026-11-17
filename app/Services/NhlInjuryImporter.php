@@ -82,7 +82,15 @@ class NhlInjuryImporter
         }
         unset($row);
 
+        $availability = app(NhlLineupAvailability::class);
+        $before = $availability->currentOutByTeam();
         $this->reconcile($rows, $fetchedAt);
+        $after = $availability->currentOutByTeam();
+        $changedTeams = array_values(array_filter(array_unique([...array_keys($before), ...array_keys($after)]),
+            fn ($team): bool => ($before[$team] ?? []) !== ($after[$team] ?? [])));
+        if ($changedTeams !== []) {
+            \Illuminate\Support\Facades\DB::afterCommit(fn () => app(NhlGamePredictionResponseCache::class)->refreshAvailabilityForTeams($changedTeams));
+        }
 
         return ['observed' => $observed, 'current' => NhlPlayerInjury::query()->count(), 'unresolved' => $unresolved];
     }

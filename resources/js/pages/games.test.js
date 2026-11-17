@@ -1824,6 +1824,8 @@ describe('public game preview and recap', () => {
         const matchup = fetch.mock.calls.find(([url]) => url.searchParams.get('section') === 'factors')[0];
         expect(matchup.searchParams.get('prediction_revision_id')).toBe('42');
         expect(fetch.mock.calls.find(([url]) => url.searchParams.get('section') === 'matchup')[0].searchParams.get('prediction_revision_id')).toBe('42');
+        await selectPreview('Lineups');
+        expect(fetch.mock.calls.find(([url]) => url.searchParams.get('section') === 'lineups')[0].searchParams.get('prediction_revision_id')).toBe('42');
     });
     it('shows saved contributions and historical comparisons only in Factors', async () => {
         mount({ mode: 'preview', preview_analysis: { revision_id: 42, predicted_at: '2026-10-26 12:00:00',

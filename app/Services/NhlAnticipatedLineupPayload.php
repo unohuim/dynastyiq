@@ -228,17 +228,18 @@ class NhlAnticipatedLineupPayload
     /** @return array<string,mixed> */
     public function build(Carbon $date, ?int $nhlGameId = null): array
     {
-        $gameIds = DB::table('nhl_games')->whereDate('game_date', $date->toDateString())
+        $games = DB::table('nhl_games')->whereDate('game_date', $date->toDateString())
             ->when($nhlGameId, fn ($query) => $query->where('nhl_game_id', $nhlGameId))
-            ->pluck('nhl_game_id');
+            ->get()->keyBy('nhl_game_id');
         $rows = NhlCurrentLineup::query()->with([
             'observation.players',
             'observation.source',
             'components.observation.players',
             'components.observation.source',
         ])
-            ->whereIn('nhl_game_id', $gameIds)->orderBy('nhl_game_id')->orderBy('team_abbrev')->get()
-            ->filter(fn (NhlCurrentLineup $row): bool => $this->isEligible($row, $date));
+            ->whereIn('nhl_game_id', $games->keys())->orderBy('nhl_game_id')->orderBy('team_abbrev')->get()
+            ->filter(fn (NhlCurrentLineup $row): bool => $this->isEligible($row, $date)
+                && app(NhlLineupAvailability::class)->errors($games->get($row->nhl_game_id), $row->team_abbrev, $this->lineup($row)['players'] ?? []) === []);
 
         return [
             'anticipated_lineups' => $rows->map(fn (NhlCurrentLineup $row): array => $this->lineup($row))->values(),
@@ -278,7 +279,13 @@ class NhlAnticipatedLineupPayload
             return null;
         }
 
-        return $row ? $this->lineup($row) : null;
+        $lineup = $row ? $this->lineup($row) : null;
+        $game = NhlGame::query()->find($nhlGameId);
+        if ($lineup !== null && $game !== null && app(NhlLineupAvailability::class)->errors($game, $teamAbbrev, $lineup['players'] ?? []) !== []) {
+            return null;
+        }
+
+        return $lineup;
     }
 
     /** @return array<string,mixed> */

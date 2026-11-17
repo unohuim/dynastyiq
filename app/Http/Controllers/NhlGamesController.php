@@ -159,6 +159,12 @@ class NhlGamesController extends Controller
             abort_unless(in_array($team, [$game->home_team_abbrev, $game->away_team_abbrev], true), 422, 'Team is not playing in this game.');
             $player = $selector->teamGoalies($team)->firstWhere('id', (int) $input['player_id']);
             abort_if($player === null, 422, 'Select a goalie belonging to this team.');
+            $errors = app(\App\Services\NhlLineupAvailability::class)->errors($game, $team, [
+                ['nhl_player_id' => $player->nhl_id, 'lineup_role' => 'goalie'],
+            ]);
+            if ($errors !== []) {
+                throw \Illuminate\Validation\ValidationException::withMessages(['player_id' => $errors]);
+            }
             $isHome = $team === $game->home_team_abbrev;
             \App\Models\NhlStartingGoalieObservation::query()->create([
                 'nhl_game_id' => $nhlGameId, 'game_date' => $game->game_date,

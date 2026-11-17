@@ -51,6 +51,12 @@ class NhlGamePredictionsController extends Controller
 
         $game = NhlGame::query()->findOrFail((int) $input['nhl_game_id']);
         $prediction = $history->latestSaved((int) $input['nhl_game_id']);
+        if ($prediction !== null && app(\App\Services\NhlLineupAvailability::class)->predictionErrors($game, $prediction) !== []) {
+            if (! $cache->refreshAvailability((int) $game->nhl_game_id)) {
+                abort(503, 'Unable to queue an injury-corrected prediction.');
+            }
+            throw new \App\Exceptions\NhlGamePredictionPreparing((int) $game->nhl_game_id);
+        }
         // Return saved publication before consulting cache age, changed inputs or refresh requests.
         if ($prediction === null) {
             if ($game->game_date->toDateString() < now('America/Toronto')->toDateString()) {

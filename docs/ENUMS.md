@@ -3037,6 +3037,10 @@ Confidence remains nullable and separate from completion and win probability.
 The shared calculator supplies new partner/admin predictions through existing
 response envelopes; prior algorithm records retain their historical meaning.
 
+Prediction payload `anticipated_lineups.{side}.prediction_source` reuses these
+same source values and describes the calculated roster, not a later live lookup.
+This adds no new source or injury-status vocabulary.
+
 ### Partner X post lookup usage
 
 - `integration_api_usage_logs.operation`: `nhl_lineup_post_lookup` records a targeted X post retrieval for a manual partner lineup submission, distinct from timeline discovery usage.

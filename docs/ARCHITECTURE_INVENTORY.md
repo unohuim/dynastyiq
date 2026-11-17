@@ -4507,3 +4507,16 @@ presenting mobile Tools as a half-height bottom sheet. Its Schedule and Lines
 links use local Inertia visit feedback, duplicate protection, retry and cancellation.
 Desktop Tools remains a dropdown. Visual authority lives in `UI_DESIGN.md`;
 behavior belongs to `architecture/ui/InertiaAppShell.yaml`.
+
+### Injury-safe prediction participants
+
+`NhlLineupAvailability` extends the existing player-availability domain with one
+shared game-date eligibility boundary for submissions, current lineup reads,
+projected/prior roster fallback, starter selection and saved forecast safety.
+Meaningful injury reconciliation queues existing affected-forecast refreshes;
+heartbeat changes do not. Prepared/response/public caches include eligibility.
+New predictions archive their exact selected lineup and starter, and API/public
+Lineups and Factors use that revision's calculated participants. Canonical policy:
+`architecture/imports/NhlPlayerAvailability.yaml`, `architecture/stats/NhlCustomGamePrediction.yaml`
+and `architecture/stats/NhlGamePredictionResponseCache.yaml`. Partner contract:
+`integrations/DIQ-API-Usage-Doc.md`. No migration is required.
