@@ -1100,13 +1100,31 @@ can use this timestamp to decide when to request the payload again; a later requ
 returns a newer revision if a separate prediction run has published one.
 
 Except for the injury-safety check below, this saved read does not consult response-cache freshness, prepare dependencies,
-rebuild Matchup or market statistics, recalculate the forecast, or queue refresh
-work. Changed model/lineup evidence and `force_refresh=1` do not delay or replace
-the saved response. Model, goalie and market parameters do not reprice saved
-predictions: the published output is returned as it was calculated. Prior failed
+rebuild Matchup, recalculate the forecast, or queue refresh work. Changed
+model/lineup evidence and `force_refresh=1` do not delay or replace the saved
+response. Model and goalie parameters do not recalculate saved predictions.
+Explicit market selectors and line parameters price the requested markets from
+the saved forecast as described below. Prior failed
 or unavailable attempts do not hide the latest successful revision. Saved scores,
 probabilities, Matchup, `days_away` and public confidence remain frozen; the usual
 public-confidence response mapping still applies. No `is_override` bypass exists.
+
+**Requested markets on saved predictions:** `markets[]`, `puckline`,
+`puckline_spreads[]`, `total` and `total_lines[]` are honored even when the saved
+prediction originally contains only moneyline rows. This is response-only
+pricing from the same saved scores, not another prediction run. Existing
+moneyline probabilities and odds remain unchanged; newly requested market rows
+use the saved forecast's algorithm provenance and public confidence. Scores,
+Matchup, lineups, `days_away`, `meta.prediction_revision_id` and `meta.predicted_at`
+retain their original values. No new revision, cache refresh or preparation job
+is created. The same behavior applies to historical saved games.
+
+Use saved unrounded selection goals when present, retaining older forecasts'
+existing total normalization. Older payloads without unrounded values use their
+saved displayed scores. If a requested market cannot be priced because the saved
+forecast lacks usable scoring/team evidence, return HTTP 422 with `errors.markets`
+rather than manufacturing values or starting another forecast. With no market
+selectors or line parameters, return the saved publication's market list unchanged.
 
 **Injury-safety exception for an upcoming game:** if a saved prediction includes a
 calculated skater or starter now supported as out for that game, DIQ retains the
@@ -1368,8 +1386,9 @@ starts. If either starter cannot be resolved to a usable goalie performance
 projection, the endpoint returns a validation error and does not emit a
 prediction.
 
-If no market parameters are provided, DynastyIQ emits full-game moneyline rows
-only. If `puckline`, `puckline_spreads[]`, `total`, or `total_lines[]` are
+For a new calculation with no market parameters, DynastyIQ emits full-game moneyline rows
+only. Saved reads without market parameters retain their original market list.
+If `puckline`, `puckline_spreads[]`, `total`, or `total_lines[]` are
 provided without `markets[]`, moneyline remains included and the requested
 line-based markets are added. If `markets[]` is provided, only those requested
 markets are emitted.
@@ -1817,6 +1836,13 @@ projected games. It is not current-season GAA, historical on-ice xGA, or a
 single-game observed value.
 
 ### Market Probabilities
+
+Requested markets are available from both newly calculated and already saved
+predictions. For example, a saved moneyline-only forecast can be read again with
+`puckline_spreads[]=1.5&total_lines[]=5.5&total_lines[]=6.0` to receive moneyline,
+puckline and over/under probabilities immediately, retaining the same prediction
+revision and calculation timestamp. An explicit `markets[]` filter restricts the
+returned rows; requesting line markets without that filter keeps moneyline included.
 
 The `market_probabilities[]` block contains model-owned betting market
 probabilities. Each row is one market selection for one full-game market.

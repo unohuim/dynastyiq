@@ -1549,6 +1549,78 @@ class NhlGamePredictionPayload
     }
 
     /**
+     * Price requested markets from an existing forecast without publishing a new calculation.
+     *
+     * @param array<string,mixed> $payload Saved or cached prediction, copied for this response only.
+     * @param array<string,mixed> $request Validated market selectors and lines only.
+     * @return array<string,mixed>
+     */
+    public function withRequestedMarkets(array $payload, array $request): array
+    {
+        if (($payload['prediction_available'] ?? false) !== true || ! is_array($payload['prediction'] ?? null)) {
+            return $payload;
+        }
+
+        $prediction = $payload['prediction'];
+        $requested = $this->requestedMarkets($request);
+        $moneyline = collect($payload['market_probabilities'] ?? [])
+            ->filter(fn (array $row): bool => ($row['market_key'] ?? null) === 'moneyline')
+            ->keyBy('selection_key');
+        if ($requested === [] || ($requested === ['moneyline'] && $moneyline->has(['away', 'home']))) {
+            $payload['market_probabilities'] = $requested === [] ? [] : $moneyline->values()->all();
+
+            return $payload;
+        }
+
+        $awayGoals = $prediction['selection_score']['away'] ?? $prediction['predicted_score']['away'] ?? null;
+        $homeGoals = $prediction['selection_score']['home'] ?? $prediction['predicted_score']['home'] ?? null;
+        $awayTeam = $payload['game']['away_team_abbrev'] ?? $payload['teams']['away']['team_abbrev'] ?? null;
+        $homeTeam = $payload['game']['home_team_abbrev'] ?? $payload['teams']['home']['team_abbrev'] ?? null;
+        $goalEstimates = [$awayGoals, $homeGoals];
+        if (in_array('total', $requested, true)) {
+            $goalEstimates[] = data_get($prediction, 'totals_normalization.away.goals_per_game', $awayGoals);
+            $goalEstimates[] = data_get($prediction, 'totals_normalization.home.goals_per_game', $homeGoals);
+        }
+        foreach ($goalEstimates as $goals) {
+            if (! is_numeric($goals) || ! is_finite((float) $goals) || (float) $goals < 0) {
+                throw ValidationException::withMessages(['markets' => 'The saved prediction lacks usable goal estimates for the requested markets.']);
+            }
+        }
+        if (! is_string($awayTeam) || $awayTeam === '' || ! is_string($homeTeam) || $homeTeam === '') {
+            throw ValidationException::withMessages(['markets' => 'The saved prediction lacks team identities for the requested markets.']);
+        }
+
+        $rows = $this->marketProbabilities($awayTeam, $homeTeam, (float) $awayGoals, (float) $homeGoals, $prediction, $request);
+        $algorithm = $payload['inputs']['algorithm_version'] ?? $prediction['algorithm_version'] ?? null;
+        foreach ($rows as &$row) {
+            if ($row['market_key'] === 'moneyline' && $moneyline->has($row['selection_key'])) {
+                // The published moneyline already includes its adopted tie and schedule treatment.
+                $row = $moneyline->get($row['selection_key']);
+                continue;
+            }
+            if ($row['market_key'] === 'moneyline') {
+                $probability = $prediction[$row['selection_key'].'_win_probability'] ?? null;
+                if (is_numeric($probability) && is_finite((float) $probability) && $probability >= 0 && $probability <= 1) {
+                    $row['probability'] = $row['win_probability'] = round((float) $probability, 6);
+                    $row['loss_probability'] = round(1 - (float) $probability, 6);
+                    $row['fair_odds_american'] = $this->americanOdds((float) $probability);
+                    $row['fair_odds_decimal'] = $this->decimalOdds((float) $probability);
+                    if ($algorithm !== null) {
+                        $row['model']['tie_resolution'] = 'equal_overtime_split';
+                    }
+                }
+            }
+            if ($algorithm !== null) {
+                $row['model']['algorithm_version'] = $algorithm;
+            }
+        }
+        unset($row);
+        $payload['market_probabilities'] = $rows;
+
+        return $payload;
+    }
+
+    /**
      * @param array<string, mixed> $prediction
      * @param array<string, mixed> $overrides
      * @return array<int, array<string, mixed>>
@@ -1563,7 +1635,7 @@ class NhlGamePredictionPayload
     ): array {
         $distribution = $this->scoreDistribution($awayGoals, $homeGoals);
         $markets = $this->requestedMarkets($overrides);
-        $confidenceScore = (int) $prediction['confidence_score'];
+        $confidenceScore = (int) ($prediction['confidence_score'] ?? 0);
         $probabilities = [];
 
         if (in_array('moneyline', $markets, true)) {

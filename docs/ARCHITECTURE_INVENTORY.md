@@ -4453,7 +4453,11 @@ Authority: `docs/architecture/stats/NhlGamePredictionHistory.yaml`.
 
 Partner prediction reads for every date return the latest successful stored
 revision immediately with its original calculation timestamp and revision ID,
-without rebuilding context, Matchup, markets or forecasts. Only today/future
+without rebuilding context, Matchup or forecasts. Explicit requested markets
+are priced on a response copy from the saved scoring estimates through
+`NhlGamePredictionPayload::withRequestedMarkets`; existing moneyline rows and
+stored revisions remain unchanged. No selector retains the published market list.
+Only today/future
 requests without saved success enter preparation; past dates without success
 return unavailable. Independent prediction runs remain separate. Authority:
 `docs/architecture/stats/NhlGamePredictionResponseCache.yaml` and

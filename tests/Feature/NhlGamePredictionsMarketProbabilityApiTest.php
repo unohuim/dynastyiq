@@ -1083,7 +1083,7 @@ it('returns the latest saved past prediction without preparing or refreshing any
     $this->travelTo(\Carbon\CarbonImmutable::parse('2026-11-06 12:00:00 UTC'));
     Cache::flush();
     Bus::fake();
-    $this->mock(NhlGamePredictionPayload::class)->shouldNotReceive('build');
+    $this->partialMock(NhlGamePredictionPayload::class)->shouldNotReceive('build');
     // Direct HTTP read avoids the test helper's intentional Matchup preparation fixture.
     $this->withToken($this->token)->getJson('/api/nhl-game-predictions?nhl_game_id=2026020001&force_refresh=1&home_goalie_id=456&total=9')
         ->assertOk()->assertJsonPath('meta.prediction_revision_id', $latest)
@@ -1093,6 +1093,7 @@ it('returns the latest saved past prediction without preparing or refreshing any
         ->assertJsonPath('prediction.days_away', 0)
         ->assertJsonPath('prediction.confidence_score', $saved['prediction']['public_confidence_score'])
         ->assertJsonPath('matchup', $saved['matchup'])
+        ->assertJsonCount(4, 'market_probabilities')
         ->assertJsonPath('market_probabilities.0.confidence_score', $saved['prediction']['public_confidence_score'])
         ->assertJsonMissingPath('prediction.confidence_inputs')
         ->assertJsonMissingPath('teams.home.input_confidence_score');
@@ -1155,7 +1156,7 @@ it('returns not found for an unknown game without prediction work', function ():
 });
 
 
-it('immediately returns saved predictions despite new inputs or forced refresh for any game date', function (string $date): void {
+it('immediately returns saved forecasts while pricing requested lines despite other overrides for any game date', function (string $date): void {
     $this->game->update(['game_date' => $date]);
     $first = ($this->requestPrediction)()->assertOk();
     $id = $first->json('meta.prediction_revision_id');
@@ -1163,14 +1164,234 @@ it('immediately returns saved predictions despite new inputs or forced refresh f
     Cache::flush();
     Bus::fake();
     config(['nhl-custom-prediction.algorithm_version' => 'different-algorithm']);
-    $this->mock(NhlGamePredictionPayload::class)->shouldNotReceive('build');
-    $this->withToken($this->token)->getJson('/api/nhl-game-predictions?nhl_game_id=2026020001&force_refresh=1&home_goalie_id=999&total=10')
+    $this->partialMock(NhlGamePredictionPayload::class)->shouldNotReceive('build');
+    $read = $this->withToken($this->token)->getJson('/api/nhl-game-predictions?nhl_game_id=2026020001&force_refresh=1&home_goalie_id=999&total=10')
         ->assertOk()->assertJsonPath('meta.prediction_revision_id', $id)
         ->assertJsonPath('meta.predicted_at', $first->json('meta.predicted_at'))
         ->assertJsonPath('prediction', $first->json('prediction'))
         ->assertJsonPath('matchup', $first->json('matchup'))
-        ->assertJsonPath('market_probabilities', $first->json('market_probabilities'));
+        ->assertJsonCount(4, 'market_probabilities');
+    expect(collect($read->json('market_probabilities'))->where('market_key', 'moneyline')->values()->all())
+        ->toBe($first->json('market_probabilities'));
+    expect(collect($read->json('market_probabilities'))->where('market_key', 'total')->pluck('line')->all())->toEqual([10.0, 10.0]);
     expect(DB::table('nhl_game_prediction_revisions')->find($id))->toEqual($row);
     $this->assertDatabaseCount('nhl_game_prediction_revisions', 1);
     Bus::assertNothingDispatched();
 })->with(['today' => '2026-11-05', 'tomorrow' => '2026-11-06', 'next week' => '2026-11-12']);
+
+it('prices requested lines from a saved moneyline prediction without recalculating or writing a revision', function (): void {
+    $first = ($this->requestPrediction)()->assertOk();
+    $id = $first->json('meta.prediction_revision_id');
+    $revision = DB::table('nhl_game_prediction_revisions')->find($id);
+    Cache::flush();
+    Bus::fake();
+    $this->mock(NhlCustomGameForecast::class)->shouldNotReceive('predict');
+    $this->mock(\App\Services\NhlGamePredictionResponseCache::class)->shouldNotReceive('respond');
+    $read = $this->withToken($this->token)->getJson('/api/nhl-game-predictions?'.http_build_query([
+        'nhl_game_id' => 2026020001, 'puckline_spreads' => [1.5, 2.5], 'total_lines' => [5.5, 6.0, 6.5],
+    ]))->assertOk()->assertJsonCount(12, 'market_probabilities')
+        ->assertJsonPath('meta.prediction_revision_id', $id)
+        ->assertJsonPath('meta.predicted_at', $first->json('meta.predicted_at'))
+        ->assertJsonPath('prediction', $first->json('prediction'))
+        ->assertJsonPath('matchup', $first->json('matchup'));
+    $markets = collect($read->json('market_probabilities'));
+    expect($markets->where('market_key', 'moneyline')->values()->all())->toBe($first->json('market_probabilities'));
+    expect($markets->where('market_key', 'puckline'))->toHaveCount(4);
+    expect($markets->where('market_key', 'total'))->toHaveCount(6);
+    expect(DB::table('nhl_game_prediction_revisions')->find($id))->toEqual($revision);
+    $this->assertDatabaseCount('nhl_game_prediction_revisions', 1);
+    Bus::assertNothingDispatched();
+    Http::assertNothingSent();
+});
+
+it('honors explicit market filters on an existing saved prediction', function (array $query, string $market, int $count): void {
+    ($this->requestPrediction)()->assertOk();
+    $rows = ($this->requestPrediction)($query)->assertOk()->json('market_probabilities');
+    expect($rows)->toHaveCount($count)->and(array_values(array_unique(array_column($rows, 'market_key'))))->toBe([$market]);
+    $this->assertDatabaseCount('nhl_game_prediction_revisions', 1);
+})->with([
+    [['markets' => ['total'], 'total_lines' => [5.5, 6]], 'total', 4],
+    [['markets' => ['puckline'], 'puckline_spreads' => [1.5, 2.5]], 'puckline', 4],
+    [['markets' => ['moneyline'], 'total_lines' => [5.5]], 'moneyline', 2],
+]);
+
+it('uses default lines when a saved read requests a market without its lines', function (string $market, float $line): void {
+    ($this->requestPrediction)()->assertOk();
+    $rows = ($this->requestPrediction)(['markets' => [$market]])->assertOk()->json('market_probabilities');
+    expect($rows)->toHaveCount(2);
+    foreach ($rows as $row) {
+        expect(abs($row['line']))->toEqual($line);
+    }
+})->with([['puckline', 1.5], ['total', 6.0]]);
+
+it('deduplicates combined single and multiple lines while preserving existing spread sign normalization', function (): void {
+    ($this->requestPrediction)()->assertOk();
+    $rows = collect(($this->requestPrediction)(['puckline' => -1.5, 'puckline_spreads' => [1.5, -1.5, 2.5],
+        'total' => 6, 'total_lines' => [6, 6.5, 6.5]])->assertOk()->json('market_probabilities'));
+    expect($rows)->toHaveCount(10);
+    expect($rows->where('market_key', 'puckline')->pluck('line')->sort()->values()->all())->toEqual([-2.5, -1.5, 1.5, 2.5]);
+    expect($rows->where('market_key', 'total')->pluck('line')->sort()->values()->all())->toEqual([6.0, 6.0, 6.5, 6.5]);
+});
+
+it('retains saved moneyline probabilities including the existing schedule adjustment', function (): void {
+    $this->input['teams']['away']['schedule'] = ['back_to_back' => true, 'games_including_target_last_7_days' => 4];
+    $first = ($this->requestPrediction)()->assertOk();
+    $read = ($this->requestPrediction)(['puckline' => 1.5, 'total' => 6])->assertOk();
+    expect(collect($read->json('market_probabilities'))->where('market_key', 'moneyline')->values()->all())
+        ->toBe($first->json('market_probabilities'));
+    $read->assertJsonPath('prediction.home_win_probability', $first->json('prediction.home_win_probability'))
+        ->assertJsonPath('prediction.away_win_probability', $first->json('prediction.away_win_probability'));
+});
+
+it('uses the saved public confidence and algorithm provenance for newly priced markets', function (): void {
+    $first = ($this->requestPrediction)()->assertOk();
+    $algorithm = $first->json('inputs.algorithm_version');
+    config(['nhl-custom-prediction.algorithm_version' => 'not-the-saved-algorithm']);
+    $read = ($this->requestPrediction)(['puckline' => 1.5, 'total' => 6])->assertOk();
+    foreach ($read->json('market_probabilities') as $row) {
+        expect($row['confidence_score'])->toEqual($first->json('prediction.public_confidence_score'))
+            ->and($row['model']['algorithm_version'])->toBe($algorithm);
+    }
+    $read->assertJsonPath('prediction.days_away', $first->json('prediction.days_away'));
+});
+
+it('keeps missing public confidence null for added line markets', function (): void {
+    $first = ($this->requestPrediction)()->assertOk();
+    DB::table('nhl_game_prediction_revisions')->where('id', $first->json('meta.prediction_revision_id'))
+        ->update(['public_confidence_score' => null]);
+    $rows = ($this->requestPrediction)(['puckline' => 1.5, 'total' => 6])->assertOk()->json('market_probabilities');
+    foreach ($rows as $row) {
+        expect($row['confidence_score'])->toBeNull();
+    }
+});
+
+it('prices historical saved predictions without starting new work', function (): void {
+    $first = ($this->requestPrediction)()->assertOk();
+    $this->travel(2)->days();
+    $this->matchupReady = false;
+    Bus::fake();
+    $this->mock(NhlCustomGameForecast::class)->shouldNotReceive('predict');
+    $read = ($this->requestPrediction)(['total_lines' => [5.5, 6]])->assertOk()->assertJsonCount(6, 'market_probabilities');
+    $read->assertJsonPath('meta.prediction_revision_id', $first->json('meta.prediction_revision_id'))
+        ->assertJsonPath('meta.predicted_at', $first->json('meta.predicted_at'))
+        ->assertJsonPath('prediction.days_away', $first->json('prediction.days_away'));
+    $this->assertDatabaseCount('nhl_game_prediction_revisions', 1);
+    Bus::assertNothingDispatched();
+    Http::assertNothingSent();
+});
+
+it('does not fabricate markets or queue predictions for a historical game without a saved success', function (): void {
+    $this->travel(2)->days();
+    $this->matchupReady = false;
+    Bus::fake();
+    ($this->requestPrediction)(['puckline' => 1.5, 'total' => 6])->assertOk()
+        ->assertJsonPath('prediction_available', false)->assertJsonPath('market_probabilities', []);
+    $this->assertDatabaseCount('nhl_game_prediction_revisions', 0);
+    Bus::assertNothingDispatched();
+});
+
+it('preserves existing line push behavior when pricing a saved prediction', function (): void {
+    ($this->requestPrediction)()->assertOk();
+    $rows = ($this->requestPrediction)(['markets' => ['puckline', 'total'],
+        'puckline_spreads' => [1, 1.5], 'total_lines' => [6, 6.5]])->assertOk()->json('market_probabilities');
+    foreach ($rows as $row) {
+        expect($row['win_probability'] + $row['push_probability'] + $row['loss_probability'])->toEqualWithDelta(1.0, 0.000002);
+        if (floor(abs($row['line'])) === abs($row['line'])) {
+            expect($row['push_probability'])->toBeGreaterThan(0);
+        } else {
+            expect($row['push_probability'])->toEqual(0);
+        }
+    }
+});
+
+it('reconstructs missing moneyline rows using the saved custom winner probabilities', function (): void {
+    $first = ($this->requestPrediction)(['markets' => ['total'], 'total' => 6])->assertOk();
+    $rows = collect(($this->requestPrediction)(['markets' => ['moneyline']])->assertOk()->json('market_probabilities'))->keyBy('selection_key');
+    foreach (['away', 'home'] as $side) {
+        expect($rows[$side]['probability'])->toEqualWithDelta($first->json('prediction.'.$side.'_win_probability'), 0.000001)
+            ->and($rows[$side]['model']['tie_resolution'])->toBe('equal_overtime_split');
+    }
+    $this->assertDatabaseCount('nhl_game_prediction_revisions', 1);
+});
+
+it('keeps requests without market selectors equal to the saved publication', function (): void {
+    $first = ($this->requestPrediction)(['total' => 6])->assertOk();
+    $read = ($this->requestPrediction)()->assertOk();
+    expect($read->json('market_probabilities'))->toBe($first->json('market_probabilities'));
+    $read->assertJsonPath('meta.predicted_at', $first->json('meta.predicted_at'));
+});
+
+it('uses unrounded saved selection goals rather than rounded displayed scores for requested totals', function (): void {
+    $payload = ($this->requestPrediction)()->assertOk()->json();
+    $payload['prediction']['selection_score'] = ['away' => 1.23456789, 'home' => 2.34567891];
+    $payload['prediction']['predicted_score'] = ['away' => 1.23, 'home' => 2.35];
+    $result = app(NhlGamePredictionPayload::class)->withRequestedMarkets($payload, ['markets' => ['total'], 'total' => 0.5]);
+    $over = collect($result['market_probabilities'])->firstWhere('selection_key', 'over');
+    expect($over['probability'])->toEqualWithDelta(1 - exp(-3.5802468), 0.000001);
+});
+
+it('retains saved legacy total normalization when pricing requested totals', function (): void {
+    $payload = ($this->requestPrediction)()->assertOk()->json();
+    $payload['prediction']['selection_score'] = ['away' => 8.0, 'home' => 7.0];
+    $payload['prediction']['totals_normalization'] = ['away' => ['goals_per_game' => 1.2], 'home' => ['goals_per_game' => 1.3]];
+    $result = app(NhlGamePredictionPayload::class)->withRequestedMarkets($payload, ['markets' => ['total'], 'total' => 0.5]);
+    $over = collect($result['market_probabilities'])->firstWhere('selection_key', 'over');
+    expect($over['probability'])->toEqualWithDelta(1 - exp(-2.5), 0.000001);
+});
+
+it('retains valid zero goals and falls back to displayed scores only when unrounded goals are absent', function (): void {
+    $payload = ($this->requestPrediction)()->assertOk()->json();
+    unset($payload['prediction']['selection_score']);
+    $payload['prediction']['predicted_score'] = ['away' => 0.0, 'home' => 0.0];
+    $result = app(NhlGamePredictionPayload::class)->withRequestedMarkets($payload, ['markets' => ['total'], 'total' => 0.5]);
+    $over = collect($result['market_probabilities'])->firstWhere('selection_key', 'over');
+    expect($over['probability'])->toEqual(0)->and($result['prediction']['predicted_score'])->toBe(['away' => 0.0, 'home' => 0.0]);
+});
+
+it('refuses to fabricate requested line prices from saved predictions missing goal estimates', function (): void {
+    $first = ($this->requestPrediction)()->assertOk();
+    $id = $first->json('meta.prediction_revision_id');
+    $row = DB::table('nhl_game_prediction_revisions')->find($id);
+    $payload = json_decode($row->payload, true, 512, JSON_THROW_ON_ERROR);
+    unset($payload['prediction']['selection_score'], $payload['prediction']['predicted_score']);
+    DB::table('nhl_game_prediction_revisions')->where('id', $id)->update(['payload' => json_encode($payload, JSON_THROW_ON_ERROR)]);
+    Bus::fake();
+    ($this->requestPrediction)(['total' => 6])->assertUnprocessable()->assertJsonValidationErrors('markets');
+    $this->assertDatabaseCount('nhl_game_prediction_revisions', 1);
+    Bus::assertNothingDispatched();
+});
+
+it('ignores changed forecast overrides while honoring requested markets on a saved read', function (): void {
+    $first = ($this->requestPrediction)()->assertOk();
+    $read = ($this->requestPrediction)(['force_refresh' => 1, 'away_goalie_id' => 1234567,
+        'source_season_id' => '20202021', 'total_lines' => [5.5, 6]])->assertOk();
+    $read->assertJsonPath('prediction', $first->json('prediction'))
+        ->assertJsonPath('inputs', $first->json('inputs'))
+        ->assertJsonPath('meta', $first->json('meta'))->assertJsonCount(6, 'market_probabilities');
+    $this->assertDatabaseCount('nhl_game_prediction_revisions', 1);
+});
+
+it('keeps requested line pricing behind the existing API authorization boundary', function (): void {
+    ($this->requestPrediction)()->assertOk();
+    $url = '/api/nhl-game-predictions?nhl_game_id=2026020001&puckline=1.5&total=6';
+    $this->withHeader('Authorization', '')->getJson($url)->assertUnauthorized();
+    $this->client->update(['scopes' => ['nhl-reference:read']]);
+    $this->withToken($this->token)->getJson($url)->assertForbidden();
+    $this->assertDatabaseCount('nhl_game_prediction_revisions', 1);
+});
+
+it('does not mutate the supplied prediction or invent markets for an unavailable forecast', function (): void {
+    $payload = ($this->requestPrediction)()->assertOk()->json();
+    $before = $payload;
+    app(NhlGamePredictionPayload::class)->withRequestedMarkets($payload, ['total' => 6]);
+    expect($payload)->toBe($before);
+    $unavailable = ['prediction_available' => false, 'prediction' => null, 'market_probabilities' => []];
+    expect(app(NhlGamePredictionPayload::class)->withRequestedMarkets($unavailable, ['total' => 6]))->toBe($unavailable);
+});
+
+it('rejects unusable saved legacy total normalization without silently substituting another score', function (): void {
+    $payload = ($this->requestPrediction)()->assertOk()->json();
+    $payload['prediction']['totals_normalization'] = ['away' => ['goals_per_game' => null], 'home' => ['goals_per_game' => 2]];
+    expect(fn () => app(NhlGamePredictionPayload::class)->withRequestedMarkets($payload, ['total' => 6]))
+        ->toThrow(\Illuminate\Validation\ValidationException::class);
+});

@@ -78,6 +78,13 @@ class NhlGamePredictionsController extends Controller
             }
         }
 
+        $marketInput = array_intersect_key($input, array_flip([
+            'markets', 'puckline', 'puckline_spreads', 'total', 'total_lines',
+        ]));
+        if ($marketInput !== [] && ($prediction['prediction_available'] ?? false) === true) {
+            $prediction = $payload->withRequestedMarkets($prediction, $marketInput);
+        }
+
         // Presentation-only copy: cached revisions and admin diagnostics keep their internal evidence.
         if (is_array($prediction['prediction'] ?? null)) {
             $publicConfidence = $prediction['prediction']['public_confidence_score'] ?? null;
