@@ -4516,7 +4516,11 @@ projected/prior roster fallback, starter selection and saved forecast safety.
 Meaningful injury reconciliation queues existing affected-forecast refreshes;
 heartbeat changes do not. Prepared/response/public caches include eligibility.
 New predictions archive their exact selected lineup and starter, and API/public
-Lineups and Factors use that revision's calculated participants. Canonical policy:
+Lineups and Factors use that revision's calculated participants. Current partner
+lineup reads replace injury-incompatible accepted rosters through the same
+team-scoped healthy participant resolver, labelling the fallback as projected
+without modifying submitted evidence. New injured submissions still fail validation.
+Canonical policy:
 `architecture/imports/NhlPlayerAvailability.yaml`, `architecture/stats/NhlCustomGamePrediction.yaml`
 and `architecture/stats/NhlGamePredictionResponseCache.yaml`. Partner contract:
 `integrations/DIQ-API-Usage-Doc.md`. No migration is required.

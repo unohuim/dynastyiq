@@ -102,9 +102,12 @@ These fields do not perform another live lineup lookup after prediction. On read
 of older revisions with inconsistent presentation, reconstruct the lineup from
 that revision's own calculated skaters and starter. Do not substitute today's
 lineup or interpret this as a new calculation; the saved revision remains unchanged.
-The separate `/api/nhl/lineups` endpoints still describe current accepted evidence.
-They may report no current lineup while the predictor uses an eligible projected
-roster. For what actually drove a forecast, use its prediction payload.
+The separate `/api/nhl/lineups` endpoints describe current eligible lineups. If a
+previously accepted upcoming roster now contains an injured, unavailable player,
+they return the complete healthy replacement selected through the same roster
+resolver used for predictions, labelled `lineup_status: projected`. Original
+submitted evidence is retained unchanged. For what actually drove a saved forecast,
+use its frozen prediction payload; a current lineup read does not rerun that forecast.
 
 ## Starter identity after puck drop
 
@@ -202,8 +205,8 @@ when a game goes live or finishes. Consumers must continue reading:
 | Single-game response path | Contract in every game state |
 | --- | --- |
 | `game.game_state` | Stored NHL game state; its value can change without changing the response structure. |
-| `game.teams.away.players` / `game.teams.home.players` | Accepted lineup players, or `[]` when no eligible lineup is stored. |
-| `game.teams.away.lineup_status` / `game.teams.home.lineup_status` | Current lineup evidence status, including `not_reported` when unavailable. |
+| `game.teams.away.players` / `game.teams.home.players` | Eligible accepted players, or the complete healthy prediction-path replacement when previously accepted upcoming evidence becomes injury-incompatible. Truly missing lineups remain `[]`. |
+| `game.teams.away.lineup_status` / `game.teams.home.lineup_status` | Current lineup evidence status; `projected` for an injury-corrected fallback, `not_reported` when unavailable. |
 | `game.teams.away.starting_goalie` / `game.teams.home.starting_goalie` | Independently selected starter, or `null`. |
 
 The date endpoint uses those same game fields under `games[]` instead of `game`.
@@ -323,9 +326,12 @@ changing the current lineup. This applies to DynastyIQ users and all partner
 clients. Questionable, unknown and suspected-only cases remain eligible. Scratches
 are not dressed participants. Existing identity, membership, exact roster counts,
 duplicates, goalie-slot and unknown-player rules still apply. Previously accepted
-upcoming lineups are checked again on reads/prediction; injury-incompatible evidence
-is not made current simply because it was accepted earlier. Actual NHL participants
-remain authoritative for started/finished games.
+upcoming lineups are checked again on reads/prediction. When existing evidence
+becomes injury-incompatible, return a healthy replacement through DIQ's prediction
+roster pathway, rather than omitting the team. A rejected new submission does not
+erase the previous roster. Projected replacements have no claimed manual source
+and leave the original evidence unchanged. Actual NHL participants remain
+authoritative for started/finished games.
 
 Validated manual submissions may target any existing scheduled game, including
 games weeks or a year ahead. Their submission timestamps do not need to fall

@@ -482,12 +482,24 @@ class NhlCustomGamePredictionInputs
         $this->allowanceSources = array_intersect_key($this->allowanceSources, $ids);
     }
 
-    /** Resolve existing verified anticipated rosters, then the established projected-roster fallback. */
-    public function anticipatedParticipants(object $game, bool $storedBoxscore = false, array $rosterOverrides = []): array
-    {
+    /**
+     * Resolve verified rosters and the established healthy projected/prior-lineup fallback.
+     *
+     * @param string|null $teamAbbrev Restrict a lineup read to one participating team.
+     * @return array<string,array>
+     */
+    public function anticipatedParticipants(
+        object $game,
+        bool $storedBoxscore = false,
+        array $rosterOverrides = [],
+        ?string $teamAbbrev = null
+    ): array {
         $record = ['players' => [], 'starters' => [], 'lineup_sources' => [], 'lineups' => []];
         foreach (['away' => $game->away_team_id, 'home' => $game->home_team_id] as $venue => $team) {
             $abbrev = $game->{$venue.'_team_abbrev'};
+            if ($teamAbbrev !== null && mb_strtoupper($teamAbbrev) !== $abbrev) {
+                continue;
+            }
             $lineup = app(NhlAnticipatedLineupPayload::class)->forGameTeam((int) $game->nhl_game_id, $abbrev, false);
             $roster = collect($lineup['players'] ?? [])->values()->all();
             $ids = $lineup === null ? null : app(NhlLineupPlayerResolver::class)->verifiedLineupIds(

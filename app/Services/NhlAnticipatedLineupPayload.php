@@ -44,9 +44,13 @@ class NhlAnticipatedLineupPayload
                     $teams[$side] = [
                         'team_id' => $game->{$side . '_team_id'} ?? $teamIds->get($abbrev),
                         'team_abbrev' => $abbrev,
-                        'lineup_status' => $lineup === null ? 'not_reported'
-                            : (($lineup['manual_override'] ?? false) ? 'manual'
-                                : ($lineup['evidence_status'] === 'official' ? 'official' : 'reported')),
+                        'lineup_status' => match (true) {
+                            $lineup === null => 'not_reported',
+                            ($lineup['evidence_status'] ?? null) === 'projected' => 'projected',
+                            (bool) ($lineup['manual_override'] ?? false) => 'manual',
+                            $lineup['evidence_status'] === 'official' => 'official',
+                            default => 'reported',
+                        },
                         'evidence_status' => $lineup['evidence_status'] ?? null,
                         'updated_at' => $lineup['last_observed_at'] ?? null,
                         'players' => $lineup['players'] ?? [],
@@ -238,11 +242,24 @@ class NhlAnticipatedLineupPayload
             'components.observation.source',
         ])
             ->whereIn('nhl_game_id', $games->keys())->orderBy('nhl_game_id')->orderBy('team_abbrev')->get()
-            ->filter(fn (NhlCurrentLineup $row): bool => $this->isEligible($row, $date)
-                && app(NhlLineupAvailability::class)->errors($games->get($row->nhl_game_id), $row->team_abbrev, $this->lineup($row)['players'] ?? []) === []);
+            ->filter(fn (NhlCurrentLineup $row): bool => $this->isEligible($row, $date));
+        $lineups = $rows->map(function (NhlCurrentLineup $row) use ($games): array {
+            $lineup = $this->lineup($row);
+            $game = $games->get($row->nhl_game_id);
+            if (app(NhlLineupAvailability::class)->errors($game, $row->team_abbrev, $lineup['players']) === []) {
+                return $lineup;
+            }
+
+            // Preserve reported evidence; expose the same complete replacement used by predictions.
+            $record = app(NhlCustomGamePredictionInputs::class)->anticipatedParticipants(
+                $game, teamAbbrev: $row->team_abbrev
+            );
+
+            return ['team_id' => (int) $row->team_id, ...$record['lineups'][$row->team_id]];
+        });
 
         return [
-            'anticipated_lineups' => $rows->map(fn (NhlCurrentLineup $row): array => $this->lineup($row))->values(),
+            'anticipated_lineups' => $lineups->values(),
             'meta' => [
                 'date' => $date->toDateString(),
                 'nhl_game_id' => $nhlGameId,

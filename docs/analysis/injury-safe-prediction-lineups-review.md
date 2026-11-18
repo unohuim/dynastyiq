@@ -152,3 +152,92 @@ Frontend changes: none. The full test file now has 41 `it(...)` declarations.
 Checks: source review and `git diff --check`; tests/CI/builds not run.
 No migration required. No production operations performed. Commit and push were
 authorized separately after the implementation review.
+
+## Follow-up: replace outdated injury-incompatible lineups on reads
+
+### Files changed
+
+- `app/Services/NhlAnticipatedLineupPayload.php`
+- `app/Services/NhlCustomGamePredictionInputs.php`
+- `tests/Feature/NhlLineupInjurySafetyTest.php`
+- `docs/architecture/imports/NhlAnticipatedLineups.yaml`
+- `docs/architecture/imports/NhlPlayerAvailability.yaml`
+- `docs/integrations/DIQ-API-Usage-Doc.md`
+- `docs/ENUMS.md`
+- `docs/ARCHITECTURE_INVENTORY.md`
+- `docs/analysis/injury-safe-prediction-lineups-review.md`
+
+Previously accepted upcoming evidence containing a now-unavailable player no
+longer causes that team to disappear from lineup API reads. The reader uses the
+existing prediction participant resolver, restricted to that team, and returns
+its complete healthy fallback with `projected` status. Reported evidence and
+manual attribution are preserved in storage, not falsely attached to the
+projected replacement. This does not run scoring, create revisions, import data,
+or alter the roster selection or scoring equations used by predictions.
+New submissions containing unavailable dressed players retain named HTTP 422
+validation, without erasing the existing accepted evidence. The existing
+complete-roster validation still rejects genuinely insufficient fallback data;
+this change does not invent players or publish shortened rosters.
+
+### Minimum coverage matrix
+
+COVERED means authored/source-reviewed, not executed or passing.
+
+| Contract | Status | Test name |
+| --- | --- | --- |
+| Submission → stored accepted evidence → injury → corrected HTTP roster; original evidence retained | COVERED | returns a healthy projected lineup when accepted evidence becomes injury incompatible |
+| All three partner read shapes use prediction-path identities | COVERED | exposes the same healthy replacement through every partner lineup read |
+| Rejected repeat submission retains corrected read availability | COVERED | keeps a corrected roster available after rejecting another injured player submission |
+| Rejected injured replacement preserves a healthy accepted manual roster | COVERED | retains a healthy accepted roster when an injured replacement is rejected |
+| Team-scoped resolver does not require opposing projections | COVERED | resolves one teams replacement independently of missing opposing roster projections |
+| Both sides can receive different healthy replacements | COVERED | returns independent corrected rosters when both accepted teams contain injured skaters |
+| Healthy reported side retains priority | COVERED | retains healthy accepted lineup authority beside an opposing corrected roster |
+| No false manual provenance or new prediction work | COVERED | labels fallback line combinations as projected without claiming manual source attribution |
+| Resolved replacement → saved revision → prediction API and public Lineups; revision immutable | COVERED | shows the corrected calculation lineup in both prediction API and public analysis |
+
+### Numbered requirements checklist
+
+1. SATISFIED: preserve named rejection of newly submitted unavailable players and
+   preserve existing evidence after rejection.
+2. SATISFIED: use the existing complete healthy prediction roster resolver when
+   previously accepted evidence becomes injury-incompatible.
+3. SATISFIED: resolve each team independently and retain healthy accepted authority.
+4. SATISFIED: distinguish inferred replacements using projected status, retaining
+   canonical team identity and explicit source provenance.
+5. SATISFIED: retain exact calculated roster/starter snapshots in new predictions
+   and their Analysis/API presentation; add a regression across that boundary.
+6. SATISFIED: update canonical availability/lineup rules, partner usage and status
+   vocabulary without a schema change or any production writes.
+
+### Endpoint × verb authorization/scope checklist
+
+| Endpoint / verb | Denied coverage | Allowed coverage |
+| --- | --- | --- |
+| POST /api/nhl-lineups | keeps guest and wrong-scope API access blocked | retains a healthy accepted roster when an injured replacement is rejected; existing healthy submission read-back test |
+| GET /api/nhl/lineups/{game} | keeps guest and wrong-scope API access blocked | returns a healthy projected lineup when accepted evidence becomes injury incompatible |
+| GET /api/nhl/lineups?date=… | keeps guest and wrong-scope API access blocked | exposes the same healthy replacement through every partner lineup read |
+| GET /api/nhl-anticipated-lineups?nhl_game_id=… | keeps guest and wrong-scope API access blocked | exposes the same healthy replacement through every partner lineup read |
+| GET /api/nhl-game-predictions | keeps guest and wrong-scope API access blocked | shows the corrected calculation lineup in both prediction API and public analysis |
+| GET /games/{game}/details?section=lineups | Public guest route; no authorization change | shows the corrected calculation lineup in both prediction API and public analysis |
+
+Global NHL resources; tenant/owner scoping is not applicable. Existing manual UI
+write authorization and identity, membership, duplicate, goalie and unknown-player
+validation are unchanged and retain the coverage listed above.
+
+### Frontend component checklist
+
+Not applicable: no JavaScript, Vue, layout, motion or browser-state changes.
+The public backend read continues to use its pinned calculated revision.
+
+### Per-file test count and performed checks
+
+`tests/Feature/NhlLineupInjurySafetyTest.php`: 49 `it(...)` declarations,
+including parameterized endpoint/evidence/authorization cases. Eight new
+behavior declarations; one existing omission test now asserts replacement.
+
+Performed: source/diff review, `git diff --check`, and read-only production
+inspection confirming both BOS and DET have stored healthy projected rosters of
+12 forwards and 6 defensemen. No test, CI, lint, build, migration, queue, import,
+sync or production prediction command was run. No migration required.
+The human authorized implementation and push in chat. No production data, cache,
+worker or deployment changes were made.
