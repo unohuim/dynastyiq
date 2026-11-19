@@ -209,6 +209,22 @@ class NhlCustomGameForecast
         }
     }
 
+    /** Reuse the bounded serializer for an isolated, run-owned historical replay checkpoint.
+     * @return array<string,mixed>|null
+     */
+    public function readSeasonCheckpoint(int $runId): ?array
+    {
+        return $this->readPreparationCheckpoint('nhl:season-evaluation:'.$runId);
+    }
+
+    /** Persist replay progress separately from operational prediction preparation.
+     * @param array<string,mixed> $work
+     */
+    public function writeSeasonCheckpoint(int $runId, array $work): void
+    {
+        $this->writePreparationCheckpoint('nhl:season-evaluation:'.$runId, $work);
+    }
+
     /** Restore bounded parts, deferring all other targets' saved context until their target phase.
      * @return array<string,mixed>|null
      */

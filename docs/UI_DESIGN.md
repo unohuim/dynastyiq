@@ -697,3 +697,29 @@ navigation succeeds; suppress duplicate taps. Navigation errors remain inside th
 sheet with Retry and preserved links. Closing or unmounting cancels that attempt;
 late callbacks cannot change a later attempt. Preserve native modified-link behavior.
 These are user-initiated navigation states; automatic feed updates remain silent.
+
+
+## SAT model season game evaluations
+
+Predict → Run Season Games opens a fresh Vue/Inertia administrative evaluation
+page using graphite surfaces, compact typography, subtle borders and sky-blue
+primary actions. The model menu disables Run Season Games with an actionable
+prerequisite explanation; Season Game Results remains accessible for readiness
+inspection and saved history. Starting is an explicit button action on that page.
+
+Place run history beside the selected run on desktop and above it on mobile.
+Above game rows show win%, correct/picked games, predicted/selected games,
+excluded/no-pick counts, progress/phase and the familiar err%, p10, p20 for team
+and game goals. Label official final scores separately from retained regulation
+EV+PP accuracy, and expose the zero/zero omission counts. A partial run must look
+partial. Show scoped admission/resume errors and loading feedback for explicit
+requests, following Silent background updates for automatic polling.
+
+Game rows show date/teams, predicted score, saved final score, both probabilities,
+pick and WIN/LOSS/no-pick/excluded result. A caret-controlled disclosure loads
+saved team, EV/PP player and selected-goalie details on demand. Unknown historical
+values use an unavailable marker. Keep EV/PP selection local; changing it does
+not request another prediction. Label goalie baseline and actual measurement
+scope explicitly. Comparison controls choose another run for the same model/Test
+season and show matched win percentages, unmatched counts and corrected/spoiled
+games. Preserve table content, scrolling and expanded detail during progress reads.

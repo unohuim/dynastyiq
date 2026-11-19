@@ -460,6 +460,14 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                 });
                 Route::get('/nhl-sat-models', [\App\Http\Controllers\Admin\NhlModelRunController::class, 'index'])
                     ->name('admin.nhl-sat-models.index');
+                Route::get('/nhl-sat-models/{model}/season-games', [\App\Http\Controllers\Admin\NhlSeasonGameEvaluationController::class, 'index'])
+                    ->whereNumber('model')->name('admin.nhl-sat-models.season-games');
+                Route::post('/nhl-sat-models/{model}/season-games/runs', [\App\Http\Controllers\Admin\NhlSeasonGameEvaluationController::class, 'store'])
+                    ->whereNumber('model')->name('admin.nhl-sat-models.season-games.store');
+                Route::post('/nhl-sat-models/{model}/season-games/runs/{seasonRun}/resume', [\App\Http\Controllers\Admin\NhlSeasonGameEvaluationController::class, 'resume'])
+                    ->whereNumber(['model', 'seasonRun'])->name('admin.nhl-sat-models.season-games.resume');
+                Route::get('/nhl-sat-models/{model}/season-games/runs/{seasonRun}/games/{prediction}', [\App\Http\Controllers\Admin\NhlSeasonGameEvaluationController::class, 'game'])
+                    ->whereNumber(['model', 'seasonRun', 'prediction'])->name('admin.nhl-sat-models.season-games.game');
                 Route::post('/nhl-sat-models', [\App\Http\Controllers\Admin\NhlModelRunController::class, 'store'])
                     ->name('admin.nhl-sat-models.store');
                 Route::get('/nhl-sat-models/next-game', [\App\Http\Controllers\Admin\NhlNextGameEvaluationController::class, 'index'])

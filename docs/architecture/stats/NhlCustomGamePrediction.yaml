@@ -56,6 +56,7 @@ rules:
   - Goalie Edge remains a diagnostic API section with the forecast's exact selected identities and SAT model, stored goalie Train evidence normalized to a sixty-minute comparison under NhlSatGoalieRatings.yaml, and opposing SOG/goal estimates. Missing components are labelled. It does not change the adopted neutral goalie scoring stage.
   - New payloads expose components.away_value_per_game and components.home_value_per_game inside prediction.goalie_edge, using the existing weighted GSAx and matchup terms for each selected starter. Their home-minus-away difference explains the existing score before independent display rounding. This is additive diagnostic presentation only; do not change weights, missing-term handling, availability, matchup values, forecasts, probabilities or confidence. Earlier saved revisions remain immutable and may lack these fields.
   - Goal accuracy uses pooled absolute summed prediction/actual difference divided by summed prediction, and strict individual prediction-denominator p10/p20. Preserve team/game units and zero-case handling. Winner comparisons use the actual returned predicted winner, including any approved probability adjustment, against official final winners including OT/SO.
+  - The model-menu season replay, readiness, background continuation and comparison UI are governed by NhlSeasonGameEvaluations.yaml. They reuse this calculator and existing custom tables; operational API publication remains separate.
 public_interface:
   - NhlCustomGameForecast::predict
   - NhlCustomGameForecast::model

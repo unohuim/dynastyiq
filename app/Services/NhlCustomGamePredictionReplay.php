@@ -132,6 +132,29 @@ class NhlCustomGamePredictionReplay
             'scope' => 'Historical lineups; retained regulation EV+PP goal errors; official final winners including OT/SO; no qualification cutoff.'];
     }
 
+    /** Publish one queued season event once; checkpoint retries cannot replace its original forecast.
+     * @param array<string,mixed> $event
+     */
+    public function saveSeasonEvent(int $runId, array $event): void
+    {
+        DB::transaction(function () use ($runId, $event): void {
+            DB::table('nhl_custom_game_prediction_runs')->where('id', $runId)->lockForUpdate()->first();
+            $game = $event['game'];
+            if (DB::table('nhl_custom_game_predictions')->where('run_id', $runId)->where('nhl_game_id', $game->nhl_game_id)->exists()) {
+                return;
+            }
+            if ($event['error'] !== null) {
+                $this->exclude($runId, $game, $event['error']);
+                return;
+            }
+            $prediction = $this->engine->predict($event['input']);
+            $actualWinner = $game->home_team_score > $game->away_team_score ? 'home' : 'away';
+            $winner = $prediction['recommendation'] === 'OT' ? null
+                : ($prediction['recommendation'] === $prediction['teams']['home']['abbrev'] ? 'home' : 'away');
+            $this->store($runId, $event, $prediction, $actualWinner, $winner);
+        });
+    }
+
     /** Create a new run rather than changing a preceding experiment's configuration or record. */
     private function startRun(bool $schedule, ?string $from, ?string $to): int
     {
@@ -209,6 +232,9 @@ class NhlCustomGamePredictionReplay
                     'actual_sat' => ($actual['EV']['sat'] ?? 0) + ($actual['PP']['sat'] ?? 0),
                     'actual_sog' => ($actual['EV']['sog'] ?? 0) + ($actual['PP']['sog'] ?? 0),
                     'actual_pp_opportunities' => $venue === 'home' ? $game->home_pp_opportunities : $game->away_pp_opportunities,
+                    'actual_ev_toi_seconds' => $event['actual_clocks'][$team['id']]['EV'] ?? null,
+                    'actual_pp_toi_seconds' => $event['actual_clocks'][$team['id']]['PP'] ?? null,
+                    'actual_pk_toi_seconds' => $event['actual_clocks'][$team['id']]['PK'] ?? null,
                     'created_at' => $time, 'updated_at' => $time,
                 ]);
             }
@@ -223,8 +249,23 @@ class NhlCustomGamePredictionReplay
                         'pregame_context_id' => $player['context_id'],
                         'inputs' => json_encode($input['teams'][$venue]['players'][$playerId], JSON_THROW_ON_ERROR),
                         'prediction' => json_encode($player, JSON_THROW_ON_ERROR),
-                        'actual' => json_encode($event['player_actual'][$playerId] ?? [], JSON_THROW_ON_ERROR),
+                        'actual' => json_encode([...($event['player_actual'][$playerId] ?? []),
+                            '_measured' => isset($event['participants'][$playerId]),
+                            '_toi_seconds' => $event['participants'][$playerId]['seconds'] ?? null], JSON_THROW_ON_ERROR),
                         'sat_prediction' => $ev['sat'] + $pp['sat'], 'toi_seconds_prediction' => $ev['seconds'] + $pp['seconds'],
+                        'created_at' => $time, 'updated_at' => $time,
+                    ]);
+                }
+                $goalie = $event['goalies'][$venue] ?? null;
+                if ($goalie !== null) {
+                    DB::table('nhl_custom_game_prediction_player_inputs')->insert([
+                        'team_prediction_id' => $teamIds[$venue], 'opponent_team_prediction_id' => $teamIds[$other],
+                        'nhl_player_id' => $goalie['id'], 'player_role' => 'goalie', 'player_name' => $goalie['name'],
+                        'pregame_context_id' => $goalie['context_id'],
+                        'inputs' => json_encode($goalie['context'], JSON_THROW_ON_ERROR),
+                        'prediction' => json_encode(['sog_against' => $prediction['teams'][$other]['sog'],
+                            'goals_against' => $prediction['teams'][$other]['goals'], 'goalie_adjustment' => 'neutral'], JSON_THROW_ON_ERROR),
+                        'actual' => json_encode($goalie['actual'], JSON_THROW_ON_ERROR),
                         'created_at' => $time, 'updated_at' => $time,
                     ]);
                 }

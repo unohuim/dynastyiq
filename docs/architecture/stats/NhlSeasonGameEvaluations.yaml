@@ -1,0 +1,46 @@
+name: SAT Model Season Game Evaluations
+type: Administrative Historical Replay And Run Comparison
+location:
+  - app/Services/NhlSeasonGameEvaluation.php
+  - app/Services/NhlCustomGamePredictionReplay.php
+  - app/Services/NhlCustomGamePredictionInputs.php
+  - app/Jobs/RunNhlSeasonGameEvaluationJob.php
+  - app/Http/Controllers/Admin/NhlSeasonGameEvaluationController.php
+  - resources/js/pages/Admin/Evaluations/SeasonGames.vue
+  - resources/views/admin/nhl-sat-models/_model-row.blade.php
+purpose: Establish durable game-by-game Test baselines and comparable experiment records using the existing custom engine and custom run tables.
+when_to_use:
+  - Running a model's completed regular-season Test games through the current custom calculator.
+  - Inspecting team, skater and selected-starter evidence behind saved game outcomes.
+  - Comparing saved algorithm versions on identical game/result memberships.
+when_not_to_use:
+  - Publishing partner or operational prediction revisions.
+  - Running the older quarter-outlook player experiment as the current engine.
+  - Introducing goalie adjustments, new coefficients or automatic research variants.
+rules:
+  - Reuse the calculation, retained-bucket scope and accuracy definitions in NhlCustomGamePrediction.yaml. This administrative workflow supplies admission, bounded execution and inspection; it does not introduce another calculator. Reuse the existing custom run/game/team/player tables. Standalone SAT rate and TOI projections are not prerequisites.
+  - The existing Predict menu exposes Run Season Games only when the model-owned readiness check succeeds; otherwise render an unavailable item with the reason. Season Game Results remains accessible to inspect readiness and history. Readiness validates the supported Train/Test horizon, complete model, reliable Train bucket/profile map, committed same-version context, linked historical skaters and starters, scheduled cutoffs, official results and stored fact/summary/clock/boxscore coverage. Recheck admission server-side; missing personal bucket samples remain governed by the calculator's fallback rules.
+  - Readiness is a short-lived cached coverage inspection, not a calculation or fit. Fetch source coverage in bounded batches and project context identities without loading full metric JSON. Explicit checks may refresh readiness; progress polling does not recalculate it. Missing or corrupt raw facts may still produce an explicit per-game exclusion at calculation time; never silently count them as predictions.
+  - An accepted run freezes Test membership, model/Train, algorithm definition, source commit identity and code identity. Each new execution appends a separate experiment. Only one active season run per model is admitted under the model lock. All new endpoints inherit the existing super-admin authorization; model/run/game ownership is checked for every selected history, comparison, resume and detail request.
+  - Queue bounded continuations on projections using the existing typed/checksummed checkpoint serializer in a separate run namespace. Fit only Train once, advance historical data in order and save each target before its result can enter later history. Defer same-day outcomes until a later game date because this source does not prove their completion time relative to another pregame cutoff. Actual identities identify finished-game participants; future performance does not choose inputs or variants.
+  - Retain personal accumulators only for the Test roster union while preserving every eligible Train skater in league/team pools. Retain only the LSeason/Test season accumulators consumed by Test inputs and prune obsolete recent defensive references. This is a storage bound, not a statistical cohort or formula change.
+  - Run/game publication is transactional and idempotent. A committed successful or excluded row cannot be rewritten on checkpoint retry. A lost checkpoint may reconstruct prior history under the same identity while retaining all committed outputs. A model, context commit, configuration or code identity change requires a new run, never mixed-version continuation.
+  - Failed and abandoned administrative runs may resume through their existing identity after the worker timeout/lock grace. Refuse live, completed, legacy-command or competing active-run recovery. Admission generations fence obsolete queued deliveries and their failure callbacks. The queue deadline is fixed and a terminal failure remains visible with saved games intact. Do not restart workers or alter unrelated queues.
+  - Run summaries derive win percentage from saved picked games against official final winners including OT/SO. Show correct/picked counts, predicted/selected counts, exclusions and no-picks so a partial record cannot masquerade as full-season accuracy. Goal accuracy retains the three canonical errors on matching retained regulation EV+PP totals, with zero cases and sample counts available. Final-score display and goal-error scope remain explicitly distinct.
+  - A comparison uses the same model/Test season and the intersection of successfully picked games with matching saved official outcomes. Report unmatched/no-pick counts and identify corrected and spoiled picks; compare matched denominators rather than unrelated headline percentages. Historical forecasts and actual snapshots are never refreshed from current results on a read.
+  - Game details load on expansion from saved rows. Persist team clocks, individual retained-bucket actuals and imported player strength TOI separately. Label player TOI as potentially including overtime while retained shot/goal comparisons are regulation-scoped. Missing legacy actual fields remain unknown rather than synthetic zeros.
+  - Selected starters have frozen descriptive pregame windows and official appearance actuals in existing player-role rows. Clearly label the unchanged neutral goalie scoring baseline; opposition EV+PP totals are not a new fitted individual-goalie model, and full-appearance actuals can include a relief change or overtime. Saved on-ice save percentages retain their source label and are not rebranded as verified individual boxscore percentages.
+  - The fresh Vue/Inertia surface owns run history, top-level accuracy, paginated game rows, expandable team/player/goalie details and matched-run comparison. Poll saved progress silently while preserving existing content and expansion state. Legacy evaluation history/routes remain accessible pending explicit retirement review; do not delete records or overwrite operational predictions.
+public_interface:
+  - GET /admin/nhl-sat-models/{model}/season-games
+  - POST /admin/nhl-sat-models/{model}/season-games/runs
+  - POST /admin/nhl-sat-models/{model}/season-games/runs/{seasonRun}/resume
+  - GET /admin/nhl-sat-models/{model}/season-games/runs/{seasonRun}/games/{prediction}
+  - NhlSeasonGameEvaluation
+  - RunNhlSeasonGameEvaluationJob
+  - NhlCustomGamePredictionInputs::beginSeasonReplay
+  - NhlCustomGamePredictionInputs::advanceSeasonReplay
+example_usage: |
+  Open a ready SAT model, choose Predict > Run Season Games, then start a new run.
+  Inspect the saved win record and expand an individual game for its component comparisons.
+  After an approved algorithm revision, run the season again and select the original baseline for comparison.

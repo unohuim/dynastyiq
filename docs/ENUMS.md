@@ -3199,3 +3199,19 @@ are `last_5`, `last_10`, `last_20`, `last_season`, `opponent_train`,
 `opponent_last_5`, `opponent_last_10`, `opponent_last_20`, and
 `opponent_last_season`. Opponent windows refer to the scheduled opponent.
 These reuse existing pregame window semantics; no new stored lifecycle state.
+
+
+## Season-game evaluation execution metadata
+
+The existing custom prediction run definition may identify the administrative
+entrypoint as `season_games`. Existing lifecycle and relational player-role values
+remain defined under Custom NHL game-prediction records; no new database states.
+Transient run checkpoint phases are `collect`, `fit`, `replay` and `complete`;
+`season` identifies their outer checkpoint scope. These do not change the
+operational forecast preparation phases.
+
+New saved player actual JSON may include `_measured` (known source coverage) and
+`_toi_seconds` (imported strength TOI keyed by EV/PP/PK). Existing lane/bucket
+actual counts remain in their original positions. Descriptive goalie snapshots
+use `goalie_adjustment: neutral`; official appearance actuals identify their basis
+as `official_full_appearance`. These labels do not enable a goalie scoring layer.

@@ -34,6 +34,7 @@
     $canViewPregame = $pregameBuild?->canViewImpacts() ?? false;
     $pregameSchedule = $pregameSchedule ?? null;
     $pregameAutoSyncEnabled = (bool) ($pregameSchedule?->enabled ?? false);
+    $seasonGameReadiness = app(\App\Services\NhlSeasonGameEvaluation::class)->readiness($run);
 @endphp
 
 <tr data-sat-model-row="{{ $run->id }}" class="relative grid min-w-0 grid-cols-2 transition-colors hover:bg-gray-50/70 lg:table-row">
@@ -184,6 +185,12 @@
                         <svg class="size-3" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M7.22 4.22a.75.75 0 0 1 1.06 0l5.25 5.25a.75.75 0 0 1 0 1.06L8.28 15.78a.75.75 0 0 1-1.06-1.06L11.94 10 7.22 5.28a.75.75 0 0 1 0-1.06Z" clip-rule="evenodd" /></svg>
                     </button>
                     <div x-cloak x-show="predictOpen" x-transition.opacity.duration.150ms class="relative mx-3 border-l border-gray-200 bg-gray-50 py-1 motion-reduce:transition-none lg:absolute lg:right-full lg:top-0 lg:z-40 lg:ml-0 lg:mr-1 lg:w-52 lg:rounded-md lg:border lg:bg-white lg:shadow-lg" role="menu">
+                        @if($seasonGameReadiness['ready'])
+                            <a href="{{ route('admin.nhl-sat-models.season-games', $run) }}" class="block px-3 py-2 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950" role="menuitem">Run Season Games</a>
+                        @else
+                            <span class="block cursor-not-allowed px-3 py-2 text-xs font-medium text-gray-400" role="menuitem" aria-disabled="true" title="{{ implode(' ', $seasonGameReadiness['reasons']) }}">Run Season Games</span>
+                        @endif
+                        <a href="{{ route('admin.nhl-sat-models.season-games', $run) }}" class="block px-3 py-2 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950" role="menuitem">Season Game Results</a>
                 @if($canViewTrainingDrift)
                     <a href="{{ route('admin.nhl-sat-models.profiles.training-drift', $run) }}" class="block px-3 py-2 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950" role="menuitem">
                         Training Drift

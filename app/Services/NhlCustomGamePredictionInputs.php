@@ -634,6 +634,107 @@ class NhlCustomGamePredictionInputs
         return $contexts;
     }
 
+    /** Initialize the same historical reader for bounded, resumable season work.
+     * @param list<int> $gameIds Frozen Test membership, not an outcome-based selection.
+     */
+    public function beginSeasonReplay(int $modelId, array $gameIds): void
+    {
+        $this->prepare($modelId);
+        $this->useSavedPlayerAggregates = false;
+        // Retired Train-only players still enter league/team pools, but need no personal replay state.
+        $this->forecastPlayerIds = DB::table('nhl_game_summaries as s')->join('players as p', 'p.nhl_id', '=', 's.nhl_player_id')
+            ->whereIn('s.nhl_game_id', $gameIds)->where('s.toi', '>', 0)->where('p.is_goalie', false)
+            ->where(fn ($query) => $query->whereNull('p.position')->orWhere('p.position', '<>', 'G'))
+            ->distinct()->pluck('s.nhl_player_id')->flip()->all();
+        $this->train = $this->seasons = $this->recent = $this->league = [];
+        $this->teamTrainBuckets = $this->teamTrain = $this->teamSeason = $this->teamRecent = [];
+        $this->trainOpponents = $this->pastAllowances = $this->allowanceSources = [];
+        $games = DB::table('nhl_games')->where('game_type', 2)->whereIn('game_state', ['OFF', 'FINAL'])
+            ->whereNotNull('start_time_utc')->where(function ($query) use ($gameIds): void {
+                $query->whereIn('season_id', $this->metadata['train_seasons'])->orWhereIn('nhl_game_id', $gameIds);
+            })->orderBy('start_time_utc')->orderBy('nhl_game_id')->get([
+                'nhl_game_id', 'season_id', 'game_date', 'start_time_utc', 'home_team_id', 'away_team_id',
+                'home_team_abbrev', 'away_team_abbrev', 'home_team_score', 'away_team_score',
+                'home_pp_goals', 'away_pp_goals', 'home_pp_opportunities', 'away_pp_opportunities',
+            ])->all();
+        $defense = new NhlCustomGameDefense();
+        $defense->beginFit();
+        $this->forecastWork = ['phase' => 'collect', 'cursor' => 0, 'contexts' => [], 'defense' => $defense,
+            'training' => array_values(array_filter($games, fn ($game): bool => in_array((string) $game->season_id, $this->metadata['train_seasons'], true))),
+            'replay_games' => $games, 'pending_history' => [], 'test_ids' => array_fill_keys($gameIds, true)];
+        $this->metadata['selected_games'] = count($gameIds);
+    }
+
+    /** Save each Test forecast before its result can enter subsequent history.
+     * @param Closure(array<string,mixed>):void $save Idempotent run/game publication boundary.
+     * @return array{complete:bool,phase:string,cursor:int}
+     */
+    public function advanceSeasonReplay(Closure $save): array
+    {
+        $work = &$this->forecastWork;
+        $defense = $work['defense'];
+        if ($work['phase'] === 'collect') {
+            $page = array_slice($work['training'], $work['cursor'], max(1, (int) config('nhl-custom-prediction.batch_games', 25)));
+            $defense->collectFit($this->trainingDefenseRecords($page));
+            $work['cursor'] += count($page);
+            if ($work['cursor'] >= count($work['training'])) {
+                unset($work['training']);
+                $work['phase'] = 'fit';
+                $work['cursor'] = 0;
+            }
+        } elseif ($work['phase'] === 'fit') {
+            if ($defense->finishFitPage(max(1, (int) config('nhl-custom-prediction.fit_bucket_batch', 8)))) {
+                $this->metadata['defense_fit'] = $defense->snapshot();
+                $work['phase'] = 'replay';
+            }
+        } elseif ($work['phase'] === 'replay') {
+            $game = $work['replay_games'][$work['cursor']] ?? null;
+            if ($game === null) {
+                $work['phase'] = 'complete';
+            } else {
+                // Daily pregame snapshots cannot consume same-day outcomes whose completion time is unproven.
+                foreach ($work['pending_history'] as $pending) {
+                    if (substr((string) ($pending['game']->game_date ?? $pending['game']->start_time_utc), 0, 10)
+                        < substr((string) ($game->game_date ?? $game->start_time_utc), 0, 10)) {
+                        $this->pastAllowances[$pending['game']->nhl_game_id] = $pending['allowances'];
+                        $this->advance($pending['game'], $pending['record'], $pending['train']);
+                    }
+                }
+                // Train totals are separate; only LSeason and Test season accumulators can be consumed by Test inputs.
+                $this->seasons = array_intersect_key($this->seasons, array_fill_keys([
+                    (string) ((int) $this->metadata['test_season'] - 10001), $this->metadata['test_season'],
+                ], true));
+                $this->pruneForecastReferences();
+                $work['pending_history'] = array_values(array_filter($work['pending_history'],
+                    fn ($pending): bool => substr((string) ($pending['game']->game_date ?? $pending['game']->start_time_utc), 0, 10)
+                        >= substr((string) ($game->game_date ?? $game->start_time_utc), 0, 10)));
+                $record = $this->records([$game])[$game->nhl_game_id];
+                $allowances = $this->allowances($game, $defense);
+                $isTest = isset($work['test_ids'][$game->nhl_game_id]);
+                if ($isTest) {
+                    $contexts = $this->contexts([$game]);
+                    $input = null;
+                    $error = null;
+                    try {
+                        $input = $this->input($game, $record, $contexts, $allowances, $defense);
+                    } catch (DomainException $exception) {
+                        $error = $exception->getMessage();
+                    }
+                    $save(['game' => $game, 'input' => $input, 'error' => $error, 'actual' => $record['actual'],
+                        'player_actual' => $record['player_actual'] ?? [], 'participants' => $record['players'],
+                        'actual_clocks' => $record['reg_clocks'] ?? []]);
+                }
+                $work['pending_history'][] = ['game' => $game, 'record' => $record, 'allowances' => $allowances, 'train' => ! $isTest];
+                $work['cursor']++;
+                if ($work['cursor'] >= count($work['replay_games'])) {
+                    $work['phase'] = 'complete';
+                }
+            }
+        }
+
+        return ['complete' => $work['phase'] === 'complete', 'phase' => $work['phase'], 'cursor' => $work['cursor']];
+    }
+
     /** Forecast before advancing history; excluded targets still become past evidence afterwards. */
     public function games(?string $from = null, ?string $to = null): Generator
     {

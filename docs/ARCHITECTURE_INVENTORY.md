@@ -4528,3 +4528,19 @@ Canonical policy:
 `architecture/imports/NhlPlayerAvailability.yaml`, `architecture/stats/NhlCustomGamePrediction.yaml`
 and `architecture/stats/NhlGamePredictionResponseCache.yaml`. Partner contract:
 `integrations/DIQ-API-Usage-Doc.md`. No migration is required.
+
+
+### SAT Model Season Game Evaluations
+
+**Purpose:** Durable model-owned Test-season baselines and matched-run comparisons
+through the current custom calculator, separate from operational/API revisions.
+The Predict menu checks prerequisites; a fresh Vue page provides run history,
+win% and goal errors, saved per-game outcomes and on-demand team/player/goalie
+details. Bounded projections jobs reuse existing custom tables and typed cache
+checkpoints, preserve committed outputs on retry and prevent mixed-version runs.
+Legacy evaluation history remains accessible.
+**Location:** `app/Services/NhlSeasonGameEvaluation.php`,
+`app/Jobs/RunNhlSeasonGameEvaluationJob.php`,
+`app/Http/Controllers/Admin/NhlSeasonGameEvaluationController.php`,
+`resources/js/pages/Admin/Evaluations/SeasonGames.vue`.
+**Authority:** `docs/architecture/stats/NhlSeasonGameEvaluations.yaml`.
