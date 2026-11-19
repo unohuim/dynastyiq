@@ -111,6 +111,12 @@ final class NhlGamePredictionHistory
             $payload['prediction']['days_away'] = $daysAway;
             $payload['prediction']['public_confidence_score'] = $publicConfidence;
         }
+        if (($payload['prediction_available'] ?? false) === true) {
+            $pages = app(NhlPublicGamePage::class);
+            $analysis = $pages->capturePlayerAnalysis($gameId, $payload, $evidence['custom_prediction'] ?? [], $at->toIso8601String());
+            $evidence['player_pregame_analysis'] = $analysis;
+            $payload['player_pregame'] = $pages->playerPregamePayload($gameId, $analysis);
+        }
         $id = DB::table('nhl_game_prediction_revisions')->insertGetId([
             'nhl_game_id' => $gameId, 'run_id' => $runId, 'source' => $runId === null ? 'api' : 'admin',
             'fingerprint' => $fingerprint, 'is_canonical' => $canonical,
@@ -126,6 +132,10 @@ final class NhlGamePredictionHistory
         }
         $payload['meta']['prediction_revision_id'] = $id;
         $payload['meta']['predicted_at'] = $at->toIso8601String();
+        if (isset($payload['player_pregame'])) {
+            $payload['player_pregame']['prediction_revision_id'] = $id;
+            $payload['player_pregame']['predicted_at'] = $payload['meta']['predicted_at'];
+        }
 
         return $payload;
     }
@@ -143,6 +153,16 @@ final class NhlGamePredictionHistory
         }
         $payload['meta']['prediction_revision_id'] = (int) $revision->id;
         $payload['meta']['predicted_at'] = \Illuminate\Support\Carbon::parse($revision->predicted_at)->toIso8601String();
+
+        if (($payload['prediction_available'] ?? false) === true) {
+            if (! is_array($payload['player_pregame'] ?? null)) {
+                $pages = app(NhlPublicGamePage::class);
+                $payload['player_pregame'] = $pages->playerPregamePayload((int) $revision->nhl_game_id,
+                    $pages->savedPlayerAnalysis((int) $revision->id));
+            }
+            $payload['player_pregame']['prediction_revision_id'] = (int) $revision->id;
+            $payload['player_pregame']['predicted_at'] = $payload['meta']['predicted_at'];
+        }
 
         return NhlGamePredictionPayload::synchronizePredictionLineups($payload);
     }

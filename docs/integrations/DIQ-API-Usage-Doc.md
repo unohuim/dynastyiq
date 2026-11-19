@@ -1621,6 +1621,131 @@ than inferring how the goalie was selected. Current values are `provided`,
 `nhl_boxscore`, `starting_goalie_observation`, `goalie_projection`, and
 `workload_projection`.
 
+### Revision-bound player pregame details
+
+Successful `GET /api/nhl-game-predictions` responses add `player_pregame`, including
+on the normal saved-prediction path. No new request parameter or scope is needed.
+This block shares the public game page's **Why this pick → Players · Last 10
+Games** and **Matchup insights** selection and comparison code.
+
+New publications freeze these details in the revision's existing JSON. Repeated
+requests, changed lineups, rebuilt context, puck drop and completed games do not
+replace them with current statistics. `prediction_revision_id` and `predicted_at`
+match `meta`; they identify the actual returned revision, including a saved request
+variant. They do not identify a different, newer canonical page revision.
+
+`baseline` identifies the actual Train window from that revision's SAT model,
+including its frozen season IDs and human label. `prediction_cutoff_at` is the
+earlier of publication, scheduled start and the archived engine source cutoff
+when supplied. `context_cutoff_at` is the latest source cutoff among matching
+committed team contexts used for this snapshot, never later than the prediction
+cutoff; it is null if no matching context was captured. These are source-data
+cutoffs, not HTTP request or cache-refresh timestamps.
+
+For each away/home team, `contributors` is the union of the top three known L10
+PTS/GP players and the top three positive projected-goal players, deduplicated.
+Recent scoring leaders appear first, descending PTS/GP with canonical NHL ID ties.
+Only the returned revision's calculated roster is eligible. Points/GP uses personal
+L10 points divided by personal L10 GP, not team GP. EV and PP projected goals are
+copied from the same revision, not estimated again.
+
+Every contributor has four comparison slots:
+
+| `metric_key` | `unit` | Meaning |
+| --- | --- | --- |
+| `ev_sat_per_60` | `attempts_per_60` | Attempts per 60 EV minutes. |
+| `ev_sat_per_game` | `attempts_per_game` | EV attempts per player appearance. |
+| `ev_shooting_pct` | `percent` | EV goals / EV SOG × 100: **12.0 means 12%, not 0.12**. |
+| `pp_goals_per_game` | `goals_per_game` | PP goals per player appearance. |
+
+`recent_value` is personal L10; `baseline_value` is personal Train. Rates divide
+window totals by their matching exposure before comparison. `recent_games` and
+`baseline_games` are the corresponding sample sizes when known. `delta_pct` is
+signed relative change, `100 × (recent − baseline) / baseline`: 10% to 12% shooting
+is +20%, not +2 percentage points. A missing or zero baseline leaves change null;
+real recent zeros remain numeric. Missing context never prevents a valid prediction.
+
+`matchup_insights` contains only the **player** facts selected for the page's
+combined team/player insight list; it does not independently rerank player facts.
+They are descriptive observations, **not model inputs or claims of causal impact**.
+Each identifies the player/team, stable metric and window keys, strength, values,
+samples and signed change. Existing five-game minimums, 25% relative-departure
+threshold, deduplication and per-side/entity limits remain unchanged. Opponent
+windows mean this scheduled opponent. Non-PP insight metrics use `strength: all`;
+PP facts use `strength: PP`. Insight `per_game` units denote the named metric per
+appearance; `percent` and `attempts_per_60` retain the meanings above.
+
+Older revisions without a frozen snapshot expose available projections and rates
+from their own archived history. Unknown comparisons and PTS/GP stay null and
+insights stay empty; current upserted context is not substituted. An unavailable
+archived source cutoff remains null instead of using a changed current schedule. No historical
+revision is rewritten and no preparation or prediction job is triggered for this
+block. The existing injury-safety exception still applies to upcoming predictions.
+
+Example fragment (other prediction fields remain unchanged):
+
+```json
+{
+  "meta": {
+    "prediction_revision_id": 418,
+    "predicted_at": "2026-11-18T11:00:00+00:00"
+  },
+  "player_pregame": {
+    "nhl_game_id": 2026020001,
+    "prediction_revision_id": 418,
+    "predicted_at": "2026-11-18T11:00:00+00:00",
+    "prediction_cutoff_at": "2026-11-18T11:00:00+00:00",
+    "context_cutoff_at": "2026-11-18T10:00:00+00:00",
+    "baseline": {
+      "window": "train",
+      "label": "Last 3 Seasons",
+      "season_ids": ["20232024", "20242025", "20252026"]
+    },
+    "teams": {
+      "away": {
+        "team_abbrev": "EDM",
+        "contributors": [{
+          "nhl_player_id": 8478402,
+          "display_name": "Connor McDavid",
+          "last_10_games_played": 10,
+          "last_10_points_per_game": 1.7,
+          "projected_goals": 0.55,
+          "projected_ev_goals": 0.35,
+          "projected_pp_goals": 0.20,
+          "comparisons": [
+            {"metric_key": "ev_sat_per_60", "unit": "attempts_per_60", "recent_window": "last_10", "baseline_window": "train", "recent_value": 24.0, "baseline_value": 20.0, "recent_games": 10, "baseline_games": 220, "delta_pct": 20.0},
+            {"metric_key": "ev_sat_per_game", "unit": "attempts_per_game", "recent_window": "last_10", "baseline_window": "train", "recent_value": 6.0, "baseline_value": 5.0, "recent_games": 10, "baseline_games": 220, "delta_pct": 20.0},
+            {"metric_key": "ev_shooting_pct", "unit": "percent", "recent_window": "last_10", "baseline_window": "train", "recent_value": 12.0, "baseline_value": 10.0, "recent_games": 10, "baseline_games": 220, "delta_pct": 20.0},
+            {"metric_key": "pp_goals_per_game", "unit": "goals_per_game", "recent_window": "last_10", "baseline_window": "train", "recent_value": 0.2, "baseline_value": 0.15, "recent_games": 10, "baseline_games": 220, "delta_pct": 33.33333333333334}
+          ]
+        }]
+      },
+      "home": {"team_abbrev": "PHI", "contributors": []}
+    },
+    "matchup_insights": [{
+      "team_abbrev": "EDM",
+      "nhl_player_id": 8478402,
+      "display_name": "Connor McDavid",
+      "metric_key": "points_per_game",
+      "metric_label": "PTS/GP",
+      "strength": "all",
+      "unit": "per_game",
+      "recent_window": "last_10",
+      "baseline_window": "train",
+      "recent_value": 1.7,
+      "baseline_value": 1.3,
+      "recent_games": 10,
+      "baseline_games": 220,
+      "delta_pct": 30.769230769230766
+    }]
+  }
+}
+```
+
+The example abbreviates contributor lists. Consumers should accept empty lists
+and nullable numbers, keep IDs canonical, and use the returned revision identity
+when comparing these details with DIQ's page.
+
 ### Game-Specific Lineup TOI and Production Inputs
 
 The shared engine selects the game's anticipated skaters, then uses projected

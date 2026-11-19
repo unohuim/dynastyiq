@@ -3178,3 +3178,24 @@ Exactly one mode is selected. The existing `enabled` boolean governs both modes.
 The default configuration is disabled, `time`, 06:00 America/Toronto, every 24 hours.
 Internal `last_context_date` and `last_context_run_id` settings record the last
 admitted completion notification. These are dispatch evidence, not new lifecycle states.
+
+
+## Player pregame API keys
+
+`player_pregame` is additive revision-bound presentation, not a prediction input.
+Comparison `metric_key` values are `ev_sat_per_60`, `ev_sat_per_game`,
+`ev_shooting_pct`, and `pp_goals_per_game`. Comparison units are
+`attempts_per_60`, `attempts_per_game`, `percent`, and `goals_per_game`, respectively.
+`percent` uses 0–100, while `delta_pct` always denotes signed relative percent.
+
+Player insight metric keys are `sat_per_game`, `sog_per_game`, `goals_per_game`,
+`points_per_game`, `sat_per_60`, `shooting_pct`, `pp_goals_per_game`, and
+`pp_sog_per_game`. Units are `per_game`, `attempts_per_60`, or `percent` as
+appropriate. Insight strength is `all` or `PP`; these are contextual totals,
+independent of the EV-specific contributor comparisons.
+
+Recent comparison window is `last_10`; baseline is `train`. Insight recent windows
+are `last_5`, `last_10`, `last_20`, `last_season`, `opponent_train`,
+`opponent_last_5`, `opponent_last_10`, `opponent_last_20`, and
+`opponent_last_season`. Opponent windows refer to the scheduled opponent.
+These reuse existing pregame window semantics; no new stored lifecycle state.
