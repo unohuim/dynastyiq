@@ -1482,7 +1482,7 @@ export default function adminHub(options = {}) {
             const runId = run?.id;
             const processKey = this.gameImportProcessKey(run, 'on_ice');
 
-            if (!runId || this.gameImports.processingRuns[processKey] === true) {
+            if (!this.canRebuildGameImportOnIce(run)) {
                 return;
             }
 
@@ -1968,20 +1968,28 @@ export default function adminHub(options = {}) {
             }
             const progress = run.progress ?? {};
             const facts = run.facts ?? {};
+            const status = this.gameImportSourceStatus(run);
             const failed = Number(progress.failed_stage_rows) || 0;
             const totalRows = Number(facts.total_stage_rows) || Number(progress.total_stage_rows) || 0;
 
-            if (failed > 0 || run.status === 'failed') {
+            if (['pausing', 'paused', 'cancelling', 'cancelled'].includes(status)) {
+                return status.toUpperCase();
+            }
+            if (failed > 0 || status === 'failed') {
                 return 'FAILED';
             }
 
-            return totalRows > 0 ? 'READY' : 'DISCOVERING';
+            if (status !== 'completed') {
+                return 'DISCOVERING';
+            }
+
+            return totalRows > 0 ? 'READY' : 'COMPLETED';
         },
 
         discoveryBadgeClass(run) {
             const label = this.discoveryBadgeText(run);
 
-            if (label === 'READY') {
+            if (['READY', 'COMPLETED'].includes(label)) {
                 return 'bg-green-100 text-green-700';
             }
 
@@ -2545,8 +2553,19 @@ export default function adminHub(options = {}) {
             return `${source?.source ?? 'source'} ${status}${reason}`;
         },
 
+        gameImportSourceStatus(run) {
+            return run?.stored_status ?? run?.status ?? null;
+        },
+
+        canRebuildGameImportOnIce(run) {
+            return Boolean(run?.id)
+                && ['discover', 'process'].includes(run?.action)
+                && ['completed', 'failed', 'cancelled'].includes(this.gameImportSourceStatus(run))
+                && !this.gameImportProcessBusy(run);
+        },
+
         canProcessGameImportRun(run) {
-            if (['pausing', 'paused', 'cancelling', 'cancelled'].includes(run.status)) {
+            if (!['completed', 'failed'].includes(this.gameImportSourceStatus(run))) {
                 return false;
             }
             const discoveredGames = Number(run?.facts?.discovered_game_count || 0);

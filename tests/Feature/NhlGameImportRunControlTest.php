@@ -429,6 +429,35 @@ describe('scoped on-ice rebuilds', function (): void {
         Bus::assertNothingBatched();
     });
 
+    it('rejects active source discoveries even when their scheduled games make them appear ready', function (string $status): void {
+        ($this->seedOnIceGame)();
+        ($this->progress)();
+        $this->run->update(['status' => $status]);
+        $this->actingAs($this->admin)->getJson(route('admin.nhl-game-imports.status'))->assertOk()
+            ->assertJsonPath('runs.0.stored_status', $status);
+        $this->postJson($this->onIceUrl, ['run_id' => $this->run->id])->assertUnprocessable()
+            ->assertJsonValidationErrors('run_id');
+        expect($this->run->fresh()->status)->toBe($status)
+            ->and(NhlGameImportRun::query()->count())->toBe(1);
+        Bus::assertNothingBatched();
+    })->with(['queued', 'running', 'pausing', 'paused', 'cancelling']);
+
+    it('preserves terminal source runs when creating a separately readable on-ice rebuild', function (string $action, string $status): void {
+        ($this->seedOnIceGame)();
+        $this->run->update(['action' => $action, 'status' => $status]);
+        $response = $this->actingAs($this->admin)->postJson($this->onIceUrl, ['run_id' => $this->run->id])->assertAccepted();
+        $id = $response->json('run.id');
+        $this->assertDatabaseHas('nhl_game_import_runs', ['id' => $id, 'action' => 'process', 'status' => 'running']);
+        $this->assertDatabaseHas('nhl_game_import_runs', ['id' => $this->run->id, 'action' => $action, 'status' => $status]);
+        $runs = $this->getJson(route('admin.nhl-game-imports.status'))->assertOk()->json('runs');
+        expect(collect($runs)->firstWhere('id', $id)['payload']['on_ice_source_run_id'])->toBe($this->run->id);
+        Bus::assertBatched(fn ($batch): bool => $batch->jobs->count() === 1
+            && $batch->jobs->first() instanceof \App\Jobs\RebuildNhlOnIceStatsJob);
+    })->with([
+        ['discover', 'completed'], ['discover', 'failed'], ['discover', 'cancelled'],
+        ['process', 'completed'], ['process', 'failed'], ['process', 'cancelled'],
+    ]);
+
     it('rejects a paused source discovery', function (): void {
         $this->run->update(['status' => 'paused']);
         $this->actingAs($this->admin)->postJson($this->onIceUrl, ['run_id' => $this->run->id])->assertUnprocessable();

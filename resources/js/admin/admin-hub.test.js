@@ -1192,6 +1192,7 @@ describe('admin-hub import listeners', () => {
         const run = {
             id: 12,
             action: 'discover',
+            status: 'completed',
             facts: {
                 scheduled_stage_rows: 0,
             },
@@ -1212,6 +1213,7 @@ describe('admin-hub import listeners', () => {
         const run = {
             id: 12,
             action: 'discover',
+            status: 'completed',
             processing_started: false,
             facts: {
                 discovered_game_count: 13,
@@ -1293,6 +1295,7 @@ describe('admin-hub import listeners', () => {
         })).toBe('Checking 3 selected dates');
         expect(instance.gameImportBadgeText({
             action: 'discover',
+            status: 'completed',
             facts: { total_stage_rows: 16, scheduled_stage_rows: 16 },
         })).toBe('READY');
         expect(instance.gameImportTitle({
@@ -1307,6 +1310,7 @@ describe('admin-hub import listeners', () => {
             status: 'running',
         })).toBe('RUNNING');
         expect(instance.discoveryStatusText({
+            status: 'completed',
             facts: { total_stage_rows: 16, scheduled_stage_rows: 16 },
         })).toBe('READY');
         expect(instance.discoveryFactsText({
@@ -3121,13 +3125,106 @@ describe('On-ice stats rebuild controls', () => {
         const source = readFileSync(new URL('../pages/Admin/Dashboard.vue', import.meta.url), 'utf8');
         expect(source).toContain('Rebuild On-Ice Stats');
         expect(source).toContain('@click.stop.prevent="processOnIceGameImports(run)"');
+        expect(source).toContain('v-if="canRebuildGameImportOnIce(run)"');
+    });
+
+    it.each(['queued', 'running'])('keeps %s discoveries discovering even after games and stages are found', async (status) => {
+        const hub = (await loadAdminHub())();
+        const run = { id: 23, action: 'discover', status, stored_status: status,
+            facts: { discovered_game_count: 1221, total_stage_rows: 10989, scheduled_stage_rows: 10989 } };
+        expect(hub.discoveryBadgeText(run)).toBe('DISCOVERING');
+        expect(hub.canProcessGameImportRun(run)).toBe(false);
+        expect(hub.canRebuildGameImportOnIce(run)).toBe(false);
+    });
+
+    it('uses persisted lifecycle status rather than inferred completed coverage for readiness', async () => {
+        const hub = (await loadAdminHub())();
+        const run = { id: 23, action: 'discover', status: 'completed', stored_status: 'running',
+            progress: { total_stage_rows: 10989, completed_stage_rows: 10989 }, facts: { total_stage_rows: 10989 } };
+        expect(hub.discoveryBadgeText(run)).toBe('DISCOVERING');
+        expect(hub.canProcessGameImportRun(run)).toBe(false);
+        expect(hub.canRebuildGameImportOnIce(run)).toBe(false);
+    });
+
+    it('makes a completed discovery ready and permits processing only after its authoritative update', async () => {
+        const hub = (await loadAdminHub())();
+        const run = { id: 23, action: 'discover', status: 'running', stored_status: 'running',
+            facts: { total_stage_rows: 10989, scheduled_stage_rows: 10989 } };
+        expect(hub.discoveryBadgeText(run)).toBe('DISCOVERING');
+        Object.assign(run, { status: 'completed', stored_status: 'completed' });
+        expect(hub.discoveryBadgeText(run)).toBe('READY');
+        expect(hub.canProcessGameImportRun(run)).toBe(true);
+        expect(hub.canRebuildGameImportOnIce(run)).toBe(true);
+    });
+
+    it('labels a completed empty discovery completed rather than discovering forever', async () => {
+        const hub = (await loadAdminHub())();
+        const run = { id: 23, action: 'discover', status: 'completed', facts: { total_stage_rows: 0 } };
+        expect(hub.discoveryBadgeText(run)).toBe('COMPLETED');
+        expect(hub.discoveryBadgeClass(run)).toBe('bg-green-100 text-green-700');
+        expect(hub.canProcessGameImportRun(run)).toBe(false);
+    });
+
+    it.each(['pausing', 'paused', 'cancelling', 'cancelled'])('preserves the %s discovery label over staged work', async (status) => {
+        const hub = (await loadAdminHub())();
+        const run = { id: 23, action: 'discover', status, facts: { total_stage_rows: 10989 } };
+        expect(hub.discoveryBadgeText(run)).toBe(status.toUpperCase());
+        expect(hub.canProcessGameImportRun(run)).toBe(false);
+    });
+
+    it('retains the failed label and permits an eligible failed discovery to be retried', async () => {
+        const hub = (await loadAdminHub())();
+        const run = { id: 23, action: 'discover', status: 'failed', facts: { total_stage_rows: 10989, scheduled_stage_rows: 10989 } };
+        expect(hub.discoveryBadgeText(run)).toBe('FAILED');
+        expect(hub.canProcessGameImportRun(run)).toBe(true);
+        expect(hub.canRebuildGameImportOnIce(run)).toBe(true);
+    });
+
+    it.each(['queued', 'running', 'pausing', 'paused', 'cancelling'])('blocks an on-ice click when the source becomes %s', async (status) => {
+        const hub = (await loadAdminHub())();
+        hub.sendGameImportRequest = vi.fn();
+        hub.loadGameImports = vi.fn();
+        await hub.processOnIceGameImports({ id: 23, action: 'discover', status: 'completed', stored_status: status });
+        expect(hub.sendGameImportRequest).not.toHaveBeenCalled();
+        expect(hub.loadGameImports).not.toHaveBeenCalled();
+        expect(hub.gameImports.processingRuns['23:on_ice']).toBeUndefined();
+        expect(hub.gameImports.processing).toBe(false);
+    });
+
+    it.each(['completed', 'failed', 'cancelled'])('recognizes terminal %s sources under the existing backend rules', async (status) => {
+        const hub = (await loadAdminHub())();
+        for (const action of ['discover', 'process']) {
+            expect(hub.canRebuildGameImportOnIce({ id: 23, action, status })).toBe(true);
+        }
+    });
+
+    it.each(['repair', 'season-sync', 'schedule-refresh'])('does not offer an on-ice rebuild for %s sources', async (action) => {
+        const hub = (await loadAdminHub())();
+        expect(hub.canRebuildGameImportOnIce({ id: 23, action, status: 'completed' })).toBe(false);
+    });
+
+    it('fails closed when source identity or lifecycle status is absent', async () => {
+        const hub = (await loadAdminHub())();
+        for (const run of [null, {}, { id: 23, action: 'discover' }, { action: 'discover', status: 'completed' }]) {
+            expect(hub.canRebuildGameImportOnIce(run)).toBe(false);
+            expect(hub.canProcessGameImportRun(run)).toBe(false);
+        }
+    });
+
+    it('prevents an on-ice submission while another processing scope is being queued for that row', async () => {
+        const hub = (await loadAdminHub())();
+        hub.gameImports.processingRuns['23:shots'] = true;
+        hub.sendGameImportRequest = vi.fn();
+        await hub.processOnIceGameImports({ id: 23, action: 'discover', status: 'completed' });
+        expect(hub.sendGameImportRequest).not.toHaveBeenCalled();
+        expect(hub.canRebuildGameImportOnIce({ id: 24, action: 'discover', status: 'completed' })).toBe(true);
     });
 
     it('acknowledges the accepted rebuild before refreshing the run list', async () => {
         const hub = (await loadAdminHub())();
         hub.sendGameImportRequest = vi.fn().mockResolvedValue({ message: 'On-ice stats rebuild queued.' });
         hub.loadGameImports = vi.fn(async () => { expect(hub.gameImports.success).toBe('On-ice stats rebuild queued.'); });
-        await hub.processOnIceGameImports({ id: 23 });
+        await hub.processOnIceGameImports({ id: 23, action: 'discover', status: 'completed' });
         expect(hub.sendGameImportRequest).toHaveBeenCalledWith('/admin/nhl-game-imports/process-on-ice', { run_id: 23 });
         expect(hub.loadGameImports).toHaveBeenCalledWith({ background: true, page: 1 });
         expect(hub.gameImports.processingRuns['23:on_ice']).toBeUndefined();
@@ -3137,7 +3234,7 @@ describe('On-ice stats rebuild controls', () => {
         const hub = (await loadAdminHub())();
         hub.gameImports.processingRuns['23:on_ice'] = true;
         hub.sendGameImportRequest = vi.fn();
-        await hub.processOnIceGameImports({ id: 23 });
+        await hub.processOnIceGameImports({ id: 23, action: 'discover', status: 'completed' });
         expect(hub.sendGameImportRequest).not.toHaveBeenCalled();
         expect(hub.gameImportProcessBusy({ id: 23 })).toBe(true);
         expect(hub.gameImportProcessBusy({ id: 24 })).toBe(false);
@@ -3148,7 +3245,7 @@ describe('On-ice stats rebuild controls', () => {
         hub.gameImports.success = 'Old request';
         hub.sendGameImportRequest = vi.fn().mockRejectedValue(new Error('Stored shifts required'));
         hub.loadGameImports = vi.fn();
-        await hub.processOnIceGameImports({ id: 23 });
+        await hub.processOnIceGameImports({ id: 23, action: 'discover', status: 'completed' });
         expect(hub.gameImports.error).toBe('Stored shifts required');
         expect(hub.gameImports.success).toBe('');
         expect(hub.gameImports.processingRuns['23:on_ice']).toBeUndefined();

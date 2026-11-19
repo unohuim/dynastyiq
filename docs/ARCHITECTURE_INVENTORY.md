@@ -1945,7 +1945,7 @@ app(NhlImportOrchestrator::class)->processScheduled('2026-01-15');
 - `app/Jobs/NhlDiscoverDayJob.php`
 
 **Purpose:**
-Discover NHL games for a date or season and seed downstream import progress rows.
+Discover NHL games for a date or season and seed downstream import progress rows. Admin READY and processing eligibility follow persisted completion, not the appearance of stage rows; on-ice submission retains the terminal-source admission rules.
 
 **When to Use:**
 Finding NHL games before running the staged import pipeline.

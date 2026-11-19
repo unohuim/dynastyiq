@@ -1111,6 +1111,7 @@ export default {
                                                             Faceoffs
                                                         </button>
                                                         <button
+                                                            v-if="canRebuildGameImportOnIce(run)"
                                                             type="button"
                                                             class="block w-full px-3 py-1.5 text-left text-[11px] font-semibold text-gray-700 transition-colors duration-150 hover:bg-gray-50 focus-visible:ring-2 focus-visible:ring-indigo-500 motion-reduce:transition-none"
                                                             @click.stop.prevent="processOnIceGameImports(run)"
