@@ -102,12 +102,41 @@ These fields do not perform another live lineup lookup after prediction. On read
 of older revisions with inconsistent presentation, reconstruct the lineup from
 that revision's own calculated skaters and starter. Do not substitute today's
 lineup or interpret this as a new calculation; the saved revision remains unchanged.
-The separate `/api/nhl/lineups` endpoints describe current eligible lineups. If a
-previously accepted upcoming roster now contains an injured, unavailable player,
-they return the complete healthy replacement selected through the same roster
-resolver used for predictions, labelled `lineup_status: projected`. Original
-submitted evidence is retained unchanged. For what actually drove a saved forecast,
-use its frozen prediction payload; a current lineup read does not rerun that forecast.
+Before puck drop, `/api/nhl/lineups`, `/api/nhl/lineups/{nhl_game_id}` and
+`/api/nhl-anticipated-lineups` prefer complete eligible lineups from the latest
+successful saved prediction. This includes projected rosters when no manual or
+reported lineup exists. Players, lines, slot order and manual/projected attribution
+come from that revision rather than another independently chosen roster.
+`prediction_revision_id` and `predicted_at` identify its source. A newer manual
+submission remains authoritative input to the next prediction; until that new
+prediction publishes, a saved lineup is explicitly tied to its earlier revision.
+
+Without an eligible saved snapshot, the existing reported/manual read behavior
+remains. A previously accepted upcoming roster with a now-unavailable player uses
+the existing healthy replacement resolver, labelled `lineup_status: projected`.
+Unavailable players are not restored from stale prediction snapshots. Truly
+absent report and prediction evidence remains empty. These reads never rebuild a
+prediction or overwrite submitted evidence. Live/final lineup and current
+starting-goalie selection rules remain unchanged.
+
+Example schedule team fields after a projected STL roster has been published:
+
+```json
+{
+  "team_abbrev": "STL",
+  "lineup_status": "projected",
+  "prediction_revision_id": 940,
+  "predicted_at": "2026-11-25T15:24:04+00:00",
+  "players": [
+    { "nhl_player_id": 8480023, "player_name": "Robert Thomas", "lineup_role": "forward", "line_key": "F1", "slot_index": 1 }
+  ]
+}
+```
+
+The example abbreviates the player list; the response includes the full stored
+lineup. Snapshot revision fields are null when schedule teams use ordinary
+current evidence. The anticipated-lineups list carries the same fields on each
+snapshot-backed lineup.
 
 ## Starter identity after puck drop
 
@@ -180,7 +209,8 @@ Use the same read key. No date parameter is needed. The response is
 `{"game": {...}, "meta": {"date": "2026-09-23", "count": 1, "generated_at": "..."}}`.
 `game` has the same fields as one entry in the date endpoint's `games` array:
 both teams, lineup statuses, players, sources and starting goalies, including
-durable live starter locks. Missing lineups have `players: []` and
+durable live starter locks. Without eligible reported or saved-prediction evidence,
+missing lineups have `players: []` and
 `lineup_status: not_reported`; a missing starter is null. Unknown or nonnumeric
 game IDs return 404. Missing credentials return 401 and wrong-scope keys 403.
 
@@ -205,8 +235,9 @@ when a game goes live or finishes. Consumers must continue reading:
 | Single-game response path | Contract in every game state |
 | --- | --- |
 | `game.game_state` | Stored NHL game state; its value can change without changing the response structure. |
-| `game.teams.away.players` / `game.teams.home.players` | Eligible accepted players, or the complete healthy prediction-path replacement when previously accepted upcoming evidence becomes injury-incompatible. Truly missing lineups remain `[]`. |
-| `game.teams.away.lineup_status` / `game.teams.home.lineup_status` | Current lineup evidence status; `projected` for an injury-corrected fallback, `not_reported` when unavailable. |
+| `game.teams.away.players` / `game.teams.home.players` | Before puck drop, eligible players from the latest saved prediction when available; otherwise accepted evidence or the existing healthy replacement. Truly missing report and prediction evidence remains `[]`. |
+| `game.teams.away.lineup_status` / `game.teams.home.lineup_status` | Preserved source status; `projected` for saved projected rosters or an injury-corrected fallback, `manual` for saved manual lineups, `not_reported` when unavailable. |
+| `game.teams.{away,home}.prediction_revision_id` / `predicted_at` | Saved lineup's revision ID and original calculation timestamp; null for ordinary current evidence. |
 | `game.teams.away.starting_goalie` / `game.teams.home.starting_goalie` | Independently selected starter, or `null`. |
 
 The date endpoint uses those same game fields under `games[]` instead of `game`.

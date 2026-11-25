@@ -30,7 +30,7 @@ class NhlAnticipatedLineupPayload
      */
     public function schedule(Carbon $date, NhlStartingGoalieSelector $goalies, ?int $nhlGameId = null): array
     {
-        $lineups = collect($this->build($date, $nhlGameId)['anticipated_lineups'])
+        $lineups = collect($this->build($date, $nhlGameId, true)['anticipated_lineups'])
             ->keyBy(fn (array $lineup): string => $lineup['nhl_game_id'] . ':' . $lineup['team_abbrev']);
         $teamIds = DB::table('nhl_teams')->pluck('nhl_id', 'abbrev');
         $games = NhlGame::query()->whereDate('game_date', $date->toDateString())
@@ -55,6 +55,8 @@ class NhlAnticipatedLineupPayload
                         'updated_at' => $lineup['last_observed_at'] ?? null,
                         'players' => $lineup['players'] ?? [],
                         'sources' => $lineup['sources'] ?? [],
+                        'prediction_revision_id' => $lineup['prediction_revision_id'] ?? null,
+                        'predicted_at' => $lineup['predicted_at'] ?? null,
                         'starting_goalie' => $goalies->select(
                             (int) $game->nhl_game_id, $abbrev, (string) $game->season_id
                         ),
@@ -229,12 +231,18 @@ class NhlAnticipatedLineupPayload
         return ['game' => $detail];
     }
 
-    /** @return array<string,mixed> */
-    public function build(Carbon $date, ?int $nhlGameId = null): array
+    /**
+     * Assemble reported evidence, optionally overlaying saved output for partner presentation only.
+     *
+     * @return array<string,mixed>
+     */
+    public function build(Carbon $date, ?int $nhlGameId = null, bool $preferPrediction = false): array
     {
         $games = DB::table('nhl_games')->whereDate('game_date', $date->toDateString())
             ->when($nhlGameId, fn ($query) => $query->where('nhl_game_id', $nhlGameId))
             ->get()->keyBy('nhl_game_id');
+        // API presentation may reuse calculated participants; prediction input reads must not.
+        $saved = $preferPrediction ? $this->savedPredictionLineups($games) : collect();
         $rows = NhlCurrentLineup::query()->with([
             'observation.players',
             'observation.source',
@@ -243,7 +251,10 @@ class NhlAnticipatedLineupPayload
         ])
             ->whereIn('nhl_game_id', $games->keys())->orderBy('nhl_game_id')->orderBy('team_abbrev')->get()
             ->filter(fn (NhlCurrentLineup $row): bool => $this->isEligible($row, $date));
-        $lineups = $rows->map(function (NhlCurrentLineup $row) use ($games): array {
+        $lineups = $rows->map(function (NhlCurrentLineup $row) use ($games, $saved): array {
+            if ($saved->has($row->nhl_game_id.':'.$row->team_abbrev)) {
+                return $saved->get($row->nhl_game_id.':'.$row->team_abbrev);
+            }
             $lineup = $this->lineup($row);
             $game = $games->get($row->nhl_game_id);
             if (app(NhlLineupAvailability::class)->errors($game, $row->team_abbrev, $lineup['players']) === []) {
@@ -257,16 +268,66 @@ class NhlAnticipatedLineupPayload
 
             return ['team_id' => (int) $row->team_id, ...$record['lineups'][$row->team_id]];
         });
+        $lineups = $lineups->keyBy(fn (array $lineup): string => $lineup['nhl_game_id'].':'.$lineup['team_abbrev'])
+            ->merge($saved)->sortKeys()->values();
 
         return [
             'anticipated_lineups' => $lineups->values(),
             'meta' => [
                 'date' => $date->toDateString(),
                 'nhl_game_id' => $nhlGameId,
-                'count' => $rows->count(),
+                'count' => $lineups->count(),
                 'generated_at' => now()->toIso8601String(),
             ],
         ];
+    }
+
+    /** Read the same latest successful revisions as the prediction API, without rebuilding inputs or writing reports. */
+    private function savedPredictionLineups(Collection $games): Collection
+    {
+        $available = app(NhlLineupAvailability::class);
+        $games = $games->filter(fn (object $game): bool => $available->applies($game));
+        if ($games->isEmpty()) {
+            return collect();
+        }
+        $latest = DB::table('nhl_game_prediction_revisions')->whereIn('nhl_game_id', $games->keys())
+            ->where('prediction_available', true)->select('nhl_game_id')->selectRaw('MAX(id) AS revision_id')->groupBy('nhl_game_id');
+        $revisions = DB::table('nhl_game_prediction_revisions as revision')->joinSub($latest, 'latest',
+            fn ($join) => $join->on('revision.id', '=', 'latest.revision_id'))
+            ->get(['revision.id', 'revision.nhl_game_id', 'revision.predicted_at', 'revision.payload']);
+        $lineups = collect();
+        foreach ($revisions as $revision) {
+            $game = $games->get($revision->nhl_game_id);
+            $payload = json_decode($revision->payload, true);
+            if (! is_array($payload) || (int) data_get($payload, 'game.nhl_game_id') !== (int) $game->nhl_game_id) {
+                continue;
+            }
+            $payload = NhlGamePredictionPayload::synchronizePredictionLineups($payload);
+            foreach (['away', 'home'] as $side) {
+                $lineup = $payload['anticipated_lineups'][$side] ?? null;
+                $abbrev = (string) $game->{$side.'_team_abbrev'};
+                if (! is_array($lineup) || ($lineup['team_abbrev'] ?? null) !== $abbrev
+                    || (int) ($lineup['nhl_game_id'] ?? $game->nhl_game_id) !== (int) $game->nhl_game_id) {
+                    continue;
+                }
+                $players = collect($lineup['players'] ?? []);
+                $skaters = $players->whereIn('lineup_role', ['forward', 'defense']);
+                $ids = $skaters->pluck('nhl_player_id')->filter(fn ($id): bool => $id !== null);
+                if ($skaters->where('lineup_role', 'forward')->count() !== 12
+                    || $skaters->where('lineup_role', 'defense')->count() !== 6
+                    || $ids->contains(fn ($id): bool => ! is_numeric($id) || (int) $id <= 0)
+                    || $ids->unique()->count() !== $ids->count()
+                    || $available->errors($game, $abbrev, $players->all()) !== []) {
+                    continue;
+                }
+                $lineups->put($game->nhl_game_id.':'.$abbrev, [...$lineup,
+                    'nhl_game_id' => (int) $game->nhl_game_id, 'team_id' => (int) $game->{$side.'_team_id'},
+                    'prediction_revision_id' => (int) $revision->id,
+                    'predicted_at' => Carbon::parse($revision->predicted_at)->toIso8601String()]);
+            }
+        }
+
+        return $lineups;
     }
 
     /** @return array<string,mixed>|null */

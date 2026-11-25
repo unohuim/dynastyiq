@@ -1,5 +1,12 @@
 # Architecture Inventory
 
+Partner lineup reads before puck drop expose the complete eligible roster from
+the latest successful saved prediction, even without an imported lineup report.
+Revision IDs/timestamps identify the snapshot; current manual input selection
+remains independent and authoritative for subsequent calculations. Reads do not
+rebuild forecasts or write synthetic reports. Authority:
+`docs/architecture/imports/NhlAnticipatedLineups.yaml`.
+
 Superadmins manage global API-client webhook subscription inventory at
 `/admin/webhooks` through Vue/Inertia. Desktop tables and mobile cards expose
 configuration CRUD and filters, with encrypted secrets revealed only by a

@@ -32,6 +32,6 @@ class NhlAnticipatedLineupsController extends Controller
             $date = Carbon::parse(DB::table('nhl_games')->where('nhl_game_id', $gameId)->value('game_date'));
         }
 
-        return response()->json($payload->build($date, $gameId));
+        return response()->json($payload->build($date, $gameId, true));
     }
 }
