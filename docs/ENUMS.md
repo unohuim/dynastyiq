@@ -18,7 +18,7 @@
 
 - Defensive allowance source: `team_recent`, `team_train`, `league_train`, in fallback order. The adopted PP defense period starts at `team_train`.
 - Player bucket `defense_allowance_source` identifies the chosen opponent allowance. `defense_reference_sources` maps these same sources to their fractional contributions to the player's historical reference, weighted by exposure and offensive source rates. Missing provenance on externally prepared calculator inputs remains null/empty.
-- Custom prediction input `context_source`: `saved_model_snapshot` for saved exact-game inputs and Test replay; `transient_prior_results` for requested-date contexts calculated without persistence; `latest_available_model_snapshot` for committed same-model future-date fallback; `prior_results_fallback` when future saved evidence is absent. Operational metadata `context_mode` is `exact_game` or `latest_available`. Player `context_provenance.source` uses `saved_model_snapshot`, `latest_available_model_snapshot` or `prior_results_fallback`. `coefficients_transferred` records that the selected model's Train seasons differ from the frozen coefficient-reference seasons.
+- Custom prediction input `context_source`: `saved_model_snapshot` for saved exact-game inputs and Test replay; `transient_prior_results` for requested-date contexts calculated without persistence; `latest_available_model_snapshot` for committed same-model latest-available fallback on any operational date; `prior_results_fallback` when usable personal saved evidence is absent. Operational metadata `context_mode` is `exact_game`, `latest_available` or `mixed` for a slate using both. Prepared input `context_source_date` is the oldest reused context date (or latest prior-result date when no snapshot is used); `context_refresh_needed` is a boolean requesting post-publication repair. These become `inputs.context.source_date` and `inputs.context.refresh_needed` in published payloads. Player `context_provenance.source` uses `saved_model_snapshot`, `latest_available_model_snapshot` or `prior_results_fallback`. `coefficients_transferred` records that the selected model's Train seasons differ from the frozen coefficient-reference seasons.
 
 ## Public NHL game detail
 
@@ -3170,8 +3170,11 @@ identifies a completed empty missing-work selection. Updates keep the existing
 ## Operational prediction preparation
 
 - Internal prediction preparation `checkpoint_format`: `1` denotes partitioned, checksummed cache state with a commit-last progress manifest. An absent field denotes the legacy reader-object format, converted at its current cursor when the source fingerprint matches. Other format values fail explicitly. This storage format does not change the algorithm or `input_pipeline_version` and is not a public API field.
-- `nhl-custom-prediction.input_pipeline_version`: `saved_pregame_checkpointed_v9`
-  identifies saved-context preparation reusing player strength-window aggregates, lineup-independent committed context history, active-prediction lineup-write exclusion, bounded cache checkpoints, actual participant selection for finished games, statistical-content freshness, recency-first starter selection, stored internal-confidence inputs and frozen team Train EV bucket counts. It supersedes `saved_pregame_checkpointed_v8`; earlier prepared checkpoints are not reused for the new conversion. The scoring algorithm is independently versioned; the current version is `custom_ev_pp_v4`.
+- `nhl-custom-prediction.input_pipeline_version`: `saved_pregame_checkpointed_v11`
+  identifies data-first operational context selection, source-age-adjusted
+  `days_away` and post-publication scoped context repair. It supersedes v10;
+  prepared cache namespace `queued-v5` isolates older mandatory-dependency
+  checkpoints. The scoring algorithm remains `custom_ev_pp_v4`.
 - Calculator `goal_sources.EV`: `train_bucket_reliability`; PP remains `season_to_date`.
   Prepared bucket `goal_source` adds `train_player_bucket` and
   `train_player_team_league_blend`, with existing `train_league_bucket` and

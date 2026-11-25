@@ -126,7 +126,6 @@ class NhlCustomGameForecast
             if (! is_array($work) || ($work['fingerprint'] ?? null) !== $fingerprint) {
                 $work = ['fingerprint' => $fingerprint, 'phase' => 'context',
                     'future' => (string) $game->game_date > now('America/Toronto')->toDateString(), 'lineups' => [], 'evidence' => [], 'errors' => []];
-                $asOf = CarbonImmutable::now('UTC');
                 $reader = app(NhlCustomGamePredictionInputs::class);
                 foreach (DB::table('nhl_games')->where('game_date', $game->game_date)->get() as $target) {
                     try {
@@ -137,9 +136,6 @@ class NhlCustomGameForecast
                             app(NhlAnticipatedLineupImporter::class)->publishGeneratedLineups($target, $record);
                         }
                         $work['lineups'][$target->nhl_game_id] = $record;
-                        if (! $work['future']) {
-                            $work['evidence'][$target->nhl_game_id] = $this->contextEvidence($model, $target, $record, $asOf);
-                        }
                     } catch (DomainException $error) {
                         $work['errors'][$target->nhl_game_id] = $error->getMessage();
                     }
@@ -153,38 +149,13 @@ class NhlCustomGameForecast
 
                 return false;
             }
-            if (isset($work['context_run_id'])) {
-                $dependency = DB::table('nhl_pregame_context_runs')->find($work['context_run_id']);
-                if ($dependency !== null && in_array($dependency->status, ['failed', 'stopped'], true)) {
-                    throw new DomainException('Pregame dependency '.$dependency->id.' '.$dependency->status.'. Resume or retry that context run before predicting.');
-                }
-                if ($dependency?->status === 'completed') {
-                    foreach (DB::table('nhl_pregame_context_run_games')->where('run_id', $dependency->id)
-                        ->whereIn('state', ['blocked', 'failed'])->get(['nhl_game_id', 'last_error']) as $blocked) {
-                        $work['errors'][$blocked->nhl_game_id] = $blocked->last_error ?? 'Pregame source evidence is unavailable.';
-                        unset($work['evidence'][$blocked->nhl_game_id], $work['lineups'][$blocked->nhl_game_id]);
-                    }
-                }
-            }
             if ($work['phase'] === 'context') {
-                $missing = [];
-                foreach ($work['evidence'] as $id => $evidence) {
-                    if (! $this->contextReady((int) $model->id, (int) $id, $evidence)) {
-                        $missing[$id] = $evidence;
-                    }
-                }
-                if ($missing !== []) {
-                    $dependency = app(NhlPregameContextOrchestrator::class)->queuePredictionContexts($model, $missing, $work['lineups']);
-                    if ($dependency !== null) {
-                        $work['context_run_id'] = $dependency->id;
-                    }
-                } else {
-                    $reader = app(NhlCustomGamePredictionInputs::class);
-                    $reader->beginQueuedForecast((int) $model->id, (string) $game->game_date, $work['lineups']);
-                    $work['reader'] = $reader;
-                    $work['phase'] = 'inputs';
-                    $this->nextPreparationDelay = 0;
-                }
+                // Read usable committed data first. Owning runs are not prediction dependencies.
+                $reader = app(NhlCustomGamePredictionInputs::class);
+                $reader->beginQueuedForecast((int) $model->id, (string) $game->game_date, $work['lineups']);
+                $work['reader'] = $reader;
+                $work['phase'] = 'inputs';
+                $this->nextPreparationDelay = 0;
             } else {
                 $step = $work['reader']->advanceQueuedForecast();
                 $this->nextPreparationDelay = 0;
@@ -656,8 +627,7 @@ class NhlCustomGameForecast
             'games' => hash('sha256', json_encode($games, JSON_THROW_ON_ERROR)),
             'summaries' => $summaries, 'imports' => $imports,
             'processed_pbp' => hash('sha256', json_encode($processed, JSON_THROW_ON_ERROR)),
-            'future_context' => (string) $game->game_date > now('America/Toronto')->toDateString()
-                ? NhlCustomGamePredictionInputs::futureContextIdentity((int) $model->id) : null];
+            'future_context' => NhlCustomGamePredictionInputs::futureContextIdentity((int) $model->id)];
     }
 
     /** Rehash only touched games, retaining a content digest rather than their touch timestamps.
@@ -739,7 +709,7 @@ class NhlCustomGameForecast
             'availability' => app(NhlLineupAvailability::class)->evidenceForGames($schedule),
             'lineups' => $lineups, 'memberships' => $memberships, 'goalies' => $goalies, 'stored_boxscore' => $storedBoxscore,
             'roster_overrides' => $rosterOverrides, 'override_game' => $rosterOverrides === [] ? null : $game->nhl_game_id];
-        $key = 'nhl:custom-inputs:queued-v4:'.$model->id.':'.$date.':'.(int) $storedBoxscore.':'
+        $key = 'nhl:custom-inputs:queued-v5:'.$model->id.':'.$date.':'.(int) $storedBoxscore.':'
             .hash('sha256', json_encode([$rosterOverrides, $rosterOverrides === [] ? null : $game->nhl_game_id], JSON_THROW_ON_ERROR));
 
         return [$key, hash('sha256', json_encode($identity, JSON_THROW_ON_ERROR))];

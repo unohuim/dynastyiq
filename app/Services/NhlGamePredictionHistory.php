@@ -103,8 +103,9 @@ final class NhlGamePredictionHistory
         $canonical = array_diff(array_keys($input), ['nhl_game_id', 'markets', 'puckline', 'puckline_spreads', 'total', 'total_lines']) === [];
         $at = now();
         $date = DB::table('nhl_games')->where('nhl_game_id', $gameId)->value('game_date');
-        $daysAway = $date === null ? null : (int) CarbonImmutable::instance($at)->setTimezone('America/Toronto')
-            ->startOfDay()->diffInDays(CarbonImmutable::parse($date, 'America/Toronto')->startOfDay(), false);
+        $daysAway = $date === null ? null : app(NhlGamePredictionPayload::class)->predictionDaysAway(
+            (string) $date, data_get($payload, 'inputs.context.source_date')
+        );
         $publicConfidence = null;
         if (is_array($payload['prediction'] ?? null)) {
             $publicConfidence = app(NhlGamePredictionPayload::class)->publicConfidenceScore($payload['prediction'], $daysAway);
@@ -129,6 +130,21 @@ final class NhlGamePredictionHistory
         ]);
         if ($canonical && ($payload['prediction_available'] ?? false) === true) {
             app(NhlPublicGamePage::class)->refreshAfterCommit($gameId);
+        }
+        if (($payload['prediction_available'] ?? false) === true
+            && data_get($payload, 'inputs.context.refresh_needed', false)
+            && is_numeric(data_get($payload, 'inputs.sat_model_run_id'))) {
+            $modelId = (int) $payload['inputs']['sat_model_run_id'];
+            // A failed context refresh cannot undo an already-published prediction.
+            DB::afterCommit(function () use ($gameId, $modelId, $id, $date): void {
+                try {
+                    \App\Jobs\UpdateNhlPredictionPregameContextJob::dispatch($gameId, $modelId, $id)
+                        ->delay($date > now('America/Toronto')->toDateString()
+                            ? CarbonImmutable::parse($date, 'America/Toronto')->startOfDay() : now());
+                } catch (Throwable $error) {
+                    report($error);
+                }
+            });
         }
         $payload['meta']['prediction_revision_id'] = $id;
         $payload['meta']['predicted_at'] = $at->toIso8601String();

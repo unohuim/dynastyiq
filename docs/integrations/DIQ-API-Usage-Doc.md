@@ -58,6 +58,38 @@ privately and are not exposed in the API response. Earlier revisions retain
 their original algorithms and confidence semantics. Older numeric examples
 below illustrate payload shape, not a current calculation or measured accuracy.
 
+### Context availability and prediction horizon
+
+New predictions use usable exact-game context first. If it is missing, they use
+the latest committed same-model context before the game/request cutoff and retain
+the existing statistical fallback rules. A failed pregame build does not block the
+prediction. The original context date is returned as `inputs.context.source_date`.
+For today/future games, `days_away` includes that date's age as well as the future
+game horizon: today with yesterday's context is `1`; a game two days ahead with
+context one day old is `3`. Historical negative horizons and older saved revisions
+retain their existing semantics. Public confidence uses the adjusted value.
+
+`inputs.context.refresh_needed` means exact context was missing at calculation.
+After the prediction revision is saved, a deduplicated background job requests
+that game's context through the existing builder. Future-game updates wait until
+the game day. An active/paused builder is respected. This repair never delays or
+rewrites the published prediction, and failures do not remove its saved result.
+
+Example for a prediction published November 25 using November 24 context:
+
+```json
+{
+  "inputs": {
+    "context": {
+      "context_mode": "latest_available",
+      "source_date": "2026-11-24",
+      "refresh_needed": true
+    }
+  },
+  "prediction": { "days_away": 1 }
+}
+```
+
 ### Matchup home/away scenario records
 
 New predictions include `matchup.away.form.venue_records` and
@@ -1232,7 +1264,7 @@ Successful game predictions additionally expose:
 
 | Field | Meaning |
 | --- | --- |
-| `prediction.days_away` | Stored signed calendar-day difference between game date and calculation date in America/Toronto: today `0`, tomorrow `1`, next week `7`. Historical requests can be negative. A cached or archived revision keeps its original value; older revisions can be null. |
+| `prediction.days_away` | Stored signed calendar game-date horizon plus nonnegative reused-context age for today/future games in America/Toronto: fresh today `0`, today using yesterday's context `1`, tomorrow using yesterday's context `2`. Historical requests can be negative. A cached or archived revision keeps its original value; older revisions can be null. |
 | `prediction.public_confidence_score` | Public confidence rating: `50 + 1.1 × (P − 50) + 0.2 × (I − 55) − 2 × max(0, days_away)`, where P is the selected team’s win probability expressed from 0–100 and I is internal confidence. Rounded to two decimals, with no artificial ceiling or floor. Older revisions or missing required inputs may be null. |
 | `prediction.confidence_score` | Public confidence, identical to `prediction.public_confidence_score` on the partner API. Internal confidence remains in stored revisions and admin views; it is not returned in this API field. |
 | `inputs.context.context_mode` | `exact_game` for today/past-date preparation; `latest_available` for future dates. |

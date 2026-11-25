@@ -1,5 +1,11 @@
 # Architecture Inventory
 
+Operational predictions read available context before considering build work.
+Exact snapshots are preferred; latest usable snapshots preserve model/cutoff
+boundaries and add their age to days_away. A committed prediction may queue a
+unique, scoped pregame repair on projections afterward; old failed run IDs never
+veto usable data. Authority: `docs/architecture/stats/NhlCustomGamePrediction.yaml`.
+
 Pregame participant-repair comparisons commit bounded metric pages and game-owned
 progress together in existing readiness metadata. Claim/stop checks fence pages
 rather than every metric, and retries resume committed progress. Authority:

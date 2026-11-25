@@ -144,8 +144,7 @@ class NhlGamePredictionPayload
             'selection_score' => ['away' => $away, 'home' => $home],
             'predicted_total_goals' => round($custom['total_goals'], 2), 'goal_differential' => round($home - $away, 4),
             'confidence_score' => $custom['confidence_score'], 'confidence_inputs' => $custom['confidence_inputs'],
-            'days_away' => (int) \Carbon\CarbonImmutable::now('America/Toronto')->startOfDay()
-                ->diffInDays(\Carbon\CarbonImmutable::parse($game->game_date, 'America/Toronto')->startOfDay(), false),
+            'days_away' => $this->predictionDaysAway((string) $game->game_date, $forecast['input']['context_source_date'] ?? null),
             'public_confidence_score' => null,
             'home_win_probability' => $custom['home_win_probability'], 'away_win_probability' => $custom['away_win_probability'],
             'goalie_edge' => $edge, 'algorithm_version' => config('nhl-custom-prediction.algorithm_version')];
@@ -177,7 +176,9 @@ class NhlGamePredictionPayload
                 'away_goalie_id' => $goalies['away']['nhl_player_id'] ?? null, 'home_goalie_id' => $goalies['home']['nhl_player_id'] ?? null,
                 'away_lineup_source' => $custom['teams']['away']['lineup_source'], 'home_lineup_source' => $custom['teams']['home']['lineup_source'],
                 'context' => array_intersect_key($forecast['metadata'], array_flip([
-                    'context_version', 'context_run_id', 'context_mode', 'as_of', 'coefficient_reference_train_seasons', 'coefficients_transferred'])),
+                    'context_version', 'context_run_id', 'context_mode', 'as_of', 'coefficient_reference_train_seasons', 'coefficients_transferred'])) + [
+                        'source_date' => $forecast['input']['context_source_date'] ?? null,
+                        'refresh_needed' => $forecast['input']['context_refresh_needed'] ?? false],
                 'algorithm_definition' => app(NhlCustomGamePredictionEngine::class)->definition()],
             'prediction' => $prediction, 'market_probabilities' => $markets, 'goalies' => $goalies,
             'anticipated_lineups' => $lineups, 'teams' => $teams, 'reasons' => $reasons,
@@ -1384,6 +1385,20 @@ class NhlGamePredictionPayload
             'confidence_score' => $this->confidenceScore($awaySide, $homeSide, $awayGoalie, $homeGoalie),
             'goalie_edge' => $this->goalieEdge($awayTeam, $homeTeam, $awayGoalie, $homeGoalie),
         ];
+    }
+
+    /** Add reused context age to the calendar horizon, retaining historical signed horizons. */
+    public function predictionDaysAway(string $gameDate, ?string $contextDate = null): int
+    {
+        $today = \Carbon\CarbonImmutable::now('America/Toronto')->startOfDay();
+        $target = \Carbon\CarbonImmutable::parse($gameDate, 'America/Toronto')->startOfDay();
+        $days = (int) $today->diffInDays($target, false);
+        if ($days < 0 || $contextDate === null) {
+            return $days;
+        }
+        $source = \Carbon\CarbonImmutable::parse($contextDate, 'America/Toronto')->startOfDay();
+
+        return $days + max(0, (int) $source->diffInDays($today, false));
     }
 
     /** Calculate the separately published confidence rating without changing outcome probabilities.

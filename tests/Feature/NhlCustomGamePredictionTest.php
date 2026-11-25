@@ -48,7 +48,7 @@ beforeEach(function (): void {
             'model_family' => 'sat', 'workflow_stage' => 'training', 'model_version' => 'fixture', 'status' => 'complete',
             'train_season_ids' => ['20232024', '20242025', '20252026'], 'target_season_id' => null]);
         $builder = Mockery::mock(NhlPregameContextBuilder::class);
-        $builder->shouldReceive('evaluationBucketFilter')->once()->with($model->id, ['20232024', '20242025', '20252026'])
+        $builder->shouldReceive('evaluationBucketFilter')->with($model->id, ['20232024', '20242025', '20252026'])
             ->andReturn(['keys' => ['B'], 'feature_config' => [], 'sat_model_id' => 4, 'minimum_confidence' => 0.5]);
         if ($saved) {
             $builder->shouldNotReceive('predictionTeamEvidence');
@@ -58,7 +58,7 @@ beforeEach(function (): void {
         }
         app()->instance(NhlPregameContextBuilder::class, $builder);
         $bucketSql = Mockery::mock(NhlSatModelEntityProfileBuilder::class);
-        $bucketSql->shouldReceive('modelBucketKeySql')->once()->andReturn("'B'");
+        $bucketSql->shouldReceive('modelBucketKeySql')->andReturn("'B'");
         app()->instance(NhlSatModelEntityProfileBuilder::class, $bucketSql);
         $records = [];
         $lineup = ['players' => [], 'starters' => [], 'lineup_sources' => [1 => 'anticipated_lineup', 2 => 'anticipated_lineup']];
@@ -124,6 +124,9 @@ beforeEach(function (): void {
         if ($saved) {
             $run = \App\Models\NhlPregameContextRun::create(['model_run_id' => $model->id,
                 'action' => 'backfill', 'status' => 'completed', 'season_ids' => ['20262027']]);
+            DB::table('nhl_pregame_context_run_games')->insert(['run_id' => $run->id, 'nhl_game_id' => 2026020002,
+                'game_date' => '2026-11-05', 'sequence' => 0, 'state' => 'complete',
+                'snapshot_completed_at' => '2026-11-05 12:00:00', 'comparisons_completed_at' => '2026-11-05 12:00:00']);
             foreach ([1 => 'away', 2 => 'home'] as $team => $venue) {
                 $parent = DB::table('nhl_team_game_pregame_contexts')->insertGetId([
                     'model_run_id' => $model->id, 'run_id' => $run->id, 'nhl_game_id' => 2026020002,
@@ -908,8 +911,8 @@ it('queues a cold date once and shares completed prepared inputs across its game
         'phase' => 'complete', 'cursor' => 2, 'inputs' => $inputs, 'errors' => [], 'metadata' => ['model_id' => $model->id]]);
     app()->instance(NhlCustomGamePredictionInputs::class, $reader);
     $service = Mockery::mock(\App\Services\NhlCustomGameForecast::class)->makePartial();
-    $service->shouldReceive('contextEvidence')->twice()->andReturn(['fingerprint' => 'fixture']);
-    $service->shouldReceive('contextReady')->twice()->andReturnTrue();
+    $service->shouldNotReceive('contextEvidence');
+    $service->shouldNotReceive('contextReady');
     foreach (array_keys($inputs) as $id) {
         expect(fn () => $service->predict($id))->toThrow(\App\Exceptions\NhlGamePredictionPreparing::class);
     }
@@ -1182,11 +1185,15 @@ it('builds queued inputs from saved contexts in bounded pages without reading ta
         ->and($this->engine->predict($input)['total_goals'])->toBeLessThan(99);
 });
 
-it('rejects queued preparation without saved lineup context before any raw replay', function (): void {
+it('uses available saved context and prior history for a missing selected player without blocking today', function (): void {
     [$reader, $model, $lineups] = ($this->forecastFixture)('FUT', true);
     DB::table('nhl_player_game_pregame_contexts')->where('nhl_player_id', 100)->delete();
-    expect(fn () => $reader->beginQueuedForecast($model, '2026-11-05', $lineups))
-        ->toThrow(\DomainException::class, 'Saved pregame context is incomplete');
+    app(NhlPregameContextBuilder::class)->shouldReceive('predictionScheduleEvidence')->twice()
+        ->andReturn(['back_to_back' => false, 'games_including_target_last_7_days' => 2]);
+    $step = ($this->finishQueuedForecast)($reader, $model, $lineups);
+    expect($step['errors'])->toBe([])
+        ->and($step['inputs'][2026020002]['context_refresh_needed'])->toBeTrue()
+        ->and($step['inputs'][2026020002]['teams']['away']['players'][100]['context_provenance']['source'])->toBe('prior_results_fallback');
 });
 
 it('releases preparation work immediately after progress and polls pending context gently', function (): void {
@@ -1481,7 +1488,7 @@ it('reuses committed context for future targets without building target context 
     Bus::assertNotDispatched(\App\Jobs\BuildNhlPregameContextDayJob::class);
 });
 
-it('uses prior player history when future context is absent without weakening same-day requirements', function (): void {
+it('uses prior player history when future context is absent without target outcome leakage', function (): void {
     [$reader, $model, $lineups] = ($this->forecastFixture)('FUT', true);
     DB::table('nhl_player_game_pregame_contexts')->delete();
     DB::table('nhl_team_game_pregame_contexts')->delete();
@@ -1515,6 +1522,7 @@ it('derives future rest and density from intervening scheduled games instead of 
 
 it('does not reuse uncommitted context rows for future forecasts', function (): void {
     [$reader, $model] = ($this->forecastFixture)('FUT', true);
+    DB::table('nhl_pregame_context_run_games')->delete();
     $identity = NhlCustomGamePredictionInputs::futureContextIdentity($model);
     expect((int) $identity['commit']->games)->toBe(0);
 });
@@ -1967,4 +1975,74 @@ it('rejects arbitrary checkpoint objects and date classes with an identifiable e
     expect(fn () => (new ReflectionMethod($forecast, 'restoreCheckpointDate'))
         ->invoke($forecast, ['class' => \stdClass::class, 'time' => '2026-11-05', 'timezone' => 'UTC']))
         ->toThrow(\DomainException::class, 'Unsupported date class');
+});
+
+
+it('uses committed same-day context even when its owning run later failed', function (): void {
+    [$reader, $model, $lineups] = ($this->forecastFixture)('FUT', true);
+    DB::table('nhl_pregame_context_runs')->update(['status' => 'failed', 'last_error' => 'Another game timed out']);
+    $step = ($this->finishQueuedForecast)($reader, $model, $lineups);
+    expect($step['errors'])->toBe([])->and($step['inputs'][2026020002]['context_refresh_needed'])->toBeFalse()
+        ->and($step['inputs'][2026020002]['context_source_date'])->toBe('2026-11-05');
+});
+
+it('uses latest earlier snapshots when todays context has not been built', function (): void {
+    [$reader, $model, $lineups] = ($this->forecastFixture)('FUT', true);
+    $runId = DB::table('nhl_pregame_context_runs')->value('id');
+    DB::table('nhl_team_game_pregame_contexts')->update(['nhl_game_id' => 2026020001, 'game_date' => '2026-11-01', 'source_cutoff_at' => '2026-11-01 12:00:00']);
+    DB::table('nhl_player_game_pregame_contexts')->update(['nhl_game_id' => 2026020001, 'game_date' => '2026-11-01', 'source_cutoff_at' => '2026-11-01 12:00:00']);
+    DB::table('nhl_pregame_context_run_games')->where('run_id', $runId)->update(['nhl_game_id' => 2026020001, 'game_date' => '2026-11-01']);
+    app(NhlPregameContextBuilder::class)->shouldReceive('predictionScheduleEvidence')->twice()
+        ->andReturn(['back_to_back' => false, 'games_including_target_last_7_days' => 2]);
+    $step = ($this->finishQueuedForecast)($reader, $model, $lineups);
+    expect($step['errors'])->toBe([])->and($step['inputs'][2026020002]['context_refresh_needed'])->toBeTrue()
+        ->and($step['inputs'][2026020002]['context_source_date'])->toBe('2026-11-01');
+});
+
+it('does not wait for a pregame build when preparing todays slate', function (): void {
+    [$fixture, $model, $lineups] = ($this->forecastFixture)('FUT', true);
+    $reader = Mockery::mock(NhlCustomGamePredictionInputs::class)->makePartial();
+    $reader->shouldReceive('anticipatedParticipants')->once()->andReturn($lineups[2026020002]);
+    $reader->shouldReceive('beginQueuedForecast')->once()->with($model, '2026-11-05', $lineups);
+    $reader->shouldReceive('advanceQueuedForecast')->once()->andReturn(['complete' => true,
+        'phase' => 'complete', 'cursor' => 1, 'inputs' => [2026020002 => ['game_id' => 2026020002]],
+        'errors' => [], 'metadata' => ['context_mode' => 'latest_available']]);
+    app()->instance(NhlCustomGamePredictionInputs::class, $reader);
+    $orchestrator = Mockery::mock(\App\Services\NhlPregameContextOrchestrator::class);
+    $orchestrator->shouldNotReceive('queuePredictionContexts');
+    app()->instance(\App\Services\NhlPregameContextOrchestrator::class, $orchestrator);
+    $forecast = new \App\Services\NhlCustomGameForecast();
+    expect($forecast->advancePreparation(2026020002, $model))->toBeFalse()
+        ->and($forecast->advancePreparation(2026020002, $model))->toBeTrue();
+    Bus::assertNotDispatched(\App\Jobs\UpdateNhlPredictionPregameContextJob::class);
+});
+
+
+it('ignores an obsolete failed dependency in a saved preparation checkpoint', function (): void {
+    [$fixture, $model, $lineups] = ($this->forecastFixture)('FUT', true);
+    $failed = DB::table('nhl_pregame_context_runs')->value('id');
+    DB::table('nhl_pregame_context_runs')->where('id', $failed)->update(['status' => 'failed']);
+    $reader = Mockery::mock(NhlCustomGamePredictionInputs::class)->makePartial();
+    $reader->shouldNotReceive('anticipatedParticipants');
+    $reader->shouldReceive('beginQueuedForecast')->once()->with($model, '2026-11-05', $lineups);
+    app()->instance(NhlCustomGamePredictionInputs::class, $reader);
+    $forecast = new \App\Services\NhlCustomGameForecast();
+    $game = DB::table('nhl_games')->where('nhl_game_id', 2026020002)->first();
+    [$key, $fingerprint] = (new ReflectionMethod($forecast, 'preparationIdentity'))
+        ->invoke($forecast, $game, NhlModelRun::findOrFail($model), false, []);
+    ($this->checkpointWrite)($key, ['fingerprint' => $fingerprint, 'phase' => 'context', 'future' => false,
+        'lineups' => $lineups, 'evidence' => [], 'errors' => [], 'context_run_id' => $failed]);
+    expect($forecast->advancePreparation(2026020002, $model))->toBeFalse();
+});
+
+it('rejects later-than-cutoff snapshots while still predicting from prior usable history', function (): void {
+    [$reader, $model, $lineups] = ($this->forecastFixture)('FUT', true);
+    DB::table('nhl_team_game_pregame_contexts')->update(['source_cutoff_at' => '2026-11-06 12:00:00']);
+    DB::table('nhl_player_game_pregame_contexts')->update(['source_cutoff_at' => '2026-11-06 12:00:00']);
+    app(NhlPregameContextBuilder::class)->shouldReceive('predictionScheduleEvidence')->twice()
+        ->andReturn(['back_to_back' => false, 'games_including_target_last_7_days' => 2]);
+    $step = ($this->finishQueuedForecast)($reader, $model, $lineups);
+    expect($step['errors'])->toBe([])
+        ->and($step['inputs'][2026020002]['teams']['away']['context_id'])->toBeNull()
+        ->and($step['inputs'][2026020002]['context_source_date'])->toBe('2026-11-01');
 });
