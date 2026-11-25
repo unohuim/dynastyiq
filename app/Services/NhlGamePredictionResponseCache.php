@@ -145,10 +145,16 @@ final class NhlGamePredictionResponseCache
         DB::afterCommit(function () use ($gameId): void {
             // The refresh worker computes the real current fingerprint before building.
             // Queue admission is deduplicated by game/request, not by this initial hint.
-            if (! $this->queue($gameId, ['nhl_game_id' => $gameId], '')) {
+            if (! $this->queueLineupRefresh($gameId)) {
                 throw new ServiceUnavailableHttpException(15, 'The lineup was saved, but its prediction refresh could not be queued.');
             }
         });
+    }
+
+    /** Admit a lineup refresh without loading models or historical inputs in the caller. */
+    public function queueLineupRefresh(int $gameId): bool
+    {
+        return $this->queue($gameId, ['nhl_game_id' => $gameId], '');
     }
 
     /** Refresh only existing forecasts affected by a completed material injury update. */
@@ -228,6 +234,9 @@ final class NhlGamePredictionResponseCache
         $model = $forecast->model(isset($input['sat_model_run_id']) ? (int) $input['sat_model_run_id'] : null, $game->season_id);
         $models = collect([['id' => $model->id, 'updated_at' => $model->updated_at, 'train_season_ids' => $model->train_season_ids]]);
         $lineups = DB::table('nhl_current_lineups')->where('nhl_game_id', $gameId)
+            ->whereNotExists(fn ($query) => $query->selectRaw('1')->from('nhl_lineup_observations as generated')
+                ->whereColumn('generated.id', 'nhl_current_lineups.nhl_lineup_observation_id')
+                ->where('generated.raw_evidence->system_generated', true))
             ->orderBy('team_id')->get(['team_id', 'structure_hash']);
         $goalies = DB::table('nhl_starting_goalie_observations')->where('nhl_game_id', $gameId)
             ->orderByRaw("CASE status WHEN 'confirmed' THEN 0 WHEN 'expected' THEN 1 ELSE 2 END")

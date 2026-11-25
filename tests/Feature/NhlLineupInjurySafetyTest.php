@@ -96,6 +96,11 @@ beforeEach(function (): void {
         }
         return $payload;
     };
+    $this->prepareLineups = function (?string $team = null): void {
+        $game = (object) $this->game->getAttributes();
+        $record = app(NhlCustomGamePredictionInputs::class)->anticipatedParticipants($game, teamAbbrev: $team);
+        app(\App\Services\NhlAnticipatedLineupImporter::class)->publishGeneratedLineups($game, $record);
+    };
     $this->save = fn (array $payload) => app(NhlGamePredictionHistory::class)->record(2026020346,
         ['nhl_game_id' => 2026020346], 'injury-fixture', [], $payload);
 });
@@ -180,14 +185,15 @@ it('returns a healthy projected lineup when accepted evidence becomes injury inc
     $observationId = ($this->submit)()->assertCreated()->json('submission_id');
     ($this->out)();
     expect(app(NhlAnticipatedLineupPayload::class)->forGameTeam(2026020346, 'COL', false))->toBeNull();
+    ($this->prepareLineups)('COL');
     $read = $this->withToken('lineup-safety-token')->getJson('/api/nhl/lineups/2026020346')->assertOk();
     $players = collect($read->json('game.teams.away.players'));
     expect($players->whereIn('lineup_role', ['forward', 'defense']))->toHaveCount(18);
     expect($players->pluck('nhl_player_id')->all())->toContain($this->players['COL'][19]->nhl_id)
         ->not->toContain($this->players['COL'][1]->nhl_id);
     $read->assertJsonPath('game.teams.away.lineup_status', 'projected');
-    $this->assertDatabaseHas('nhl_current_lineups', ['nhl_lineup_observation_id' => $observationId]);
-    $this->assertDatabaseCount('nhl_lineup_observations', 1);
+    $this->assertDatabaseHas('nhl_lineup_observations', ['id' => $observationId]);
+    $this->assertDatabaseCount('nhl_lineup_observations', 2);
 });
 
 it('exposes the same healthy replacement through every partner lineup read', function (string $path, string $key): void {
@@ -195,6 +201,7 @@ it('exposes the same healthy replacement through every partner lineup read', fun
     $record = app(NhlCustomGamePredictionInputs::class)->anticipatedParticipants(
         (object) $this->game->getAttributes(), teamAbbrev: 'COL'
     );
+    ($this->prepareLineups)('COL');
     $read = $this->withToken('lineup-safety-token')->getJson($path)->assertOk();
     $ids = collect($read->json($key))->whereIn('lineup_role', ['forward', 'defense'])
         ->pluck('nhl_player_id')->sort()->values()->all();
@@ -210,11 +217,12 @@ it('keeps a corrected roster available after rejecting another injured player su
     $observationId = ($this->submit)()->assertCreated()->json('submission_id');
     ($this->out)();
     ($this->submit)()->assertUnprocessable()->assertJsonValidationErrors('text');
+    ($this->prepareLineups)('COL');
     $read = $this->withToken('lineup-safety-token')->getJson('/api/nhl/lineups/2026020346')->assertOk();
     expect(collect($read->json('game.teams.away.players'))->pluck('nhl_player_id')->all())
         ->toContain($this->players['COL'][19]->nhl_id)->not->toContain($this->players['COL'][1]->nhl_id);
-    $this->assertDatabaseHas('nhl_current_lineups', ['nhl_lineup_observation_id' => $observationId]);
-    $this->assertDatabaseCount('nhl_lineup_observations', 1);
+    $this->assertDatabaseHas('nhl_lineup_observations', ['id' => $observationId]);
+    $this->assertDatabaseCount('nhl_lineup_observations', 2);
 });
 
 it('retains a healthy accepted roster when an injured replacement is rejected', function (): void {
@@ -233,6 +241,7 @@ it('retains a healthy accepted roster when an injured replacement is rejected', 
 it('resolves one teams replacement independently of missing opposing roster projections', function (): void {
     ($this->submit)()->assertCreated(); ($this->out)();
     DB::table('nhl_player_toi_projections')->where('target_team_abbrev', 'UTA')->delete();
+    ($this->prepareLineups)('COL');
     $read = $this->withToken('lineup-safety-token')->getJson('/api/nhl/lineups/2026020346')->assertOk();
     $read->assertJsonPath('game.teams.away.lineup_status', 'projected')
         ->assertJsonPath('game.teams.home.lineup_status', 'not_reported');
@@ -242,6 +251,7 @@ it('resolves one teams replacement independently of missing opposing roster proj
 it('returns independent corrected rosters when both accepted teams contain injured skaters', function (): void {
     ($this->submit)()->assertCreated(); ($this->submit)('UTA')->assertCreated();
     ($this->out)(1); ($this->out)(13, [], 'UTA');
+    ($this->prepareLineups)();
     $read = $this->withToken('lineup-safety-token')->getJson('/api/nhl/lineups/2026020346')->assertOk();
     foreach (['away' => 'COL', 'home' => 'UTA'] as $side => $team) {
         $players = collect($read->json('game.teams.'.$side.'.players'));
@@ -255,6 +265,7 @@ it('returns independent corrected rosters when both accepted teams contain injur
 
 it('retains healthy accepted lineup authority beside an opposing corrected roster', function (): void {
     ($this->submit)()->assertCreated(); ($this->submit)('UTA')->assertCreated(); ($this->out)();
+    ($this->prepareLineups)();
     $read = $this->withToken('lineup-safety-token')->getJson('/api/nhl/lineups/2026020346')->assertOk();
     $read->assertJsonPath('game.teams.away.lineup_status', 'projected')
         ->assertJsonPath('game.teams.home.lineup_status', 'manual');
@@ -378,9 +389,9 @@ it('reconstructs legacy API lineups only from the saved calculated roster and st
         ->toContain('999');
 });
 
-it('queues a replacement rather than returning an unsafe saved prediction as current', function (): void {
+it('returns the frozen saved forecast while a safe lineup replacement is prepared', function (): void {
     ($this->save)(($this->savedPayload)()); ($this->out)();
-    $this->withToken('lineup-safety-token')->getJson('/api/nhl-game-predictions?nhl_game_id=2026020346')->assertStatus(202);
+    $this->withToken('lineup-safety-token')->getJson('/api/nhl-game-predictions?nhl_game_id=2026020346')->assertOk()->assertJsonPath('meta.refresh_pending', true);
     Bus::assertDispatched(RefreshNhlGamePredictionJob::class);
     $this->assertDatabaseCount('nhl_game_prediction_revisions', 1);
 });
@@ -496,9 +507,9 @@ it('permits an eligible super-admin goalie choice and exposes it through the rea
         ->assertJsonPath('game.teams.away.starting_goalie.nhl_player_id', $id);
 });
 
-it('withholds a saved forecast when its calculated starting goalie is now out', function (): void {
+it('returns the frozen forecast with refresh pending when its starting goalie is now out', function (): void {
     ($this->save)(($this->savedPayload)()); ($this->out)(21);
-    $this->withToken('lineup-safety-token')->getJson('/api/nhl-game-predictions?nhl_game_id=2026020346')->assertStatus(202);
+    $this->withToken('lineup-safety-token')->getJson('/api/nhl-game-predictions?nhl_game_id=2026020346')->assertOk()->assertJsonPath('meta.refresh_pending', true);
     Bus::assertDispatched(RefreshNhlGamePredictionJob::class);
 });
 
@@ -599,6 +610,7 @@ it('fills the sixth defensive slot from current membership through calculation a
     $record = app(NhlCustomGamePredictionInputs::class)->anticipatedParticipants(
         (object) $this->game->getAttributes(), teamAbbrev: 'COL'
     );
+    ($this->prepareLineups)('COL');
     $read = $this->withToken('lineup-safety-token')->getJson('/api/nhl/lineups/2026020346')->assertOk();
     $players = collect($read->json('game.teams.away.players'));
 
@@ -609,7 +621,7 @@ it('fills the sixth defensive slot from current membership through calculation a
     expect($record['players'])->toHaveCount(18)->toHaveKey($replacement->nhl_id);
     expect($players->whereIn('lineup_role', ['forward', 'defense'])->pluck('nhl_player_id')->sort()->values()->all())
         ->toBe(collect($record['players'])->pluck('id')->sort()->values()->all());
-    $this->assertDatabaseHas('nhl_current_lineups', ['nhl_lineup_observation_id' => $observation]);
+    $this->assertDatabaseHas('nhl_lineup_observations', ['id' => $observation]);
     $this->assertDatabaseHas('nhl_player_toi_projections', ['player_id' => $replacement->nhl_id, 'target_team_abbrev' => 'NSH']);
 });
 

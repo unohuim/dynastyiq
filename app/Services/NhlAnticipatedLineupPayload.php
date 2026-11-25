@@ -232,7 +232,7 @@ class NhlAnticipatedLineupPayload
     }
 
     /**
-     * Assemble reported evidence, optionally overlaying saved output for partner presentation only.
+     * Read current authoritative lineups, optionally filling missing teams from saved predictions.
      *
      * @return array<string,mixed>
      */
@@ -241,8 +241,6 @@ class NhlAnticipatedLineupPayload
         $games = DB::table('nhl_games')->whereDate('game_date', $date->toDateString())
             ->when($nhlGameId, fn ($query) => $query->where('nhl_game_id', $nhlGameId))
             ->get()->keyBy('nhl_game_id');
-        // API presentation may reuse calculated participants; prediction input reads must not.
-        $saved = $preferPrediction ? $this->savedPredictionLineups($games) : collect();
         $rows = NhlCurrentLineup::query()->with([
             'observation.players',
             'observation.source',
@@ -251,25 +249,18 @@ class NhlAnticipatedLineupPayload
         ])
             ->whereIn('nhl_game_id', $games->keys())->orderBy('nhl_game_id')->orderBy('team_abbrev')->get()
             ->filter(fn (NhlCurrentLineup $row): bool => $this->isEligible($row, $date));
-        $lineups = $rows->map(function (NhlCurrentLineup $row) use ($games, $saved): array {
-            if ($saved->has($row->nhl_game_id.':'.$row->team_abbrev)) {
-                return $saved->get($row->nhl_game_id.':'.$row->team_abbrev);
-            }
+        $lineups = $rows->toBase()->map(function (NhlCurrentLineup $row) use ($games): ?array {
             $lineup = $this->lineup($row);
-            $game = $games->get($row->nhl_game_id);
-            if (app(NhlLineupAvailability::class)->errors($game, $row->team_abbrev, $lineup['players']) === []) {
-                return $lineup;
-            }
 
-            // Preserve reported evidence; expose the same complete replacement used by predictions.
-            $record = app(NhlCustomGamePredictionInputs::class)->anticipatedParticipants(
-                $game, teamAbbrev: $row->team_abbrev
-            );
-
-            return ['team_id' => (int) $row->team_id, ...$record['lineups'][$row->team_id]];
-        });
-        $lineups = $lineups->keyBy(fn (array $lineup): string => $lineup['nhl_game_id'].':'.$lineup['team_abbrev'])
-            ->merge($saved)->sortKeys()->values();
+            return app(NhlLineupAvailability::class)->errors(
+                $games->get($row->nhl_game_id), $row->team_abbrev, $lineup['players']
+            ) === [] ? $lineup : null;
+        })->filter()->keyBy(fn (array $lineup): string => $lineup['nhl_game_id'].':'.$lineup['team_abbrev']);
+        // Avoid loading large saved revisions when both current team rosters are already usable.
+        $missing = $games->filter(fn (object $game): bool => ! $lineups->has($game->nhl_game_id.':'.$game->away_team_abbrev)
+            || ! $lineups->has($game->nhl_game_id.':'.$game->home_team_abbrev));
+        $saved = $preferPrediction ? $this->savedPredictionLineups($missing) : collect();
+        $lineups = $saved->merge($lineups)->sortKeys()->values();
 
         return [
             'anticipated_lineups' => $lineups->values(),
@@ -280,6 +271,23 @@ class NhlAnticipatedLineupPayload
                 'generated_at' => now()->toIso8601String(),
             ],
         ];
+    }
+
+    /** Compare effective player assignments independently of source metadata and timestamps. */
+    public static function playerFingerprint(iterable $players): string
+    {
+        $slots = collect($players)->map(fn ($player): array => [
+            'identity' => data_get($player, 'nhl_player_id') ?: mb_strtolower(trim((string) (
+                data_get($player, 'player_name') ?? data_get($player, 'name', '')
+            ))),
+            'role' => data_get($player, 'lineup_role'),
+            'line' => data_get($player, 'line_key'),
+            'slot' => (int) data_get($player, 'slot_index'),
+            'pp' => data_get($player, 'power_play_unit'),
+            'pk' => data_get($player, 'penalty_kill_unit'),
+        ])->sortBy(fn (array $slot): string => json_encode($slot, JSON_THROW_ON_ERROR))->values()->all();
+
+        return hash('sha256', json_encode($slots, JSON_THROW_ON_ERROR));
     }
 
     /** Read the same latest successful revisions as the prediction API, without rebuilding inputs or writing reports. */
@@ -431,7 +439,7 @@ class NhlAnticipatedLineupPayload
 
     private function isEligible(NhlCurrentLineup $row, string|Carbon $gameDate): bool
     {
-        if (! $row->hasVerifiedPlayers()) {
+        if (! $row->hasVerifiedPlayers(true)) {
             return false;
         }
         $representatives = $row->components->where('is_representative', true)->pluck('observation')->filter();

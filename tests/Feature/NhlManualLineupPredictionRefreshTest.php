@@ -286,3 +286,37 @@ it('reports a queue failure and releases prediction admission without undoing th
     $this->assertDatabaseHas('nhl_current_lineups', ['id' => $current->id]);
     expect(Cache::get('nhl:prediction-input-writers:2026020390', []))->toBe([]);
 });
+
+
+it('does not queue another prediction for an identical partner resubmission', function (): void {
+    ($this->submit)()->assertCreated();
+    ($this->commitCallbacks)();
+    app(NhlGamePredictionResponseCache::class)->refreshFailed(2026020390, ['nhl_game_id' => 2026020390]);
+    ($this->submit)()->assertCreated();
+    ($this->commitCallbacks)();
+    Bus::assertDispatchedTimes(RefreshNhlGamePredictionJob::class, 1);
+    $this->assertDatabaseCount('nhl_lineup_observations', 2);
+});
+
+it('does not queue another prediction for identical first party lineup text', function (): void {
+    $this->actingAs($this->admin)->postJson('/games/2026020390/lineup', $this->body)->assertOk();
+    ($this->commitCallbacks)();
+    app(NhlGamePredictionResponseCache::class)->refreshFailed(2026020390, ['nhl_game_id' => 2026020390]);
+    $this->actingAs($this->admin)->postJson('/games/2026020390/lineup', $this->body)->assertOk();
+    ($this->commitCallbacks)();
+    Bus::assertDispatchedTimes(RefreshNhlGamePredictionJob::class, 1);
+});
+
+it('still blocks an identical submission while prediction work is active', function (): void {
+    NhlGame::predictionActivity(2026020390, 'active-fixture', true);
+    ($this->submit)()->assertStatus(409);
+    $this->assertDatabaseCount('nhl_lineup_observations', 0);
+    NhlGame::predictionActivity(2026020390, 'active-fixture', false);
+});
+
+it('does not confuse an unchanged player list with changed special teams deployment', function (): void {
+    $players = [['nhl_player_id' => 8800001, 'lineup_role' => 'forward', 'line_key' => 'F1', 'slot_index' => 1]];
+    $before = \App\Services\NhlAnticipatedLineupPayload::playerFingerprint($players);
+    $players[0]['power_play_unit'] = 1;
+    expect(\App\Services\NhlAnticipatedLineupPayload::playerFingerprint($players))->not->toBe($before);
+});

@@ -51,12 +51,6 @@ class NhlGamePredictionsController extends Controller
 
         $game = NhlGame::query()->findOrFail((int) $input['nhl_game_id']);
         $prediction = $history->latestSaved((int) $input['nhl_game_id']);
-        if ($prediction !== null && app(\App\Services\NhlLineupAvailability::class)->predictionErrors($game, $prediction) !== []) {
-            if (! $cache->refreshAvailability((int) $game->nhl_game_id)) {
-                abort(503, 'Unable to queue an injury-corrected prediction.');
-            }
-            throw new \App\Exceptions\NhlGamePredictionPreparing((int) $game->nhl_game_id);
-        }
         // Return saved publication before consulting cache age, changed inputs or refresh requests.
         if ($prediction === null) {
             if ($game->game_date->toDateString() < now('America/Toronto')->toDateString()) {
@@ -76,6 +70,10 @@ class NhlGamePredictionsController extends Controller
                     $prediction['matchup'] = $pages->matchup($game);
                 }
             }
+        }
+
+        if (($prediction['prediction_available'] ?? false) === true) {
+            $prediction = $this->withCurrentLineups($game, $prediction, $cache);
         }
 
         $marketInput = array_intersect_key($input, array_flip([
@@ -100,5 +98,47 @@ class NhlGamePredictionsController extends Controller
         unset($prediction['_internal_confidence'], $prediction['_confidence_components']);
 
         return response()->json($prediction, 200, [], JSON_PRESERVE_ZERO_FRACTION);
+    }
+
+    /** Return the saved forecast and independently selected current roster without waiting for refresh work. */
+    private function withCurrentLineups(NhlGame $game, array $prediction, NhlGamePredictionResponseCache $cache): array
+    {
+        $prediction['prediction_lineups'] = $prediction['anticipated_lineups'] ?? [];
+        if ($game->game_date->toDateString() < now('America/Toronto')->toDateString()
+            || ! app(\App\Services\NhlLineupAvailability::class)->applies($game)) {
+            return $prediction;
+        }
+        $injuryErrors = app(\App\Services\NhlLineupAvailability::class)->predictionErrors($game, $prediction);
+        $lineups = collect(app(\App\Services\NhlAnticipatedLineupPayload::class)
+            ->build($game->game_date, (int) $game->nhl_game_id, true)['anticipated_lineups'])->keyBy('team_abbrev');
+        $changed = false;
+        foreach (['away', 'home'] as $side) {
+            $lineup = $lineups->get($game->{$side.'_team_abbrev'});
+            $snapshot = collect(data_get($prediction, 'prediction_lineups.'.$side.'.players', []));
+            if ($lineup !== null) {
+                $players = collect($lineup['players']);
+                // An omitted manual goalie/scratch is not an instruction to remove the selected starter.
+                $roles = $players->pluck('lineup_role')->unique();
+                $changed = $changed || \App\Services\NhlAnticipatedLineupPayload::playerFingerprint($players)
+                    !== \App\Services\NhlAnticipatedLineupPayload::playerFingerprint($snapshot->whereIn('lineup_role', $roles));
+            }
+            $prediction['anticipated_lineups'][$side] = $lineup;
+        }
+        $pending = $changed || $injuryErrors !== [];
+        $prediction['meta']['lineup_changed'] = $changed;
+        $prediction['meta']['refresh_pending'] = $pending;
+        if ($pending) {
+            app()->terminating(function () use ($cache, $game): void {
+                try {
+                    if (! $cache->queueLineupRefresh((int) $game->nhl_game_id)) {
+                        throw new \RuntimeException('Unable to queue updated prediction for game '.$game->nhl_game_id.'.');
+                    }
+                } catch (\Throwable $error) {
+                    report($error);
+                }
+            });
+        }
+
+        return $prediction;
     }
 }

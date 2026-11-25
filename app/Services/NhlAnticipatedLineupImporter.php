@@ -101,10 +101,35 @@ class NhlAnticipatedLineupImporter
         $observed = 0;
         $skipped = 0;
         $this->persistCandidates([$candidate], $game, $teamAbbrev, $teamId, $observed, $skipped);
-        if ($observed > 0) {
-            app(NhlGamePredictionResponseCache::class)->refreshAfterLineupSave((int) $game->nhl_game_id);
-        }
         return compact('observed', 'skipped');
+    }
+
+    /** Publish resolved prediction participants without impersonating reports or triggering this run again. */
+    public function publishGeneratedLineups(object $game, array $record): void
+    {
+        if (! in_array($game->game_state, ['FUT', 'PRE'], true)) {
+            return;
+        }
+        foreach (['away', 'home'] as $side) {
+            $teamId = (int) $game->{$side.'_team_id'};
+            $team = (string) $game->{$side.'_team_abbrev'};
+            $lineup = $record['lineups'][$teamId] ?? null;
+            if (! is_array($lineup)) {
+                continue;
+            }
+            $players = collect($lineup['players'] ?? [])->map(fn ($player): array => [
+                ...((array) $player), 'name' => data_get($player, 'player_name') ?? data_get($player, 'name'),
+            ])->all();
+            $url = route('games.show', ['nhlGameId' => $game->nhl_game_id]);
+            $candidate = ['platform' => 'dynastyiq', 'source_name' => 'DynastyIQ projected lineup',
+                'source_handle' => 'projected-lineups', 'source_url' => route('games.index').'#projected-lineups',
+                'post_url' => $url.'#projected-'.$team.'-'.Str::uuid(),
+                'post_text' => 'System-generated anticipated lineup', 'published_at' => now()->toIso8601String(),
+                'system_generated' => true, 'game_date' => Carbon::parse($game->game_date)->toDateString(),
+                'players' => $players];
+            $observed = $skipped = 0;
+            $this->persistCandidates([$candidate], $game, $team, $teamId, $observed, $skipped, true);
+        }
     }
 
     /** @return array{observed:int,skipped:int} */
@@ -217,7 +242,8 @@ class NhlAnticipatedLineupImporter
         string $teamAbbrev,
         int $teamId,
         int &$observed,
-        int &$skipped
+        int &$skipped,
+        bool $fromPrediction = false
     ): void {
         foreach ($candidates as $candidate) {
             if (! $this->hasLineupText($candidate)) {
@@ -252,9 +278,29 @@ class NhlAnticipatedLineupImporter
                 $teamId,
                 $normalized,
                 $completeness,
+                $fromPrediction,
                 &$observed
             ): void {
-                \App\Models\NhlGame::lockForLineupChange((int) $game->nhl_game_id);
+                if ($fromPrediction) {
+                    $lockedGame = \App\Models\NhlGame::query()->lockForUpdate()->findOrFail((int) $game->nhl_game_id);
+                    if (! in_array($lockedGame->game_state, ['FUT', 'PRE'], true)) {
+                        return;
+                    }
+                } else {
+                    \App\Models\NhlGame::lockForLineupChange((int) $game->nhl_game_id);
+                }
+                $current = NhlCurrentLineup::query()->with('observation.players')
+                    ->where('nhl_game_id', $game->nhl_game_id)->where('team_id', $teamId)->first();
+                $before = NhlAnticipatedLineupPayload::playerFingerprint($current?->observation?->players ?? []);
+                if ($fromPrediction) {
+                    $usable = $current !== null && $current->hasVerifiedPlayers(true)
+                        && $current->observation?->isEligibleForGameDate((string) $game->game_date)
+                        && app(NhlLineupAvailability::class)->errors($game, $teamAbbrev, $current->observation->players->toArray()) === [];
+                    if ($usable && ($current->evidence_status !== 'projected'
+                        || $before === NhlAnticipatedLineupPayload::playerFingerprint($normalized))) {
+                        return;
+                    }
+                }
                 $source = $this->source($candidate, $teamId, $teamAbbrev);
                 $this->recordEngagement($source, $candidate);
                 $structureHash = hash('sha256', json_encode(array_map(
@@ -294,9 +340,17 @@ class NhlAnticipatedLineupImporter
                     return;
                 }
                 $observation->players()->createMany($normalized);
-                $this->recordStartingGoalie($observation, $normalized, $candidate, $game, $teamAbbrev);
+                if (! $fromPrediction) {
+                    $this->recordStartingGoalie($observation, $normalized, $candidate, $game, $teamAbbrev);
+                }
                 $observed++;
                 $this->refreshCurrent((int) $game->nhl_game_id, $teamId, $teamAbbrev);
+                $after = NhlCurrentLineup::query()->with('observation.players')
+                    ->where('nhl_game_id', $game->nhl_game_id)->where('team_id', $teamId)->first();
+                if (! $fromPrediction && in_array($game->game_state, ['FUT', 'PRE'], true)
+                    && $before !== NhlAnticipatedLineupPayload::playerFingerprint($after?->observation?->players ?? [])) {
+                    app(NhlGamePredictionResponseCache::class)->refreshAfterLineupSave((int) $game->nhl_game_id);
+                }
             });
         }
     }
@@ -311,14 +365,17 @@ class NhlAnticipatedLineupImporter
             ->when(! $handle, fn ($query) => $query->where('canonical_url', (string) $candidate['source_url']))
             ->first();
         if ($source === null) {
-            $source = EvidenceSource::query()->create([
+            $attributes = [
                 'platform' => $platform,
                 'name' => (string) $candidate['source_name'],
                 'handle' => $handle,
                 'canonical_url' => (string) $candidate['source_url'],
                 'first_seen_at' => now(),
                 'last_seen_at' => now(),
-            ]);
+            ];
+            $source = $platform === 'dynastyiq'
+                ? EvidenceSource::query()->firstOrCreate(['platform' => $platform, 'handle' => $handle], $attributes)
+                : EvidenceSource::query()->create($attributes);
         } else {
             $source->update(['last_seen_at' => now()]);
         }
@@ -505,6 +562,7 @@ class NhlAnticipatedLineupImporter
             ->where('nhl_game_id', $gameId)->where('team_id', $teamId)
             ->where('completeness', 'full')
             ->where(fn ($query) => $query->where('raw_evidence->manual_override', true)
+                ->orWhere('raw_evidence->system_generated', true)
                 ->orWhere(fn ($fresh) => $fresh->where('provider_published_at', '>=', $eligibleFrom)
                     ->orWhere(fn ($fallback) => $fallback->whereNull('provider_published_at')
                         ->where('observed_at', '>=', $eligibleFrom))))
@@ -513,8 +571,15 @@ class NhlAnticipatedLineupImporter
             $observation->isEligibleForGameDate((string) $gameDate)
             && $this->players->verifiedLineupIds($observation->players->toArray(), null, $gameType) !== null
             && app(NhlLineupAvailability::class)->errors($game, $teamAbbrev, $observation->players->toArray()) === []);
+        $reported = $observations->reject(fn (NhlLineupObservation $observation): bool =>
+            (bool) data_get($observation->raw_evidence, 'system_generated', false));
+        if ($reported->isNotEmpty()) {
+            $observations = $reported;
+        }
         $forward = $observations->first(fn (NhlLineupObservation $observation): bool =>
-            (bool) data_get($observation->raw_evidence, 'manual_override', false)) ?? $observations->first();
+            (bool) data_get($observation->raw_evidence, 'manual_override', false))
+            ?? $observations->first(fn (NhlLineupObservation $observation): bool =>
+                (bool) data_get($observation->raw_evidence, 'official', false)) ?? $observations->first();
         $defense = $forward;
         if ($forward === null || $defense === null) {
             NhlCurrentLineup::query()->where('nhl_game_id', $gameId)->where('team_id', $teamId)->delete();
@@ -539,6 +604,10 @@ class NhlAnticipatedLineupImporter
             : ($componentSourceCount >= 3
                 ? 'strongly_corroborated'
                 : ($componentSourceCount >= 2 ? 'corroborated' : 'reported'));
+        if ((bool) data_get($forward->raw_evidence, 'system_generated', false)) {
+            $status = 'projected';
+            $sourceCount = 0;
+        }
         $representative = $observations->first(fn (NhlLineupObservation $observation): bool =>
             in_array($observation->id, [$forward->id, $defense->id], true));
         $current = NhlCurrentLineup::query()->updateOrCreate(
@@ -546,7 +615,7 @@ class NhlAnticipatedLineupImporter
             [
                 'team_abbrev' => $teamAbbrev,
                 'nhl_lineup_observation_id' => $representative->id,
-                'structure_hash' => hash('sha256', $forwardHash . ':' . $defenseHash),
+                'structure_hash' => NhlAnticipatedLineupPayload::playerFingerprint($representative->players),
                 'evidence_status' => $status,
                 'source_count' => $sourceCount,
                 'first_observed_at' => $supporting->min('observed_at'),

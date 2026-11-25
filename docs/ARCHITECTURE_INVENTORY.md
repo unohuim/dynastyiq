@@ -11,12 +11,13 @@ scoring and profile readers select one matching-strength row before combined
 fallback. Legacy combined models remain readable until explicitly reevaluated.
 Authority: `docs/architecture/stats/NhlExpectedGoalsModel.yaml`.
 
-Partner lineup reads before puck drop expose the complete eligible roster from
-the latest successful saved prediction, even without an imported lineup report.
-Revision IDs/timestamps identify the snapshot; current manual input selection
-remains independent and authoritative for subsequent calculations. Reads do not
-rebuild forecasts or write synthetic reports. Authority:
-`docs/architecture/imports/NhlAnticipatedLineups.yaml`.
+Partner lineup reads prefer complete eligible current lineups; saved prediction
+participants are a team-specific fallback. Preparation publishes honest internal
+projected rosters without replacing valid manual/reported evidence or suppressing
+discovery. Changed submissions refresh after commit; identical saves and internal
+publication do not. Saved forecast API reads remain immediate, with current
+anticipated_lineups, frozen prediction_lineups and refresh-pending metadata.
+Authority: `docs/architecture/imports/NhlAnticipatedLineups.yaml`.
 
 Superadmins manage global API-client webhook subscription inventory at
 `/admin/webhooks` through Vue/Inertia. Desktop tables and mobile cards expose

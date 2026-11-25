@@ -50,6 +50,9 @@ class NhlLineupObservation extends Model
         if ($timestamp === null) {
             return false;
         }
+        if (data_get($this->raw_evidence, 'system_generated', false)) {
+            return data_get($this->raw_evidence, 'game_date') === Carbon::parse($gameDate)->toDateString();
+        }
         // Explicit manual submissions target this game even when entered well in advance.
         if (data_get($this->raw_evidence, 'manual_override', false)) {
             return true;

@@ -34,9 +34,12 @@ class NhlCurrentLineup extends Model
         return $this->hasMany(NhlCurrentLineupComponent::class);
     }
 
-    /** Verify the actual selected groups, not the stored evidence-status label. */
-    public function hasVerifiedPlayers(): bool
+    /** Verify selected groups; generated projections require explicit opt-in and never count as discovered reports. */
+    public function hasVerifiedPlayers(bool $includeProjected = false): bool
     {
+        if (! $includeProjected && $this->evidence_status === 'projected') {
+            return false;
+        }
         $this->loadMissing('observation.players', 'components.observation.players');
         $components = $this->components->where('is_representative', true);
         // Historical component unions must not suppress discovery or qualify for predictions.

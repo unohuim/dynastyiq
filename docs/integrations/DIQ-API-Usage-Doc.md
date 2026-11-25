@@ -89,54 +89,58 @@ retain their names and eligible fallback projections.
 
 ## The lineup used by a prediction
 
-`anticipated_lineups.away` and `anticipated_lineups.home` in a successful prediction
-are the exact selected participant snapshots for that calculation. Match skaters
-by `nhl_player_id` against `teams.{side}.roster`; G1 matches the calculated
-`inputs.{side}_goalie_id`. Healthy G2 may remain labelled backup context and does
-not enter starter simulation. The ordinary `players`, role, line and slot fields
-are retained. `prediction_source` reuses the documented requested-date lineup
-sources; projected/last-known groups are labelled as such rather than attributed
-to the submitted lines. Valid anticipated sources retain manual/provider attribution.
+`prediction_lineups.away` and `prediction_lineups.home` identify the frozen
+participants used by the returned saved prediction. Match them by `nhl_player_id`
+against `teams.{side}.roster`; G1 matches the calculated `inputs.{side}_goalie_id`.
+Prediction scores, projections, Matchup, player context and revision timestamps
+remain tied to that calculation.
 
-These fields do not perform another live lineup lookup after prediction. On reads
-of older revisions with inconsistent presentation, reconstruct the lineup from
-that revision's own calculated skaters and starter. Do not substitute today's
-lineup or interpret this as a new calculation; the saved revision remains unchanged.
-Before puck drop, `/api/nhl/lineups`, `/api/nhl/lineups/{nhl_game_id}` and
-`/api/nhl-anticipated-lineups` prefer complete eligible lineups from the latest
-successful saved prediction. This includes projected rosters when no manual or
-reported lineup exists. Players, lines, slot order and manual/projected attribution
-come from that revision rather than another independently chosen roster.
-`prediction_revision_id` and `predicted_at` identify its source. A newer manual
-submission remains authoritative input to the next prediction; until that new
-prediction publishes, a saved lineup is explicitly tied to its earlier revision.
+Before puck drop, `anticipated_lineups.away` and `.home` independently expose the
+current complete, injury-eligible lineup. The shared `/api/nhl/lineups`,
+`/api/nhl/lineups/{nhl_game_id}` and `/api/nhl-anticipated-lineups` readers use the
+same priority: valid manual, official, reported, then DynastyIQ-generated current
+lineup. A healthy saved prediction snapshot is a fallback only when current
+lineup evidence is absent or invalid. Its `prediction_revision_id` and
+`predicted_at` identify that fallback; ordinary current evidence has its own
+`last_observed_at`. No read generates replacement players or writes report rows.
+If neither source is usable, that team's prediction-response lineup is null and
+its schedule players list is empty; the other team and saved forecast still return.
 
-Without an eligible saved snapshot, the existing reported/manual read behavior
-remains. A previously accepted upcoming roster with a now-unavailable player uses
-the existing healthy replacement resolver, labelled `lineup_status: projected`.
-Unavailable players are not restored from stale prediction snapshots. Truly
-absent report and prediction evidence remains empty. These reads never rebuild a
-prediction or overwrite submitted evidence. Live/final lineup and current
-starting-goalie selection rules remain unchanged.
+Preparation publishes its generated roster into the existing current lineup store
+with `evidence_status: projected`, `source_count: 0` and source platform
+`dynastyiq`. This does not replace valid manual/official/reported evidence, assert
+an external report, suppress provider discovery, or trigger its own new prediction.
 
-Example schedule team fields after a projected STL roster has been published:
+`meta.lineup_changed` reports an effective current assignment difference from the
+saved participants; an omitted manual goalie is not a request to remove the
+calculated starter. `meta.refresh_pending` is true when the saved forecast needs a
+lineup/injury refresh. The API returns it immediately with HTTP 200 and queues
+refresh work after responding. Consumers can display current selectable players
+while retaining the saved forecast's original timestamp. Started/final games keep
+their frozen prediction lineups and historical read behavior.
 
 ```json
 {
-  "team_abbrev": "STL",
-  "lineup_status": "projected",
-  "prediction_revision_id": 940,
-  "predicted_at": "2026-11-25T15:24:04+00:00",
-  "players": [
-    { "nhl_player_id": 8480023, "player_name": "Robert Thomas", "lineup_role": "forward", "line_key": "F1", "slot_index": 1 }
-  ]
+  "meta": {
+    "prediction_revision_id": 955,
+    "predicted_at": "2026-11-25T15:24:49+00:00",
+    "lineup_changed": true,
+    "refresh_pending": true
+  },
+  "anticipated_lineups": {
+    "away": { "team_abbrev": "VAN", "evidence_status": "projected", "players": [] },
+    "home": { "team_abbrev": "DET", "manual_override": true, "players": [] }
+  },
+  "prediction_lineups": {
+    "away": { "team_abbrev": "VAN", "players": [] },
+    "home": { "team_abbrev": "DET", "players": [] }
+  }
 }
 ```
 
-The example abbreviates the player list; the response includes the full stored
-lineup. Snapshot revision fields are null when schedule teams use ordinary
-current evidence. The anticipated-lineups list carries the same fields on each
-snapshot-backed lineup.
+The arrays above are abbreviated; a usable lineup retains twelve forwards, six
+defensemen and any selected goalie context. Existing identity, slot, unknown-player
+and injury validation remains in force.
 
 ## Starter identity after puck drop
 
@@ -359,14 +363,15 @@ game/team, whether submitted through DynastyIQ or any authorized partner key.
 Save order is server-controlled (observation id breaks timestamp ties); supplied
 publication timestamps or claimed submitter identities cannot change it.
 
-After a valid manual submission commits, DIQ queues a background prediction refresh
-for that game through the same pathway used by its game-page manual lineup form.
+After a valid submission changes the selected players or their assignments and
+commits, DIQ queues a background prediction refresh for that game through the same pathway used by its game-page manual lineup form.
 The submission response remains the accepted lineup and starter; it does not wait
 for prediction calculation. No webhook or outbound prediction is sent. Retrieve
 the latest successful revision through `GET /api/nhl-game-predictions`; while work
 is pending, that endpoint retains the existing saved-success response behavior.
 The refresh worker uses current inputs and the normal preparation, deduplication
-and revision-publication rules. Invalid submissions do not trigger refreshes.
+and revision-publication rules. Invalid and identical submissions do not trigger
+refreshes; identical submissions still preserve their immutable source evidence.
 
 An upcoming-game submission containing a dressed player or goalie reported **out**
 with supported reported/corroborated/confirmed-unavailable evidence returns
@@ -1140,7 +1145,7 @@ nhl-stats:read
 Every successful prediction payload includes `prediction_available`. Consumers
 must check this field before reading prediction or market output.
 
-**Healthy saved predictions are returned first for every game date.** The API reads the
+**Saved predictions are returned first for every game date.** The API reads the
 latest successful saved prediction for that game (highest revision ID), whether
 published by the API or an admin run, and returns it immediately with HTTP 200.
 `meta.predicted_at` is the saved calculation timestamp in ISO 8601 format, not the
@@ -1148,8 +1153,9 @@ request time. `meta.prediction_revision_id` identifies that calculation. Consume
 can use this timestamp to decide when to request the payload again; a later request
 returns a newer revision if a separate prediction run has published one.
 
-Except for the injury-safety check below, this saved read does not consult response-cache freshness, prepare dependencies,
-rebuild Matchup, recalculate the forecast, or queue refresh work. Changed
+This saved read does not consult response-cache freshness, prepare dependencies,
+rebuild Matchup or recalculate the forecast. Lineup/injury differences may queue
+a separate refresh after the response, as described below. Changed
 model/lineup evidence and `force_refresh=1` do not delay or replace the saved
 response. Model and goalie parameters do not recalculate saved predictions.
 Explicit market selectors and line parameters price the requested markets from
@@ -1164,7 +1170,7 @@ prediction originally contains only moneyline rows. This is response-only
 pricing from the same saved scores, not another prediction run. Existing
 moneyline probabilities and odds remain unchanged; newly requested market rows
 use the saved forecast's algorithm provenance and public confidence. Scores,
-Matchup, lineups, `days_away`, `meta.prediction_revision_id` and `meta.predicted_at`
+Matchup, frozen `prediction_lineups`, `days_away`, `meta.prediction_revision_id` and `meta.predicted_at`
 retain their original values. No new revision, cache refresh or preparation job
 is created. The same behavior applies to historical saved games.
 
@@ -1175,15 +1181,13 @@ forecast lacks usable scoring/team evidence, return HTTP 422 with `errors.market
 rather than manufacturing values or starting another forecast. With no market
 selectors or line parameters, return the saved publication's market list unchanged.
 
-**Injury-safety exception for an upcoming game:** if a saved prediction includes a
-calculated skater or starter now supported as out for that game, DIQ retains the
-revision but queues a deduplicated replacement and returns **HTTP 202 preparing**
-with the existing Retry-After contract. Do not use the old forecast as a current
-pick. Completed injury imports also initiate this refresh for affected existing
-upcoming forecasts. Repeated polling timestamps alone do not trigger it. This
-exception does not recalculate historical saved games or change healthy saved
-reads. New calculations resolve a complete eligible roster through the existing
-lineup/fallback pathway; an incomplete roster is not silently published.
+**Upcoming lineup/injury refresh:** a saved forecast containing a now-unavailable
+participant/starter still returns HTTP 200 with its original timestamp and
+`meta.refresh_pending: true`. Current lineup fields omit invalid rosters; the
+frozen prediction participants remain under `prediction_lineups`. A deduplicated
+refresh is requested after the response, and completed injury imports also queue
+updates for affected existing upcoming forecasts. No historical game is recalculated.
+An incomplete or injury-incompatible roster is never accepted for a new forecast.
 
 **When no saved prediction exists:** today/future games retain the existing
 calculation/preparation process below. For dates before today in
@@ -1976,7 +1980,7 @@ blocks, including `market_probabilities` and `reasons`, remain unchanged.
 }
 ```
 
-`anticipated_lineups.*.players` is the source-evidence view: it explains what
+`anticipated_lineups.*.players` is the current source-evidence view: it explains what
 was reported, by whom, and with which lineup slots. `teams.*.roster` is the
 prediction-input view: it identifies the skaters and rates actually used by the
 model. Consumers should use the latter for prediction audit and player-level event
@@ -1992,8 +1996,9 @@ inputs, while retaining the former for evidence provenance.
 - Persist `nhl_player_id`; do not join prediction players by name.
 - Record `inputs.*_lineup_source` with every imported prediction snapshot.
 - Use `teams.*.roster` to audit which players contributed to that prediction.
-- Treat `anticipated_lineups` as evidence and provenance, not as a second set
-  of calculated player projections.
+- Treat `anticipated_lineups` as current selectable lineup evidence. Audit the
+  returned forecast with `prediction_lineups` and `teams.*.roster`, which remain
+  tied to its revision; current lineups can be newer than that forecast.
 - Do not reject a lineup solely because `evidence_status` is `reported`; one
   complete source is accepted by DynastyIQ.
 - Treat null PP/PK units as unknown, not as evidence that the player is off the

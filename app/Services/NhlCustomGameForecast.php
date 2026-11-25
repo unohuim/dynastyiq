@@ -86,6 +86,16 @@ class NhlCustomGameForecast
             throw new DomainException($cached['errors'][$gameId] ?? 'The scheduled game has no prepared inputs.');
         }
 
+        if (! $storedBoxscore && $rosterOverrides === []) {
+            $lineups = [];
+            foreach ($input['teams'] ?? [] as $team) {
+                if (isset($team['id'], $team['lineup'])) {
+                    $lineups[(int) $team['id']] = $team['lineup'];
+                }
+            }
+            app(NhlAnticipatedLineupImporter::class)->publishGeneratedLineups($game, ['lineups' => $lineups]);
+        }
+
         return ['game' => $game, 'model' => $model, 'input' => $input,
             'metadata' => $cached['metadata'], 'source_fingerprint' => $fingerprint,
             'prediction' => app(NhlCustomGamePredictionEngine::class)->predict($input)];
@@ -123,6 +133,9 @@ class NhlCustomGameForecast
                         $finished = in_array($target->game_state, ['OFF', 'FINAL'], true);
                         $record = $reader->anticipatedParticipants($target, $storedBoxscore || $finished,
                             ! $finished && (int) $target->nhl_game_id === $gameId ? $rosterOverrides : []);
+                        if (! $storedBoxscore && ! $finished && $rosterOverrides === []) {
+                            app(NhlAnticipatedLineupImporter::class)->publishGeneratedLineups($target, $record);
+                        }
                         $work['lineups'][$target->nhl_game_id] = $record;
                         if (! $work['future']) {
                             $work['evidence'][$target->nhl_game_id] = $this->contextEvidence($model, $target, $record, $asOf);
@@ -706,6 +719,9 @@ class NhlCustomGameForecast
         $schedule = DB::table('nhl_games')->where('game_date', $date)->orderBy('nhl_game_id')
             ->get(['nhl_game_id', 'game_date', 'game_state', 'start_time_utc', 'home_team_id', 'away_team_id', 'away_team_abbrev', 'home_team_abbrev', 'away_starter_lock', 'home_starter_lock']);
         $lineups = DB::table('nhl_current_lineups')->whereIn('nhl_game_id', $schedule->pluck('nhl_game_id'))
+            ->whereNotExists(fn ($query) => $query->selectRaw('1')->from('nhl_lineup_observations as generated')
+                ->whereColumn('generated.id', 'nhl_current_lineups.nhl_lineup_observation_id')
+                ->where('generated.raw_evidence->system_generated', true))
             ->orderBy('nhl_game_id')->orderBy('team_id')->get(['nhl_game_id', 'team_id', 'structure_hash']);
         $memberships = $storedBoxscore ? [] : DB::table('players')
             ->whereIn('team_abbrev', $schedule->flatMap(fn ($row): array => [$row->away_team_abbrev, $row->home_team_abbrev])->unique())
