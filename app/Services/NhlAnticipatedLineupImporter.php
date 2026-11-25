@@ -101,6 +101,9 @@ class NhlAnticipatedLineupImporter
         $observed = 0;
         $skipped = 0;
         $this->persistCandidates([$candidate], $game, $teamAbbrev, $teamId, $observed, $skipped);
+        if ($observed > 0) {
+            app(NhlGamePredictionResponseCache::class)->refreshAfterLineupSave((int) $game->nhl_game_id);
+        }
         return compact('observed', 'skipped');
     }
 

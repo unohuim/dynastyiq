@@ -319,6 +319,15 @@ game/team, whether submitted through DynastyIQ or any authorized partner key.
 Save order is server-controlled (observation id breaks timestamp ties); supplied
 publication timestamps or claimed submitter identities cannot change it.
 
+After a valid manual submission commits, DIQ queues a background prediction refresh
+for that game through the same pathway used by its game-page manual lineup form.
+The submission response remains the accepted lineup and starter; it does not wait
+for prediction calculation. No webhook or outbound prediction is sent. Retrieve
+the latest successful revision through `GET /api/nhl-game-predictions`; while work
+is pending, that endpoint retains the existing saved-success response behavior.
+The refresh worker uses current inputs and the normal preparation, deduplication
+and revision-publication rules. Invalid submissions do not trigger refreshes.
+
 An upcoming-game submission containing a dressed player or goalie reported **out**
 with supported reported/corroborated/confirmed-unavailable evidence returns
 **HTTP 422**, with named reasons in `errors.text`, before saving observations or

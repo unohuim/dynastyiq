@@ -139,6 +139,18 @@ final class NhlGamePredictionResponseCache
         \App\Models\NhlGame::predictionActivity($gameId, $this->refreshOwner($input), false);
     }
 
+    /** Queue manual-lineup changes after commit without calculating model inputs in the save request. */
+    public function refreshAfterLineupSave(int $gameId): void
+    {
+        DB::afterCommit(function () use ($gameId): void {
+            // The refresh worker computes the real current fingerprint before building.
+            // Queue admission is deduplicated by game/request, not by this initial hint.
+            if (! $this->queue($gameId, ['nhl_game_id' => $gameId], '')) {
+                throw new ServiceUnavailableHttpException(15, 'The lineup was saved, but its prediction refresh could not be queued.');
+            }
+        });
+    }
+
     /** Refresh only existing forecasts affected by a completed material injury update. */
     public function refreshAvailabilityForTeams(array $teams): void
     {
