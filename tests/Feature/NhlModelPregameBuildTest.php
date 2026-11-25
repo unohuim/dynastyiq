@@ -730,10 +730,10 @@ it('checkpoints one game at a time and completes the day through continuations',
     $builder->shouldReceive('buildDay')->twice()->andReturnUsing(fn ($run, $ids): array => [
         'games' => [$ids[0] => ['team_context_count' => 2, 'player_context_count' => 40]], 'blocked_games' => 0]);
     $service = Mockery::mock(\App\Services\NhlPregameLeagueResults::class);
-    $service->shouldReceive('attachGameComparisons')->twice()->withArgs(function ($actualRun, $actualDay, $gameId) use ($run): bool {
+    $service->shouldReceive('attachGameComparisonsPage')->twice()->withArgs(function ($actualRun, $actualDay, $gameId) use ($run): bool {
         expect($run->games()->where('nhl_game_id', $gameId)->first()->snapshot_completed_at)->not->toBeNull();
         return $actualRun->id === $run->id;
-    });
+    })->andReturn(true);
     $transactionLevel = \Illuminate\Support\Facades\DB::transactionLevel();
     $service->shouldReceive('releaseDayPeerPage')->once()->andReturnUsing(function () use ($transactionLevel): bool {
         expect(\Illuminate\Support\Facades\DB::transactionLevel())->toBe($transactionLevel);
@@ -754,6 +754,30 @@ it('checkpoints one game at a time and completes the day through continuations',
         ->and($run->games()->whereNotNull('comparisons_completed_at')->count())->toBe(2);
 });
 
+it('continues incomplete comparison pages without marking the game complete', function (): void {
+    $run = NhlPregameContextRun::create(['model_run_id' => $this->model->id, 'action' => 'backfill',
+        'status' => 'running', 'season_ids' => ['20252026'], 'total_games' => 1,
+        'options' => ['pipeline_version' => NhlPregameContextOrchestrator::CHECKPOINT_PIPELINE]]);
+    $day = NhlPregameContextRunDay::create(['run_id' => $run->id, 'game_date' => '2025-10-10',
+        'league_state' => 'complete', 'context_state' => 'pending']);
+    $game = NhlPregameContextRunGame::create(['run_id' => $run->id, 'nhl_game_id' => 2025020001,
+        'game_date' => '2025-10-10', 'sequence' => 1, 'state' => 'processing',
+        'snapshot_completed_at' => now(), 'comparison_seconds' => 5]);
+    $service = Mockery::mock(\App\Services\NhlPregameLeagueResults::class);
+    $service->shouldReceive('attachGameComparisonsPage')->twice()->andReturn(false, true);
+    $this->app->instance(\App\Services\NhlPregameLeagueResults::class, $service);
+    $builder = Mockery::mock(\App\Services\NhlPregameContextBuilder::class);
+    $builder->shouldNotReceive('buildDay');
+    app(NhlPregameContextOrchestrator::class)->load($run->id);
+    (new \App\Jobs\BuildNhlPregameContextDayBatchJob($run->id, $day->id, $day->fresh()->context_claim_token))->handle($builder);
+    expect($game->fresh()->state)->toBe('processing')->and($game->fresh()->comparisons_completed_at)->toBeNull()
+        ->and($game->fresh()->comparison_seconds)->toBeGreaterThanOrEqual(5.0);
+    app(NhlPregameContextOrchestrator::class)->load($run->id);
+    (new \App\Jobs\BuildNhlPregameContextDayBatchJob($run->id, $day->id, $day->fresh()->context_claim_token))->handle($builder);
+    expect($game->fresh()->state)->toBe('complete')->and($game->fresh()->comparisons_completed_at)->not->toBeNull()
+        ->and($game->fresh()->comparison_seconds)->toBeGreaterThanOrEqual(5.0);
+});
+
 it('retains a committed snapshot when comparisons fail and retries only unfinished work', function (): void {
     $run = NhlPregameContextRun::create(['model_run_id' => $this->model->id, 'action' => 'backfill',
         'status' => 'running', 'season_ids' => ['20252026'], 'total_games' => 1,
@@ -765,7 +789,7 @@ it('retains a committed snapshot when comparisons fail and retries only unfinish
     $builder = Mockery::mock(\App\Services\NhlPregameContextBuilder::class);
     $builder->shouldReceive('buildDay')->once()->andReturn(['games' => [2025020001 => ['team_context_count' => 2]], 'blocked_games' => 0]);
     $service = Mockery::mock(\App\Services\NhlPregameLeagueResults::class);
-    $service->shouldReceive('attachGameComparisons')->once()->andThrow(new RuntimeException('Comparison failure'));
+    $service->shouldReceive('attachGameComparisonsPage')->once()->andThrow(new RuntimeException('Comparison failure'));
     $this->app->instance(\App\Services\NhlPregameLeagueResults::class, $service);
     $job = new \App\Jobs\BuildNhlPregameContextDayBatchJob($run->id, $day->id);
     $job->handle($builder);
@@ -777,7 +801,7 @@ it('retains a committed snapshot when comparisons fail and retries only unfinish
     $this->actingAs($this->admin)->postJson(route('admin.nhl-sat-models.context.resume', $this->model))->assertOk();
     app(NhlPregameContextOrchestrator::class)->load($run->id);
     $retryService = Mockery::mock(\App\Services\NhlPregameLeagueResults::class);
-    $retryService->shouldReceive('attachGameComparisons')->once();
+    $retryService->shouldReceive('attachGameComparisonsPage')->once()->andReturn(true);
     $this->app->instance(\App\Services\NhlPregameLeagueResults::class, $retryService);
     (new \App\Jobs\BuildNhlPregameContextDayBatchJob($run->id, $day->id, $day->fresh()->context_claim_token))->handle($builder);
     expect($game->fresh()->state)->toBe('complete')->and($run->fresh()->failed_games)->toBe(0);
@@ -900,7 +924,7 @@ it('yields bounded peer cleanup while preserving completed games', function (): 
     $builder = Mockery::mock(\App\Services\NhlPregameContextBuilder::class);
     $builder->shouldNotReceive('buildDay');
     $service = Mockery::mock(\App\Services\NhlPregameLeagueResults::class);
-    $service->shouldNotReceive('attachGameComparisons');
+    $service->shouldNotReceive('attachGameComparisonsPage');
     $service->shouldReceive('releaseDayPeerPage')->twice()->andReturn(true, false);
     $this->app->instance(\App\Services\NhlPregameLeagueResults::class, $service);
     (new \App\Jobs\BuildNhlPregameContextDayBatchJob($run->id, $day->id))->handle($builder);

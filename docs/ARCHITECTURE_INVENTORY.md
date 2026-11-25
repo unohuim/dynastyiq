@@ -1,5 +1,10 @@
 # Architecture Inventory
 
+Pregame participant-repair comparisons commit bounded metric pages and game-owned
+progress together in existing readiness metadata. Claim/stop checks fence pages
+rather than every metric, and retries resume committed progress. Authority:
+`docs/architecture/stats/NhlPregameContextEvidence.yaml`.
+
 Eval SAT/SOG rebuild combined and independent strength probability rows under the
 same model and shot-context keys. Each partition uses its own baseline/shrinkage;
 scoring and profile readers select one matching-strength row before combined

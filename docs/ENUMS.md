@@ -1,5 +1,11 @@
 # ENUMS - Canonical Enum Authority
 
+## Pregame comparison progress
+
+- `nhl_pregame_context_run_games.readiness.comparison_progress.version`: `1` identifies resumable comparison pages.
+- `comparison_progress.completed_types`: unique list containing `team` and/or `player`, identifying fully committed comparison populations.
+- `comparison_progress.after_metric_ids`: maps those same entity types to nonnegative integer metric-row cursors. A cursor is committed in the same transaction as its page's comparison values; missing progress starts at zero. Existing unrelated readiness keys remain unchanged.
+
 ## Webhook subscription inventory
 
 - `webhook_subscriptions.events`: currently supports `prediction.available`,

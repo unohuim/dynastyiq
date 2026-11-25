@@ -95,11 +95,12 @@ class BuildNhlPregameContextDayBatchJob extends BuildNhlPregameContextDayJob
             } elseif ($work !== null && $work->fresh()->state !== 'blocked') {
                 $started = hrtime(true);
                 DB::transaction(function () use ($service, $run, $day, $work, $started): void {
-                    $service->attachGameComparisons($run, $day, (int) $work->nhl_game_id, fn (): bool => $this->runStopped());
+                    $complete = $service->attachGameComparisonsPage($run, $day, (int) $work->nhl_game_id, fn (): bool => $this->runStopped());
                     $this->assertOwnerActive();
                     $seconds = round((hrtime(true) - $started) / 1e9, 3);
-                    $work->update(['state' => 'complete', 'comparisons_completed_at' => now(), 'completed_at' => now(),
-                        'comparison_seconds' => $seconds, 'last_error' => null]);
+                    $work->update(['state' => $complete ? 'complete' : 'processing',
+                        'comparisons_completed_at' => $complete ? now() : null, 'completed_at' => $complete ? now() : null,
+                        'comparison_seconds' => (float) $work->comparison_seconds + $seconds, 'last_error' => null]);
                     NhlPregameContextRunDay::query()->whereKey($day->id)->increment('comparison_seconds', $seconds);
                 });
             }

@@ -7,6 +7,7 @@ namespace App\Services;
 use App\Exceptions\NhlPregameContextRunStopped;
 use App\Models\NhlPregameContextRun;
 use App\Models\NhlPregameContextRunDay;
+use App\Models\NhlPregameContextRunGame;
 use Closure;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -511,6 +512,58 @@ class NhlPregameLeagueResults
         DB::update('UPDATE nhl_pregame_context_league_peers AS peer SET league_rank = ranked.league_rank FROM ('.$ranks->toSql().') AS ranked WHERE peer.league_average_id = ranked.league_average_id AND peer.entity_id = ranked.entity_id', $ranks->getBindings());
     }
 
+    /**
+     * Commit one referenced-comparison page and its cursor together, retaining old snapshots.
+     * The caller fences the worker claim; cancellation checks happen at page boundaries.
+     */
+    public function attachGameComparisonsPage(NhlPregameContextRun $run, NhlPregameContextRunDay $day, int $gameId, ?Closure $isStopped = null): bool
+    {
+        return DB::transaction(function () use ($run, $day, $gameId, $isStopped): bool {
+            $this->assertActive($isStopped);
+            $work = NhlPregameContextRunGame::query()->where('run_id', $run->id)
+                ->where('nhl_game_id', $gameId)->lockForUpdate()->firstOrFail();
+            $readiness = $work->readiness ?? [];
+            $progress = $readiness['comparison_progress'] ?? ['version' => 1, 'completed_types' => [], 'after_metric_ids' => []];
+            if (! is_array($progress) || ($progress['version'] ?? null) !== 1
+                || ! is_array($progress['completed_types'] ?? null) || ! is_array($progress['after_metric_ids'] ?? null)
+                || ! array_is_list($progress['completed_types'])
+                || count(array_unique($progress['completed_types'])) !== count($progress['completed_types'])
+                || array_diff($progress['completed_types'], ['team', 'player']) !== []) {
+                throw new \RuntimeException('Unsupported pregame comparison progress.');
+            }
+            foreach (['team', 'player'] as $type) {
+                if (in_array($type, $progress['completed_types'], true)) {
+                    continue;
+                }
+                $cursor = $progress['after_metric_ids'][$type] ?? 0;
+                if (! is_int($cursor) || $cursor < 0) {
+                    throw new \RuntimeException('Invalid pregame comparison cursor.');
+                }
+                $page = ['after_id' => $cursor,
+                    'limit' => max(1, min(1000, (int) config('nhl-pregame.comparison_metric_page_size', 300)))];
+                // The page transaction's final check fences every write; no per-metric status reads.
+                if (! $this->attachReferencedComparisons($run, $gameId, $type, null, $page)) {
+                    // Non-reference populations already use one set-based PostgreSQL operation.
+                    $this->attachUnreferencedComparisons($run, $day, $gameId, null, [$type]);
+                    $progress['completed_types'][] = $type;
+                    break;
+                }
+                $progress['after_metric_ids'][$type] = $page['last_id'];
+                if ($page['complete']) {
+                    $progress['completed_types'][] = $type;
+                }
+                if ($page['processed'] > 0) {
+                    break;
+                }
+            }
+            $this->assertActive($isStopped);
+            $readiness['comparison_progress'] = $progress;
+            $work->update(['readiness' => $readiness]);
+
+            return count($progress['completed_types']) === 2;
+        });
+    }
+
     /** Attach one game's comparisons using persisted peers; never rebuild league histories. */
     public function attachGameComparisons(NhlPregameContextRun $run, NhlPregameContextRunDay $day, int $gameId, ?Closure $isStopped = null): void
     {
@@ -520,6 +573,12 @@ class NhlPregameLeagueResults
                 $types[] = $entityType;
             }
         }
+        $this->attachUnreferencedComparisons($run, $day, $gameId, $isStopped, $types);
+    }
+
+    /** Preserve the existing set-based path for populations without retained references. */
+    private function attachUnreferencedComparisons(NhlPregameContextRun $run, NhlPregameContextRunDay $day, int $gameId, ?Closure $isStopped, array $types): void
+    {
         if (DB::getDriverName() === 'pgsql') {
             $this->attachGameComparisonsInDatabase($run, $day, $gameId, $isStopped, $types);
 
@@ -576,8 +635,13 @@ class NhlPregameLeagueResults
         }
     }
 
-    /** Compare only this run's added contexts against matching retained peer groups, preserving all older rows. */
-    private function attachReferencedComparisons(NhlPregameContextRun $run, int $gameId, string $entityType, ?Closure $isStopped): bool
+    /**
+     * Compare only newly owned contexts; an optional page receives its durable cursor.
+     *
+     * @param array{after_id:int,limit:int,last_id?:int,complete?:bool,processed?:int}|null $page
+     * @return bool Whether this population has a retained reference.
+     */
+    private function attachReferencedComparisons(NhlPregameContextRun $run, int $gameId, string $entityType, ?Closure $isStopped, ?array &$page = null): bool
     {
         $contextTable = 'nhl_'.$entityType.'_game_pregame_contexts';
         $metricTable = 'nhl_'.$entityType.'_game_pregame_context_metrics';
@@ -586,6 +650,9 @@ class NhlPregameLeagueResults
             ->where('nhl_game_id', $gameId)->where('context_version', NhlPregameContextBuilder::VERSION);
         $cutoffs = (clone $contexts)->distinct()->pluck('source_cutoff_at');
         if ($cutoffs->isEmpty()) {
+            if ($page !== null) {
+                $page += ['last_id' => $page['after_id'], 'complete' => true, 'processed' => 0];
+            }
             return true;
         }
         if ($cutoffs->count() !== 1) {
@@ -603,17 +670,24 @@ class NhlPregameLeagueResults
         if ($averages->count() !== count($reference['average_ids'])) {
             throw new \RuntimeException('The saved league comparison reference is no longer available.');
         }
-        $rows = DB::table($metricTable.' as metric')->join($contextTable.' as context', 'context.id', '=', 'metric.'.$foreignKey)
+        $query = DB::table($metricTable.' as metric')->join($contextTable.' as context', 'context.id', '=', 'metric.'.$foreignKey)
             ->whereIn('context.id', (clone $contexts)->select('id'))
-            ->orderBy('metric.metric_key')->orderBy('metric.window_key')->orderBy('metric.strength')->orderBy('metric.id')
-            ->select(['metric.'.$foreignKey, 'metric.metric_key', 'metric.window_key', 'metric.strength', 'metric.measure_key',
-                'metric.value', 'context.nhl_'.$entityType.'_id as entity_id'])->lazy(300);
+            ->select(['metric.id as comparison_metric_id', 'metric.'.$foreignKey, 'metric.metric_key', 'metric.window_key', 'metric.strength', 'metric.measure_key',
+                'metric.value', 'context.nhl_'.$entityType.'_id as entity_id']);
+        if ($page !== null) {
+            $found = $query->where('metric.id', '>', $page['after_id'])->orderBy('metric.id')->limit($page['limit'] + 1)->get();
+            $rows = $found->take($page['limit']);
+            $page += ['last_id' => $rows->isEmpty() ? $page['after_id'] : (int) $rows->last()->comparison_metric_id,
+                'complete' => $found->count() <= $page['limit'], 'processed' => $rows->count()];
+        } else {
+            $rows = $query->orderBy('metric.metric_key')->orderBy('metric.window_key')
+                ->orderBy('metric.strength')->orderBy('metric.id')->lazy(300);
+        }
         $updates = [];
         $lastId = null;
         $peers = [];
         $timestamp = now()->toDateTimeString();
         foreach ($rows as $metric) {
-            $this->assertActive($isStopped);
             $average = $averages->get(implode('|', [$metric->metric_key, $metric->window_key, $metric->strength]));
             if ($average !== null && $lastId !== (int) $average->id) {
                 $cached = Cache::get($this->peerKey((int) $average->id));

@@ -10,6 +10,7 @@ return [
     'league_continuation_seconds' => 8,
     'league_continuation_pages' => 4,
     'league_rank_group_page_size' => 8,
+    'comparison_metric_page_size' => 300,
     'league_reference_hours' => 24,
     'peer_cleanup_page_size' => 10000,
     'peer_cleanup_pages' => 8,
