@@ -214,7 +214,22 @@ class NhlExpectedGoalsBackfiller
             : $this->trainingEligibilityCounts($trainingSeasonIds);
         $baselineRate = $baseline['attempts'] > 0 ? $baseline['successes'] / $baseline['attempts'] : 0.0;
         $buckets = $this->trainedBuckets($bucketStats, $smoothingPriorAttempts, $baselineRate);
+        $strengthBuckets = [];
+        foreach (['ev', 'pp', 'pk'] as $strength) {
+            $stats = $this->trainingBucketStats(
+                $trainingSeasonIds, $predictionTarget, $aggregateDefinitions, $sampleMode, $strength
+            );
+            $strengthBaseline = $stats[$this->bucketKey(99, ['baseline' => 'league'])] ?? null;
+            if (($strengthBaseline['attempts'] ?? 0) > 0) {
+                $strengthBuckets[$strength] = $this->trainedBuckets(
+                    $stats,
+                    $smoothingPriorAttempts,
+                    $strengthBaseline['successes'] / $strengthBaseline['attempts']
+                );
+            }
+        }
         $bucketCount = count($buckets);
+        $strengthBucketCount = array_sum(array_map('count', $strengthBuckets));
         $workflowAction = $sampleMode === self::SAMPLE_SAT && $predictionTarget === self::TARGET_SHOT_ON_GOAL
             ? 'eval_sat'
             : 'eval_sog';
@@ -236,6 +251,7 @@ class NhlExpectedGoalsBackfiller
                 'training_successes' => $baseline['successes'],
                 'baseline_success_rate' => round($baselineRate, 6),
                 'bucket_count' => $bucketCount,
+                'strength_bucket_count' => $strengthBucketCount,
                 'sample_mode' => $sampleMode,
                 'workflow_action' => $workflowAction,
                 'dry_run' => 1,
@@ -265,6 +281,7 @@ class NhlExpectedGoalsBackfiller
                     'sample_mode' => $sampleMode,
                     'workflow_action' => $workflowAction,
                     'training_season_ids' => $trainingSeasonIds,
+                    'strength_probabilities' => 'strength_bucket_v1',
                     'sat_factor_evaluation' => $sampleMode === self::SAMPLE_SAT
                         && $predictionTarget === self::TARGET_SHOT_ON_GOAL ? $evaluationMetrics : null,
                     'sog_factor_evaluation' => $sampleMode === self::SAMPLE_SOG ? $evaluationMetrics : null,
@@ -279,13 +296,16 @@ class NhlExpectedGoalsBackfiller
             ]
         );
 
-        DB::table('nhl_expected_goals_model_buckets')
-            ->where('expected_goals_model_id', $model->id)
-            ->delete();
+        DB::transaction(function () use ($model, $buckets, $strengthBuckets): void {
+            DB::table('nhl_expected_goals_model_buckets')
+                ->where('expected_goals_model_id', $model->id)->delete();
+            $this->insertBuckets((int) $model->id, $buckets);
+            foreach ($strengthBuckets as $strength => $rows) {
+                $this->insertBuckets((int) $model->id, $rows, $strength);
+            }
+        });
 
-        $this->insertBuckets((int) $model->id, $buckets);
-
-        unset($buckets, $bucketStats);
+        unset($buckets, $bucketStats, $strengthBuckets);
 
         $model->forceFill([
             'metrics' => [
@@ -301,6 +321,7 @@ class NhlExpectedGoalsBackfiller
                 'training_successes' => $baseline['successes'],
                 'baseline_success_rate' => round($baselineRate, 6),
                 'bucket_count' => $bucketCount,
+                'strength_bucket_count' => $strengthBucketCount,
                 'sample_mode' => $sampleMode,
                 'workflow_action' => $workflowAction,
                 'sat_factor_evaluation' => $sampleMode === self::SAMPLE_SAT
@@ -328,6 +349,7 @@ class NhlExpectedGoalsBackfiller
             'training_successes' => $baseline['successes'],
             'baseline_success_rate' => round($baselineRate, 6),
             'bucket_count' => $bucketCount,
+            'strength_bucket_count' => $strengthBucketCount,
             'sample_mode' => $sampleMode,
             'workflow_action' => $workflowAction,
             'dry_run' => 0,
@@ -424,13 +446,14 @@ class NhlExpectedGoalsBackfiller
         array $seasonIds,
         string $predictionTarget,
         ?array $aggregateDefinitions = null,
-        string $sampleMode = self::SAMPLE_SAT
+        string $sampleMode = self::SAMPLE_SAT,
+        ?string $strength = null
     ): array {
         $stats = [];
         $definitions = $aggregateDefinitions ?? $this->aggregateDefinitions();
 
         foreach ($definitions as $level => $definition) {
-            foreach ($this->aggregateBucketStats($seasonIds, $predictionTarget, $level, $definition, $sampleMode) as $bucket) {
+            foreach ($this->aggregateBucketStats($seasonIds, $predictionTarget, $level, $definition, $sampleMode, $strength) as $bucket) {
                 $key = $this->bucketKey($level, $bucket['dimensions']);
                 $stats[$key] = [
                     'attempts' => $bucket['attempts'],
@@ -453,12 +476,13 @@ class NhlExpectedGoalsBackfiller
         string $predictionTarget,
         int $level,
         array $definition,
-        string $sampleMode = self::SAMPLE_SAT
+        string $sampleMode = self::SAMPLE_SAT,
+        ?string $strength = null
     ): array {
         $outcomeColumn = $this->outcomeColumn($predictionTarget);
 
         if ($level === 99) {
-            $row = $this->eligibleTrainingBaseQuery($seasonIds, $sampleMode)
+            $row = $this->eligibleTrainingBaseQuery($seasonIds, $sampleMode, $strength)
                 ->selectRaw('COUNT(*) as attempts')
                 ->selectRaw('SUM(CASE WHEN ' . $outcomeColumn . ' THEN 1 ELSE 0 END) as successes')
                 ->first();
@@ -470,7 +494,7 @@ class NhlExpectedGoalsBackfiller
             ]];
         }
 
-        $query = $this->eligibleTrainingBaseQuery($seasonIds, $sampleMode)
+        $query = $this->eligibleTrainingBaseQuery($seasonIds, $sampleMode, $strength)
             ->selectRaw('COUNT(*) as attempts')
             ->selectRaw('SUM(CASE WHEN ' . $outcomeColumn . ' THEN 1 ELSE 0 END) as successes');
 
@@ -532,7 +556,7 @@ class NhlExpectedGoalsBackfiller
     /**
      * @param array<string, array{attempts:int,successes:int,level:int,dimensions:array<string,string>,raw_success_rate:float,smoothed_probability:float,confidence_score:float,confidence_bucket:string,shrinkage_weight:float}> $buckets
      */
-    private function insertBuckets(int $modelId, array $buckets): void
+    private function insertBuckets(int $modelId, array $buckets, string $strength = 'all'): void
     {
         $now = now();
         $rows = [];
@@ -540,6 +564,7 @@ class NhlExpectedGoalsBackfiller
         foreach ($buckets as $key => $bucket) {
             $rows[] = [
                 'expected_goals_model_id' => $modelId,
+                'strength' => $strength,
                 'bucket_key' => $key,
                 'fallback_level' => $bucket['level'],
                 'bucket_dimensions' => json_encode($bucket['dimensions'], JSON_THROW_ON_ERROR),
@@ -582,6 +607,7 @@ class NhlExpectedGoalsBackfiller
 
         $exclusionReason = $this->exclusionReasonSql();
         $candidateKeys = implode(",\n                    ", $this->candidateBucketKeySql());
+        $strength = $this->analysisBuckets()->strengthSql('facts');
 
         DB::statement(<<<SQL
 INSERT INTO nhl_shot_attempt_predictions (
@@ -628,7 +654,9 @@ SELECT
     matched.smoothed_goal_probability as xg,
     matched.bucket_key as matched_bucket_key,
     matched.fallback_level,
-    NULL as matched_bucket_payload,
+    CASE WHEN matched.bucket_key IS NULL THEN NULL
+        ELSE json_build_object('bucket_key', matched.bucket_key, 'strength', matched.strength)
+    END as matched_bucket_payload,
     now() as created_at,
     now() as updated_at
 FROM nhl_shot_attempts_facts facts
@@ -636,7 +664,7 @@ CROSS JOIN LATERAL (
     SELECT {$exclusionReason} as exclusion_reason
 ) exclusions
 LEFT JOIN LATERAL (
-    SELECT buckets.bucket_key, buckets.fallback_level, buckets.smoothed_goal_probability
+    SELECT buckets.bucket_key, buckets.strength, buckets.fallback_level, buckets.smoothed_goal_probability
     FROM (
         VALUES
             {$candidateKeys}
@@ -644,8 +672,9 @@ LEFT JOIN LATERAL (
     INNER JOIN nhl_expected_goals_model_buckets buckets
         ON buckets.expected_goals_model_id = ?
         AND buckets.bucket_key = candidates.bucket_key
+        AND buckets.strength IN ({$strength}, 'all')
     WHERE exclusions.exclusion_reason IS NULL
-    ORDER BY candidates.sort_order
+    ORDER BY CASE WHEN buckets.strength = {$strength} THEN 0 ELSE 1 END, candidates.sort_order
     LIMIT 1
 ) matched ON true
 WHERE facts.season_id = ?
@@ -674,7 +703,7 @@ SQL, [$modelRunId, $modelId, $predictionTarget, $modelId, $seasonId]);
         END";
     }
 
-    private function eligibleTrainingBaseQuery(array $seasonIds, string $sampleMode = self::SAMPLE_SAT)
+    private function eligibleTrainingBaseQuery(array $seasonIds, string $sampleMode = self::SAMPLE_SAT, ?string $strength = null)
     {
         $query = DB::table('nhl_shot_attempts_facts')
             ->whereIn('season_id', $seasonIds)
@@ -690,6 +719,10 @@ SQL, [$modelRunId, $modelId, $predictionTarget, $modelId, $seasonId]);
         if ($sampleMode === self::SAMPLE_SOG) {
             $query->where('is_shot_on_goal', true)
                 ->whereRaw("COALESCE(NULLIF(shot_type_bucket, ''), 'unknown') <> 'other'");
+        }
+
+        if ($strength !== null) {
+            $query->whereRaw($this->analysisBuckets()->strengthSql('nhl_shot_attempts_facts') . ' = ?', [$strength]);
         }
 
         return $query;
@@ -783,6 +816,10 @@ SQL, [$modelRunId, $modelId, $predictionTarget, $modelId, $seasonId]);
         $singles = [];
 
         foreach ($this->evalFactorDefinitions() as $key => $definition) {
+            // Strength is now a probability partition, not a competing shot-shape factor.
+            if ($key === 'strength_group') {
+                continue;
+            }
             $singles[] = $this->scoreFactorSet(
                 seasonIds: $seasonIds,
                 factorKeys: [$key],

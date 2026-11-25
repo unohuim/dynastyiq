@@ -475,18 +475,16 @@ SQL,
         $now = now();
         $seasonJson = json_encode($seasonIds, JSON_THROW_ON_ERROR);
         $seasonPlaceholders = implode(', ', array_fill(0, count($seasonIds), '?'));
-        $goalModelId = $sogModel?->id;
+        $bucketLookup = app(NhlShotAttemptAnalysisBuckets::class);
+        $satBucketJoin = $bucketLookup->probabilityBucketJoinSql(
+            (int) $satModel->id, $satBucketKeySql, 'sat_buckets', 'profile_facts'
+        );
         $goalBucketJoin = $sogModel === null || $sogBucketKeySql === null
             ? ''
-            : "LEFT JOIN nhl_expected_goals_model_buckets goal_buckets
-                ON goal_buckets.expected_goals_model_id = {$goalModelId}
-                AND goal_buckets.bucket_key = {$sogBucketKeySql}
-            LEFT JOIN nhl_expected_goals_model_buckets goal_baseline
-                ON goal_baseline.expected_goals_model_id = {$goalModelId}
-                AND goal_baseline.bucket_key = 'L99|baseline=league'";
-        $goalProbability = $sogModel === null
-            ? '0'
-            : 'COALESCE(goal_buckets.smoothed_goal_probability, goal_baseline.smoothed_goal_probability, 0)';
+            : $bucketLookup->probabilityBucketJoinSql(
+                (int) $sogModel->id, $sogBucketKeySql, 'goal_buckets', 'profile_facts'
+            );
+        $goalProbability = $sogModel === null ? '0' : 'COALESCE(goal_buckets.smoothed_goal_probability, 0)';
         $usesPlayerExposure = in_array($profileType, ['skater_offense', 'skater_defense', 'goalie_faced'], true);
         $sourceExposureSeconds = $factStrength === null
             ? ($usesPlayerExposure ? 'COALESCE(game_summaries.toi, boxscores.toi_seconds, 0)' : '3600')
@@ -600,21 +598,16 @@ WITH profile_facts AS (
 scored_facts AS (
     SELECT
         profile_facts.*,
-        COALESCE(sat_buckets.bucket_key, sat_baseline.bucket_key) as matched_bucket_key,
-        COALESCE(sat_buckets.fallback_level, sat_baseline.fallback_level) as fallback_level,
-        COALESCE(sat_buckets.bucket_dimensions, sat_baseline.bucket_dimensions) as bucket_dimensions,
-        COALESCE(sat_buckets.smoothed_goal_probability, sat_baseline.smoothed_goal_probability, 0) as sat_probability,
+        sat_buckets.bucket_key as matched_bucket_key,
+        sat_buckets.fallback_level as fallback_level,
+        sat_buckets.bucket_dimensions as bucket_dimensions,
+        COALESCE(sat_buckets.smoothed_goal_probability, 0) as sat_probability,
         {$goalProbability} as goal_probability,
-        COALESCE(sat_buckets.confidence_score, sat_baseline.confidence_score, 0) as confidence_score,
-        COALESCE(sat_buckets.shrinkage_weight, sat_baseline.shrinkage_weight, 0) as shrinkage_weight,
-        COALESCE(sat_buckets.confidence_bucket, sat_baseline.confidence_bucket) as confidence_bucket
+        COALESCE(sat_buckets.confidence_score, 0) as confidence_score,
+        COALESCE(sat_buckets.shrinkage_weight, 0) as shrinkage_weight,
+        sat_buckets.confidence_bucket as confidence_bucket
     FROM profile_facts
-    LEFT JOIN nhl_expected_goals_model_buckets sat_buckets
-        ON sat_buckets.expected_goals_model_id = ?
-        AND sat_buckets.bucket_key = {$satBucketKeySql}
-    LEFT JOIN nhl_expected_goals_model_buckets sat_baseline
-        ON sat_baseline.expected_goals_model_id = ?
-        AND sat_baseline.bucket_key = 'L99|baseline=league'
+    {$satBucketJoin}
     {$goalBucketJoin}
 ),
 strength_profile_facts AS (
@@ -738,8 +731,6 @@ SQL;
             self::REGULAR_SEASON_GAME_TYPE,
             ...($factStrength === null ? [] : [$factStrength]),
             ...($entityKey === null ? [] : [$entityKey]),
-            $satModel->id,
-            $satModel->id,
             $projectionStrength,
             ...($factStrength === null ? [] : [$factStrength]),
             $run->id,

@@ -74,6 +74,7 @@ rules:
   - Draft model creation must not start imports, queues, schedulers, migrations, or model execution as a hidden side effect.
   - Eval SAT from a SAT model queues only training-season SAT danger evaluation: P(shot_on_goal | SAT, selected context). It must not score events, create predictions, create entity profiles, evaluate results against the test season, or project future performance as a hidden side effect.
   - Eval SAT must use only nhl_model_runs.train_season_ids; the optional test season is stored for later evaluation and must not be used during SAT evaluation.
+  - Eval SAT and Eval SOG build combined and observed strength probability partitions under the shared shot-context bucket keys; strength-specific samples, shrinkage and matching follow NhlExpectedGoalsModel.yaml. Evaluation alone never rebuilds saved profiles, context or game predictions.
   - Eval SAT must test approved single factors, then two-factor combinations from the strongest three to five single factors, and store the selected factor interpretation with the trained model.
   - Eval SAT must keep observed rows and use shrinkage plus confidence instead of hard minimum row exclusion.
   - Eval SOG from a SAT model queues only training-season SOG danger evaluation: P(goal | shot_on_goal, selected context). It must not score events, create predictions, create entity profiles, evaluate results against the test season, or project future performance as a hidden side effect.

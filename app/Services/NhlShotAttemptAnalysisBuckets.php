@@ -9,6 +9,50 @@ namespace App\Services;
  */
 class NhlShotAttemptAnalysisBuckets
 {
+    /** Normalize shooter-side strength without confusing goalie/team perspectives. */
+    public function strengthSql(string $tableAlias): string
+    {
+        if (preg_match('/^[a-z_][a-z0-9_]*$/i', $tableAlias) !== 1) {
+            throw new \InvalidArgumentException('Invalid shot-fact table alias.');
+        }
+
+        return "CASE WHEN LOWER({$tableAlias}.strength) IN ('ev','pp','pk')
+            THEN LOWER({$tableAlias}.strength)
+            WHEN LOWER({$tableAlias}.strength_bucket) IN ('ev','pp','pk')
+            THEN LOWER({$tableAlias}.strength_bucket) ELSE 'all' END";
+    }
+
+    /**
+     * Resolve one row, preferring same-strength shape/baseline before combined fallback.
+     * Expressions are generated internally; identifiers and model IDs are bounded here.
+     */
+    public function probabilityBucketJoinSql(int $modelId, string $bucketKeySql, string $alias, string $factAlias): string
+    {
+        if ($modelId < 1 || preg_match('/^[a-z_][a-z0-9_]*$/i', $alias) !== 1) {
+            throw new \InvalidArgumentException('Invalid probability bucket lookup.');
+        }
+
+        return 'LEFT JOIN LATERAL (' . $this->probabilityBucketSelectSql($modelId, $bucketKeySql, $factAlias)
+            . ") {$alias} ON true";
+    }
+
+    /** Share single-row lookup SQL with query-builder readers. */
+    public function probabilityBucketSelectSql(int $modelId, string $bucketKeySql, string $factAlias): string
+    {
+        if ($modelId < 1) {
+            throw new \InvalidArgumentException('Invalid probability model ID.');
+        }
+        $strength = $this->strengthSql($factAlias);
+
+        return "SELECT probability_buckets.* FROM nhl_expected_goals_model_buckets probability_buckets
+            WHERE probability_buckets.expected_goals_model_id = {$modelId}
+                AND probability_buckets.bucket_key IN ({$bucketKeySql}, 'L99|baseline=league')
+                AND probability_buckets.strength IN ({$strength}, 'all')
+            ORDER BY CASE WHEN probability_buckets.strength = {$strength} THEN 0 ELSE 1 END,
+                CASE WHEN probability_buckets.bucket_key = {$bucketKeySql} THEN 0 ELSE 1 END
+            LIMIT 1";
+    }
+
     /**
      * @return array<int, array<string, string>>
      */

@@ -2563,10 +2563,17 @@ to rating preparation without building legacy season projections.
 - `pp`: Power-play training sample.
 - `pk`: Penalty-kill training sample.
 
-The schema permits independent probability rows for the same model and bucket at
-each strength. This schema addition alone does not calculate strength-specific
-probabilities or change evaluation/scoring behavior. The unique identity includes
-strength; `bucket_key` continues to identify the shot-context shape.
+Eval SAT and Eval SOG rebuild the combined sample and each observed strength
+partition under the same shot-context bucket keys. Probability lookup prefers the
+attempt's strength and uses combined rows as fallback. Unknown strength uses the
+combined rows. The unique identity includes strength; `bucket_key` continues to
+identify the shot-context shape.
+
+`nhl_expected_goals_models.feature_config.strength_probabilities` uses
+`strength_bucket_v1` for this explicit strength-partition training and matching
+contract. Missing metadata denotes a legacy combined model. Score/prediction
+`matched_bucket_payload.strength` records the selected bucket's strength using
+the values above, including combined fallback when used.
 
 ---
 

@@ -1,8 +1,9 @@
 # Architecture Inventory
 
-Expected-goals bucket storage supports independent strength rows under the same
-model and shot-context bucket key. Existing rows and writers retain combined
-samples; this schema change does not yet split training or scoring.
+Eval SAT/SOG rebuild combined and independent strength probability rows under the
+same model and shot-context keys. Each partition uses its own baseline/shrinkage;
+scoring and profile readers select one matching-strength row before combined
+fallback. Legacy combined models remain readable until explicitly reevaluated.
 Authority: `docs/architecture/stats/NhlExpectedGoalsModel.yaml`.
 
 Partner lineup reads before puck drop expose the complete eligible roster from

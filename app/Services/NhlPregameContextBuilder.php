@@ -311,7 +311,7 @@ class NhlPregameContextBuilder
         if (! $model || $sources === [] || array_diff($sources, $training) || array_diff($training, $sources)) {
             throw new RuntimeException('Game evaluation requires one SAT bucket model matching its frozen Train seasons.');
         }
-        $buckets = $model->buckets()->where('fallback_level', 1)->orderBy('bucket_key')
+        $buckets = $model->buckets()->where('strength', 'all')->where('fallback_level', 1)->orderBy('bucket_key')
             ->limit(5001)->get(['bucket_key', 'confidence_score']);
         if ($buckets->isEmpty() || $buckets->count() > 5000) {
             throw new RuntimeException('Game evaluation requires a bounded, built SAT bucket map.');

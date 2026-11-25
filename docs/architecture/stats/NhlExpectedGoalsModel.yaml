@@ -34,7 +34,12 @@ when_not_to_use:
   - Treating draft model outputs as published production signals before calibration and holdout validation are approved.
 rules:
   - Probability-bucket storage identity includes owning model, shot-context bucket key, and strength. Strength values are canonical in docs/ENUMS.md.
-  - Existing combined-strength buckets and writers retain their pooled probabilities by default; adding the strength storage dimension must not fabricate separate probabilities or change evaluation, scoring, or predictions.
+  - Existing combined-strength models remain usable until explicitly reevaluated. Reevaluation replaces the selected model target's combined and strength-specific rows atomically without changing other targets or writing per-attempt scores.
+  - Eval SAT and Eval SOG must keep one shared shot-shape mapping and train independent strength partitions from the same approved Train window. Strength is a partition, not a competing shot-shape factor.
+  - Each observed strength partition must use its own eligible attempt denominator, target outcomes, baseline and shrinkage prior; missing strength samples must not produce fabricated zero-probability rows.
+  - Probability lookup must prefer matching-strength buckets, then broader matching-strength buckets, before combined-strength fallback. It must never substitute a different strength's probability or replace a measured zero with fallback.
+  - Scoring and profile joins must select at most one probability row for each source attempt; strength rows must not multiply observed counts or probability sums. Saved score provenance must retain the selected probability strength.
+  - Shared shot-shape membership and reliability maps must read combined rows once, retaining the existing confidence rules independently of strength-specific probability lookup.
   - Rolling back the strength dimension must refuse to discard any strength-specific probability rows.
   - Shot outcome training samples must retain unknown, null, and blank shot types as the existing unknown shot-type category; shootout and empty-net exclusions remain in effect.
   - Unknown shot types must participate in evaluation, scoring, profiles, projections, comparison denominators, and predictive analysis through existing bucket rules. Do not infer a blocked outcome from the unknown label, duplicate attempts, or introduce a separate fallback model. Existing stored results require explicit evaluation and downstream rebuilds.
@@ -90,6 +95,9 @@ public_interface:
   - NhlShotAttemptModelScorer
   - NhlExpectedGoalsModel
   - NhlExpectedGoalsModelBucket
+  - NhlShotAttemptAnalysisBuckets::strengthSql
+  - NhlShotAttemptAnalysisBuckets::probabilityBucketJoinSql
+  - NhlShotAttemptAnalysisBuckets::probabilityBucketSelectSql
   - NhlShotAttemptModelScore
   - NhlShotAttemptPrediction
   - data/shot_attempts_model_input_20252026.csv

@@ -2120,7 +2120,7 @@
                                                     $dimensionLabel = collect($dimensions)->map(fn ($value, $key) => $key . ': ' . $value)->implode(' · ');
                                                 @endphp
                                                 <tr>
-                                                    <td class="min-w-80 px-4 py-3 font-medium text-gray-900">{{ $dimensionLabel ?: $row->bucket_key }}</td>
+                                                    <td class="min-w-80 px-4 py-3 font-medium text-gray-900">{{ $dimensionLabel ?: $row->bucket_key }}<span class="ml-2 text-xs font-medium uppercase text-gray-500">{{ $row->strength === 'all' ? 'All strengths' : $row->strength }}</span></td>
                                                     <td class="whitespace-nowrap px-4 py-3 text-gray-700">{{ $row->fallback_level }}</td>
                                                     <td class="whitespace-nowrap px-4 py-3 text-gray-700">{{ $formatNumber($row->attempts) }}</td>
                                                     <td class="whitespace-nowrap px-4 py-3 text-gray-700">{{ $formatNumber($row->goals) }}</td>

@@ -302,11 +302,9 @@ class NhlEvaluationGameForecaster
         $probability = 'NULL';
         if ($model) {
             $key = app(NhlSatModelEntityProfileBuilder::class)->modelBucketKeySql($model, 'f');
-            $facts->leftJoin('nhl_expected_goals_model_buckets as b', fn ($join) => $join
-                ->where('b.expected_goals_model_id', $model->id)->whereRaw("b.bucket_key = {$key}"))
-                ->leftJoin('nhl_expected_goals_model_buckets as fallback', fn ($join) => $join
-                    ->where('fallback.expected_goals_model_id', $model->id)->where('fallback.bucket_key', 'L99|baseline=league'));
-            $probability = 'COALESCE(b.smoothed_goal_probability, fallback.smoothed_goal_probability)';
+            $lookup = app(NhlShotAttemptAnalysisBuckets::class)->probabilityBucketSelectSql((int) $model->id, $key, 'f');
+            $facts->leftJoin(DB::raw("LATERAL ({$lookup}) as b"), fn ($join) => $join->whereRaw('true'));
+            $probability = 'b.smoothed_goal_probability';
         }
         $counts = $facts->select('f.nhl_game_id')
             ->selectRaw("SUM(CASE WHEN f.is_shot_on_goal AND ({$selected}) THEN 1 ELSE 0 END) as sog, SUM(CASE WHEN f.is_goal AND ({$selected}) THEN 1 ELSE 0 END) as goals")

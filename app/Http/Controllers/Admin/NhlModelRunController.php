@@ -265,6 +265,7 @@ class NhlModelRunController extends Controller
             ->orderBy($sorts[$sort], $direction)
             ->orderByDesc('attempts')
             ->orderBy('bucket_key')
+            ->orderBy('strength')
             ->paginate(50)
             ->withQueryString();
 

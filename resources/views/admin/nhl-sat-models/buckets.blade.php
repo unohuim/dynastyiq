@@ -21,7 +21,7 @@
         $baselineAttemptsLabel = $isSatDanger ? 'Training SAT' : 'Training SOG';
         $baselineSuccessesLabel = $isSatDanger ? 'SOG' : 'goals';
         $modelStateLabel = $model?->trained_at ? 'Trained' : ($model?->status ? $label($model->status) : 'Unlabeled');
-        $bucketCount = data_get($model?->metrics, 'bucket_count') ?? $buckets->total();
+        $bucketCount = $buckets->total();
         $percent = static fn ($value, int $decimals = 2): string => $value === null
             ? '-'
             : number_format(((float) $value) * 100, $decimals) . '%';
@@ -208,6 +208,7 @@
                                         <div class="text-sm font-semibold leading-5 text-gray-950">
                                             {{ $profileTitle !== '' ? $profileTitle : ($isSatDanger ? 'All selected SAT' : 'All selected SOG') }}
                                         </div>
+                                        <div class="mt-1 text-xs font-medium uppercase text-gray-500">{{ $bucket->strength === 'all' ? 'All strengths' : $bucket->strength }}</div>
                                         @if($dimensions !== [])
                                             <div class="mt-2 flex flex-wrap gap-1.5">
                                                 @foreach($dimensions as $dimension => $value)

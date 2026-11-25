@@ -2155,7 +2155,8 @@ class NhlShotAttemptController extends Controller
         $query = $this->playerProfileBaseQuery($filters, $goalModelId, $sogModelId)
             ->join('nhl_expected_goals_model_buckets as goal_buckets', function ($join) use ($goalModelId): void {
                 $join->on('goal_buckets.bucket_key', '=', 'goal_predictions.matched_bucket_key')
-                    ->where('goal_buckets.expected_goals_model_id', '=', $goalModelId);
+                    ->where('goal_buckets.expected_goals_model_id', '=', $goalModelId)
+                    ->where('goal_buckets.strength', '=', 'all');
             })
             ->selectRaw('nhl_shot_attempts_facts.shooter_player_id as nhl_player_id')
             ->selectRaw("COALESCE(shooters.full_name, CAST(nhl_shot_attempts_facts.shooter_player_id AS TEXT)) as player_name")
@@ -4937,6 +4938,7 @@ class NhlShotAttemptController extends Controller
             ->where('expected_goals_model_id', $modelId)
             ->select([
                 'bucket_key',
+                'strength',
                 'fallback_level',
                 'bucket_dimensions',
                 'attempts',

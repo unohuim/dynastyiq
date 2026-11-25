@@ -96,6 +96,7 @@ WHERE facts.id = scores.shot_attempt_fact_id
 SQL, $deleteBindings);
 
         $candidateKeys = implode(",\n                    ", $this->candidateBucketKeySql($model, 'facts'));
+        $strength = app(NhlShotAttemptAnalysisBuckets::class)->strengthSql('facts');
         $goalTarget = $model->prediction_target === NhlExpectedGoalsBackfiller::TARGET_GOAL ? 'true' : 'false';
 
         DB::statement(<<<SQL
@@ -155,6 +156,7 @@ SELECT
         WHEN matched.bucket_key IS NULL THEN NULL
         ELSE json_build_object(
             'bucket_key', matched.bucket_key,
+            'strength', matched.strength,
             'fallback_level', matched.fallback_level,
             'probability', matched.smoothed_goal_probability,
             'attempts', matched.attempts,
@@ -177,6 +179,7 @@ CROSS JOIN LATERAL (
 LEFT JOIN LATERAL (
     SELECT
         buckets.bucket_key,
+        buckets.strength,
         buckets.fallback_level,
         buckets.smoothed_goal_probability,
         buckets.attempts,
@@ -188,8 +191,9 @@ LEFT JOIN LATERAL (
     INNER JOIN nhl_expected_goals_model_buckets buckets
         ON buckets.expected_goals_model_id = ?
         AND buckets.bucket_key = candidates.bucket_key
+        AND buckets.strength IN ({$strength}, 'all')
     WHERE exclusions.exclusion_reason IS NULL
-    ORDER BY candidates.sort_order
+    ORDER BY CASE WHEN buckets.strength = {$strength} THEN 0 ELSE 1 END, candidates.sort_order
     LIMIT 1
 ) matched ON true
 WHERE facts.season_id = ?

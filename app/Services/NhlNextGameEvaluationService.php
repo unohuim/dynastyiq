@@ -75,7 +75,7 @@ class NhlNextGameEvaluationService
             throw new RuntimeException('Complete, single-SAT-model offensive profiles are required.');
         }
         $satModel = NhlExpectedGoalsModel::query()->findOrFail($satIds->first());
-        $keys = $satModel->buckets()->limit(self::PROFILE_ROW_LIMIT + 1)->pluck('bucket_key');
+        $keys = $satModel->buckets()->where('strength', 'all')->limit(self::PROFILE_ROW_LIMIT + 1)->pluck('bucket_key');
         if ($keys->count() > self::PROFILE_ROW_LIMIT) {
             throw new RuntimeException('SAT bucket mapping exceeds the evaluation safety limit.');
         }

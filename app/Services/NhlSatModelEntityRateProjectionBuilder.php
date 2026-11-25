@@ -3147,6 +3147,7 @@ SQL : '';
         }
 
         $candidateKeys = implode(",\n                    ", $this->goalModelCandidateBucketKeySql($goalModel, 'facts'));
+        $strength = app(NhlShotAttemptAnalysisBuckets::class)->strengthSql('facts');
 
         DB::statement(<<<SQL
 WITH scored_attempts AS (
@@ -3169,7 +3170,8 @@ WITH scored_attempts AS (
         INNER JOIN nhl_expected_goals_model_buckets buckets
             ON buckets.expected_goals_model_id = ?
             AND buckets.bucket_key = candidates.bucket_key
-        ORDER BY candidates.sort_order
+            AND buckets.strength IN ({$strength}, 'all')
+        ORDER BY CASE WHEN buckets.strength = {$strength} THEN 0 ELSE 1 END, candidates.sort_order
         LIMIT 1
     ) matched ON true
     WHERE facts.season_id = ?
