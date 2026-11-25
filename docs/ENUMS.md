@@ -3152,6 +3152,13 @@ identifies a completed empty missing-work selection. Updates keep the existing
   `prediction_available: false` and `Retry-After: 15`, not a database run status.
   Pending manual game work retains the existing `queued` state.
 - Context prediction evidence additionally stores `history_fingerprint` separately from the complete participant fingerprint; private run evidence retains `history_identity` to verify older snapshots without a blanket rebuild.
+- Private context-run option `prediction_context_gaps.{nhl_game_id}` stores
+  `ready`, `teams_ready` and `missing_players` (NHL player/team ID pairs) at admission.
+  It is diagnostic coverage, not a new lifecycle state or participant authority.
+- Private context-run option `prediction_league_references.{cutoff}.{entity_type}`
+  binds the source `run_id`, `run_day_id`, `source` fingerprint and `average_ids`.
+  Existing `team`/`player` entity types and completion states retain their meaning.
+  It references retained completed populations without duplicating saved averages.
 
 - Private result-evidence version `result_values_v1` fingerprints selected completed-game
   statistical fields and summary values. Polling/creation/update timestamps are

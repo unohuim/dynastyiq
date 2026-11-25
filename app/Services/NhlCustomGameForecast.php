@@ -538,9 +538,19 @@ class NhlCustomGameForecast
     /** A ready context includes both teams, each selected player and committed comparisons. */
     public function contextReady(int $modelId, int $gameId, array $evidence): bool
     {
+        return $this->contextCoverage($modelId, $gameId, $evidence)['ready'];
+    }
+
+    /**
+     * Identify missing same-cutoff participants without invalidating valid teammates.
+     *
+     * @return array{ready:bool,teams_ready:bool,missing_players:array}
+     */
+    public function contextCoverage(int $modelId, int $gameId, array $evidence): array
+    {
         $teams = $this->reusableContextTeams($modelId, $gameId, $evidence);
         if ($teams->count() !== 2) {
-            return false;
+            return ['ready' => false, 'teams_ready' => false, 'missing_players' => []];
         }
         $players = DB::table('nhl_player_game_pregame_contexts')->where('model_run_id', $modelId)
             ->where('nhl_game_id', $gameId)->where('context_version', NhlPregameContextBuilder::VERSION)
@@ -551,18 +561,19 @@ class NhlCustomGameForecast
                 ->where('work.nhl_game_id', $gameId)->where('work.state', 'complete')->whereNotNull('work.comparisons_completed_at'))
             ->get(['nhl_player_id', 'nhl_team_id']);
         $keys = $players->mapWithKeys(fn (object $player): array => [$player->nhl_player_id.':'.$player->nhl_team_id => true]);
+        $missing = [];
         foreach ($evidence['players'] as $id => $player) {
             if (! $keys->has($id.':'.$player['team'])) {
-                return false;
+                $missing[$id.':'.$player['team']] = ['nhl_player_id' => (int) $id, 'nhl_team_id' => (int) $player['team']];
             }
         }
 
         foreach ($evidence['starters'] ?? [] as $team => $id) {
             if ($id !== null && ! $keys->has($id.':'.$team)) {
-                return false;
+                $missing[$id.':'.$team] = ['nhl_player_id' => (int) $id, 'nhl_team_id' => (int) $team];
             }
         }
-        return true;
+        return ['ready' => $missing === [], 'teams_ready' => true, 'missing_players' => array_values($missing)];
     }
 
     /** Reuse committed team history independently of player selection, deployment and starters. */

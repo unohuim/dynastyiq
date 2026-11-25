@@ -1885,6 +1885,11 @@ checkpoint claims without resetting completed dates. League entity pages reuse
 unchanged player values between cutoffs, and PostgreSQL attaches comparisons in bulk.
 `NhlPregameLeagueResults` shares result calculations with the builder and keeps
 league peer staging in temporary SQL tables rather than PHP memory or JSON.
+Prediction participant repairs identify missing players separately, retain existing
+snapshots and reuse matching completed league populations. Finalized ranking peers
+have bounded cache retention before SQL cleanup; expiry or absent older references
+uses normal preparation. Canonical reuse and cutoff rules remain in
+`NhlPregameContextEvidence.yaml`.
 
 **Authority:** `docs/architecture/stats/NhlPregameContextEvidence.yaml`
 

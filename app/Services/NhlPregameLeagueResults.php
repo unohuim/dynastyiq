@@ -8,6 +8,7 @@ use App\Exceptions\NhlPregameContextRunStopped;
 use App\Models\NhlPregameContextRun;
 use App\Models\NhlPregameContextRunDay;
 use Closure;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
 /** Calculates independent league baselines from results, then attaches context comparisons. */
@@ -18,6 +19,162 @@ class NhlPregameLeagueResults
     /** Reuse the context metric definitions while reading only raw results for league peers. */
     public function __construct(private NhlPregameContextBuilder $builder)
     {
+    }
+
+    /** Admit matching completed populations before dispatching any league work for a prediction repair. */
+    public function reuseDayReferences(NhlPregameContextRun $run, NhlPregameContextRunDay $day): bool
+    {
+        if (data_get($run->options, 'trigger') !== 'prediction') {
+            return false;
+        }
+        $references = [];
+        $complete = true;
+        $cutoffs = $this->cutoffs($run, $day);
+        foreach ($cutoffs as $game) {
+            foreach (['team', 'player'] as $entityType) {
+                $reference = $this->findReference($run, $day, $game, $entityType);
+                if ($reference === null) {
+                    $complete = false;
+                } else {
+                    $references[$game->start_time_utc][$entityType] = $reference;
+                }
+            }
+        }
+        DB::transaction(function () use ($run, $day, $references, $complete, $cutoffs): void {
+            $owner = NhlPregameContextRun::query()->whereKey($run->id)->lockForUpdate()->firstOrFail();
+            $options = $owner->options ?? [];
+            foreach ($references as $cutoff => $populations) {
+                $options['prediction_league_references'][$cutoff] = array_replace(
+                    $options['prediction_league_references'][$cutoff] ?? [], $populations
+                );
+            }
+            $owner->update(['options' => $options]);
+            $run->setRawAttributes($owner->getAttributes(), true);
+            if ($complete && $cutoffs !== [] && $day->league_state === 'pending') {
+                $day->update(['league_state' => 'complete', 'league_cursor' => count($cutoffs) * 2,
+                    'league_entity_cursor' => 0, 'league_completed_at' => now()]);
+            }
+        });
+
+        return $complete && $cutoffs !== [];
+    }
+
+    /** Source identity excludes participants and game identity but preserves every historical boundary. */
+    private function referenceSource(NhlPregameContextRun $run, object $game): ?string
+    {
+        if ($run->model_run_id === null) {
+            return null;
+        }
+        foreach (data_get($run->options, 'prediction_evidence', []) as $evidence) {
+            if (($evidence['cutoff_at'] ?? null) !== (string) $game->start_time_utc
+                || ! isset($evidence['history_identity']['model'], $evidence['history_identity']['results'], $evidence['history_identity']['version'])) {
+                continue;
+            }
+            $seasons = array_map('strval', $run->season_ids ?? []);
+            sort($seasons);
+            $schedule = DB::table('nhl_games')->where('season_id', $game->season_id)->where('game_type', 2)
+                ->where('start_time_utc', '>=', $game->start_time_utc)->orderBy('start_time_utc')->orderBy('nhl_game_id')
+                ->get(['nhl_game_id', 'season_id', 'game_date', 'start_time_utc', 'home_team_id', 'away_team_id']);
+            return hash('sha256', json_encode(['version' => 1, 'model_id' => $run->model_run_id,
+                'cutoff' => (string) $game->start_time_utc,
+                'seasons' => $seasons, 'schedule' => $schedule->all(),
+                'history' => \Illuminate\Support\Arr::except($evidence['history_identity'], ['game']),
+                'train' => data_get($run->options, 'train_season_ids', [])], JSON_THROW_ON_ERROR));
+        }
+
+        return null;
+    }
+
+    /** Cache names are scoped to immutable average identities, never merely to calendar dates. */
+    private function peerKey(int $averageId): string
+    {
+        return 'nhl:pregame:comparison-peers:v1:'.$averageId;
+    }
+
+    /** Name one complete source-owned league population. */
+    private function populationKey(int $runId, int $dayId, string $cutoff, string $entityType): string
+    {
+        return 'nhl:pregame:comparison-population:v1:'.hash('sha256', json_encode([$runId, $dayId, $cutoff, $entityType], JSON_THROW_ON_ERROR));
+    }
+
+    /** Preserve bounded finalized peer groups before normal SQL peer cleanup removes them. */
+    private function cachePeerGroups(NhlPregameContextRun $run, object $game, string $entityType, iterable $averages): void
+    {
+        $source = $this->referenceSource($run, $game);
+        if ($source === null) {
+            return;
+        }
+        foreach ($averages as $average) {
+            $peers = DB::table('nhl_pregame_context_league_peers')->where('league_average_id', $average->id)
+                ->orderBy('entity_id')->get(['entity_id', 'value', 'league_rank'])
+                ->mapWithKeys(fn ($row): array => [(int) $row->entity_id => [(string) $row->value, (int) $row->league_rank]])->all();
+            if (count($peers) !== (int) $average->rank_population) {
+                throw new \RuntimeException('Completed league reference has an incomplete rank population.');
+            }
+            if (! Cache::put($this->peerKey((int) $average->id), ['source' => $source, 'peers' => $peers,
+                'checksum' => hash('sha256', serialize($peers))],
+                now()->addHours(max(1, (int) config('nhl-pregame.league_reference_hours', 24)) + 1))) {
+                throw new \RuntimeException('Unable to retain the completed league ranking reference.');
+            }
+        }
+    }
+
+    /** Publish a reusable population only after every independent group has committed its cache entry. */
+    private function cachePopulation(NhlPregameContextRun $run, NhlPregameContextRunDay $day, object $game, string $entityType): void
+    {
+        $source = $this->referenceSource($run, $game);
+        if ($source === null) {
+            return;
+        }
+        $averages = DB::table('nhl_pregame_context_league_averages')->where('run_id', $run->id)
+            ->where('run_day_id', $day->id)->where('source_cutoff_at', $game->start_time_utc)->where('entity_type', $entityType)
+            ->orderBy('id')->get(['id', 'rank_population', 'league_average', 'metric_key', 'window_key', 'strength']);
+        foreach ($averages as $average) {
+            if (! Cache::has($this->peerKey((int) $average->id))) {
+                throw new \RuntimeException('A completed league ranking reference is missing.');
+            }
+        }
+        if (! Cache::put($this->populationKey($run->id, $day->id, (string) $game->start_time_utc, $entityType),
+            ['source' => $source, 'average_ids' => $averages->pluck('id')->all()],
+            now()->addHours(max(1, (int) config('nhl-pregame.league_reference_hours', 24))))) {
+            throw new \RuntimeException('Unable to publish the completed league ranking reference.');
+        }
+    }
+
+    /** Find a complete matching source population without recalculating any player or team history. */
+    private function findReference(NhlPregameContextRun $run, NhlPregameContextRunDay $day, object $game, string $entityType): ?array
+    {
+        $source = $this->referenceSource($run, $game);
+        if ($source === null) {
+            return null;
+        }
+        $candidates = DB::table('nhl_pregame_context_league_averages as average')
+            ->join('nhl_pregame_context_runs as owner', 'owner.id', '=', 'average.run_id')
+            ->join('nhl_pregame_context_run_days as day', 'day.id', '=', 'average.run_day_id')
+            ->where('average.model_run_id', $run->model_run_id)->whereDate('average.game_date', $day->game_date)
+            ->where('average.source_cutoff_at', $game->start_time_utc)->where('average.entity_type', $entityType)
+            ->where('owner.id', '<', $run->id)->where('owner.status', 'completed')->where('day.league_state', 'complete')
+            ->distinct()->orderByDesc('average.run_id')->limit(8)->get(['average.run_id', 'average.run_day_id']);
+        foreach ($candidates as $candidate) {
+            $key = $this->populationKey((int) $candidate->run_id, (int) $candidate->run_day_id, (string) $game->start_time_utc, $entityType);
+            $manifest = Cache::get($key);
+            if (! is_array($manifest) || ($manifest['source'] ?? null) !== $source || ! is_array($manifest['average_ids'] ?? null)) {
+                continue;
+            }
+            $complete = true;
+            foreach ($manifest['average_ids'] as $averageId) {
+                if (! Cache::has($this->peerKey((int) $averageId))) {
+                    $complete = false;
+                    break;
+                }
+            }
+            if ($complete) {
+                return ['run_id' => (int) $candidate->run_id, 'run_day_id' => (int) $candidate->run_day_id,
+                    'source' => $source, 'average_ids' => $manifest['average_ids']];
+            }
+        }
+
+        return null;
     }
 
     /** Aggregate league peers without requiring any saved pregame context. */
@@ -159,6 +316,23 @@ class NhlPregameLeagueResults
         }
         $game = $cutoffs[intdiv($cursor, 2)];
         $entityType = $cursor % 2 === 0 ? 'team' : 'player';
+        $reference = data_get($run->options, 'prediction_league_references.'.$game->start_time_utc.'.'.$entityType);
+        if (is_array($reference) && (int) $day->league_entity_cursor === 0) {
+            DB::transaction(function () use ($run, $day, $cursor, $isStopped): void {
+                $owner = NhlPregameContextRun::query()->whereKey($run->id)->lockForUpdate()->firstOrFail();
+                $this->assertActive($isStopped);
+                if (! in_array($owner->status, ['running', 'pausing'], true)) {
+                    throw new NhlPregameContextRunStopped('Pregame work is no longer active.');
+                }
+                $updated = NhlPregameContextRunDay::query()->whereKey($day->id)->where('league_cursor', $cursor)
+                    ->where('league_entity_cursor', 0)->update(['league_cursor' => $cursor + 1]);
+                if ($updated !== 1) {
+                    throw new NhlPregameContextRunStopped('The league checkpoint has changed.');
+                }
+            });
+
+            return $cursor + 1 >= count($cutoffs) * 2;
+        }
         if ((int) $day->league_entity_cursor === self::FINALIZING_ENTITY_CURSOR) {
             return $this->finalizeNextPopulation($run, $day, $game, $entityType, count($cutoffs) * 2, $isStopped);
         }
@@ -297,8 +471,12 @@ class NhlPregameLeagueResults
                 ->limit(max(1, (int) config('nhl-pregame.league_rank_group_page_size', 8)))->pluck('id');
             if ($ids->isNotEmpty()) {
                 $this->finalizePopulation((clone $averages)->whereIn('id', $ids));
+                $this->cachePeerGroups($run, $game, $entityType, (clone $averages)->whereIn('id', $ids)->get());
             }
             $more = (clone $averages)->where('rank_population', 0)->exists();
+            if (! $more) {
+                $this->cachePopulation($run, $day, $game, $entityType);
+            }
             $owner = NhlPregameContextRun::query()->whereKey($run->id)
                 ->lock(DB::getDriverName() === 'pgsql' ? 'for no key update' : true)->firstOrFail();
             if (! in_array($owner->status, ['running', 'pausing'], true)) {
@@ -336,12 +514,18 @@ class NhlPregameLeagueResults
     /** Attach one game's comparisons using persisted peers; never rebuild league histories. */
     public function attachGameComparisons(NhlPregameContextRun $run, NhlPregameContextRunDay $day, int $gameId, ?Closure $isStopped = null): void
     {
+        $types = [];
+        foreach (['team', 'player'] as $entityType) {
+            if (! $this->attachReferencedComparisons($run, $gameId, $entityType, $isStopped)) {
+                $types[] = $entityType;
+            }
+        }
         if (DB::getDriverName() === 'pgsql') {
-            $this->attachGameComparisonsInDatabase($run, $day, $gameId, $isStopped);
+            $this->attachGameComparisonsInDatabase($run, $day, $gameId, $isStopped, $types);
 
             return;
         }
-        foreach (['team', 'player'] as $entityType) {
+        foreach ($types as $entityType) {
             $contextTable = 'nhl_'.$entityType.'_game_pregame_contexts';
             $metricTable = 'nhl_'.$entityType.'_game_pregame_context_metrics';
             $foreignKey = $entityType.'_context_id';
@@ -392,10 +576,94 @@ class NhlPregameLeagueResults
         }
     }
 
-    /** Update comparison fields in place instead of clearing and round-tripping every metric through PHP. */
-    private function attachGameComparisonsInDatabase(NhlPregameContextRun $run, NhlPregameContextRunDay $day, int $gameId, ?Closure $isStopped): void
+    /** Compare only this run's added contexts against matching retained peer groups, preserving all older rows. */
+    private function attachReferencedComparisons(NhlPregameContextRun $run, int $gameId, string $entityType, ?Closure $isStopped): bool
     {
-        foreach (['team', 'player'] as $entityType) {
+        $contextTable = 'nhl_'.$entityType.'_game_pregame_contexts';
+        $metricTable = 'nhl_'.$entityType.'_game_pregame_context_metrics';
+        $foreignKey = $entityType.'_context_id';
+        $contexts = DB::table($contextTable)->where('run_id', $run->id)->where('model_run_id', $run->model_run_id)
+            ->where('nhl_game_id', $gameId)->where('context_version', NhlPregameContextBuilder::VERSION);
+        $cutoffs = (clone $contexts)->distinct()->pluck('source_cutoff_at');
+        if ($cutoffs->isEmpty()) {
+            return true;
+        }
+        if ($cutoffs->count() !== 1) {
+            throw new \RuntimeException('A game comparison cannot mix historical cutoffs.');
+        }
+        $cutoff = (string) $cutoffs->first();
+        $reference = data_get($run->options, 'prediction_league_references.'.$cutoff.'.'.$entityType);
+        if (! is_array($reference)) {
+            return false;
+        }
+        $averages = DB::table('nhl_pregame_context_league_averages')->whereIn('id', $reference['average_ids'])
+            ->where('model_run_id', $run->model_run_id)->where('run_id', $reference['run_id'])
+            ->where('run_day_id', $reference['run_day_id'])->where('source_cutoff_at', $cutoff)->where('entity_type', $entityType)
+            ->get()->keyBy(fn ($row): string => implode('|', [$row->metric_key, $row->window_key, $row->strength]));
+        if ($averages->count() !== count($reference['average_ids'])) {
+            throw new \RuntimeException('The saved league comparison reference is no longer available.');
+        }
+        $rows = DB::table($metricTable.' as metric')->join($contextTable.' as context', 'context.id', '=', 'metric.'.$foreignKey)
+            ->whereIn('context.id', (clone $contexts)->select('id'))
+            ->orderBy('metric.metric_key')->orderBy('metric.window_key')->orderBy('metric.strength')->orderBy('metric.id')
+            ->select(['metric.'.$foreignKey, 'metric.metric_key', 'metric.window_key', 'metric.strength', 'metric.measure_key',
+                'metric.value', 'context.nhl_'.$entityType.'_id as entity_id'])->lazy(300);
+        $updates = [];
+        $lastId = null;
+        $peers = [];
+        $timestamp = now()->toDateTimeString();
+        foreach ($rows as $metric) {
+            $this->assertActive($isStopped);
+            $average = $averages->get(implode('|', [$metric->metric_key, $metric->window_key, $metric->strength]));
+            if ($average !== null && $lastId !== (int) $average->id) {
+                $cached = Cache::get($this->peerKey((int) $average->id));
+                if (! is_array($cached) || ($cached['source'] ?? null) !== $reference['source']
+                    || ! is_array($cached['peers'] ?? null) || count($cached['peers']) !== (int) $average->rank_population
+                    || ($cached['checksum'] ?? null) !== hash('sha256', serialize($cached['peers']))) {
+                    throw new \RuntimeException('The retained league rank population is unavailable; retry reference preparation.');
+                }
+                $peers = $cached['peers'];
+                $lastId = (int) $average->id;
+            }
+            $rank = $difference = $percentage = null;
+            $known = $average !== null && $metric->measure_key === 'value' && $metric->value !== null
+                && isset($peers[(int) $metric->entity_id]);
+            if ($known) {
+                [$value, $savedRank] = $peers[(int) $metric->entity_id];
+                $rank = (float) $value === (float) $metric->value ? $savedRank : 1;
+                if ((float) $value !== (float) $metric->value) {
+                    foreach ($peers as $id => [$peerValue]) {
+                        if ((int) $id !== (int) $metric->entity_id && (float) $peerValue > (float) $metric->value) {
+                            $rank++;
+                        }
+                    }
+                }
+                $difference = (float) $metric->value - (float) $average->league_average;
+                $percentage = (float) $average->league_average == 0.0 ? null : 100 * $difference / abs((float) $average->league_average);
+            }
+            $updates[] = [$foreignKey => $metric->{$foreignKey}, 'metric_key' => $metric->metric_key,
+                'window_key' => $metric->window_key, 'strength' => $metric->strength, 'measure_key' => $metric->measure_key,
+                'value' => $metric->value, 'league_average_id' => $known ? $average->id : null,
+                'league_average' => $known ? $average->league_average : null, 'league_rank' => $rank,
+                'rank_population' => $known ? $average->rank_population : null, 'signed_difference' => $difference,
+                'absolute_difference' => $difference === null ? null : abs($difference), 'percentage_difference' => $percentage,
+                'created_at' => $timestamp, 'updated_at' => $timestamp];
+            if (count($updates) >= 300) {
+                $this->writeComparisons($metricTable, $foreignKey, $updates, $isStopped);
+                $updates = [];
+            }
+        }
+        if ($updates !== []) {
+            $this->writeComparisons($metricTable, $foreignKey, $updates, $isStopped);
+        }
+
+        return true;
+    }
+
+    /** Update comparison fields in place instead of clearing and round-tripping every metric through PHP. */
+    private function attachGameComparisonsInDatabase(NhlPregameContextRun $run, NhlPregameContextRunDay $day, int $gameId, ?Closure $isStopped, array $types = ['team', 'player']): void
+    {
+        foreach ($types as $entityType) {
             $this->assertActive($isStopped);
             $contexts = 'nhl_'.$entityType.'_game_pregame_contexts';
             $metrics = 'nhl_'.$entityType.'_game_pregame_context_metrics';

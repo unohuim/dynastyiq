@@ -178,6 +178,15 @@ class NhlPregameContextOrchestrator
     /** Queue a shared, explicitly scoped date dependency for the current prediction lineups. */
     public function queuePredictionContexts(NhlModelRun $model, array $evidence, array $lineups): ?NhlPregameContextRun
     {
+        $gaps = [];
+        foreach ($evidence as $gameId => $values) {
+            $coverage = app(NhlCustomGameForecast::class)->contextCoverage((int) $model->id, (int) $gameId, $values);
+            if ($coverage['ready']) {
+                unset($evidence[$gameId]);
+            } else {
+                $gaps[$gameId] = $coverage;
+            }
+        }
         $ids = array_map('intval', array_keys($evidence));
         if ($ids === []) {
             return null;
@@ -186,6 +195,7 @@ class NhlPregameContextOrchestrator
 
         return $this->queueBackfill($seasons, (int) $model->id, null, [
             'trigger' => 'prediction', 'game_ids' => $ids, 'prediction_evidence' => $evidence,
+            'prediction_context_gaps' => $gaps,
             'prediction_participants' => array_intersect_key($lineups, $evidence),
             'train_season_ids' => array_map('strval', $model->train_season_ids ?? []),
             'pipeline_version' => self::CHECKPOINT_PIPELINE,
@@ -565,6 +575,11 @@ class NhlPregameContextOrchestrator
                 'total_games' => count($rows),
                 'last_error' => null,
             ]);
+            if (data_get($fresh->options, 'trigger') === 'prediction') {
+                foreach ($fresh->days()->get() as $day) {
+                    app(NhlPregameLeagueResults::class)->reuseDayReferences($fresh, $day);
+                }
+            }
         });
 
         if ($run->fresh()->status === NhlPregameContextRun::STATUS_RUNNING) {
