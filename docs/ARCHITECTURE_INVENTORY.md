@@ -3961,6 +3961,10 @@ attempts to SOG and goals; API rows expose the applied model and rates. Rookie
 NHLe, depth-player averages, and missing-model fallbacks remain available. See
 `docs/architecture/stats/NhlProjectedTeamMatchups.yaml` for the governing rules.
 
+Projected roster membership follows current canonical player team assignments;
+saved statistical projection team fields do not assign current rosters. See
+`docs/architecture/stats/NhlPredictionInputServices.yaml` for the governing rule.
+
 The non-live game-detail Vue team component exposes independent Lineup and
 Prediction tabs. Missing reports use the shared injury-filtered projected roster
 preview without creating evidence. Per-player /60 and /GP previews do not depend

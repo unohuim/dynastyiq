@@ -1604,7 +1604,7 @@ lineups no longer qualify as reported or suppress further discovery.
 | --- | --- |
 | `nhl_boxscore` | A complete official NHL game roster supplied the skaters. |
 | `anticipated_lineup` | A complete, canonically resolved reported lineup supplied the skaters. |
-| `projected_roster` | No usable game-specific lineup existed, so DynastyIQ used its roster projection and injury exclusions. |
+| `projected_roster` | No usable game-specific lineup existed, so DynastyIQ selected current team members using personal opportunity projections and injury exclusions. |
 
 Goalie precedence:
 

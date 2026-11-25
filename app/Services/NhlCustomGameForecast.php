@@ -696,6 +696,10 @@ class NhlCustomGameForecast
             ->get(['nhl_game_id', 'game_date', 'game_state', 'start_time_utc', 'home_team_id', 'away_team_id', 'away_team_abbrev', 'home_team_abbrev', 'away_starter_lock', 'home_starter_lock']);
         $lineups = DB::table('nhl_current_lineups')->whereIn('nhl_game_id', $schedule->pluck('nhl_game_id'))
             ->orderBy('nhl_game_id')->orderBy('team_id')->get(['nhl_game_id', 'team_id', 'structure_hash']);
+        $memberships = $storedBoxscore ? [] : DB::table('players')
+            ->whereIn('team_abbrev', $schedule->flatMap(fn ($row): array => [$row->away_team_abbrev, $row->home_team_abbrev])->unique())
+            ->where('nhl_id', '>', 0)->orderBy('nhl_id')
+            ->get(['nhl_id', 'team_abbrev', 'position', 'pos_type', 'is_goalie']);
         $goalies = DB::table('nhl_starting_goalie_observations')->whereIn('nhl_game_id', $schedule->pluck('nhl_game_id'))
             ->orderByRaw("CASE status WHEN 'confirmed' THEN 0 WHEN 'expected' THEN 1 ELSE 2 END")
             ->orderByDesc('fetched_at')->orderByDesc('id')
@@ -706,7 +710,7 @@ class NhlCustomGameForecast
             'date' => $date, 'calculation_date' => now('America/Toronto')->toDateString(),
             'schedule' => $schedule, 'results' => $results,
             'availability' => app(NhlLineupAvailability::class)->evidenceForGames($schedule),
-            'lineups' => $lineups, 'goalies' => $goalies, 'stored_boxscore' => $storedBoxscore,
+            'lineups' => $lineups, 'memberships' => $memberships, 'goalies' => $goalies, 'stored_boxscore' => $storedBoxscore,
             'roster_overrides' => $rosterOverrides, 'override_game' => $rosterOverrides === [] ? null : $game->nhl_game_id];
         $key = 'nhl:custom-inputs:queued-v4:'.$model->id.':'.$date.':'.(int) $storedBoxscore.':'
             .hash('sha256', json_encode([$rosterOverrides, $rosterOverrides === [] ? null : $game->nhl_game_id], JSON_THROW_ON_ERROR));

@@ -539,8 +539,10 @@ class NhlCustomGamePredictionInputs
                 $source = 'last_known_lineup';
             }
             if (! $storedBoxscore) {
+                $currentIds = DB::table('players')->where('team_abbrev', $abbrev)
+                    ->whereIn('nhl_id', $ids)->pluck('nhl_id')->all();
                 $blocked = $availability->blocked($game, $abbrev)->pluck('nhl_player_id')->all();
-                $ids = array_values(array_diff($ids, $blocked));
+                $ids = array_values(array_diff(array_intersect($ids, $currentIds), $blocked));
             }
             $players = DB::table('players')->whereIn('nhl_id', $ids)->get(['nhl_id', 'full_name', 'position', 'pos_type'])->keyBy('nhl_id');
             $reported = collect($roster)->keyBy('nhl_player_id');

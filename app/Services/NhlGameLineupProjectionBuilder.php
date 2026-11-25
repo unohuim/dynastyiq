@@ -43,7 +43,7 @@ final class NhlGameLineupProjectionBuilder
     }
 
     /**
-     * Select the existing TOI-ranked roster without importing or declaring reported evidence.
+     * Select current team members, using optional personal TOI projections only for ranking.
      *
      * @param array<int,int>|null $rosterIds
      * @return array<int,array<string,mixed>>
@@ -58,17 +58,24 @@ final class NhlGameLineupProjectionBuilder
     /** Resolve an uncached input snapshot; see projectedRosterPreview() for its input contract. */
     private function loadProjectedRosterPreview(string $targetSeasonId, string $toiProjectionVersion, string $team, ?array $rosterIds = null): array
     {
-        $rows = DB::table('nhl_player_toi_projections as toi')
-            ->leftJoin('players', 'players.nhl_id', '=', 'toi.player_id')
-            ->where('toi.target_season_id', $targetSeasonId)
-            ->where('toi.projection_version', $toiProjectionVersion)
-            ->where('toi.target_team_abbrev', $team)
-            ->when($rosterIds !== null, fn ($query) => $query->whereIn('toi.player_id', $rosterIds))
-            ->when($rosterIds === null, fn ($query) => $query->whereNotIn('toi.player_id', $this->unavailablePlayerIds($team)))
-            ->whereRaw("UPPER(COALESCE(toi.position, '')) <> 'G'")
-            ->orderByDesc('toi.projected_toi_per_game_seconds')->orderBy('toi.player_id')
-            ->get(['toi.player_id', 'players.id as dynasty_player_id', 'players.full_name as player_name',
-                'toi.position', 'toi.projected_toi_per_game_seconds', 'toi.confidence_score', 'toi.confidence_bucket']);
+        $position = "COALESCE(NULLIF(players.position, ''), NULLIF(players.pos_type, ''), toi.position)";
+        $rows = DB::table('players')
+            ->leftJoin('nhl_player_toi_projections as toi', function ($join) use ($targetSeasonId, $toiProjectionVersion): void {
+                $join->on('toi.player_id', '=', 'players.nhl_id')
+                    ->where('toi.target_season_id', $targetSeasonId)
+                    ->where('toi.projection_version', $toiProjectionVersion);
+            })
+            ->where('players.nhl_id', '>', 0)
+            // Explicit historical participants retain their supplied identities after a trade.
+            ->when($rosterIds !== null, fn ($query) => $query->whereIn('players.nhl_id', $rosterIds))
+            ->when($rosterIds === null, fn ($query) => $query->where('players.team_abbrev', $team)
+                ->whereNotIn('players.nhl_id', $this->unavailablePlayerIds($team)))
+            ->where(fn ($query) => $query->whereNull('players.is_goalie')->orWhere('players.is_goalie', false))
+            ->whereRaw("UPPER(COALESCE($position, '')) NOT IN ('', 'G')")
+            ->orderByRaw('toi.projected_toi_per_game_seconds DESC NULLS LAST')->orderBy('players.nhl_id')
+            ->select(['players.nhl_id as player_id', 'players.id as dynasty_player_id', 'players.full_name as player_name',
+                'toi.projected_toi_per_game_seconds', 'toi.confidence_score', 'toi.confidence_bucket'])
+            ->selectRaw($position.' AS position')->get();
         $forwards = $rows->filter(fn (object $row): bool => mb_strtoupper((string) $row->position) !== 'D')->take(12);
         $defense = $rows->filter(fn (object $row): bool => mb_strtoupper((string) $row->position) === 'D')->take(6);
 

@@ -14,6 +14,8 @@ use App\Models\Role;
 use App\Models\User;
 use App\Services\NhlAnticipatedLineupPayload;
 use App\Services\NhlCustomGamePredictionInputs;
+use App\Services\NhlCustomGameForecast;
+use App\Services\NhlGameLineupProjectionBuilder;
 use App\Services\NhlGamePredictionHistory;
 use App\Services\NhlGamePredictionPayload;
 use App\Services\NhlGamePredictionResponseCache;
@@ -314,7 +316,7 @@ it('keeps the selected snapshot identities equal to the players used for statist
 
 it('rejects an incomplete fallback instead of publishing a shortened roster', function (): void {
     ($this->out)();
-    DB::table('nhl_player_toi_projections')->where('player_id', $this->players['COL'][19]->nhl_id)->delete();
+    $this->players['COL'][19]->update(['team_abbrev' => 'UTA']);
     expect(fn () => app(NhlCustomGamePredictionInputs::class)->anticipatedParticipants((object) $this->game->getAttributes()))
         ->toThrow(\DomainException::class);
 });
@@ -560,4 +562,214 @@ it('keeps each teams current injuries separate from its frozen prediction partic
     $this->getJson('/games/2026020346/details?section=lineups')->assertOk()
         ->assertJsonCount(0, 'data.away.injuries')->assertJsonCount(1, 'data.home.injuries')
         ->assertJsonPath('data.home.injuries.0.nhl_player_id', $this->players['UTA'][19]->nhl_id);
+});
+
+it('selects a current team member whose projection still names the former team', function (): void {
+    $player = $this->players['COL'][13];
+    DB::table('nhl_player_toi_projections')->where('player_id', $player->nhl_id)->update(['target_team_abbrev' => 'NSH']);
+
+    $roster = collect(app(NhlGameLineupProjectionBuilder::class)->projectedRosterPreview('20262027', 'injury-fixture', 'COL'));
+
+    expect($roster)->toHaveCount(18);
+    expect($roster->pluck('nhl_player_id')->all())->toContain($player->nhl_id);
+    expect($roster->firstWhere('nhl_player_id', $player->nhl_id)['baseline_toi_seconds'])->toBe(1487.0);
+    $this->assertDatabaseHas('nhl_player_toi_projections', ['player_id' => $player->nhl_id, 'target_team_abbrev' => 'NSH']);
+});
+
+it('excludes a departed player despite the projection retaining their former team', function (): void {
+    $player = $this->players['COL'][13];
+    $player->update(['team_abbrev' => 'UTA']);
+    $builder = app(NhlGameLineupProjectionBuilder::class);
+
+    $former = collect($builder->projectedRosterPreview('20262027', 'injury-fixture', 'COL'));
+    $current = collect($builder->projectedRosterPreview('20262027', 'injury-fixture', 'UTA'));
+
+    expect($former->pluck('nhl_player_id')->all())->not->toContain($player->nhl_id)
+        ->toContain($this->players['COL'][20]->nhl_id);
+    expect($former)->toHaveCount(18);
+    expect($current->pluck('nhl_player_id')->all())->toContain($player->nhl_id);
+});
+
+it('fills the sixth defensive slot from current membership through calculation and partner reads', function (): void {
+    $observation = ($this->submit)()->assertCreated()->json('submission_id');
+    $replacement = $this->players['COL'][20];
+    DB::table('nhl_player_toi_projections')->where('player_id', $replacement->nhl_id)->update(['target_team_abbrev' => 'NSH']);
+    ($this->out)(13);
+
+    $record = app(NhlCustomGamePredictionInputs::class)->anticipatedParticipants(
+        (object) $this->game->getAttributes(), teamAbbrev: 'COL'
+    );
+    $read = $this->withToken('lineup-safety-token')->getJson('/api/nhl/lineups/2026020346')->assertOk();
+    $players = collect($read->json('game.teams.away.players'));
+
+    expect($players->where('lineup_role', 'forward'))->toHaveCount(12);
+    expect($players->where('lineup_role', 'defense'))->toHaveCount(6);
+    expect($players->pluck('nhl_player_id')->all())->toContain($replacement->nhl_id)
+        ->not->toContain($this->players['COL'][13]->nhl_id);
+    expect($record['players'])->toHaveCount(18)->toHaveKey($replacement->nhl_id);
+    expect($players->whereIn('lineup_role', ['forward', 'defense'])->pluck('nhl_player_id')->sort()->values()->all())
+        ->toBe(collect($record['players'])->pluck('id')->sort()->values()->all());
+    $this->assertDatabaseHas('nhl_current_lineups', ['nhl_lineup_observation_id' => $observation]);
+    $this->assertDatabaseHas('nhl_player_toi_projections', ['player_id' => $replacement->nhl_id, 'target_team_abbrev' => 'NSH']);
+});
+
+it('retains a healthy replacement without a personal projection and leaves statistics unknown', function (): void {
+    ($this->out)(13);
+    $replacement = $this->players['COL'][20];
+    DB::table('nhl_player_toi_projections')->where('player_id', $replacement->nhl_id)->delete();
+
+    $roster = collect(app(NhlGameLineupProjectionBuilder::class)->projectedRosterPreview('20262027', 'injury-fixture', 'COL'));
+    $row = $roster->firstWhere('nhl_player_id', $replacement->nhl_id);
+
+    expect($roster)->toHaveCount(18);
+    expect($row)->not->toBeNull();
+    expect($row['baseline_toi_seconds'])->toBeNull();
+    expect($row['confidence_score'])->toBeNull();
+    expect($row['confidence'])->toBeNull();
+    expect($row['player_name'])->toBe($replacement->full_name);
+});
+
+it('can select current identities when the entire team has no season TOI projections', function (): void {
+    DB::table('nhl_player_toi_projections')->where('target_team_abbrev', 'COL')->delete();
+
+    $roster = collect(app(NhlGameLineupProjectionBuilder::class)->projectedRosterPreview('20262027', 'injury-fixture', 'COL'));
+
+    expect($roster)->toHaveCount(18);
+    expect($roster->where('position', 'D'))->toHaveCount(6);
+    expect($roster->where('position', 'C'))->toHaveCount(12);
+    expect($roster->every(fn ($row): bool => $row['baseline_toi_seconds'] === null))->toBeTrue();
+});
+
+it('attaches statistical projections only from the requested season and version', function (array $changes): void {
+    $player = $this->players['COL'][13];
+    DB::table('nhl_player_toi_projections')->where('player_id', $player->nhl_id)->update($changes);
+
+    $roster = app(NhlGameLineupProjectionBuilder::class)->projectedRosterPreview(
+        '20262027', 'injury-fixture', 'COL', [$player->nhl_id]
+    );
+
+    expect($roster)->toHaveCount(1);
+    expect($roster[0]['nhl_player_id'])->toBe($player->nhl_id);
+    expect($roster[0]['baseline_toi_seconds'])->toBeNull();
+})->with([
+    'another target season' => [['target_season_id' => '20272028']],
+    'another projection version' => [['projection_version' => 'other-fixture']],
+]);
+
+it('ranks measured zero opportunity above missing opportunity without inventing a value', function (): void {
+    $player = $this->players['COL'][13];
+    DB::table('nhl_player_toi_projections')->where('player_id', $player->nhl_id)->update(['projected_toi_per_game_seconds' => 0]);
+    DB::table('nhl_player_toi_projections')->where('player_id', $this->players['COL'][20]->nhl_id)->delete();
+
+    $roster = collect(app(NhlGameLineupProjectionBuilder::class)->projectedRosterPreview('20262027', 'injury-fixture', 'COL'));
+
+    expect($roster->firstWhere('nhl_player_id', $player->nhl_id)['baseline_toi_seconds'])->toBe(0.0);
+    expect($roster->pluck('nhl_player_id')->all())->not->toContain($this->players['COL'][20]->nhl_id);
+});
+
+it('excludes a canonical goalie even when its projection calls it a defenseman', function (): void {
+    $goalie = $this->players['COL'][21];
+    $goalie->update(['is_goalie' => true]);
+    DB::table('nhl_player_toi_projections')->insert(['player_id' => $goalie->nhl_id,
+        'projection_version' => 'injury-fixture', 'source_season_id' => '20252026', 'target_season_id' => '20262027',
+        'target_team_abbrev' => 'COL', 'position' => 'D', 'projected_toi_per_game_seconds' => 9999]);
+
+    $roster = collect(app(NhlGameLineupProjectionBuilder::class)->projectedRosterPreview('20262027', 'injury-fixture', 'COL'));
+
+    expect($roster)->toHaveCount(18);
+    expect($roster->pluck('nhl_player_id')->all())->not->toContain($goalie->nhl_id);
+});
+
+it('preserves explicitly selected historical identities after their current team changes', function (): void {
+    $player = $this->players['COL'][13];
+    $player->update(['team_abbrev' => 'UTA']);
+
+    $roster = app(NhlGameLineupProjectionBuilder::class)->projectedRosterPreview(
+        '20262027', 'injury-fixture', 'COL', [$player->nhl_id]
+    );
+
+    expect($roster)->toHaveCount(1);
+    expect($roster[0]['nhl_player_id'])->toBe($player->nhl_id);
+    expect($roster[0]['projection_source'])->toBe('nhl_boxscore');
+});
+
+it('keeps an explicitly empty roster from becoming an unrestricted current roster', function (): void {
+    expect(app(NhlGameLineupProjectionBuilder::class)->projectedRosterPreview('20262027', 'injury-fixture', 'COL', []))
+        ->toBe([]);
+});
+
+it('invalidates prepared upcoming inputs after a current team membership change', function (): void {
+    $forecast = app(NhlCustomGameForecast::class);
+    $identity = new ReflectionMethod($forecast, 'preparationIdentity');
+    $before = $identity->invoke($forecast, (object) $this->game->getAttributes(), $this->model, false, []);
+    $this->players['COL'][13]->update(['team_abbrev' => 'UTA']);
+    $after = $identity->invoke($forecast, (object) $this->game->getAttributes(), $this->model, false, []);
+
+    expect($after[0])->toBe($before[0]);
+    expect($after[1])->not->toBe($before[1]);
+});
+
+it('does not let a projection team snapshot change current membership or preparation identity', function (): void {
+    $forecast = app(NhlCustomGameForecast::class);
+    $identity = new ReflectionMethod($forecast, 'preparationIdentity');
+    $before = $identity->invoke($forecast, (object) $this->game->getAttributes(), $this->model, false, []);
+    DB::table('nhl_player_toi_projections')->where('player_id', $this->players['COL'][13]->nhl_id)
+        ->update(['target_team_abbrev' => 'NSH']);
+    $after = $identity->invoke($forecast, (object) $this->game->getAttributes(), $this->model, false, []);
+
+    expect($after)->toBe($before);
+});
+
+it('does not invalidate prepared rosters for a player-name heartbeat update', function (): void {
+    $forecast = app(NhlCustomGameForecast::class);
+    $identity = new ReflectionMethod($forecast, 'preparationIdentity');
+    $before = $identity->invoke($forecast, (object) $this->game->getAttributes(), $this->model, false, []);
+    $this->players['COL'][13]->update(['full_name' => 'Updated Display Name']);
+    $after = $identity->invoke($forecast, (object) $this->game->getAttributes(), $this->model, false, []);
+
+    expect($after)->toBe($before);
+});
+
+it('keeps current membership changes out of historical boxscore preparation identity', function (): void {
+    $forecast = app(NhlCustomGameForecast::class);
+    $identity = new ReflectionMethod($forecast, 'preparationIdentity');
+    $before = $identity->invoke($forecast, (object) $this->game->getAttributes(), $this->model, true, []);
+    $this->players['COL'][13]->update(['team_abbrev' => 'UTA']);
+    $after = $identity->invoke($forecast, (object) $this->game->getAttributes(), $this->model, true, []);
+
+    expect($after)->toBe($before);
+});
+
+it('does not reintroduce departed players through the previous-game lineup fallback', function (): void {
+    NhlGame::create(['nhl_game_id' => 2026020345, 'season_id' => '20262027', 'game_type' => 2,
+        'game_date' => '2026-11-16', 'start_time_utc' => '2026-11-17 02:00:00', 'game_state' => 'OFF',
+        'game_dow' => 'Monday', 'game_month' => 'November', 'away_team_id' => 21, 'home_team_id' => 68,
+        'away_team_abbrev' => 'COL', 'home_team_abbrev' => 'UTA']);
+    foreach (collect($this->players['COL'])->take(18) as $player) {
+        DB::table('nhl_boxscores')->insert(['nhl_game_id' => 2026020345, 'nhl_team_id' => 21,
+            'nhl_player_id' => $player->nhl_id, 'player_name' => $player->full_name, 'position' => $player->position]);
+    }
+    $this->players['COL'][13]->update(['team_abbrev' => 'UTA']);
+    $this->players['COL'][20]->update(['team_abbrev' => 'UTA']);
+
+    expect(fn () => app(NhlCustomGamePredictionInputs::class)->anticipatedParticipants(
+        (object) $this->game->getAttributes(), teamAbbrev: 'COL'
+    ))->toThrow(\DomainException::class, '12 forwards and 6 defensemen');
+});
+
+it('retains actual historical participants even when they are now injured and on another team', function (): void {
+    foreach (collect($this->players['COL'])->take(18) as $player) {
+        DB::table('nhl_boxscores')->insert(['nhl_game_id' => 2026020346, 'nhl_team_id' => 21,
+            'nhl_player_id' => $player->nhl_id, 'player_name' => $player->full_name, 'position' => $player->position]);
+    }
+    ($this->out)(13);
+    $this->players['COL'][13]->update(['team_abbrev' => 'UTA']);
+    $this->game->update(['game_state' => 'OFF']);
+
+    $record = app(NhlCustomGamePredictionInputs::class)->anticipatedParticipants(
+        (object) $this->game->getAttributes(), true, teamAbbrev: 'COL'
+    );
+
+    expect($record['players'])->toHaveCount(18)->toHaveKey($this->players['COL'][13]->nhl_id);
+    expect($record['lineup_sources'][21])->toBe('historical_participants');
 });
