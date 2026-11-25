@@ -1,5 +1,10 @@
 # Architecture Inventory
 
+Expected-goals bucket storage supports independent strength rows under the same
+model and shot-context bucket key. Existing rows and writers retain combined
+samples; this schema change does not yet split training or scoring.
+Authority: `docs/architecture/stats/NhlExpectedGoalsModel.yaml`.
+
 Partner lineup reads before puck drop expose the complete eligible roster from
 the latest successful saved prediction, even without an imported lineup report.
 Revision IDs/timestamps identify the snapshot; current manual input selection

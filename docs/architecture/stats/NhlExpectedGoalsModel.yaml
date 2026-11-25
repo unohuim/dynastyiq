@@ -13,6 +13,7 @@ location:
   - database/migrations/2026_08_19_000002_add_model_run_id_to_nhl_expected_goals_tables.php
   - database/migrations/2026_08_19_000003_add_confidence_to_nhl_expected_goals_model_buckets.php
   - database/migrations/2026_08_26_000001_create_nhl_shot_attempt_model_scores_table.php
+  - database/migrations/2026_11_25_000002_add_strength_to_nhl_expected_goals_model_buckets.php
   - docs/architecture/stats/StatModelLifecycle.yaml
   - docs/architecture/stats/NhlExpectedGoalsModel.yaml
   - data/shot_attempts_model_analysis_20252026.md
@@ -32,6 +33,9 @@ when_not_to_use:
   - Storing xG directly on nhl_shot_attempts_facts.
   - Treating draft model outputs as published production signals before calibration and holdout validation are approved.
 rules:
+  - Probability-bucket storage identity includes owning model, shot-context bucket key, and strength. Strength values are canonical in docs/ENUMS.md.
+  - Existing combined-strength buckets and writers retain their pooled probabilities by default; adding the strength storage dimension must not fabricate separate probabilities or change evaluation, scoring, or predictions.
+  - Rolling back the strength dimension must refuse to discard any strength-specific probability rows.
   - Shot outcome training samples must retain unknown, null, and blank shot types as the existing unknown shot-type category; shootout and empty-net exclusions remain in effect.
   - Unknown shot types must participate in evaluation, scoring, profiles, projections, comparison denominators, and predictive analysis through existing bucket rules. Do not infer a blocked outcome from the unknown label, duplicate attempts, or introduce a separate fallback model. Existing stored results require explicit evaluation and downstream rebuilds.
   - Raw grouped goal rates are discovery evidence only; factor weights require controlled modeling such as logistic regression or a successor approved model.

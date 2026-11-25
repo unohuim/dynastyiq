@@ -2552,6 +2552,24 @@ to rating preparation without building legacy season projections.
 
 ---
 
+### NHL Expected Goals Bucket Strength
+
+**Name:** NHL expected goals bucket strength
+**Storage location(s):** `nhl_expected_goals_model_buckets.strength` (non-null enum column)
+**Allowed values:**
+
+- `all`: Combined-strength training sample; default for existing rows and existing writers.
+- `ev`: Even-strength training sample.
+- `pp`: Power-play training sample.
+- `pk`: Penalty-kill training sample.
+
+The schema permits independent probability rows for the same model and bucket at
+each strength. This schema addition alone does not calculate strength-specific
+probabilities or change evaluation/scoring behavior. The unique identity includes
+strength; `bucket_key` continues to identify the shot-context shape.
+
+---
+
 ### NHL Expected Goals Bucket Confidence Bucket
 
 **Name:** NHL expected goals bucket confidence bucket

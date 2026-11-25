@@ -3367,6 +3367,7 @@ Migrations remain the **sole source of truth**.
 | model_run_id | bigint | Yes | FK -> `nhl_model_runs.id`; set null on delete |
 | expected_goals_model_id | bigint | No | FK -> `nhl_expected_goals_models.id` |
 | bucket_key | string(600) | No | Stable bucket identity |
+| strength | enum | No | Defaults to combined samples; canonical values in `docs/ENUMS.md`. Added by `2026_11_25_000002_add_strength_to_nhl_expected_goals_model_buckets.php`; existing rows retain combined probabilities. |
 | fallback_level | unsignedTinyInteger | No | Bucket fallback depth used by the model |
 | bucket_dimensions | json | No | Bucket dimensions |
 | attempts | unsignedInteger | No | Training attempts in bucket |
@@ -3384,7 +3385,7 @@ Migrations remain the **sole source of truth**.
 - PK: `id`
 - FK: `model_run_id` references `nhl_model_runs.id` with null on delete
 - FK: `expected_goals_model_id` references `nhl_expected_goals_models.id` with cascade delete
-- Unique: `(expected_goals_model_id, bucket_key)` (`uq_nhl_xg_buckets_model_key`)
+- Unique: `(expected_goals_model_id, bucket_key, strength)` (`uq_nhl_xg_buckets_model_key_strength`)
 - Index: `(expected_goals_model_id, fallback_level)` (`ix_nhl_xg_buckets_level`)
 - Index: `(expected_goals_model_id, confidence_bucket)` (`ix_nhl_xg_buckets_confidence`)
 
