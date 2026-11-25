@@ -309,6 +309,15 @@ This is a persisted-data read: it does not import boxscores, contact X, or calcu
 predictions. Scores/live play are outside this endpoint. Data freshness depends
 on the existing import/sync processes. Existing read and write routes are unchanged.
 
+## Webhook Subscription Inventory
+
+Superadmins can register subscription configuration at `/admin/webhooks`,
+including an API client, HTTPS receiving URL, event selection and enabled setting.
+This phase provides inventory only: saving or enabling a subscription sends no
+notification. Test deliveries, delivery history and retries are not implemented.
+Partner API tokens cannot administer subscriptions through these session routes.
+Existing prediction API reads and manual lineup behavior remain unchanged.
+
 ## Submit A Lineup (Authoritative Manual Override)
 
 `POST https://dynastyiq.com/api/nhl-lineups` accepts a full team lineup through

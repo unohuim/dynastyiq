@@ -110,6 +110,7 @@ class HandleInertiaRequests extends Middleware
                 $link('SAT Models', 'admin.nhl-sat-models.index', 'admin.nhl-sat-models.*'),
                 $link('SAT Engines', 'admin.nhl-sat-engines.index', 'admin.nhl-sat-engines.*'),
                 $link('Admin Faceoffs', 'admin.nhl-faceoffs.index', 'admin.nhl-faceoffs.*'),
+                $link('Webhooks', 'admin.webhooks.index', 'admin.webhooks.*'),
             ] : [],
             'avatar' => $user?->socialAccounts()->where('provider', 'discord')->value('avatar'),
             'login_url' => route('discord.redirect'),

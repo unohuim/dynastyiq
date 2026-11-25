@@ -5173,3 +5173,22 @@ in `nhl_games`; these rows can be rebuilt without reimporting source results.
 
 Whole replacements publish in one transaction. Empty migration; no historical
 copy or rebuild runs inside it. No source-game foreign keys are introduced.
+
+## webhook_subscriptions
+
+**Global:** Yes; partner API-client configuration, not organization/tenant data.
+**Migration:** `2026_11_25_000001_create_webhook_subscriptions_table.php`.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| id | bigint | Primary key |
+| api_client_id | bigint | Foreign key to api_clients; deleting the client cascades configuration deletion |
+| name | varchar(120) | Human-readable subscription label |
+| receiving_url | text | Validated HTTPS endpoint; saving does not contact it |
+| events | JSON | Selected event vocabulary is defined in ENUMS.md |
+| is_enabled | boolean | Indexed; false by default; configuration only |
+| signing_secret | text | Server-generated secret encrypted by the model cast; excluded from ordinary serialization |
+| created_at / updated_at | timestamp | Configuration timestamps |
+
+This migration creates empty storage. No delivery, attempt, retry, event outbox or
+prediction relationships are added in this phase.

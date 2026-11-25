@@ -238,6 +238,10 @@
                                 </svg>
                                 <span class="text-sm">Admin Faceoffs</span>
                             </a>
+                            <a href="{{ route('admin.webhooks.index') }}"
+                                class="group flex items-center gap-3 rounded-xl px-3 py-2 hover:bg-white/5">
+                                <span class="text-sm">Webhooks</span>
+                            </a>
                         </div>
                     </div>
                 @endif

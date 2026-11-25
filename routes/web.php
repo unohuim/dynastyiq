@@ -317,6 +317,15 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
             ->middleware(['admin.super', 'admin.lifecycle'])
             ->group(function () {
 
+                Route::prefix('webhooks')->name('admin.webhooks.')->controller(\App\Http\Controllers\Admin\WebhookController::class)->group(function () {
+                    Route::get('/', 'index')->name('index');
+                    Route::post('/', 'store')->name('store');
+                    Route::put('/{webhook}', 'update')->name('update');
+                    Route::patch('/{webhook}/status', 'status')->name('status');
+                    Route::get('/{webhook}/secret', 'secret')->name('secret');
+                    Route::delete('/{webhook}', 'destroy')->name('destroy');
+                });
+
                 Route::get('/api/players', [\App\Http\Controllers\Admin\AdminPlayersController::class, 'index'])
                     ->name('admin.api.players');
 

@@ -1,5 +1,12 @@
 # Architecture Inventory
 
+Superadmins manage global API-client webhook subscription inventory at
+`/admin/webhooks` through Vue/Inertia. Desktop tables and mobile cards expose
+configuration CRUD and filters, with encrypted secrets revealed only by a
+privileged no-store request. Webhooks follows Admin Faceoffs in both account
+menus. This inventory sends no notifications and records no delivery attempts.
+Authority: `docs/architecture/integrations/WebhookSubscriptions.yaml`.
+
 Operational default-stack predictions retain immutable revisions through
 `NhlGamePredictionHistory` at the response-cache publication boundary. The admin
 Game Predictions tab runs date ranges with `RunNhlGamePredictionJob`, displays

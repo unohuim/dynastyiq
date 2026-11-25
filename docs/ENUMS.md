@@ -1,5 +1,13 @@
 # ENUMS - Canonical Enum Authority
 
+## Webhook subscription inventory
+
+- `webhook_subscriptions.events`: currently supports `prediction.available`,
+  displayed as New Prediction Available. This is stored subscription vocabulary,
+  not an emitted event or implemented delivery contract.
+- `webhook_subscriptions.is_enabled`: boolean, default `false`. The UI labels
+  values Enabled/Disabled; configuration does not currently activate delivery.
+
 ## Custom prediction defensive history
 
 - Defensive allowance source: `team_recent`, `team_train`, `league_train`, in fallback order. The adopted PP defense period starts at `team_train`.

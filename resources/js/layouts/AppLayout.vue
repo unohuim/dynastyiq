@@ -13,6 +13,7 @@ const page = usePage();
 const statsPage = computed(() => page.component === 'Stats/Index');
 const gamePage = computed(() => page.component === 'Games/Show');
 const schedulePage = computed(() => page.component === 'Tools/Schedule');
+const webhooksPage = computed(() => page.component === 'Admin/Webhooks');
 const shell = computed(() => page.props.shell);
 const user = computed(() => page.props.auth?.user);
 const drawer = ref(null);
@@ -157,7 +158,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-    <div :class="[statsPage ? 'bg-[#020e17] text-slate-100' : gamePage ? 'bg-[#101923] text-[#E7EEF6] lg:flex lg:h-dvh lg:flex-col lg:overflow-hidden' : 'bg-gray-50 text-gray-900', schedulePage ? 'flex h-dvh flex-col overflow-hidden pb-[calc(5rem+env(safe-area-inset-bottom))] md:pb-0' : 'min-h-screen pb-20 md:pb-0']">
+    <div :class="[statsPage ? 'bg-[#020e17] text-slate-100' : gamePage ? 'bg-[#101923] text-[#E7EEF6] lg:flex lg:h-dvh lg:flex-col lg:overflow-hidden' : webhooksPage ? 'bg-[#11171D] text-slate-100' : 'bg-gray-50 text-gray-900', schedulePage ? 'flex h-dvh flex-col overflow-hidden pb-[calc(5rem+env(safe-area-inset-bottom))] md:pb-0' : 'min-h-screen pb-20 md:pb-0']">
         <a href="#page-content" class="sr-only fixed left-4 top-4 z-[200] rounded-lg bg-white px-4 py-2 shadow focus:not-sr-only">Skip to content</a>
         <header v-if="shell" class="hidden shrink-0 border-b border-[#1F2B37] bg-[#101923] text-[#E7EEF6] md:block">
             <div class="flex w-full items-center justify-between gap-6 px-6 py-2">
