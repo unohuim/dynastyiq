@@ -45,7 +45,7 @@ class LoadNhlSatModelProfileBatchJob implements ShouldQueue
         $this->afterCommit = true;
     }
 
-    /** Discover at most 100 entities, queue them in 25-player jobs, then continue. */
+    /** Discover at most 100 entities, queue them in 15-player jobs, then continue. */
     public function handle(NhlSatModelEntityProfileBuilder $builder): void
     {
         try {
@@ -68,6 +68,14 @@ class LoadNhlSatModelProfileBatchJob implements ShouldQueue
             $partitions = $run->metrics['profile_build']['partitions'] ?? ($this->profileTypes === ['skater_offense']
                 ? $builder->profilePartitions($run)
                 : $builder->profilePartitions($run, $this->profileTypes));
+            $reuse = data_get($run->metrics, 'profile_build.snapshot_reuse');
+            if (empty(data_get($run->metrics, 'profile_build.initialized')) && is_array($reuse)) {
+                $reuse = ($reuse['evaluation_sources'] ?? null) == data_get($run->metrics, 'profile_build.evaluation_sources')
+                    && NhlSatModelEntityProfileBuilder::snapshotsUnchanged($run, $reuse) ? $reuse : null;
+                if ($reuse !== null) {
+                    $partitions = array_values(array_filter($partitions, static fn (array $part): bool => $part['season_id'] === null));
+                }
+            }
             $descriptor = $partitions[$this->partition] ?? null;
             if ($descriptor === null || ! in_array($descriptor['profile_type'], $this->profileTypes, true)) {
                 throw new RuntimeException('Profile build scope changed. Start a fresh profile build.');
@@ -76,7 +84,7 @@ class LoadNhlSatModelProfileBatchJob implements ShouldQueue
             // on the model row while that read-only query executes.
             $entities = $builder->profileEntityPage($run, $descriptor['profile_type'], $descriptor['season_id'], $this->after);
 
-            DB::transaction(function () use ($builder, $batch, $partitions, $descriptor, $entities, $pageKey): void {
+            DB::transaction(function () use ($builder, $batch, $partitions, $descriptor, $entities, $pageKey, $reuse): void {
                 $run = NhlModelRun::query()->whereKey($this->modelRunId)->lock('for no key update')->firstOrFail();
                 if ($this->predictionBuildId === null || ! $run->acceptsPredictionStage($this->predictionBuildId, 'profiles')) {
                     return;
@@ -90,24 +98,27 @@ class LoadNhlSatModelProfileBatchJob implements ShouldQueue
                     if ($this->partition !== 0 || $this->after !== null) {
                         throw new RuntimeException('Profile continuation has no initialized build.');
                     }
-                    if ($this->profileTypes === ['skater_offense']) {
+                    if ($reuse !== null) {
+                        $builder->clearProfileOutputs($run, $this->profileTypes, true);
+                    } elseif ($this->profileTypes === ['skater_offense']) {
                         $builder->clearProfileOutputs($run);
                     } else {
                         $builder->clearProfileOutputs($run, $this->profileTypes);
                     }
+                    $build['snapshot_reuse'] = $reuse;
                     $build['initialized'] = true;
                     $build['partitions'] = $partitions;
                     $metrics['profile_entities_queued'] = 0;
                     $metrics['profile_entities_completed'] = 0;
-                    $metrics['season_snapshot_entities_queued'] = 0;
-                    $metrics['season_snapshot_entities_completed'] = 0;
+                    $metrics['season_snapshot_entities_queued'] = (int) ($reuse['entities'] ?? 0);
+                    $metrics['season_snapshot_entities_completed'] = (int) ($reuse['entities'] ?? 0);
                     $metrics['profiles_completed_at'] = null;
                 }
                 if (($build['partitions'][$this->partition] ?? null) !== $descriptor) {
                     throw new RuntimeException('Profile partition changed during discovery.');
                 }
                 $jobs = [];
-                foreach (array_chunk($entities, 25) as $index => $entityKeys) {
+                foreach (array_chunk($entities, BuildNhlSatModelEntityProfileForEntityJob::MAX_ENTITIES) as $index => $entityKeys) {
                     $jobs[] = new BuildNhlSatModelEntityProfileForEntityJob(
                         $this->modelRunId, $this->satModelId, $this->sogModelId,
                         $descriptor['profile_type'], $entityKeys, $descriptor['season_id'], $this->predictionBuildId,

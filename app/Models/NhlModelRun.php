@@ -145,6 +145,12 @@ class NhlModelRun extends Model
 
             $metrics = array_merge($run->metrics ?? [], $stageMetrics);
             if ($stage === 'profiles') {
+                $snapshotReuse = data_get($metrics, 'profile_build.snapshot_reuse');
+                if (! $failed && is_array($snapshotReuse)
+                    && ! \App\Services\NhlSatModelEntityProfileBuilder::snapshotsUnchanged($run, $snapshotReuse)) {
+                    $failed = true;
+                    $error = 'Season snapshot sources changed during this retry. Start a fresh profile build.';
+                }
                 $sources = data_get($metrics, 'profile_build.evaluation_sources');
                 if (! $failed && $sources !== null) {
                     $sat = NhlExpectedGoalsModel::query()->find(data_get($sources, 'sat.model_id'));

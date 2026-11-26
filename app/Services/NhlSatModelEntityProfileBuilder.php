@@ -42,6 +42,77 @@ class NhlSatModelEntityProfileBuilder
     }
 
     /**
+     * Reuse only fully committed snapshots from a failed, unchanged build.
+     *
+     * @param array<int, string> $profileTypes
+     * @return array<string, mixed>|null
+     */
+    public static function reusableSnapshots(NhlModelRun $run, NhlExpectedGoalsModel $satModel, ?NhlExpectedGoalsModel $sogModel, array $profileTypes): ?array
+    {
+        $metrics = $run->metrics ?? [];
+        $build = $metrics['profile_build'] ?? [];
+        $queued = (int) ($metrics['season_snapshot_entities_queued'] ?? 0);
+        $seasons = (new self())->snapshotSeasonIds($run);
+        $builtSeasons = $build['snapshot_reuse']['season_ids'] ?? array_values(array_filter(array_column($build['partitions'] ?? [], 'season_id')));
+        $builtSeasons = array_values(array_unique($builtSeasons));
+        sort($builtSeasons);
+        if (($build['status'] ?? null) !== 'failed' || empty($build['loading_complete'])
+            || $queued <= 0 || $queued !== (int) ($metrics['season_snapshot_entities_completed'] ?? 0)
+            || ($build['profile_types'] ?? []) !== $profileTypes || $builtSeasons !== $seasons
+            || ($build['evaluation_sources'] ?? null) != self::probabilitySources($satModel, $sogModel)) {
+            return null;
+        }
+        $reuse = [
+            'from_build_id' => $build['id'],
+            'since' => $build['snapshot_reuse']['since'] ?? $metrics['profiles_started_at'] ?? null,
+            'evaluation_sources' => $build['evaluation_sources'],
+            'profile_types' => $profileTypes, 'season_ids' => $seasons, 'entities' => $queued,
+        ];
+
+        return self::snapshotsUnchanged($run, $reuse) ? $reuse : null;
+    }
+
+    /**
+     * Recheck persisted source changes before retaining snapshots at worker execution.
+     *
+     * @param array<string, mixed> $reuse
+     */
+    public static function snapshotsUnchanged(NhlModelRun $run, array $reuse): bool
+    {
+        if (empty($reuse['since']) || empty($reuse['season_ids']) || empty($reuse['profile_types'])) {
+            return false;
+        }
+        $since = \Carbon\CarbonImmutable::parse($reuse['since'])->utc();
+        $seasons = $reuse['season_ids'];
+        if ($seasons !== (new self())->snapshotSeasonIds($run)) {
+            return false;
+        }
+        $entities = DB::table(self::TEST_PROFILE_TABLE)->where('model_run_id', $run->id)
+            ->whereIn('profile_type', $reuse['profile_types'])->whereIn('test_season_id', $seasons)
+            ->select('test_season_id', 'profile_type', 'entity_key')->distinct();
+        if (DB::query()->fromSub($entities, 'snapshot_entities')->count() !== (int) $reuse['entities']) {
+            return false;
+        }
+        foreach (['nhl_games', 'nhl_shot_attempts_facts'] as $table) {
+            if (DB::table($table)->whereIn('season_id', $seasons)->where('updated_at', '>=', $since)->exists()) {
+                return false;
+            }
+        }
+        foreach (['nhl_game_summaries', 'nhl_boxscores', 'nhl_player_game_strength_summaries', 'nhl_pbp_processing_states'] as $table) {
+            if (DB::table($table . ' as source')->join('nhl_games as games', 'games.nhl_game_id', '=', 'source.nhl_game_id')
+                ->whereIn('games.season_id', $seasons)->where('source.updated_at', '>=', $since)->exists()) {
+                return false;
+            }
+        }
+        $gameIds = DB::table('nhl_games')->whereIn('season_id', $seasons)->selectRaw('CAST(nhl_game_id AS TEXT)');
+        if (DB::table('nhl_import_progress')->whereIn('game_id', $gameIds)->where('updated_at', '>=', $since)->exists()) {
+            return false;
+        }
+
+        return ! DB::table('players')->where('updated_at', '>=', $since)->exists();
+    }
+
+    /**
      * Build selected entity profile buckets for one SAT model run.
      *
      * @param  array<int, string>  $profileTypes
@@ -121,11 +192,13 @@ class NhlSatModelEntityProfileBuilder
      *
      * @param  array<int, string>  $profileTypes
      */
-    public function clearProfileOutputs(NhlModelRun $run, array $profileTypes = ['skater_offense']): void
+    public function clearProfileOutputs(NhlModelRun $run, array $profileTypes = ['skater_offense'], bool $preserveSnapshots = false): void
     {
         $profileTypes = $this->supportedProfileTypes($profileTypes);
         DB::table(self::PROFILE_TABLE)->where('model_run_id', $run->id)->whereIn('profile_type', $profileTypes)->delete();
-        DB::table(self::TEST_PROFILE_TABLE)->where('model_run_id', $run->id)->whereIn('profile_type', $profileTypes)->delete();
+        if (! $preserveSnapshots) {
+            DB::table(self::TEST_PROFILE_TABLE)->where('model_run_id', $run->id)->whereIn('profile_type', $profileTypes)->delete();
+        }
     }
 
     /**
@@ -506,7 +579,7 @@ SQL,
         $sourceExposureSeconds = $factStrength === null
             ? ($usesPlayerExposure ? 'COALESCE(game_summaries.toi, boxscores.toi_seconds, 0)' : '3600')
             : 'COALESCE(strength_summaries.toi, 0)';
-        $entityWhereSql = $entityKey === null ? '' : "AND {$definition['entity_key']} = ?";
+        [$entityWhereSql, $entityBindings] = $this->entityFilter($definition, $entityKey);
         $factStrengthSql = $factStrength === null
             ? ''
             : "AND UPPER(COALESCE(NULLIF(facts.strength_bucket, ''), NULLIF(facts.strength, ''))) = ?";
@@ -748,7 +821,7 @@ SQL;
             ...$seasonIds,
             self::REGULAR_SEASON_GAME_TYPE,
             ...($factStrength === null ? [] : [$factStrength]),
-            ...($entityKey === null ? [] : [$entityKey]),
+            ...$entityBindings,
             $projectionStrength,
             ...($factStrength === null ? [] : [$factStrength]),
             $run->id,
@@ -775,6 +848,33 @@ SQL;
     }
 
     /**
+     * Keep player predicates numeric so PostgreSQL can use existing fact indexes.
+     *
+     * @param array<string, string> $definition
+     * @return array{string, array<int, int|string>}
+     */
+    private function entityFilter(array $definition, ?string $entityKey): array
+    {
+        if ($entityKey === null) {
+            return ['', []];
+        }
+        $prefix = match ($definition['entity_id']) {
+            'facts.shooter_player_id' => 'skater_offense',
+            'facts.goalie_player_id' => 'goalie_faced',
+            default => null,
+        };
+        if ($prefix === null) {
+            return ["AND {$definition['entity_key']} = ?", [$entityKey]];
+        }
+        if (preg_match('/^' . $prefix . ':([1-9][0-9]*)$/D', $entityKey, $matches) !== 1
+            || strlen($matches[1]) > 10 || (int) $matches[1] > 2147483647) {
+            throw new RuntimeException('Invalid profile player identifier.');
+        }
+
+        return ["AND {$definition['entity_id']} = ?", [(int) $matches[1]]];
+    }
+
+    /**
      * Fail the owning job before its completion receipt if eligible split evidence was lost.
      * Players without attempts at a strength legitimately have no profile at that strength.
      *
@@ -792,7 +892,7 @@ SQL;
         ?string $testSeasonId
     ): void {
         $seasonPlaceholders = implode(', ', array_fill(0, count($seasonIds), '?'));
-        $entityFilter = $entityKey === null ? '' : "AND {$definition['entity_key']} = ?";
+        [$entityFilter, $entityBindings] = $this->entityFilter($definition, $entityKey);
         $snapshotFilter = $testSeasonId === null ? '' : 'AND profiles.test_season_id = ?';
         $missing = DB::selectOne(<<<SQL
 SELECT {$definition['entity_key']} AS entity_key
@@ -819,7 +919,7 @@ SQL, [
             ...$seasonIds,
             self::REGULAR_SEASON_GAME_TYPE,
             strtolower($strength),
-            ...($entityKey === null ? [] : [$entityKey]),
+            ...$entityBindings,
             $run->id,
             $profileType,
             $strength,

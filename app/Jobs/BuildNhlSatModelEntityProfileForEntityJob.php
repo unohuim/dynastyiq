@@ -27,6 +27,8 @@ class BuildNhlSatModelEntityProfileForEntityJob implements ShouldQueue
     use InteractsWithQueue;
     use SerializesModels;
 
+    public const MAX_ENTITIES = 15;
+
     /**
      * @var int
      */
@@ -109,8 +111,8 @@ class BuildNhlSatModelEntityProfileForEntityJob implements ShouldQueue
         if (! in_array($this->profileType, ['skater_offense', 'goalie_faced'], true)) {
             throw new \RuntimeException('Unknown profile type. Start a fresh profile build.');
         }
-        if ($this->entityKeys === [] || count($this->entityKeys) > 25) {
-            throw new \RuntimeException('Profile job requires between one and twenty-five entities.');
+        if ($this->entityKeys === [] || count($this->entityKeys) > self::MAX_ENTITIES) {
+            throw new \RuntimeException('Profile job requires between one and fifteen entities.');
         }
         $receipt = $this->receiptPage ?? sha1(($this->snapshotSeasonId ?? 'training') . ':' . $this->profileType . ':' . implode(':', $this->entityKeys));
         if ($this->receiptIndex < 0 || $this->receiptIndex >= 100) {
@@ -160,7 +162,7 @@ class BuildNhlSatModelEntityProfileForEntityJob implements ShouldQueue
             $metricKey = $this->snapshotSeasonId === null ? 'profile_entities_completed' : 'season_snapshot_entities_completed';
             $metrics[$metricKey] = (int) ($metrics[$metricKey] ?? 0) + count($this->entityKeys);
             $run->forceFill(['metrics' => $metrics])->save();
-            if (((int) ($metrics['profile_entities_completed'] ?? 0) + (int) ($metrics['season_snapshot_entities_completed'] ?? 0)) % 25 === 0) {
+            if (((int) ($metrics['profile_entities_completed'] ?? 0) + (int) ($metrics['season_snapshot_entities_completed'] ?? 0)) % self::MAX_ENTITIES === 0) {
                 DB::afterCommit(function (): void {
                     try {
                         broadcast(new \App\Events\NhlSatModelUpdated($this->modelRunId, 'predictions-progress'));

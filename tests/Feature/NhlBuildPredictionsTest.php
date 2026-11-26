@@ -338,12 +338,13 @@ it('queues a full page in bounded inserts and preserves the pending continuation
     (new LoadNhlSatModelProfileBatchJob($this->run->id, $this->sat->id, null, 'build-1'))
         ->withBatchId($batchId)->handle($builder);
     expect(max($bindings))->toBeLessThanOrEqual(600)
-        ->and(DB::table('jobs')->count())->toBe(102)
-        ->and(Bus::findBatch($batchId)->pendingJobs)->toBe(102)
+        ->and(DB::table('jobs')->count())->toBe(9)
+        ->and(Bus::findBatch($batchId)->pendingJobs)->toBe(9)
         ->and(data_get($this->run->fresh()->metrics, 'profile_build.loading_complete'))->toBeNull()
         ->and(data_get($this->run->fresh()->metrics, 'profile_entities_queued'))->toBe(100);
     $payloads = DB::table('jobs')->pluck('payload')->map(fn (string $payload): array => json_decode($payload, true));
-    expect($payloads->where('displayName', LoadNhlSatModelProfileBatchJob::class))->toHaveCount(2);
+    expect($payloads->where('displayName', LoadNhlSatModelProfileBatchJob::class))->toHaveCount(2)
+        ->and($payloads->where('displayName', BuildNhlSatModelEntityProfileForEntityJob::class))->toHaveCount(7);
 });
 
 it('continues with the same cursor and then moves to the next season partition', function (): void {
@@ -1178,4 +1179,106 @@ it('compares evaluation descriptors independent of database JSON key order', fun
     NhlModelRun::finishPredictionStage($this->run->id, 'build-1', 'profiles', false);
     expect(data_get($this->run->fresh()->metrics, 'profile_freshness.skater_offense.outdated'))->toBeFalse();
     Bus::assertDispatched(BuildNhlSatModelEntityRateProjectionsJob::class);
+});
+
+describe('bounded profile retries', function (): void {
+    beforeEach(function (): void {
+        $this->snapshotRow = [...$this->profileRow, 'source_season_ids' => '["20242025"]', 'test_season_id' => '20242025'];
+        $this->failedSnapshots = function (): array {
+            $this->run->update(['train_season_ids' => ['20242025'], 'target_season_id' => null]);
+            DB::table('nhl_sat_model_entity_test_profile_buckets')->insert($this->snapshotRow);
+            $this->run->update(['status' => 'failed', 'metrics' => [
+                'profiles_started_at' => '2026-09-29T11:00:00+00:00',
+                'profile_build' => ['id' => 'failed-build', 'status' => 'failed', 'loading_complete' => true,
+                    'profile_types' => ['skater_offense'],
+                    'evaluation_sources' => NhlSatModelEntityProfileBuilder::probabilitySources($this->sat, null),
+                    'partitions' => [['profile_type' => 'skater_offense', 'season_id' => null],
+                        ['profile_type' => 'skater_offense', 'season_id' => '20242025']]],
+                'season_snapshot_entities_queued' => 1, 'season_snapshot_entities_completed' => 1,
+            ]]);
+
+            return NhlSatModelEntityProfileBuilder::reusableSnapshots($this->run->fresh(), $this->sat, null, ['skater_offense']) ?? [];
+        };
+    });
+
+    it('accepts fifteen entities in one profile delivery', function (): void {
+        ($this->activate)();
+        $builder = Mockery::mock(NhlSatModelEntityProfileBuilder::class);
+        $builder->shouldReceive('buildEntity')->times(15)->andReturn(1);
+        (new BuildNhlSatModelEntityProfileForEntityJob($this->run->id, $this->sat->id, null, 'skater_offense',
+            array_map(fn ($id): string => 'skater_offense:'.$id, range(101, 115)), null, 'build-1'))->handle($builder);
+        expect(data_get($this->run->fresh()->metrics, 'profile_entities_completed'))->toBe(15);
+    });
+
+    it('rejects a delivery larger than fifteen before profile writes', function (): void {
+        ($this->activate)();
+        $builder = Mockery::mock(NhlSatModelEntityProfileBuilder::class);
+        $builder->shouldNotReceive('buildEntity');
+        $job = new BuildNhlSatModelEntityProfileForEntityJob($this->run->id, $this->sat->id, null, 'skater_offense',
+            array_map(fn ($id): string => 'skater_offense:'.$id, range(101, 116)), null, 'build-1');
+        expect(fn () => $job->handle($builder))->toThrow(RuntimeException::class, 'one and fifteen');
+    });
+
+    it('recognizes fully completed snapshots from a failed unchanged build', function (): void {
+        $reuse = ($this->failedSnapshots)();
+        expect($reuse['from_build_id'])->toBe('failed-build')->and($reuse['entities'])->toBe(1);
+    });
+
+    it('does not reuse an incomplete snapshot partition', function (): void {
+        ($this->failedSnapshots)();
+        $this->run->update(['metrics' => [...$this->run->metrics, 'season_snapshot_entities_completed' => 0]]);
+        expect(NhlSatModelEntityProfileBuilder::reusableSnapshots($this->run->fresh(), $this->sat, null, ['skater_offense']))->toBeNull();
+    });
+
+    it('does not reuse snapshots when the evaluation revision changed', function (): void {
+        ($this->failedSnapshots)();
+        $this->sat->update(['trained_at' => now()]);
+        expect(NhlSatModelEntityProfileBuilder::reusableSnapshots($this->run->fresh(), $this->sat, null, ['skater_offense']))->toBeNull();
+    });
+
+    it('does not reuse snapshots after player source information changes', function (): void {
+        $reuse = ($this->failedSnapshots)();
+        DB::table('players')->insert(['nhl_id' => 999991, 'first_name' => 'Updated', 'last_name' => 'Skater', 'full_name' => 'Updated Skater', 'updated_at' => now()]);
+        expect(NhlSatModelEntityProfileBuilder::snapshotsUnchanged($this->run->fresh(), $reuse))->toBeFalse();
+    });
+
+    it('does not reuse snapshots for a different profile type', function (): void {
+        ($this->failedSnapshots)();
+        expect(NhlSatModelEntityProfileBuilder::reusableSnapshots($this->run->fresh(), $this->sat, null, ['goalie_faced']))->toBeNull();
+    });
+
+    it('keeps snapshot rows while clearing selected combined Train profiles', function (): void {
+        ($this->failedSnapshots)();
+        DB::table('nhl_sat_model_entity_profile_buckets')->insert($this->profileRow);
+        app(NhlSatModelEntityProfileBuilder::class)->clearProfileOutputs($this->run, ['skater_offense'], true);
+        expect(DB::table('nhl_sat_model_entity_profile_buckets')->where('model_run_id', $this->run->id)->count())->toBe(0)
+            ->and(DB::table('nhl_sat_model_entity_test_profile_buckets')->where('model_run_id', $this->run->id)->count())->toBe(1);
+    });
+
+    it('carries reusable snapshot decisions through the admin action and HTTP progress read', function (): void {
+        ($this->failedSnapshots)();
+        $this->actingAs($this->admin)->postJson(route('admin.nhl-sat-models.profiles.build', $this->run))->assertOk();
+        expect(data_get($this->run->fresh()->metrics, 'profile_build.snapshot_reuse.entities'))->toBe(1);
+        $this->get(route('admin.nhl-sat-models.index'))->assertOk()->assertSee('Build predictions');
+    });
+
+    it('queues only combined Train work when complete snapshots can be reused', function (): void {
+        $reuse = ($this->failedSnapshots)();
+        ($this->activate)();
+        $this->run->update(['metrics' => [...$this->run->metrics, 'profile_build' => ['id' => 'build-1', 'status' => 'running',
+            'snapshot_reuse' => $reuse, 'evaluation_sources' => $reuse['evaluation_sources']]]]);
+        $builder = Mockery::mock(NhlSatModelEntityProfileBuilder::class);
+        $builder->shouldReceive('profilePartitions')->once()->andReturn([
+            ['profile_type' => 'skater_offense', 'season_id' => null],
+            ['profile_type' => 'skater_offense', 'season_id' => '20242025'],
+        ]);
+        $builder->shouldReceive('clearProfileOutputs')->with(Mockery::type(NhlModelRun::class), ['skater_offense'], true)->once();
+        $builder->shouldReceive('profileEntityPage')->with(Mockery::type(NhlModelRun::class), 'skater_offense', null, null)
+            ->once()->andReturn(['skater_offense:101']);
+        [$loader, $batch] = (new LoadNhlSatModelProfileBatchJob($this->run->id, $this->sat->id, null, 'build-1'))->withFakeBatch();
+        $loader->handle($builder);
+        $jobs = collect($batch->added)->flatten(1);
+        expect($jobs)->toHaveCount(1)->and($jobs->first()->snapshotSeasonId)->toBeNull()
+            ->and(data_get($this->run->fresh()->metrics, 'season_snapshot_entities_completed'))->toBe(1);
+    });
 });

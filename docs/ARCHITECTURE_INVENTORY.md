@@ -4604,3 +4604,10 @@ neutral and PP reconciliation remains separate. Existing PK prediction/actual
 columns and versioned preparation state are reused. Authority:
 `docs/architecture/stats/NhlCustomGamePrediction.yaml` and
 `docs/architecture/stats/NhlSeasonGameEvaluations.yaml`.
+
+
+Profile loaders now submit at most 15 entities per child job. Construction and
+strength validation use numeric player predicates with existing fact indexes.
+A failed-build retry can retain complete season snapshots after evaluation,
+source freshness and scope checks; combined Train profiles rebuild under a fresh
+build identity. Canonical authority: `docs/architecture/stats/NhlModelRuns.yaml`.

@@ -359,7 +359,21 @@ it('builds profiles without multiplying attempts across probability strengths', 
     }
     $sat = ($this->train)();
     $sog = ($this->train)('goal');
+    $sourceQueries = [];
+    DB::listen(function (\Illuminate\Database\Events\QueryExecuted $query) use (&$sourceQueries): void {
+        if (str_contains($query->sql, 'FROM nhl_shot_attempts_facts facts')) {
+            $sourceQueries[] = $query;
+        }
+    });
     app(NhlSatModelEntityProfileBuilder::class)->buildEntity($this->run, $sat, $sog, 'skater_offense', 'skater_offense:101');
+    app(NhlSatModelEntityProfileBuilder::class)->buildSeasonSnapshotEntity($this->run, $sat, $sog,
+        'skater_offense', 'skater_offense:101', '20242025');
+    expect($sourceQueries)->not->toBeEmpty();
+    foreach ($sourceQueries as $query) {
+        expect($query->sql)->toContain('AND facts.shooter_player_id = ?')
+            ->and($query->bindings)->toContain(101)->not->toContain('skater_offense:101');
+    }
+
     $rows = DB::table('nhl_sat_model_entity_profile_buckets')->where('model_run_id', $this->run->id)
         ->where('profile_type', 'skater_offense')->where('entity_key', 'skater_offense:101')->get();
     expect((int) $rows->where('strength', 'all')->sum('source_sat'))->toBe(12)
@@ -468,4 +482,31 @@ it('keeps the bucket signature stable for identical evidence and smoothing setti
     $second = ($this->train)('shot_on_goal', 100);
     expect(data_get($first->feature_config, 'probability_smoothing.bucket_signature'))
         ->toBe(data_get($second->feature_config, 'probability_smoothing.bucket_signature'));
+});
+
+it('binds offensive profile lookups as numeric NHL player identifiers', function (): void {
+    $builder = new NhlSatModelEntityProfileBuilder();
+    $filter = (new ReflectionMethod($builder, 'entityFilter'))->invoke($builder,
+        $builder->profileDefinitions()['skater_offense'], 'skater_offense:8474568');
+    expect($filter)->toBe(['AND facts.shooter_player_id = ?', [8474568]]);
+});
+
+it('binds goalie profile lookups as numeric NHL player identifiers', function (): void {
+    $builder = new NhlSatModelEntityProfileBuilder();
+    $filter = (new ReflectionMethod($builder, 'entityFilter'))->invoke($builder,
+        $builder->profileDefinitions()['goalie_faced'], 'goalie_faced:8474568');
+    expect($filter)->toBe(['AND facts.goalie_player_id = ?', [8474568]]);
+});
+
+it('rejects malformed numeric player keys before querying facts', function (string $key): void {
+    $builder = new NhlSatModelEntityProfileBuilder();
+    expect(fn () => (new ReflectionMethod($builder, 'entityFilter'))->invoke($builder,
+        $builder->profileDefinitions()['skater_offense'], $key))->toThrow(RuntimeException::class, 'Invalid profile player');
+})->with(['skater_offense:0', 'skater_offense:-1', 'skater_offense:abc', 'skater_offense:0001',
+    'goalie_faced:101', 'skater_offense:2147483648', 'skater_offense:101 OR 1=1']);
+
+it('does not add a player restriction to an explicit whole-profile build', function (): void {
+    $builder = new NhlSatModelEntityProfileBuilder();
+    expect((new ReflectionMethod($builder, 'entityFilter'))->invoke($builder,
+        $builder->profileDefinitions()['skater_offense'], null))->toBe(['', []]);
 });

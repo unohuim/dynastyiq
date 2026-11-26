@@ -3296,3 +3296,13 @@ PK-enabled replay evidence uses accuracy target
 Existing `PK`, `train_player_bucket`, `train_league_bucket` and
 `train_league_strength` source labels retain their meanings. PK `usage_fallback`
 is a boolean identifying whole-lineup league usage imputation.
+
+
+### Profile snapshot retry metadata
+
+`nhl_model_runs.metrics.profile_build.snapshot_reuse` is nullable evidence for
+retaining completed snapshots on a failed-build retry. Its fields are
+`from_build_id`, `since`, `evaluation_sources`, `profile_types`, `season_ids`,
+and `entities`. These reuse existing IDs, source descriptors and profile types;
+they introduce no new lifecycle statuses. `since` remains the original build's
+source cutoff for retry validation, not the latest retry timestamp.

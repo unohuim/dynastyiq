@@ -338,7 +338,8 @@ class NhlModelRunController extends Controller
         $this->claimModelWork($run, [
             'status' => NhlModelRun::STATUS_RUNNING,
             'metrics' => array_merge($run->metrics ?? [], [
-                'profile_build' => ['id' => $buildId, 'status' => 'running'],
+                'profile_build' => ['id' => $buildId, 'status' => 'running',
+                    'snapshot_reuse' => \App\Services\NhlSatModelEntityProfileBuilder::reusableSnapshots($run, $satModel, $sogModel, [$profileType])],
                 'profiles_completed_at' => null,
                 'profiles_started_at' => now()->toIso8601String(),
                 'profile_entities_queued' => 0, 'profile_entities_completed' => 0,
@@ -486,7 +487,8 @@ class NhlModelRunController extends Controller
             'metrics' => array_merge($run->metrics ?? [], [
                 'prediction_build' => ['id' => $buildId, 'stage' => 'profiles', 'status' => 'running',
                     'started_at' => now()->toIso8601String()],
-                'profile_build' => ['id' => $buildId, 'status' => 'running'],
+                'profile_build' => ['id' => $buildId, 'status' => 'running',
+                    'snapshot_reuse' => \App\Services\NhlSatModelEntityProfileBuilder::reusableSnapshots($run, $satModel, $sogModel, ['skater_offense'])],
                 'profiles_completed_at' => null,
                 'profiles_started_at' => now()->toIso8601String(),
                 'profile_entities_queued' => 0, 'profile_entities_completed' => 0,
