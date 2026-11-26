@@ -558,7 +558,7 @@ describe('Operational Game Predictions', () => {
         await vi.advanceTimersByTimeAsync(5000); await settle();
         expect(document.querySelector('tbody tr')).toBe(row);
         expect(document.querySelector('[data-prediction-activity]').textContent).toContain('lineup');
-        expect(document.querySelector('[data-prediction-activity]').textContent).toContain('running');
+        expect(document.querySelector('[data-prediction-activity]').textContent).toContain('Running');
     });
 
     it('replaces an obsolete attempt error on the next activity read', async () => {
@@ -568,6 +568,36 @@ describe('Operational Game Predictions', () => {
         await vi.advanceTimersByTimeAsync(5000); await settle();
         expect(document.querySelector('[data-prediction-activity]').textContent).not.toContain('Obsolete dependency 217');
         expect(document.querySelector('[data-prediction-activity]').textContent).toContain('evidence');
+    });
+
+    it('labels an existing game without a forecast or attempt as Queued', async () => {
+        list.games[0].revision = null;
+        list.games[0].work = null;
+        await mount();
+        const activity = document.querySelector('[data-prediction-activity]');
+        expect(activity.textContent.trim()).toBe('Queued');
+        expect(activity.textContent).not.toContain('Saved');
+        expect(activity.textContent).not.toContain('Not started');
+    });
+
+    it('labels a queued attempt without a forecast once and omits the empty saved label', async () => {
+        list.games[0].revision = null;
+        list.games[0].work = { status: 'queued', phase: 'queued' };
+        await mount();
+        const activity = document.querySelector('[data-prediction-activity]');
+        expect(activity.textContent).toContain('Queued');
+        expect(activity.textContent).not.toContain('Saved');
+        expect(activity.textContent).not.toContain('Queued · queued');
+    });
+
+    it('shows the running stage instead of Queued while the first prediction is being calculated', async () => {
+        list.games[0].revision = null;
+        list.games[0].work = { status: 'running', phase: 'history' };
+        await mount();
+        const activity = document.querySelector('[data-prediction-activity]');
+        expect(activity.textContent).toContain('Running · history');
+        expect(activity.textContent).not.toContain('Queued');
+        expect(activity.textContent).not.toContain('Saved');
     });
 
 });

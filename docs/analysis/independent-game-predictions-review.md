@@ -94,7 +94,7 @@ Counts are test declarations, with parameterized datasets expanding at execution
 | `tests/Feature/NhlGamePredictionsMarketProbabilityApiTest.php` | 108 | Met |
 | `tests/Feature/NhlManualLineupPredictionRefreshTest.php` | 32 | Met |
 | `tests/Feature/NhlOperationalGamePredictionsTest.php` | 48 | Met |
-| `resources/js/pages/Admin/game-predictions.test.js` | 70 | Met |
+| `resources/js/pages/Admin/game-predictions.test.js` | 73 | Met |
 
 ## Checks actually performed
 
@@ -119,5 +119,23 @@ npx vitest run resources/js/pages/Admin/game-predictions.test.js
 ```
 
 Runtime checks after human-authorized deployment: run two games concurrently, confirm separate cursors, confirm a waiting/failed game does not prevent the other publishing, verify live admin activity without losing saved scores, and verify queued/running lineup writes return 409 while terminal work releases the lock. Exercise interrupted-delivery recovery in a controlled environment before any production failure simulation.
+
+Awaiting human review
+
+## Approved status wording follow-up
+
+Files: `resources/js/pages/Admin/GamePredictions.vue`, its existing
+`game-predictions.test.js` suite, and the canonical history architecture rule.
+
+COVERED (authored): an existing game without an attempt displays Queued; a queued
+attempt displays Queued without duplicate phase wording; a running first
+calculation displays Running with its stage. Saved renders only with an actual
+saved timestamp. Database status, queue admission and prediction calculations are
+unchanged. Existing endpoint authorization/scope coverage above remains applicable;
+no endpoint changed. Requirements for both Queued cases, running-stage display and
+omitting Saved — are SATISFIED in the authored UI and tests. Frontend transitions
+use the existing polling data and fixed-time, stubbed-network tests. The modified
+frontend file has 73 test declarations, exceeding the 20-test minimum. Tests were
+not executed. No migration is required for this wording change.
 
 Awaiting human review

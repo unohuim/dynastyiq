@@ -365,10 +365,11 @@ onBeforeUnmount(() => {
                     <tbody class="divide-y divide-gray-100">
                         <template v-for="game in data.games" :key="game.nhl_game_id">
                             <tr><td class="whitespace-nowrap p-3"><p class="text-gray-500">{{ game.date }}</p><b>{{ game.away }} @ {{ game.home }}</b></td><td class="p-3 tabular-nums">{{ score(game.revision) }}</td><td class="p-3 tabular-nums">{{ spread(game.revision) }}</td><td class="p-3 tabular-nums">{{ number(game.revision?.total_goals) }}</td><td class="p-3">{{ game.revision?.winner ?? '—' }}</td><td class="p-3">{{ percent(game.revision?.win_probability) }}</td><td class="p-3">{{ confidence(game.revision?.confidence) }}</td><td class="p-3" data-public-confidence>{{ confidence(game.revision?.public_confidence_score) }}</td><td class="p-3 tabular-nums" data-days-away>{{ game.revision?.days_away ?? '—' }}</td><td class="min-w-64 max-w-sm p-3" data-prediction-activity>
-                                <p class="text-xs text-gray-500">Saved {{ dateTime(game.revision?.predicted_at) }}</p>
+                                <p v-if="game.revision?.predicted_at" class="text-xs text-gray-500">Saved {{ dateTime(game.revision.predicted_at) }}</p>
+                                <p v-else-if="!game.work" class="text-xs text-gray-500">Queued</p>
                                 <div v-if="game.work" class="mt-1 space-y-1 text-xs">
                                     <p data-attempt-time>Latest attempt {{ dateTime(game.work.created_at) }} · {{ game.work.trigger_source }}</p>
-                                    <p class="font-medium" :class="game.work.status === 'failed' ? 'text-red-700' : 'text-gray-700'">{{ game.work.status }} · {{ game.work.phase }}</p>
+                                    <p class="font-medium" :class="game.work.status === 'failed' ? 'text-red-700' : 'text-gray-700'">{{ game.work.status === 'queued' ? 'Queued' : game.work.status === 'running' ? 'Running' : game.work.status }}<template v-if="game.work.phase && game.work.phase !== game.work.status"> · {{ game.work.phase }}</template></p>
                                     <p v-if="game.work.progress_total != null">{{ game.work.progress_current }} / {{ game.work.progress_total }}</p>
                                     <p v-else-if="game.work.progress_current">{{ game.work.progress_current }} processed</p>
                                     <p>Deliveries {{ game.work.attempts }} · Retries {{ game.work.failures }} · Recoveries {{ game.work.recoveries }}</p>
