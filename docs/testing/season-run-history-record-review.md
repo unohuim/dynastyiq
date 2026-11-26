@@ -74,3 +74,20 @@ npx vitest run resources/js/pages/Admin/Evaluations/SeasonGames.test.js
 ```
 
 No migration or prediction rerun required.
+
+
+## Approved follow-up: numbers only
+
+Files touched in this follow-up are `resources/js/pages/Admin/Evaluations/SeasonGames.vue`,
+`resources/js/pages/Admin/Evaluations/SeasonGames.test.js`,
+`docs/architecture/stats/NhlSeasonGameEvaluations.yaml`, and this review.
+Remove the visible W–L–OTL legend in both locations; retain only the dash-separated
+numbers. Existing DOM assertions now require the exact numeric text for the main
+and history records. Font sizes, accessible record names, percentages, counts,
+authorization and backend behavior are unchanged.
+
+Coverage B/G and the numbers-only requirement are COVERED/SATISFIED by authored
+exact-text assertions; other matrix and auth cells remain unchanged/not affected.
+The sole modified test file retains 43 `it(...)` declarations. Diff inspection,
+declaration counting and `git diff --check` were performed; no tests, CI, builds,
+migrations or production operations were run. No migration required.

@@ -241,7 +241,7 @@ it('places W L OTL directly beneath the existing large win percentage', () => {
     const host = mount(selected({ summary: { ...summary(), regulation_losses: 30, overtime_losses: 12 } }));
     const record = host.querySelector('[aria-label="Prediction record"]');
     expect(record.textContent).toContain('58–30–12');
-    expect(record.textContent).toContain('W–L–OTL');
+    expect(record.textContent.trim()).toBe('58–30–12');
     expect(record.previousElementSibling.textContent).toBe('58.00%');
     expect(record.previousElementSibling.classList.contains('text-3xl')).toBe(true);
     expect(host.querySelector('[aria-label="Run accuracy"]').textContent).toContain('58 / 100');
@@ -270,7 +270,7 @@ it('updates the split record automatically without replacing the displayed perce
 it('places the smaller history record directly under its own win percentage', () => {
     const host = mount(selected({ runs: [run(1, { regulation_losses: 30, overtime_losses: 12 })], summary: { ...summary(), regulation_losses: 30, overtime_losses: 12 } }));
     const record = host.querySelector('[aria-label="Run 1 prediction record"]');
-    expect(record.textContent).toContain('58–30–12');
+    expect(record.textContent.trim()).toBe('58–30–12');
     expect(record.previousElementSibling.textContent).toBe('58.00%');
     expect(record.classList.contains('text-[10px]')).toBe(true);
     expect(host.querySelector('[aria-label="Prediction record"]').classList.contains('text-xs')).toBe(true);
