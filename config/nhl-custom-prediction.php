@@ -3,8 +3,8 @@
 declare(strict_types=1);
 
 return [
-    'algorithm_version' => 'custom_ev_pp_v4',
-    'input_pipeline_version' => 'saved_pregame_checkpointed_v12',
+    'algorithm_version' => 'custom_ev_pp_pk_v5',
+    'input_pipeline_version' => 'saved_pregame_checkpointed_v13',
     'reference_train_seasons' => ['20222023', '20232024', '20242025'],
     // Required completion after fallbacks, not a gate on observed player history.
     'minimum_input_completeness' => 1.0,
@@ -22,7 +22,7 @@ return [
         'prior_minutes' => 150.0,
         'fit_iterations' => 100,
         'fit_tolerance' => 0.00000001,
-        'coefficients' => ['EV' => 0.3152975390611162, 'PP' => 0.346997919269746],
+        'coefficients' => ['EV' => 0.3152975390611162, 'PP' => 0.346997919269746, 'PK' => 0.32647549417570887],
     ],
     'schedule' => [
         'forward_sat_multiplier' => 0.98,

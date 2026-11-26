@@ -132,7 +132,7 @@ it('changes EV and PP detail without another server request', async () => {
 });
 it('identifies the actual selected goalie while labeling the neutral baseline', async () => {
     const host = mount(selected()); host.querySelector('[aria-label="Game predictions"] button').click(); await settle();
-    expect(host.textContent).toContain('Starter Two · Starting goalie'); expect(host.textContent).toContain('25 SV · 28 SA · 3 GA'); expect(host.textContent).toContain('Neutral goalie baseline'); expect(host.textContent).toContain('91.00%');
+    expect(host.textContent).toContain('Starter Two · Starting goalie'); expect(host.textContent).toContain('25 SV · 28 SA · 3 GA'); expect(host.textContent).toContain('Neutral goalie baseline · opposition forecast:'); expect(host.textContent).toContain('91.00%');
 });
 it('keeps missing historical values unknown rather than replacing them with zeros', async () => {
     const data = detail(); data.teams.away.players[0].lanes.EV.actual = { seconds: null, sat: null, sog: null, goals: null }; mocks.detail.mockResolvedValue({ data });

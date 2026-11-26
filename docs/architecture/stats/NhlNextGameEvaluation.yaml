@@ -444,6 +444,17 @@ rules:
     selection; prospective use must supply the expected PP lineup before puck
     drop. One zero-sum initial matchup used an equal split of its game total.
   - >-
+    PK goal pathway, adopted November 25, 2026. New calculations allocate four
+    skater-minutes per opponent PP minute using normalized L10 PK usage.
+    Use the existing equal Train/L10 personal PK SAT-bucket rate blend and
+    documented PK defensive coefficient/reference. Convert attempts to SOG and
+    goals using personal Train PK bucket ratios with matching PK Train league
+    fallbacks. Sum this lane with EV and the separately reconciled PP lane;
+    do not change PP allocation or subtract PK time from EV a second time.
+    The goalie stage remains neutral. The four-skater budget is an aggregate
+    baseline, not a forecast of individual three-versus-five intervals. This
+    addition does not claim a measured next-game or season-win improvement.
+  - >-
     Custom prediction engine — neutral goalie stage. Adopted November 5, 2026:
     retain each player's predicted bucket SOG times their adopted bucket SH%
     (EV Train bucket reliability under the November 11 rule, PP current-season-to-date), with the documented league fallback

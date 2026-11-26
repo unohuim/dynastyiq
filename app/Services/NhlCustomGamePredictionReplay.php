@@ -74,7 +74,7 @@ class NhlCustomGamePredictionReplay
                     $actual = [];
                     foreach (['home' => $game->home_team_id, 'away' => $game->away_team_id] as $venue => $team) {
                         $actual[$venue] = 0;
-                        foreach (['EV', 'PP'] as $lane) {
+                        foreach (['EV', 'PP', 'PK'] as $lane) {
                             $actual[$venue] += $event['actual'][$team][$lane]['goals'] ?? 0;
                         }
                         $comparisons[$name]['team'][] = [$prediction['teams'][$venue]['goals'], $actual[$venue]];
@@ -129,7 +129,7 @@ class NhlCustomGamePredictionReplay
         return ['model' => $this->inputs->metadata(), 'definition' => $this->engine->definition(),
             'selected_games' => $count, 'excluded_games' => count($exclusions), 'exclusions' => $exclusions,
             'summary' => $summary, 'games' => $results,
-            'scope' => 'Historical lineups; retained regulation EV+PP goal errors; official final winners including OT/SO; no qualification cutoff.'];
+            'scope' => 'Historical lineups; retained regulation EV+PP+PK goal errors; official final winners including OT/SO; no qualification cutoff.'];
     }
 
     /** Publish one queued season event once; checkpoint retries cannot replace its original forecast.
@@ -218,9 +218,10 @@ class NhlCustomGamePredictionReplay
                         'opponent_team_metrics' => $input['teams'][$other]['team_metrics'], 'pp_allocation' => $team['pp_allocation'],
                         'league_pk_probability' => $input['league_pk_probability'], 'league_usage_seconds' => $input['league_usage_seconds'],
                         'actual_goal_basis' => ['actual_goals' => 'official_final', 'actual_ev_goals' => 'retained_regulation',
-                            'actual_pp_goals' => 'retained_regulation', 'accuracy_target' => 'actual_ev_goals_plus_actual_pp_goals']], JSON_THROW_ON_ERROR),
+                            'actual_pp_goals' => 'retained_regulation', 'actual_pk_goals' => 'retained_regulation',
+                            'accuracy_target' => 'actual_ev_goals_plus_actual_pp_goals_plus_actual_pk_goals']], JSON_THROW_ON_ERROR),
                     'ev_goals_prediction' => $team['strengths']['EV']['goals'], 'pp_goals_prediction' => $team['strengths']['PP']['goals'],
-                    'pk_goals_prediction' => null, 'goals_prediction' => $team['goals'],
+                    'pk_goals_prediction' => $team['strengths']['PK']['goals'], 'goals_prediction' => $team['goals'],
                     'sat_prediction' => $team['sat'], 'sog_prediction' => $team['sog'],
                     'shooting_pct_prediction' => $team['sog'] > 0 ? 100 * $team['goals'] / $team['sog'] : null,
                     'pp_opportunities_prediction' => $team['pp_opportunities'],
@@ -229,8 +230,9 @@ class NhlCustomGamePredictionReplay
                     'pk_toi_seconds_prediction' => $team['time']['PK'],
                     'actual_goals' => $venue === 'home' ? $game->home_team_score : $game->away_team_score,
                     'actual_ev_goals' => $actual['EV']['goals'] ?? 0, 'actual_pp_goals' => $actual['PP']['goals'] ?? 0,
-                    'actual_sat' => ($actual['EV']['sat'] ?? 0) + ($actual['PP']['sat'] ?? 0),
-                    'actual_sog' => ($actual['EV']['sog'] ?? 0) + ($actual['PP']['sog'] ?? 0),
+                    'actual_pk_goals' => $actual['PK']['goals'] ?? 0,
+                    'actual_sat' => ($actual['EV']['sat'] ?? 0) + ($actual['PP']['sat'] ?? 0) + ($actual['PK']['sat'] ?? 0),
+                    'actual_sog' => ($actual['EV']['sog'] ?? 0) + ($actual['PP']['sog'] ?? 0) + ($actual['PK']['sog'] ?? 0),
                     'actual_pp_opportunities' => $venue === 'home' ? $game->home_pp_opportunities : $game->away_pp_opportunities,
                     'actual_ev_toi_seconds' => $event['actual_clocks'][$team['id']]['EV'] ?? null,
                     'actual_pp_toi_seconds' => $event['actual_clocks'][$team['id']]['PP'] ?? null,
@@ -243,6 +245,7 @@ class NhlCustomGamePredictionReplay
                 foreach ($prediction['teams'][$venue]['players'] as $playerId => $player) {
                     $ev = $player['strengths']['EV'];
                     $pp = $player['strengths']['PP'];
+                    $pk = $player['strengths']['PK'];
                     DB::table('nhl_custom_game_prediction_player_inputs')->insert([
                         'team_prediction_id' => $teamIds[$venue], 'opponent_team_prediction_id' => $teamIds[$other],
                         'nhl_player_id' => $playerId, 'player_role' => 'skater', 'player_name' => $player['name'],
@@ -252,7 +255,7 @@ class NhlCustomGamePredictionReplay
                         'actual' => json_encode([...($event['player_actual'][$playerId] ?? []),
                             '_measured' => isset($event['participants'][$playerId]),
                             '_toi_seconds' => $event['participants'][$playerId]['seconds'] ?? null], JSON_THROW_ON_ERROR),
-                        'sat_prediction' => $ev['sat'] + $pp['sat'], 'toi_seconds_prediction' => $ev['seconds'] + $pp['seconds'],
+                        'sat_prediction' => $ev['sat'] + $pp['sat'] + $pk['sat'], 'toi_seconds_prediction' => $ev['seconds'] + $pp['seconds'] + $pk['seconds'],
                         'created_at' => $time, 'updated_at' => $time,
                     ]);
                 }

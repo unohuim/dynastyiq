@@ -36,7 +36,7 @@ beforeEach(function (): void {
     $this->client = ApiClient::query()->create(['name' => 'Custom API fixture', 'slug' => 'custom-api',
         'token_hash' => ApiClient::hashToken($this->token), 'scopes' => ['nhl-stats:read']]);
     $this->input = ['game_id' => 2026020001, 'source_cutoff_at' => '2026-11-05 12:00:00',
-        'retained_bucket_keys' => ['B'], 'league_usage_seconds' => ['EV' => 600.0, 'PP' => 60.0],
+        'retained_bucket_keys' => ['B'], 'league_usage_seconds' => ['EV' => 600.0, 'PP' => 60.0, 'PK' => 60.0],
         'league_pk_probability' => 0.8, 'teams' => []];
     foreach (['away' => 1, 'home' => 2] as $venue => $team) {
         $side = ['id' => $team, 'abbrev' => $venue === 'away' ? 'BUF' : 'COL',
@@ -46,8 +46,8 @@ beforeEach(function (): void {
             'schedule' => ['back_to_back' => false, 'games_including_target_last_7_days' => 2], 'players' => []];
         foreach (['F', 'D'] as $slot => $role) {
             $id = $team * 100 + $slot;
-            $player = ['name' => 'Fixture '.$id, 'role' => $role, 'usage' => ['EV' => 600.0, 'PP' => 60.0],
-                'complete' => ['EV' => true, 'PP' => true], 'buckets' => []];
+            $player = ['name' => 'Fixture '.$id, 'role' => $role, 'usage' => ['EV' => 600.0, 'PP' => 60.0, 'PK' => 60.0],
+                'complete' => ['EV' => true, 'PP' => true, 'PK' => true], 'buckets' => []];
             foreach (['EV' => ($venue === 'home' ? 14.0 : 12.0), 'PP' => 24.0] as $lane => $rate) {
                 $player['buckets'][$lane]['B'] = ['sat_per_60' => $rate, 'defense_allowance' => 1.0,
                     'defense_reference' => 1.0, 'sog_probability' => 0.5, 'goal_probability' => 0.1];
@@ -174,7 +174,7 @@ it('rejects nonpositive totals', function (): void {
 it('uses the new shared engine and SAT_V2 for an ordinary API request', function (): void {
     ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction_available', true)
         ->assertJsonPath('inputs.sat_model_run_id', $this->model->id)
-        ->assertJsonPath('inputs.algorithm_version', 'custom_ev_pp_v4')
+        ->assertJsonPath('inputs.algorithm_version', 'custom_ev_pp_pk_v5')
         ->assertJsonPath('inputs.engine_id', null)->assertJsonPath('inputs.stack_id', null);
 });
 
@@ -559,14 +559,14 @@ it('uses the same new calculation in empty saved stack previews', function (): v
 
 it('routes the standalone matchup simulator through the same new engine', function (): void {
     $result = app(NhlProjectedTeamMatchupSimulator::class)->simulate('20252026', '20262027', '', '', '', 'BUF', 'COL');
-    expect($result['inputs']['algorithm_version'])->toBe('custom_ev_pp_v4')
+    expect($result['inputs']['algorithm_version'])->toBe('custom_ev_pp_pk_v5')
         ->and($result['sides'][0]['summary']['total_goalie_adjusted_xgf_per_game'])->toBe(($this->calculate)()['teams']['away']['goals']);
 });
 
 it('returns current algorithm provenance in saved revision summaries', function (): void {
     $response = ($this->requestPrediction)()->assertOk();
     $row = DB::table('nhl_game_prediction_revisions')->find($response->json('meta.prediction_revision_id'));
-    expect(json_decode($row->summary, true)['algorithm_version'])->toBe('custom_ev_pp_v4');
+    expect(json_decode($row->summary, true)['algorithm_version'])->toBe('custom_ev_pp_pk_v5');
 });
 
 it('returns saved predictions beyond cache expiry without starting refresh work', function (): void {
@@ -588,7 +588,7 @@ it('publishes L5 adjusted scores and probabilities while archiving its source ev
     $this->input['teams']['away']['team_metrics']['last_5'] = ['games' => 5, 'win_pct' => 40];
     $expected = ($this->calculate)();
     $response = ($this->requestPrediction)()->assertOk()
-        ->assertJsonPath('inputs.algorithm_version', 'custom_ev_pp_v4')
+        ->assertJsonPath('inputs.algorithm_version', 'custom_ev_pp_pk_v5')
         ->assertJsonPath('inputs.algorithm_definition.team_l5_win_pct_weight', 0.5)
         ->assertJsonPath('prediction.predicted_score.home', round($expected['teams']['home']['goals'], 2))
         ->assertJsonPath('prediction.home_win_probability', $expected['home_win_probability'])
@@ -606,11 +606,11 @@ it('invalidates earlier algorithm cache entries while retaining the previous imm
         'nhl-custom-prediction.team_l5_win_pct_weight' => 0]);
     $first = ($this->requestPrediction)()->assertOk()->json('meta.prediction_revision_id');
     $original = DB::table('nhl_game_prediction_revisions')->find($first);
-    config(['nhl-custom-prediction.algorithm_version' => 'custom_ev_pp_v4',
+    config(['nhl-custom-prediction.algorithm_version' => 'custom_ev_pp_pk_v5',
         'nhl-custom-prediction.team_l5_win_pct_weight' => 0.50]);
     ($this->publishPrediction)();
     $second = ($this->requestPrediction)()->assertOk()
-        ->assertJsonPath('inputs.algorithm_version', 'custom_ev_pp_v4')->json('meta.prediction_revision_id');
+        ->assertJsonPath('inputs.algorithm_version', 'custom_ev_pp_pk_v5')->json('meta.prediction_revision_id');
     expect($second)->not->toBe($first)
         ->and(DB::table('nhl_game_prediction_revisions')->where('id', $first)->value('payload'))->toBe($original->payload)
         ->and(json_decode(DB::table('nhl_game_prediction_revisions')->where('id', $first)->value('summary'), true)['algorithm_version'])
@@ -622,7 +622,7 @@ it('publishes reliability converted goals as a new revision without exposing pri
     config(['nhl-custom-prediction.algorithm_version' => 'custom_ev_pp_v3']);
     $first = ($this->requestPrediction)()->assertOk()->json('meta.prediction_revision_id');
     $original = DB::table('nhl_game_prediction_revisions')->find($first);
-    config(['nhl-custom-prediction.algorithm_version' => 'custom_ev_pp_v4']);
+    config(['nhl-custom-prediction.algorithm_version' => 'custom_ev_pp_pk_v5']);
     $method = new \ReflectionMethod(\App\Services\NhlCustomGamePredictionInputs::class, 'evGoalConversion');
     $conversion = $method->invoke(new \App\Services\NhlCustomGamePredictionInputs(),
         ['buckets' => ['B' => ['sat' => 1, 'sog' => 1, 'goals' => 1]]],
@@ -634,7 +634,7 @@ it('publishes reliability converted goals as a new revision without exposing pri
     $expected = ($this->calculate)();
     ($this->publishPrediction)();
     $response = ($this->requestPrediction)()->assertOk()
-        ->assertJsonPath('inputs.algorithm_version', 'custom_ev_pp_v4')
+        ->assertJsonPath('inputs.algorithm_version', 'custom_ev_pp_pk_v5')
         ->assertJsonPath('prediction.predicted_score.away', round($expected['teams']['away']['goals'], 2))
         ->assertJsonPath('prediction.home_win_probability', $expected['home_win_probability'])
         ->assertJsonMissingPath('_custom_prediction_evidence');
@@ -838,7 +838,7 @@ it('automatically saves and publishes the prediction when queued dependencies be
     $job->handle(app(\App\Services\NhlGamePredictionResponseCache::class), app(NhlGamePredictionPayload::class));
     $this->assertDatabaseCount('nhl_game_prediction_revisions', 1);
     ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction_available', true)
-        ->assertJsonPath('inputs.algorithm_version', 'custom_ev_pp_v4');
+        ->assertJsonPath('inputs.algorithm_version', 'custom_ev_pp_pk_v5');
     $this->assertDatabaseCount('nhl_game_prediction_revisions', 1);
 });
 
@@ -1623,4 +1623,27 @@ it('keeps a tracked legacy completions unknown finish separate from its known pu
     ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction_status.status', 'completed')
         ->assertJsonPath('prediction_status.completed_at', null)->assertJsonPath('prediction_status.elapsed_seconds', null)
         ->assertJsonPath('prediction_status.prediction_completed_at', $saved['meta']['predicted_at']);
+});
+
+it('publishes PK components once and serves them with the saved prediction', function (): void {
+    foreach ($this->input['teams'] as &$team) {
+        foreach ($team['players'] as &$player) {
+            $player['buckets']['PK']['B'] = ['sat_per_60' => 6.0, 'defense_allowance' => 1.0,
+                'defense_reference' => 1.0, 'sog_probability' => .5, 'goal_probability' => .1];
+        }
+        unset($player);
+    }
+    unset($team);
+    $expected = ($this->calculate)();
+    $published = ($this->publishPrediction)();
+    $revision = DB::table('nhl_game_prediction_revisions')->find($published['meta']['prediction_revision_id']);
+    $evidence = json_decode($revision->evidence, true);
+    expect(data_get($evidence, 'custom_prediction.input.teams.away.players.100.buckets.PK.B.goal_probability'))->toBe(0.1)
+        ->and(data_get(json_decode($revision->payload, true), 'teams.away.summary.pk_xgf_per_game'))->toBeGreaterThan(0);
+    $response = ($this->requestPrediction)()->assertOk()
+        ->assertJsonPath('meta.prediction_revision_id', $published['meta']['prediction_revision_id'])
+        ->assertJsonPath('inputs.algorithm_version', 'custom_ev_pp_pk_v5');
+    expect($response->json('teams.away.summary.pk_xgf_per_game'))
+        ->toEqualWithDelta($expected['teams']['away']['strengths']['PK']['goals'], .000001);
+    expect($response->json('prediction.predicted_total_goals'))->toBe(round($expected['total_goals'], 2));
 });

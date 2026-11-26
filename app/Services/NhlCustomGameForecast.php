@@ -13,7 +13,7 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
-/** Shared default game calculation and compatibility view of the EV/PP engine. */
+/** Shared default game calculation and compatibility view of the EV/PP/PK engine. */
 class NhlCustomGameForecast
 {
     private int $nextPreparationDelay = 15;
@@ -786,9 +786,10 @@ class NhlCustomGameForecast
             foreach ($team['players'] as $id => $player) {
                 $ev = $player['strengths']['EV'];
                 $pp = $player['strengths']['PP'];
-                $goals = $ev['goals'] + $pp['goals'];
+                $pk = $player['strengths']['PK'];
+                $goals = $ev['goals'] + $pp['goals'] + $pk['goals'];
                 $raw = ['sat' => 0.0, 'sog' => 0.0, 'goals' => 0.0];
-                foreach (['EV', 'PP'] as $lane) {
+                foreach (['EV', 'PP', 'PK'] as $lane) {
                     foreach ($forecast['input']['teams'][$venue]['players'][$id]['buckets'][$lane] ?? [] as $bucket) {
                         $attempts = $bucket['sat_per_60'] * $player['strengths'][$lane]['seconds'] / 3600;
                         $shots = $attempts * $bucket['sog_probability'];
@@ -804,11 +805,11 @@ class NhlCustomGameForecast
                     'position' => $player['role'], 'line_key' => $player['line_key'] ?? null, 'projection_source' => 'custom_pregame',
                     'model_run_id' => $forecast['model']->id, 'bucket_model_run_id' => $forecast['model']->id,
                     'bucket_projection_source' => 'custom_pregame',
-                    'toi_seconds' => $ev['seconds'] + $pp['seconds'], 'confidence_score' => $player['confidence_score'] ?? null,
-                    'projected_sat' => $ev['sat'] + $pp['sat'], 'projected_sog' => $ev['sog'] + $pp['sog'],
+                    'toi_seconds' => $ev['seconds'] + $pp['seconds'] + $pk['seconds'], 'confidence_score' => $player['confidence_score'] ?? null,
+                    'projected_sat' => $ev['sat'] + $pp['sat'] + $pk['sat'], 'projected_sog' => $ev['sog'] + $pp['sog'] + $pk['sog'],
                     'projected_goals' => $goals, 'team_xgf_share' => $team['goals'] > 0 ? $goals / $team['goals'] : 0.0,
-                    'baseline_xsat_per_game' => $raw['sat'], 'adjusted_xsat_per_game' => $ev['sat'] + $pp['sat'],
-                    'baseline_xsog_per_game' => $raw['sog'], 'adjusted_xsog_per_game' => $ev['sog'] + $pp['sog'],
+                    'baseline_xsat_per_game' => $raw['sat'], 'adjusted_xsat_per_game' => $ev['sat'] + $pp['sat'] + $pk['sat'],
+                    'baseline_xsog_per_game' => $raw['sog'], 'adjusted_xsog_per_game' => $ev['sog'] + $pp['sog'] + $pk['sog'],
                     'baseline_xgf_per_game' => $raw['goals'], 'adjusted_xgf_per_game' => $goals,
                     'strengths' => $player['strengths']];
             }
@@ -816,9 +817,9 @@ class NhlCustomGameForecast
                 'baseline_xsog_per_game' => $baseline['sog'], 'adjusted_xsog_per_game' => $team['sog'],
                 'baseline_xgf_per_game' => $baseline['goals'], 'adjusted_xgf_per_game' => $team['goals'],
                 'ev_xgf_per_game' => $team['strengths']['EV']['goals'], 'pp_xgf_per_game' => $team['strengths']['PP']['goals'],
-                'pk_xgf_per_game' => 0.0, 'ev_goalie_adjusted_xgf_per_game' => $team['strengths']['EV']['goals'],
+                'pk_xgf_per_game' => $team['strengths']['PK']['goals'], 'ev_goalie_adjusted_xgf_per_game' => $team['strengths']['EV']['goals'],
                 'pp_goalie_adjusted_xgf_per_game' => $team['strengths']['PP']['goals'],
-                'pk_goalie_adjusted_xgf_per_game' => 0.0, 'total_goalie_adjusted_xgf_per_game' => $team['goals'],
+                'pk_goalie_adjusted_xgf_per_game' => $team['strengths']['PK']['goals'], 'total_goalie_adjusted_xgf_per_game' => $team['goals'],
                 'goalie_adjusted_xgf_per_game' => $team['goals'], 'goalie_adjustment_per_game' => 0.0,
                 'pk_goalie_adjustment_per_game' => 0.0, 'total_goalie_adjustment_per_game' => 0.0,
                 'xsat_delta_per_game' => $team['sat'] - $baseline['sat'], 'xsog_delta_per_game' => $team['sog'] - $baseline['sog'],

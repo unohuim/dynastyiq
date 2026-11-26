@@ -82,7 +82,7 @@ beforeEach(function (): void {
                     $identity = ['id' => $player, 'team' => $team, 'name' => 'Fixture '.$player, 'role' => $slot === 0 ? 'F' : 'D'];
                     $lineup['players'][$player] = $identity;
                     $record['players'][$player] = [...$identity, 'unclassified' => false,
-                        'seconds' => ['EV' => 1500.0, 'PP' => 150.0],
+                        'seconds' => ['EV' => 1500.0, 'PP' => 150.0, 'PK' => 150.0],
                         'counts' => ['EV' => ['B' => ['sat' => 20, 'sog' => 8, 'goals' => 1]],
                             'PP' => ['B' => ['sat' => 4, 'sog' => 2, 'goals' => 1]]]];
                 }
@@ -91,7 +91,7 @@ beforeEach(function (): void {
             }
             if ($outsideRoster) {
                 $record['players'][999] = [...$record['players'][100], 'id' => 999,
-                    'seconds' => ['EV' => 900.0, 'PP' => 90.0],
+                    'seconds' => ['EV' => 900.0, 'PP' => 90.0, 'PK' => 90.0],
                     'counts' => ['EV' => [], 'PP' => []]];
             }
             $records[$id] = $record;
@@ -137,11 +137,11 @@ beforeEach(function (): void {
                 ]);
                 foreach ([0, 1] as $slot) {
                     $strength = [];
-                    foreach (['EV' => [1500, 20, 8], 'PP' => [150, 4, 2]] as $lane => [$seconds, $sat, $sog]) {
+                    foreach (['EV' => [1500, 20, 8], 'PP' => [150, 4, 2], 'PK' => [150, 0, 0]] as $lane => [$seconds, $sat, $sog]) {
                         foreach (['train' => 3, 'last_game' => 1, 'last_5' => 4, 'last_10' => 4,
                             'last_20' => 4, 'last_season' => 1, 'season_to_date' => 1] as $window => $games) {
                             $strength[$lane][$window] = ['games' => $games, 'toi_seconds' => $games * $seconds,
-                                'sat' => $games * $sat, 'sog' => $games * $sog, 'goals' => $games,
+                                'sat' => $games * $sat, 'sog' => $games * $sog, 'goals' => $lane === 'PK' ? 0 : $games,
                                 'individual_missing_games' => 0];
                         }
                     }
@@ -188,7 +188,7 @@ beforeEach(function (): void {
         return $records;
     };
     $this->input = ['game_id' => 2025020001, 'source_cutoff_at' => '2025-11-01 23:00:00',
-        'retained_bucket_keys' => ['B'], 'league_usage_seconds' => ['EV' => 600.0, 'PP' => 60.0],
+        'retained_bucket_keys' => ['B'], 'league_usage_seconds' => ['EV' => 600.0, 'PP' => 60.0, 'PK' => 60.0],
         'league_pk_probability' => 0.8, 'teams' => []];
     foreach (['away' => 1, 'home' => 2] as $venue => $team) {
         $side = ['id' => $team, 'abbrev' => $venue === 'away' ? 'BUF' : 'COL',
@@ -200,7 +200,7 @@ beforeEach(function (): void {
         foreach (['F', 'D'] as $index => $role) {
             $id = $team * 100 + $index;
             $side['players'][$id] = ['name' => 'Fixture '.$id, 'role' => $role, 'context_id' => null,
-                'usage' => ['EV' => 600.0, 'PP' => 60.0], 'complete' => ['EV' => true, 'PP' => true],
+                'usage' => ['EV' => 600.0, 'PP' => 60.0, 'PK' => 60.0], 'complete' => ['EV' => true, 'PP' => true, 'PK' => true],
                 'buckets' => [], 'history' => []];
             foreach (['EV' => ($venue === 'home' ? 14.0 : 12.0), 'PP' => 24.0] as $lane => $rate) {
                 $side['players'][$id]['buckets'][$lane]['B'] = ['sat_per_60' => $rate,
@@ -556,9 +556,9 @@ it('keeps final player PP goals summing to the final team allocation', function 
     expect($players)->toEqualWithDelta($team['strengths']['PP']['goals'], 1.0e-12);
 });
 
-it('predicts no short handed scoring lane while retaining PK clock time', function (): void {
+it('predicts a separate PK scoring lane while retaining opposing PP clock time', function (): void {
     $team = $this->engine->predict($this->input)['teams']['away'];
-    expect(array_keys($team['strengths']))->toBe(['EV', 'PP'])->and($team['time']['PK'])->toBeGreaterThan(0);
+    expect(array_keys($team['strengths']))->toBe(['EV', 'PP', 'PK'])->and($team['time']['PK'])->toBeGreaterThan(0);
 });
 
 it('does not change goals when starting goalie identity changes in neutral mode', function (): void {
@@ -688,7 +688,7 @@ it('saves both team snapshots and linked player inputs in one isolated run', fun
         expect($player->team_prediction_id)->not->toBe($player->opponent_team_prediction_id)
             ->and(json_decode($player->prediction, true)['strengths'])->toHaveKeys(['EV', 'PP']);
     }
-    expect($teams[0]->pk_goals_prediction)->toBeNull();
+    expect((float) $teams[0]->pk_goals_prediction)->toBe(0.0);
 });
 
 it('creates a new run for a repeated game without replacing the prior forecast', function (): void {
@@ -1050,7 +1050,7 @@ it('builds both sides before advancing history and excludes target and later out
                 $player = $team * 100 + $slot;
                 $record['players'][$player] = ['id' => $player, 'team' => $team, 'name' => 'Fixture '.$player,
                     'role' => $slot === 0 ? 'F' : 'D', 'unclassified' => false,
-                    'seconds' => ['EV' => 1500.0, 'PP' => 150.0],
+                    'seconds' => ['EV' => 1500.0, 'PP' => 150.0, 'PK' => 150.0],
                     'counts' => ['EV' => ['B' => ['sat' => 20, 'sog' => 8, 'goals' => 2]],
                         'PP' => ['B' => ['sat' => 4, 'sog' => 2, 'goals' => 1]]]];
             }
@@ -1561,11 +1561,11 @@ it('aligns future personal bucket counts to the reused snapshot cutoff rather th
     $parentId = DB::table('nhl_team_game_pregame_contexts')->insertGetId($parent);
     $player = DB::table('nhl_player_game_pregame_contexts')->where('nhl_player_id', 100)->first();
     $metrics = json_decode($player->metrics, true, 512, JSON_THROW_ON_ERROR);
-    foreach (['EV' => [1500, 20, 8], 'PP' => [150, 4, 2]] as $lane => [$seconds, $sat, $sog]) {
+    foreach (['EV' => [1500, 20, 8], 'PP' => [150, 4, 2], 'PK' => [150, 0, 0]] as $lane => [$seconds, $sat, $sog]) {
         foreach (['last_5', 'last_10', 'last_20', 'season_to_date'] as $window) {
             $games = $window === 'season_to_date' ? 0 : 3;
             $metrics['strength'][$lane][$window] = ['games' => $games, 'toi_seconds' => $games * $seconds,
-                'sat' => $games * $sat, 'sog' => $games * $sog, 'goals' => $games, 'individual_missing_games' => 0];
+                'sat' => $games * $sat, 'sog' => $games * $sog, 'goals' => $lane === 'PK' ? 0 : $games, 'individual_missing_games' => 0];
         }
     }
     DB::table('nhl_player_game_pregame_contexts')->where('id', $player->id)->update([
@@ -2048,4 +2048,190 @@ it('rejects later-than-cutoff snapshots while still predicting from prior usable
     expect($step['errors'])->toBe([])
         ->and($step['inputs'][2026020002]['teams']['away']['context_id'])->toBeNull()
         ->and($step['inputs'][2026020002]['context_source_date'])->toBe('2026-11-01');
+});
+
+describe('penalty kill goal production', function (): void {
+    beforeEach(function (): void {
+        foreach ($this->input['teams'] as &$team) {
+            foreach ($team['players'] as &$player) {
+                $player['buckets']['PK']['B'] = ['sat_per_60' => 6.0,
+                    'defense_allowance' => 1.0, 'defense_reference' => 1.0,
+                    'sog_probability' => 0.5, 'goal_probability' => 0.1];
+            }
+            unset($player);
+        }
+        unset($team);
+    });
+
+    it('allocates four skater minutes per predicted PK minute', function (): void {
+        $team = $this->engine->predict($this->input)['teams']['away'];
+        $seconds = array_sum(array_map(fn ($p): float => $p['strengths']['PK']['seconds'], $team['players']));
+        expect($seconds)->toEqualWithDelta(4 * $team['time']['PK'], 0.000001);
+    });
+
+    it('uses the opposing teams PP time for its own PK time', function (): void {
+        $this->input['teams']['home']['train_opportunity_share'] = 0.7;
+        $result = $this->engine->predict($this->input);
+        expect($result['teams']['away']['time']['PK'])->toBe($result['teams']['home']['time']['PP']);
+    });
+
+    it('allocates PK usage independently from PP usage', function (): void {
+        $this->input['teams']['away']['players'][100]['usage']['PK'] = 120.0;
+        $result = $this->engine->predict($this->input)['teams']['away']['players'][100]['strengths'];
+        expect($result['PK']['share'])->toEqualWithDelta(2 / 3, 0.000001)->and($result['PP']['share'])->toBe(0.5);
+    });
+
+    it('respects a measured zero PK share when another penalty killer has usage', function (): void {
+        $this->input['teams']['away']['players'][100]['usage']['PK'] = 0.0;
+        $line = $this->engine->predict($this->input)['teams']['away']['players'][100]['strengths']['PK'];
+        expect($line['seconds'])->toBe(0.0)->and($line['goals'])->toBe(0.0);
+    });
+
+    it('uses frozen league PK usage when personal usage is missing', function (): void {
+        $this->input['teams']['away']['players'][100]['usage']['PK'] = null;
+        expect($this->engine->predict($this->input)['teams']['away']['players'][100]['strengths']['PK']['share'])->toBe(0.5);
+    });
+
+    it('completes an entirely zero-use PK lineup from league usage and records the fallback', function (): void {
+        foreach ($this->input['teams']['away']['players'] as &$player) {
+            $player['usage']['PK'] = 0.0;
+        }
+        unset($player);
+        $team = $this->engine->predict($this->input)['teams']['away'];
+        expect($team['players'][100]['strengths']['PK']['usage_fallback'])->toBeTrue()
+            ->and($team['players'][100]['strengths']['PK']['share'])->toBe(0.5);
+    });
+
+    it('converts PK attempts to shots then goals with the PK probabilities', function (): void {
+        $line = $this->engine->predict($this->input)['teams']['away']['players'][100]['strengths']['PK'];
+        expect($line['sat'])->toEqualWithDelta(6 * $line['seconds'] / 3600, 0.000001)
+            ->and($line['sog'])->toEqualWithDelta($line['sat'] * .5, 0.000001)
+            ->and($line['goals'])->toEqualWithDelta($line['sog'] * .1, 0.000001);
+    });
+
+    it('keeps PK conversion separate from EV conversion', function (): void {
+        $first = $this->engine->predict($this->input);
+        $this->input['teams']['away']['players'][100]['buckets']['EV']['B']['goal_probability'] = 0.9;
+        $second = $this->engine->predict($this->input);
+        expect($second['teams']['away']['strengths']['PK'])->toBe($first['teams']['away']['strengths']['PK']);
+    });
+
+    it('keeps an observed PK zero goal conversion at zero', function (): void {
+        $this->input['teams']['away']['players'][100]['buckets']['PK']['B']['goal_probability'] = 0.0;
+        $line = $this->engine->predict($this->input)['teams']['away']['players'][100]['strengths']['PK'];
+        expect($line['sog'])->toBeGreaterThan(0)->and($line['goals'])->toBe(0.0);
+    });
+
+    it('sums all three strengths into team and game totals', function (): void {
+        $result = $this->engine->predict($this->input);
+        foreach ($result['teams'] as $team) {
+            foreach (['sat', 'sog', 'goals'] as $metric) {
+                expect($team[$metric])->toEqualWithDelta(array_sum(array_column($team['strengths'], $metric)), 0.000001);
+            }
+        }
+        expect($result['total_goals'])->toEqualWithDelta(array_sum(array_column($result['teams'], 'goals')), 0.000001);
+    });
+
+    it('leaves final PP allocation intact when PK scoring changes', function (): void {
+        $first = $this->engine->predict($this->input);
+        $this->input['teams']['away']['players'][100]['buckets']['PK']['B']['sat_per_60'] = 60.0;
+        $second = $this->engine->predict($this->input);
+        expect($second['teams']['away']['pp_allocation'])->toBe($first['teams']['away']['pp_allocation'])
+            ->and($second['teams']['away']['strengths']['PP'])->toBe($first['teams']['away']['strengths']['PP']);
+    });
+
+    it('leaves the EV clock and production intact when PK scoring changes', function (): void {
+        $first = $this->engine->predict($this->input);
+        $this->input['teams']['away']['players'][100]['buckets']['PK']['B']['sat_per_60'] = 60.0;
+        $second = $this->engine->predict($this->input);
+        expect($second['teams']['away']['time'])->toBe($first['teams']['away']['time'])
+            ->and($second['teams']['away']['strengths']['EV'])->toBe($first['teams']['away']['strengths']['EV']);
+    });
+
+    it('includes PK goals in the Poisson winning probabilities', function (): void {
+        $first = $this->engine->predict($this->input);
+        $this->input['teams']['away']['players'][100]['buckets']['PK']['B']['sat_per_60'] = 60.0;
+        expect($this->engine->predict($this->input)['away_win_probability'])->toBeGreaterThan($first['away_win_probability']);
+    });
+
+    it('keeps goalie identity neutral for PK goals', function (): void {
+        $first = $this->engine->predict($this->input);
+        $this->input['teams']['home']['starting_goalie_id'] = 999999;
+        $second = $this->engine->predict($this->input);
+        expect($second['teams']['away']['strengths']['PK'])->toBe($first['teams']['away']['strengths']['PK'])
+            ->and($second['away_win_probability'])->toBe($first['away_win_probability']);
+    });
+
+    it('does not extrapolate travel or L5 form multipliers into PK production', function (): void {
+        $this->input['teams']['away']['schedule'] = ['back_to_back' => true, 'games_including_target_last_7_days' => 4];
+        $this->input['teams']['away']['team_metrics']['last_5'] = ['games' => 5, 'win_pct' => 100];
+        $this->input['teams']['home']['team_metrics']['last_5'] = ['games' => 5, 'win_pct' => 0];
+        $line = $this->engine->predict($this->input)['teams']['away']['players'][100]['strengths']['PK'];
+        expect($line['schedule_multiplier'])->toBe(1.0)->and($line['form_multiplier'])->toBe(1.0);
+    });
+
+    it('rejects an impossible PK conversion probability', function (): void {
+        $this->input['teams']['away']['players'][100]['buckets']['PK']['B']['goal_probability'] = 1.1;
+        expect(fn () => $this->engine->predict($this->input))->toThrow(DomainException::class, 'Probability exceeds one');
+    });
+
+    it('rejects a negative PK attempt rate', function (): void {
+        $this->input['teams']['away']['players'][100]['buckets']['PK']['B']['sat_per_60'] = -1;
+        expect(fn () => $this->engine->predict($this->input))->toThrow(DomainException::class);
+    });
+
+    it('keeps PK attempts within the frozen retained bucket set', function (): void {
+        $this->input['teams']['away']['players'][100]['buckets']['PK']['outside'] = $this->input['teams']['away']['players'][100]['buckets']['PK']['B'];
+        expect(fn () => $this->engine->predict($this->input))->toThrow(DomainException::class, 'outside the frozen');
+    });
+
+    it('persists PK predictions and retained regulation PK actuals in existing columns', function (): void {
+        $event = ($this->event)($this->input);
+        $event['actual'][1]['PK'] = ['sat' => 4, 'sog' => 2, 'goals' => 1];
+        [$replay, $model] = ($this->source)([$event]);
+        $replay->run($model, save: true);
+        $team = DB::table('nhl_custom_game_prediction_teams')->where('nhl_team_id', 1)->sole();
+        expect((float) $team->pk_goals_prediction)->toBeGreaterThan(0)->and($team->actual_pk_goals)->toBe(1)
+            ->and($team->actual_sat)->toBe(52)->and($team->actual_sog)->toBe(26);
+    });
+
+    it('uses model Train PK conversions and preserves PP source selection in the real reader', function (): void {
+        [$reader, $model, $lineups] = ($this->forecastFixture)('FUT', false, false, function (array $records): array {
+            foreach ($records as &$record) {
+                foreach ($record['players'] as &$player) {
+                    $player['counts']['PK']['B'] = ['sat' => 4, 'sog' => 2, 'goals' => 1];
+                }
+                unset($player);
+                foreach ([1, 2] as $team) {
+                    $record['counts'][$team]['PK']['B'] = ['sat' => 8, 'sog' => 4, 'goals' => 2];
+                }
+            }
+            unset($record);
+            return $records;
+        });
+        $reader->prepare($model, '20262027');
+        $event = iterator_to_array($reader->forecastGames('2026-11-05', $lineups))[0];
+        expect($event['error'])->toBeNull();
+        $side = $event['input']['teams']['away'];
+        expect($side['players'][100]['buckets']['PK']['B']['goal_source'])->toBe('train_player_bucket')
+            ->and($side['players'][100]['buckets']['PK']['B']['sog_probability'])->toBe(0.5)
+            ->and($side['pp_offense_l20'])->toBe(2.0);
+    });
+});
+
+it('keeps zero PK opportunity exposure at zero without requiring a usage denominator', function (): void {
+    config(['nhl-custom-prediction.initial_game_pp_opportunities' => 0.0]);
+    foreach ($this->input['teams'] as &$team) {
+        $team['pk_opportunities_l10'] = 0.0;
+        $team['pp_offense_l20'] = 0.0;
+        $team['pp_allowed_l5'] = 0.0;
+        foreach ($team['players'] as &$player) {
+            $player['usage']['PK'] = 0.0;
+        }
+        unset($player);
+    }
+    unset($team);
+    $result = $this->engine->predict($this->input);
+    expect($result['teams']['away']['time']['PK'])->toBe(0.0)
+        ->and($result['teams']['away']['strengths']['PK']['goals'])->toBe(0.0);
 });

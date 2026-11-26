@@ -35,6 +35,9 @@ class NhlCustomGamePredictionInputs
 
     private array $teamRecent = [];
 
+    /** Prior-season PK attempts allowed during PP, pooled by opponent for bounded defense history. */
+    private array $pkDefenseSeasons = [];
+
     private array $trainOpponents = [];
 
     private array $pastAllowances = [];
@@ -155,7 +158,7 @@ class NhlCustomGamePredictionInputs
         }
         $this->prepare($modelId, (string) $targets->first()->season_id);
         $this->train = $this->seasons = $this->recent = $this->league = [];
-        $this->teamTrainBuckets = $this->teamTrain = $this->teamSeason = $this->teamRecent = [];
+        $this->teamTrainBuckets = $this->teamTrain = $this->teamSeason = $this->teamRecent = $this->pkDefenseSeasons = [];
         $this->trainOpponents = $this->pastAllowances = $this->allowanceSources = [];
         $asOf = CarbonImmutable::now('UTC');
         $cutoff = fn (object $g): CarbonImmutable => $g->start_time_utc
@@ -224,7 +227,7 @@ class NhlCustomGamePredictionInputs
         }
         $this->prepare($modelId, (string) $targets->first()->season_id);
         $this->train = $this->seasons = $this->recent = $this->league = [];
-        $this->teamTrainBuckets = $this->teamTrain = $this->teamSeason = $this->teamRecent = [];
+        $this->teamTrainBuckets = $this->teamTrain = $this->teamSeason = $this->teamRecent = $this->pkDefenseSeasons = [];
         $this->trainOpponents = $this->pastAllowances = $this->allowanceSources = [];
         $this->forecastPlayerIds = [];
         $contexts = [];
@@ -687,7 +690,7 @@ class NhlCustomGamePredictionInputs
             ->where(fn ($query) => $query->whereNull('p.position')->orWhere('p.position', '<>', 'G'))
             ->distinct()->pluck('s.nhl_player_id')->flip()->all();
         $this->train = $this->seasons = $this->recent = $this->league = [];
-        $this->teamTrainBuckets = $this->teamTrain = $this->teamSeason = $this->teamRecent = [];
+        $this->teamTrainBuckets = $this->teamTrain = $this->teamSeason = $this->teamRecent = $this->pkDefenseSeasons = [];
         $this->trainOpponents = $this->pastAllowances = $this->allowanceSources = [];
         $games = DB::table('nhl_games')->where('game_type', 2)->whereIn('game_state', ['OFF', 'FINAL'])
             ->whereNotNull('start_time_utc')->where(function ($query) use ($gameIds): void {
@@ -783,7 +786,7 @@ class NhlCustomGamePredictionInputs
             throw new DomainException('Prepare the model before requesting game inputs.');
         }
         $this->train = $this->seasons = $this->recent = $this->league = [];
-        $this->teamTrainBuckets = $this->teamTrain = $this->teamSeason = $this->teamRecent = [];
+        $this->teamTrainBuckets = $this->teamTrain = $this->teamSeason = $this->teamRecent = $this->pkDefenseSeasons = [];
         $this->trainOpponents = $this->pastAllowances = $this->allowanceSources = [];
         $query = DB::table('nhl_games')->whereIn('season_id', [...$this->metadata['train_seasons'], $this->metadata['test_season']])
             ->where('game_type', 2)->whereIn('game_state', ['OFF', 'FINAL'])->whereNotNull('start_time_utc');
@@ -915,10 +918,6 @@ class NhlCustomGamePredictionInputs
                 unset($record);
                 continue;
             }
-            if (! in_array($row->lane, ['EV', 'PP'], true)) {
-                unset($record);
-                continue;
-            }
             foreach (['sat', 'sog', 'goals'] as $field) {
                 $record['counts'][$row->team_id][$row->lane][$row->bucket_key][$field]
                     = ($record['counts'][$row->team_id][$row->lane][$row->bucket_key][$field] ?? 0) + (int) $row->{$field};
@@ -997,11 +996,15 @@ class NhlCustomGamePredictionInputs
     {
         $out = [];
         foreach ([$game->home_team_id, $game->away_team_id] as $team) {
-            foreach (['EV', 'PP'] as $lane) {
+            foreach (['EV', 'PP', 'PK'] as $lane) {
                 foreach ($this->filter['keys'] as $key) {
                     try {
                         $resolved = $defense->resolveAllowance((int) $team, $lane, $key,
-                            $lane === 'EV' ? array_slice($this->teamRecent[$team] ?? [], -20) : null);
+                            match ($lane) {
+                                'EV' => array_slice($this->teamRecent[$team] ?? [], -20),
+                                'PK' => array_values($this->pkDefenseSeasons[(string) ((int) $game->season_id - 10001)][$team] ?? []),
+                                default => null,
+                            });
                         $out[$team][$lane][$key] = $resolved['value'];
                         $this->allowanceSources[$game->nhl_game_id][$team][$lane][$key] = $resolved['source'];
                     } catch (DomainException) {
@@ -1039,7 +1042,7 @@ class NhlCustomGamePredictionInputs
             $input['context_source_date'] = $dates->min() ?? $this->metadata['latest_result_date'] ?? null;
             $input['context_refresh_needed'] = (bool) ($game->future_context_fallback ?? false);
         }
-        foreach (['EV', 'PP'] as $lane) {
+        foreach (['EV', 'PP', 'PK'] as $lane) {
             $reference = $this->league[$lane] ?? [];
             if (($reference['games'] ?? 0) <= 0 || ($reference['seconds'] ?? 0) <= 0) {
                 throw new DomainException('Train player exposure is unavailable.');
@@ -1120,8 +1123,11 @@ class NhlCustomGamePredictionInputs
                     'confidence_score' => $skaterConfidence->get((int) $id),
                     'line_key' => $player['line_key'] ?? null,
                     'usage' => [], 'complete' => [], 'buckets' => [], 'history' => []];
-                foreach (['EV', 'PP'] as $lane) {
+                foreach (['EV', 'PP', 'PK'] as $lane) {
                     $sources = $this->sources((int) $id, $lane, (string) $game->season_id, $playerContext);
+                    if ($lane === 'PP') {
+                        $ppSources = $sources;
+                    }
                     $t = $sources['train'];
                     $ten = $sources['last_10'];
                     $usage = $ten !== null && $ten['games'] > 0 ? $ten['seconds'] / $ten['games'] : null;
@@ -1151,8 +1157,9 @@ class NhlCustomGamePredictionInputs
                         if ($allowance === null || $reference === null) {
                             throw new DomainException('A required defensive allowance/reference is unavailable.');
                         }
-                        $sogSource = $sources[$lane === 'EV' ? 'last_20' : 'last_5'];
-                        $goalSource = $lane === 'EV' ? ($this->train[$id]['EV'] ?? null) : $sources['season_to_date'];
+                        $sogWindow = match ($lane) { 'EV' => 'last_20', 'PP' => 'last_5', 'PK' => 'train' };
+                        $sogSource = $sources[$sogWindow];
+                        $goalSource = $lane === 'PP' ? $sources['season_to_date'] : ($this->train[$id][$lane] ?? null);
                         $evGoal = $lane === 'EV' ? $this->evGoalConversion(
                             $goalSource,
                             $this->teamTrainBuckets[$team] ?? [],
@@ -1166,9 +1173,9 @@ class NhlCustomGamePredictionInputs
                             'sog_probability' => $this->conversion($sogSource, $league, $key, 'sog', 'sat'),
                             'goal_probability' => $evGoal['probability'] ?? $this->conversion($goalSource, $league, $key, 'goals', 'sog'),
                             'sog_source' => ($sogSource['buckets'][$key]['sat'] ?? 0) > 0
-                                ? ($lane === 'EV' ? 'last_20' : 'last_5') : 'train_league_bucket',
+                                ? $sogWindow : 'train_league_bucket',
                             'goal_source' => $evGoal['source'] ?? (($goalSource['buckets'][$key]['sog'] ?? 0) > 0
-                                ? 'season_to_date'
+                                ? ($lane === 'PK' ? 'train_player_bucket' : 'season_to_date')
                                 : ((($league['buckets'][$key]['sog'] ?? 0) > 0) ? 'train_league_bucket' : 'train_league_strength')),
                             'personal_sog_sample' => $sogSource['buckets'][$key]['sat'] ?? null,
                             'personal_goal_sample' => $goalSource['buckets'][$key]['sog'] ?? null,
@@ -1178,6 +1185,8 @@ class NhlCustomGamePredictionInputs
                         }
                     }
                 }
+                // PK is processed last; PP allocation must keep its own PP source windows.
+                $sources = $ppSources;
                 $twenty = $sources['last_20'];
                 $goalSource = 'last_20';
                 if ($twenty === null || $twenty['games'] <= 0) {
@@ -1463,7 +1472,7 @@ class NhlCustomGamePredictionInputs
                     || CarbonImmutable::parse($game->start_time_utc, 'UTC')->timestamp < $this->forecastPlayerCutoffs[$id]);
             $opponent = $player['team'] === (int) $game->home_team_id ? (int) $game->away_team_id : (int) $game->home_team_id;
             $current = [...$player, 'game_id' => $game->nhl_game_id, 'opponent' => $opponent, 'valid' => []];
-            foreach (['EV', 'PP'] as $lane) {
+            foreach (['EV', 'PP', 'PK'] as $lane) {
                 $current['valid'][$lane] = $record['source'] && $player['seconds'] !== [] && ! $player['unclassified']
                     && (($player['seconds'][$lane] ?? 0) > 0 || array_sum(array_column($player['counts'][$lane] ?? [], 'sat')) === 0);
                 if ($isTrain && $current['valid'][$lane]) {
@@ -1511,6 +1520,15 @@ class NhlCustomGamePredictionInputs
                 'clock' => $record['clocks'][$team] ?? [], 'against' => $record['counts'][$other] ?? [],
                 'own_opps' => $own === null ? null : (int) $own,
                 'opponent_opps' => $opponent === null ? null : (int) $opponent, 'pp_allowed' => $ppAllowed];
+            $prior = &$this->pkDefenseSeasons[$game->season_id][$team][$other];
+            $prior ??= ['opponent' => (int) $other, 'valid' => true, 'clock' => ['PP' => 0.0], 'against' => ['PK' => []]];
+            $ppSeconds = $record['clocks'][$team]['PP'] ?? null;
+            $prior['valid'] = $prior['valid'] && $record['valid'] && is_numeric($ppSeconds) && $ppSeconds >= 0;
+            $prior['clock']['PP'] += is_numeric($ppSeconds) ? (float) $ppSeconds : 0.0;
+            foreach ($record['counts'][$other]['PK'] ?? [] as $key => $counts) {
+                $prior['against']['PK'][$key]['sat'] = ($prior['against']['PK'][$key]['sat'] ?? 0) + $counts['sat'];
+            }
+            unset($prior);
             $this->teamRecent[$team][] = $entry;
             if (count($this->teamRecent[$team]) > 20) {
                 array_shift($this->teamRecent[$team]);

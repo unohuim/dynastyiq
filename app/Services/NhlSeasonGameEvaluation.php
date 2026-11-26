@@ -344,12 +344,16 @@ class NhlSeasonGameEvaluation
         $wins = $rows->where('winner_correct', true)->count();
         $losses = $rows->where('winner_correct', false)->whereNotNull('winner_correct')->count();
         $teams = DB::table('nhl_custom_game_prediction_teams')->whereIn('prediction_id', $rows->where('status', 'complete')->pluck('id'))->get([
-            'prediction_id', 'goals_prediction', 'actual_ev_goals', 'actual_pp_goals']);
-        $pairs = $teams->filter(fn ($row): bool => $row->actual_ev_goals !== null && $row->actual_pp_goals !== null)
-            ->map(fn ($row): array => [(float) $row->goals_prediction, $row->actual_ev_goals + $row->actual_pp_goals]);
+            'prediction_id', 'goals_prediction', 'actual_ev_goals', 'actual_pp_goals', 'actual_pk_goals', 'pk_goals_prediction']);
+        $known = static fn ($row): bool => $row->actual_ev_goals !== null && $row->actual_pp_goals !== null
+            && ($row->pk_goals_prediction === null || $row->actual_pk_goals !== null);
+        $actualGoals = static fn ($row): float => $row->actual_ev_goals + $row->actual_pp_goals
+            + ($row->pk_goals_prediction === null ? 0 : $row->actual_pk_goals);
+        $pairs = $teams->filter($known)
+            ->map(fn ($row): array => [(float) $row->goals_prediction, $actualGoals($row)]);
         $games = $teams->groupBy('prediction_id')->filter(fn ($group): bool => $group->count() === 2
-            && $group->every(fn ($row): bool => $row->actual_ev_goals !== null && $row->actual_pp_goals !== null))
-            ->map(fn ($group): array => [(float) $group->sum('goals_prediction'), $group->sum('actual_ev_goals') + $group->sum('actual_pp_goals')]);
+            && $group->every($known))
+            ->map(fn ($group): array => [(float) $group->sum('goals_prediction'), $group->sum($actualGoals)]);
         return ['wins' => $wins, 'losses' => $losses, 'win_pct' => $wins + $losses > 0 ? 100 * $wins / ($wins + $losses) : null,
             'predicted' => $rows->where('status', 'complete')->count(), 'unpicked' => $rows->where('status', 'complete')->whereNull('winner_correct')->count(),
             'excluded' => $rows->where('status', 'excluded')->count(),

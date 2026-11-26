@@ -2,7 +2,7 @@
 
 ## Admin engine evaluations
 
-All new game forecasts use the shared pregame EV/PP engine, including the API,
+All new game forecasts use the shared pregame EV/PP/PK engine, including the API,
 manual admin runs, refreshes, saved-engine/stack previews and evaluations.
 SAT_V2 is the preferred default model. For a past season the default must use
 a complete eligible model trained strictly before that season; explicit model
@@ -26,7 +26,7 @@ for engine and super-admin diagnostics. Player/goalie evidence-quality fields
 retain their own documented meanings. Older revisions without a public score
 return null rather than substituting internal confidence. Moneyline probabilities
 come directly from the shared calculator, including its equal regulation-tie
-resolution and approved schedule adjustment. Scores are already final EV+PP
+resolution and approved schedule adjustment. Scores are already final EV+PP+PK
 team estimates; do not divide them by legacy offensive/defensive weights.
 
 The current scoring version includes the adopted L5 team-record adjustment to
@@ -38,13 +38,24 @@ returned scores and probabilities directly rather than applying this factor
 again. Exact rules remain in
 [NhlCustomGamePrediction.yaml](../architecture/stats/NhlCustomGamePrediction.yaml).
 
-The current `custom_ev_pp_v4` version also applies the adopted EV Train
+The current `custom_ev_pp_pk_v5` version retains the adopted EV Train
 bucket-volume conversion rule. Its settings are recorded under
 `inputs.algorithm_definition.ev_goal_conversion`. SOG and PP team-goal
 allocation retain their existing calculations; consumers should use the returned
 scores/probabilities without adding the conversion again. Per-player bucket
 component rates, sample counts and weights remain private revision evidence.
 Earlier revisions retain their original algorithm and are not rewritten.
+
+New calculations also include short-handed (PK) goals. PK time equals the other
+team's PP time; the player time budget uses four skaters and their recent PK
+usage. Train PK bucket conversion and same-strength fallbacks supply shots and
+goals. Goalie scoring remains neutral. The final PP allocation is unchanged.
+`teams.{away|home}.summary.pk_xgf_per_game` and
+`pk_goalie_adjusted_xgf_per_game` contain the PK estimate;
+`teams.{away|home}.roster[].strengths.PK` contains player bucket/time components.
+Team/player total goals and returned moneyline, puckline and total probabilities
+include PK. Do not add these components again. Saved older responses retain
+their original version and may not contain PK production.
 
 Read `inputs.algorithm_version`, `inputs.sat_model_run_id`,
 `inputs.training_season_ids`, `inputs.algorithm_definition`,
@@ -1974,7 +1985,7 @@ Annual projected TOI and the old offensive/defensive weight blends no longer
 supply these game scores.
 
 Roster `projection_source` identifies current pregame output. `strengths`
-contains EV/PP player components. `projected_sat`, `projected_sog`,
+contains EV/PP/PK player components in new revisions. `projected_sat`, `projected_sog`,
 `projected_goals` and adjusted summary totals come from the new calculation.
 `baseline_*` values are the offensive bucket estimates before defensive,
 schedule and final PP reconciliation. Current confidence fields may be null.

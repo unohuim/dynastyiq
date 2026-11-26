@@ -12,7 +12,7 @@ use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 
 /**
- * Builds partner game payloads through the shared default pregame EV/PP calculator.
+ * Builds partner game payloads through the shared default pregame EV/PP/PK calculator.
  */
 class NhlGamePredictionPayload
 {
@@ -97,7 +97,7 @@ class NhlGamePredictionPayload
         ];
     }
 
-    /** Assemble the existing API envelope exclusively from the shared EV/PP calculation. */
+    /** Assemble the existing API envelope exclusively from the shared EV/PP/PK calculation. */
     private function buildCustomPrediction(int $gameId, array $overrides): array
     {
         $service = app(NhlCustomGameForecast::class);
@@ -168,7 +168,7 @@ class NhlGamePredictionPayload
             'matchup' => $pregameMatchup,
             'game' => $this->gamePayload($game), 'inputs' => [
                 'engine_id' => null, 'stack_id' => null, 'sat_model_run_id' => $model->id,
-                'engine_name' => 'Pregame EV/PP', 'legacy_engine_settings_applied' => false,
+                'engine_name' => 'Pregame EV/PP/PK', 'legacy_engine_settings_applied' => false,
                 'qualification_model_run_id' => $model->id, 'algorithm_version' => config('nhl-custom-prediction.algorithm_version'),
                 'training_season_ids' => $model->train_season_ids, 'source_season_id' => max($model->train_season_ids),
                 'target_season_id' => (string) $game->season_id, 'goalie_projection_version' => $goalieVersion,

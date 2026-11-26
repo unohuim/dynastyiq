@@ -4297,7 +4297,7 @@ NHL gamecenter boxscore rosters are checked only for game/teams without complete
 **Name:** NHL Custom Game Prediction Evidence
 **Type:** Default Pregame Game Calculator And Immutable Prediction Evidence
 
-`NhlCustomGameForecast` supplies the shared `custom_ev_pp_v4` calculator to API,
+`NhlCustomGameForecast` supplies the shared `custom_ev_pp_pk_v5` calculator to API,
 manual admin runs, engine/stack previews, evaluation, simulator and command
 callers. Every requested scheduled state is admitted. The 100% completion target
 uses matching retained Train fallbacks, preserving measured zeros and observed
@@ -4595,3 +4595,12 @@ Operational prediction activity uses the existing run/game history tables for al
 triggers, independent game-owned preparation, fenced worker recovery, and private
 admin Reverb invalidations. Canonical rules: `stats/NhlGamePredictionHistory.yaml`
 and `stats/NhlCustomGamePrediction.yaml`.
+
+
+The shared game calculator now includes a separate PK scoring lane using existing
+PK exposure/history and matching-strength conversion. Player/team/game totals,
+API summaries and new saved season comparisons include PK; goalie scoring stays
+neutral and PP reconciliation remains separate. Existing PK prediction/actual
+columns and versioned preparation state are reused. Authority:
+`docs/architecture/stats/NhlCustomGamePrediction.yaml` and
+`docs/architecture/stats/NhlSeasonGameEvaluations.yaml`.

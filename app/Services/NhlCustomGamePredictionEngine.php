@@ -6,7 +6,7 @@ namespace App\Services;
 
 use DomainException;
 
-/** Pure EV/PP calculation shared by custom replay and independently supplied future inputs. */
+/** Pure EV/PP/PK calculation shared by custom replay and independently supplied future inputs. */
 class NhlCustomGamePredictionEngine
 {
     /** Freeze the complete calculation definition into each custom run. */
@@ -19,9 +19,10 @@ class NhlCustomGamePredictionEngine
 
         return [
             ...$settings,
-            'strengths' => ['EV', 'PP'],
-            'sog_sources' => ['EV' => 'last_20', 'PP' => 'last_5'],
-            'goal_sources' => ['EV' => 'train_bucket_reliability', 'PP' => 'season_to_date'],
+            'strengths' => ['EV', 'PP', 'PK'],
+            'skaters_on_ice' => ['EV' => 5, 'PP' => 5, 'PK' => 4],
+            'sog_sources' => ['EV' => 'last_20', 'PP' => 'last_5', 'PK' => 'train'],
+            'goal_sources' => ['EV' => 'train_bucket_reliability', 'PP' => 'season_to_date', 'PK' => 'train'],
             'goalie_multiplier' => 1.0,
             'player_usage' => 'last_10_normalized_over_full_lineup',
             'sat_fallback' => 'frozen_retained_train_league_by_strength',
@@ -30,7 +31,7 @@ class NhlCustomGamePredictionEngine
             'goal_fallback' => 'personal_bucket_then_train_bucket_then_train_strength',
             'probability' => 'independent_poisson_with_equal_overtime_split',
             'pp_allocation' => 'conditional_split_scaled_to_75_offense_25_defense_total',
-            'short_handed_goals' => false,
+            'short_handed_goals' => true,
         ];
     }
 
@@ -79,14 +80,19 @@ class NhlCustomGamePredictionEngine
         foreach (['away' => 'home', 'home' => 'away'] as $venue => $opponent) {
             $side = $sides[$venue];
             $qualifies = $withSchedule && $this->fourthGameBackToBack($side['schedule'] ?? []);
-            $weights = ['EV' => [], 'PP' => []];
+            $weights = ['EV' => [], 'PP' => [], 'PK' => []];
             foreach ($side['players'] as $id => $player) {
-                foreach (['EV', 'PP'] as $lane) {
+                foreach (['EV', 'PP', 'PK'] as $lane) {
                     $weights[$lane][$id] = $this->nonnegative(
                         $player['usage'][$lane] ?? $input['league_usage_seconds'][$lane] ?? null,
                         'Player usage or Train usage fallback'
                     );
                 }
+            }
+            $pkUsageFallback = array_sum($weights['PK']) <= 0 && $pp[$opponent] > 0;
+            if ($pkUsageFallback) {
+                $weights['PK'] = array_fill_keys(array_keys($side['players']),
+                    $this->positive($input['league_usage_seconds']['PK'] ?? null, 'Train PK usage fallback'));
             }
             $team = [
                 'id' => (int) $side['id'], 'abbrev' => $side['abbrev'], 'venue' => $venue,
@@ -97,7 +103,7 @@ class NhlCustomGamePredictionEngine
                 'time' => ['EV' => $ev, 'PP' => $pp[$venue], 'PK' => $pp[$opponent]],
                 'schedule_adjustment_applied' => $qualifies,
                 'ev_form_multiplier' => $form['multipliers'][$venue],
-                'players' => [], 'strengths' => ['EV' => $this->emptyTotals(), 'PP' => $this->emptyTotals()],
+                'players' => [], 'strengths' => ['EV' => $this->emptyTotals(), 'PP' => $this->emptyTotals(), 'PK' => $this->emptyTotals()],
             ];
             foreach ($side['players'] as $id => $player) {
                 if (! in_array($player['role'] ?? null, ['F', 'D'], true)) {
@@ -106,18 +112,19 @@ class NhlCustomGamePredictionEngine
                 $prediction = ['id' => (int) $id, 'role' => $player['role'], 'name' => $player['name'],
                     'line_key' => $player['line_key'] ?? null,
                     'context_id' => $player['context_id'] ?? null, 'strengths' => []];
-                foreach (['EV', 'PP'] as $lane) {
+                foreach (['EV', 'PP', 'PK'] as $lane) {
                     $totalWeight = array_sum($weights[$lane]);
-                    if ($totalWeight <= 0) {
+                    if ($totalWeight <= 0 && ! ($lane === 'PK' && $team['time']['PK'] === 0.0)) {
                         throw new DomainException('Lineup usage has no positive denominator.');
                     }
-                    $share = $weights[$lane][$id] / $totalWeight;
-                    $seconds = 5 * $team['time'][$lane] * $share;
-                    $multiplier = $qualifies
+                    $share = $totalWeight > 0 ? $weights[$lane][$id] / $totalWeight : 0.0;
+                    $seconds = $definition['skaters_on_ice'][$lane] * $team['time'][$lane] * $share;
+                    $multiplier = $qualifies && $lane !== 'PK'
                         ? $definition['schedule'][$player['role'] === 'D' ? 'defense_sat_multiplier' : 'forward_sat_multiplier'] : 1.0;
                     $formMultiplier = $lane === 'EV' ? $form['multipliers'][$venue] : 1.0;
                     $line = [...$this->emptyTotals(), 'share' => $share, 'seconds' => $seconds,
-                        'schedule_multiplier' => $multiplier, 'form_multiplier' => $formMultiplier, 'buckets' => []];
+                        'schedule_multiplier' => $multiplier, 'form_multiplier' => $formMultiplier,
+                        'usage_fallback' => $lane === 'PK' && $pkUsageFallback, 'buckets' => []];
                     foreach ($player['buckets'][$lane] ?? [] as $key => $bucket) {
                         if (! isset($retained[$key])) {
                             throw new DomainException('A forecast bucket is outside the frozen Train-confidence filter.');
@@ -149,9 +156,9 @@ class NhlCustomGamePredictionEngine
         }
         $this->allocatePowerPlayGoals($teams, $sides, $this->probability($input['league_pk_probability'] ?? null));
         foreach ($teams as &$team) {
-            $team['goals'] = $team['strengths']['EV']['goals'] + $team['strengths']['PP']['goals'];
-            $team['sat'] = $team['strengths']['EV']['sat'] + $team['strengths']['PP']['sat'];
-            $team['sog'] = $team['strengths']['EV']['sog'] + $team['strengths']['PP']['sog'];
+            $team['goals'] = array_sum(array_column($team['strengths'], 'goals'));
+            $team['sat'] = array_sum(array_column($team['strengths'], 'sat'));
+            $team['sog'] = array_sum(array_column($team['strengths'], 'sog'));
         }
         unset($team);
         $probabilities = $this->winProbabilities($teams['home']['goals'], $teams['away']['goals']);
@@ -172,7 +179,7 @@ class NhlCustomGamePredictionEngine
                 : $teams[$homeProbability > 0.5 ? 'home' : 'away']['abbrev'],
             'confidence_score' => $confidence['score'],
             'confidence_inputs' => ['input_completeness' => $this->completeness($sides),
-                'effective_input_completeness' => ['EV' => 1.0, 'PP' => 1.0],
+                'effective_input_completeness' => ['EV' => 1.0, 'PP' => 1.0, 'PK' => 1.0],
                 'calibration' => 'unavailable', 'schedule_enabled' => $withSchedule,
                 'teams' => $confidence['teams']],
         ];
@@ -190,7 +197,7 @@ class NhlCustomGamePredictionEngine
         foreach (['away' => 'home', 'home' => 'away'] as $venue => $opponent) {
             $roster = [];
             foreach ($teams[$venue]['players'] as $id => $player) {
-                $roster[] = ['adjusted_xgf_per_game' => $player['strengths']['EV']['goals'] + $player['strengths']['PP']['goals'],
+                $roster[] = ['adjusted_xgf_per_game' => array_sum(array_column($player['strengths'], 'goals')),
                     'confidence_score' => $input['teams'][$venue]['players'][$id]['confidence_score'] ?? null];
                 $teams[$venue]['players'][$id]['confidence_score'] = $input['teams'][$venue]['players'][$id]['confidence_score'] ?? null;
             }
@@ -345,7 +352,7 @@ class NhlCustomGamePredictionEngine
     /** Count complete inputs before league imputation, separately for each predicted strength. */
     private function completeness(array $sides): array
     {
-        $counts = ['EV' => 0, 'PP' => 0];
+        $counts = ['EV' => 0, 'PP' => 0, 'PK' => 0];
         $total = 0;
         foreach ($sides as $side) {
             foreach ($side['players'] as $player) {

@@ -80,7 +80,7 @@ beforeEach(function (): void {
     $this->savedRun = function (array $extra = []): int {
         return DB::table('nhl_custom_game_prediction_runs')->insertGetId([
             'name' => 'Saved baseline', 'model_run_id' => $this->model->id, 'season_id' => '20252026',
-            'algorithm_version' => 'custom_ev_pp_v4', 'status' => 'complete', 'total_games' => 1,
+            'algorithm_version' => 'custom_ev_pp_pk_v5', 'status' => 'complete', 'total_games' => 1,
             'definition' => json_encode(['entrypoint' => 'season_games', 'identity' => $this->service->identity($this->model), 'game_ids' => [$this->gameId]]),
             'created_at' => now()->subHour(), 'updated_at' => now()->subHour(), ...$extra,
         ]);
@@ -353,7 +353,7 @@ it('leaves a saved successful prediction untouched on checkpoint retry', functio
 it('publishes team player and goalie snapshots and reads them without replaying the engine', function (): void {
     $run = ($this->savedRun)(['status' => 'running']);
     $input = ['game_id' => $this->gameId, 'source_cutoff_at' => '2025-11-01 23:00:00', 'retained_bucket_keys' => ['B'],
-        'league_usage_seconds' => ['EV' => 600.0, 'PP' => 60.0], 'league_pk_probability' => .8, 'teams' => []];
+        'league_usage_seconds' => ['EV' => 600.0, 'PP' => 60.0, 'PK' => 60.0], 'league_pk_probability' => .8, 'teams' => []];
     $goalies = [];
     foreach (['away' => [1, 101, 102, 'BOS'], 'home' => [2, 201, 202, 'TOR']] as $side => [$team, $player, $goalie, $abbrev]) {
         $parent = DB::table('nhl_team_game_pregame_contexts')->where('nhl_team_id', $team)->value('id');
@@ -363,7 +363,7 @@ it('publishes team player and goalie snapshots and reads them without replaying 
             'pk_opportunities_l10' => 3.0, 'pp_offense_l20' => .8, 'pp_allowed_l5' => .6, 'pk_probability' => .8,
             'schedule' => ['back_to_back' => false, 'games_including_target_last_7_days' => 3],
             'players' => [$player => ['name' => 'Player '.$player, 'role' => 'F', 'context_id' => $child,
-                'usage' => ['EV' => 600.0, 'PP' => 60.0], 'complete' => ['EV' => true, 'PP' => true],
+                'usage' => ['EV' => 600.0, 'PP' => 60.0, 'PK' => 60.0], 'complete' => ['EV' => true, 'PP' => true, 'PK' => true],
                 'history' => [], 'buckets' => ['EV' => ['B' => ['sat_per_60' => 12.0, 'defense_allowance' => 1.0,
                     'defense_reference' => 1.0, 'sog_probability' => .5, 'goal_probability' => .1]],
                     'PP' => ['B' => ['sat_per_60' => 24.0, 'defense_allowance' => 1.0, 'defense_reference' => 1.0,
@@ -445,4 +445,29 @@ it('can discard only a broken transient checkpoint during explicit resume', func
     expect(Cache::get('nhl:season-evaluation:'.$id.':work'))->toBeNull()
         ->and(Cache::get('nhl:season-evaluation:99999:work'))->toBe(['other' => true]);
     expect(DB::table('nhl_custom_game_predictions')->where('run_id', $id)->count())->toBe(1);
+});
+
+it('includes retained PK goals in error comparisons for PK-enabled runs', function (): void {
+    $run = ($this->savedRun)();
+    $prediction = ($this->savedGame)($run);
+    foreach ([1, 2] as $team) {
+        DB::table('nhl_custom_game_prediction_teams')->insert([
+            'prediction_id' => $prediction, 'nhl_team_id' => $team, 'opponent_team_id' => $team === 1 ? 2 : 1,
+            'venue' => $team === 1 ? 'away' : 'home', 'goals_prediction' => 3,
+            'pk_goals_prediction' => 1, 'actual_ev_goals' => 2, 'actual_pp_goals' => 0, 'actual_pk_goals' => 1,
+        ]);
+    }
+    $summary = $this->service->summary($run);
+    expect($summary['team_goals']['p20'])->toEqual(100)->and($summary['team_goals']['err_pct'])->toEqual(0)
+        ->and($summary['game_goals']['actual_sum'])->toEqual(6);
+});
+
+it('keeps missing PK actuals unknown for PK-enabled comparisons', function (): void {
+    $run = ($this->savedRun)();
+    $prediction = ($this->savedGame)($run);
+    DB::table('nhl_custom_game_prediction_teams')->insert([
+        'prediction_id' => $prediction, 'nhl_team_id' => 1, 'opponent_team_id' => 2, 'venue' => 'away',
+        'goals_prediction' => 3, 'pk_goals_prediction' => 1, 'actual_ev_goals' => 2, 'actual_pp_goals' => 0,
+    ]);
+    expect($this->service->summary($run)['team_goals']['count'])->toBe(0);
 });

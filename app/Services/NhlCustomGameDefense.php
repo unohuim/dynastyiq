@@ -71,7 +71,7 @@ class NhlCustomGameDefense
             if (! $record['valid']) {
                 continue;
             }
-            foreach (['EV', 'PP'] as $lane) {
+            foreach (['EV', 'PP', 'PK'] as $lane) {
                 $minutes = ($record['clock'][$lane] ?? 0) / 60;
                 if ($minutes <= 0) {
                     continue;
@@ -93,8 +93,11 @@ class NhlCustomGameDefense
     {
         if ($this->fitKeys === null) {
             $this->fitKeys = [];
-            foreach (['EV', 'PP'] as $lane) {
+            foreach (['EV', 'PP', 'PK'] as $lane) {
                 $minutes = array_sum(array_map('array_sum', $this->fitSeconds[$lane] ?? []));
+                if ($lane === 'PK' && $minutes <= 0) {
+                    continue;
+                }
                 if ($minutes <= 0) {
                     throw new DomainException('Train defensive clocks are unavailable for '.$lane.'.');
                 }
@@ -183,7 +186,7 @@ class NhlCustomGameDefense
         $exposure = $prior;
         $minutes = 0.0;
         foreach ($recent as $record) {
-            $seconds = $record['clock'][$lane === 'PP' ? 'PK' : 'EV'] ?? null;
+            $seconds = $record['clock'][match ($lane) { 'PP' => 'PK', 'PK' => 'PP', default => 'EV' }] ?? null;
             if (! ($record['valid'] ?? false) || ! is_numeric($seconds)
                 || ! is_finite((float) $seconds) || $seconds < 0) {
                 return $fallback;
