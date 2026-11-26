@@ -60,7 +60,7 @@ it('shows initial loading without declaring the pilot missing', () => {
     expect(host.textContent).not.toContain('Source unavailable');
 });
 it('identifies historical pilot data instead of production readiness', () => {
-    mount(); expect(host.textContent).toContain('Shared workspace pilot · Sep2026 · Test 20252026');
+    mount(); expect(host.textContent).toContain('Sep2026 · Test 20252026');
     expect(host.textContent).toContain('Production context remains independent.');
 });
 it('does not label complete team snapshots as full player readiness', () => {
@@ -189,4 +189,57 @@ it('retains the reference tab order with Models first and Pregame as one peer', 
 it('uses the actual extracted rink artwork without adding another application header', () => {
     mount(); expect(host.querySelector('[data-sat-hq-hero] img').getAttribute('src')).toBe('/images/sat-models-rink.png');
     expect(host.querySelector('[aria-label="Primary navigation"]')).toBeNull();
+});
+
+
+it('opens all recorded issues from the Overall Health badge', async () => {
+    const issues = [1, 2, 3, 4].map(id => ({ title: `Issue ${id}`, detail: `Saved cause ${id}` }));
+    mount({ pregame: pregame({ health: 'attention', issues }) });
+    expect(host.textContent).not.toContain('Saved cause 4');
+    host.querySelector('[aria-label="View pregame health issues"]').click(); await nextTick();
+    const panel = host.querySelector('#sat-pregame-issues-panel');
+    expect(panel.textContent).toContain('Saved cause 4');
+    expect(panel.textContent).toContain('Update missing Test context');
+});
+
+it('opens the same issue panel from the Outstanding count without processing work', async () => {
+    mount({ pregame: pregame({ health: 'attention', issues: [{ title: 'Missing sources', detail: 'Two games lack context.' }] }) });
+    host.querySelector('[aria-label="View 1 outstanding pregame issues"]').click(); await nextTick();
+    expect(host.querySelector('#sat-pregame-issues-panel').textContent).toContain('Two games lack context.');
+    expect(mocks.post).not.toHaveBeenCalled(); expect(mocks.put).not.toHaveBeenCalled();
+    expect(mocks.patch).not.toHaveBeenCalled(); expect(mocks.get).not.toHaveBeenCalled();
+});
+
+it('provides a visible native-button View issues affordance with dialog state', async () => {
+    mount(); const trigger = button('View issues →');
+    expect(trigger.tagName).toBe('BUTTON'); expect(trigger.type).toBe('button');
+    expect(trigger.getAttribute('aria-haspopup')).toBe('dialog');
+    expect(trigger.getAttribute('aria-expanded')).toBe('false');
+    trigger.click(); await nextTick();
+    expect(trigger.getAttribute('aria-expanded')).toBe('true');
+    expect(host.querySelector(`#${trigger.getAttribute('aria-controls')}`)).not.toBeNull();
+});
+
+it('allows issue inspection when the pilot is unavailable while repair remains disabled', async () => {
+    mount({ pregame: pregame({ source: null, health: 'unavailable', run: null,
+        issues: [{ title: 'Sep2026 source unavailable', detail: 'No unambiguous historical pilot exists.' }] }) });
+    await click('View issues →');
+    expect(host.querySelector('#sat-pregame-issues-panel').textContent).toContain('No unambiguous historical pilot exists.');
+    expect(button('Update missing Test context').disabled).toBe(true);
+    expect(button('Full Train + Test rebuild').disabled).toBe(true);
+    expect(mocks.post).not.toHaveBeenCalled();
+});
+
+it('shows an explicit empty issue state when current health has no tracked problems', async () => {
+    mount(); await click('View issues →');
+    expect(host.querySelector('#sat-pregame-issues-panel').textContent).toContain('No tracked pregame issues.');
+    expect(mocks.post).not.toHaveBeenCalled();
+});
+
+it('restores closed issue-trigger state without removing the health summary', async () => {
+    mount(); await click('View issues →');
+    host.querySelector('[aria-label="Close panel"]').click(); await nextTick();
+    expect(host.querySelector('#sat-pregame-issues-panel')).toBeNull();
+    expect(button('View issues →').getAttribute('aria-expanded')).toBe('false');
+    expect(host.querySelector('[data-pregame-health-strip]')).not.toBeNull();
 });

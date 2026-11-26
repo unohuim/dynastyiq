@@ -99,7 +99,7 @@ row/progress assertions remain in the existing action suites.
 | File | it(...) declarations | Execution |
 | --- | ---: | --- |
 | tests/Feature/NhlSatWorkspaceTest.php | 31 | Not run |
-| resources/js/pages/Admin/SatModels/Index.test.js | 34 | Not run |
+| resources/js/pages/Admin/SatModels/Index.test.js | 40 | Not run |
 | tests/Feature/NhlModelPregameBuildTest.php | 107 | Not run |
 | tests/Feature/NhlBuildPredictionsTest.php | 111 | Not run |
 | tests/Feature/NhlStrengthProbabilityTrainingTest.php | 52 | Not run |
@@ -167,3 +167,45 @@ visual correction. No database migration is needed.
 Checks actually performed: source/reference inspection, artwork inspection and
 `git diff --check`. Tests, build, browser rendering and Playwright verification
 were not run. No pixel-perfect runtime claim is made without browser verification.
+
+
+## Health issue navigation correction
+
+Files changed for this correction:
+
+- `resources/js/pages/Admin/SatModels/Index.vue`
+- `resources/js/pages/Admin/SatModels/Index.test.js`
+- `docs/UI_DESIGN.md`
+- `docs/testing/sat-hq-pregame-workspace-review.md`
+
+The Overall Health badge, Outstanding count and visible View issues button open
+the existing full issues/repair panel. Native buttons expose dialog ownership,
+expanded state and visible keyboard focus. The overview remains mounted. Viewing
+issues remains available without a pilot, while actual maintenance buttons retain
+their eligibility checks. No endpoint, queue operation, database or calculation
+behaviour changes. No migration is required.
+
+Coverage matrix for this correction: G COVERED by six additional deterministic
+component cases; A–F are unchanged, with no new endpoint or persistence contract.
+The source uses the existing accessible ReKa dialog for focus/escape handling.
+
+Requirements: (1) SATISFIED — badge opens all issues, (2) SATISFIED — count opens
+same panel, (3) SATISFIED — explicit View issues affordance, (4) SATISFIED — no
+processing or HTTP request on open, (5) SATISFIED — unavailable source inspection
+with disabled repairs, (6) SATISFIED — empty state and close-state reconciliation.
+
+New assertions:
+
+- opens all recorded issues from the Overall Health badge
+- opens the same issue panel from the Outstanding count without processing work
+- provides a visible native-button View issues affordance with dialog state
+- allows issue inspection when the pilot is unavailable while repair remains disabled
+- shows an explicit empty issue state when current health has no tracked problems
+- restores closed issue-trigger state without removing the health summary
+
+The preexisting pilot-caption assertion is aligned with the visible reference
+header introduced by the preceding design correction. The component suite now
+contains 40 it(...) declarations. Backend authorization/scope is unchanged; the
+endpoint matrix above still applies. Source review and `git diff --check` were
+performed; tests, CI, builds, browser checks and production operations were not run.
+Human command: `npm run test -- --run resources/js/pages/Admin/SatModels/Index.test.js`.

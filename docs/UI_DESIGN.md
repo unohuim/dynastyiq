@@ -757,6 +757,11 @@ Pregame initially identifies Sep2026 as its historical pilot. The compact health
 strip and expandable workstream table sit beside the control/attention/automation
 rail. Job activity, allocation and coverage occupy a three-panel footer. Show at
 most three attention items in the overview; View all opens the full scoped list.
+The Overall Health badge, Outstanding count and visible View issues link are
+keyboard-accessible dialog triggers for that same complete list and repair
+panel. Opening it is read-only and remains available when the pilot source is
+missing; processing controls keep their separate eligibility checks. Show an
+explicit empty state when no tracked issues exist.
 Use real date coverage cells and a claim-capacity ring. An unmeasured freshness
 strip stays muted/unavailable rather than inventing current freshness. Actual
 states, snapshots and claims replace illustrative data without claiming complete
