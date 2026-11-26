@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Models\NhlExpectedGoalsModel;
 use App\Models\NhlModelRun;
 use Carbon\CarbonImmutable;
 use Closure;
@@ -25,6 +26,9 @@ class NhlCustomGamePredictionInputs
     private array $recent = [];
 
     private array $league = [];
+
+    /** Frozen strength-specific Train profile references, shared by checkpoint and replay paths. */
+    private array $conversionReferences = [];
 
     private array $teamTrain = [];
 
@@ -129,15 +133,130 @@ class NhlCustomGamePredictionInputs
         }
         $bucketModel = new \App\Models\NhlExpectedGoalsModel(['feature_config' => $this->filter['feature_config']]);
         $this->bucketExpression = app(NhlSatModelEntityProfileBuilder::class)->modelBucketKeySql($bucketModel, 'f');
+        $this->conversionReferences = $this->profileConversionReferences($model, $training);
         $this->metadata = ['model_id' => $modelId, 'model_name' => $model->name,
             'train_seasons' => $training, 'test_season' => (string) $model->target_season_id,
             'prediction_season' => $predictionSeason,
             'coefficient_reference_train_seasons' => $reference,
             'coefficients_transferred' => $training !== $reference,
             'context_version' => NhlPregameContextBuilder::VERSION, 'context_run_id' => $run?->id,
-            'bucket_filter' => $this->filter];
+            'bucket_filter' => $this->filter,
+            'conversion_profile_sources' => $this->conversionReferences['provenance']];
 
         return $this->metadata;
+    }
+
+    /** Compact source identity invalidates prepared inputs after evaluation or skater-profile publication. */
+    public static function conversionProfileIdentity(NhlModelRun $model): array
+    {
+        return [
+            'freshness' => data_get($model->metrics, 'profile_freshness.skater_offense'),
+            'active_build' => in_array('skater_offense', data_get($model->metrics, 'profile_build.profile_types', []), true)
+                ? array_intersect_key(data_get($model->metrics, 'profile_build', []), array_flip(['id', 'status'])) : null,
+            'evaluations' => NhlExpectedGoalsModel::query()->where('model_run_id', $model->id)
+                ->whereIn('prediction_target', ['shot_on_goal', 'goal'])->whereNotNull('trained_at')
+                ->orderBy('id')->get()->map(fn (NhlExpectedGoalsModel $evaluation): array =>
+                    NhlSatModelEntityProfileBuilder::probabilitySources($evaluation, null)['sat'])->all(),
+        ];
+    }
+
+    /**
+     * Pool committed offensive Train profiles once; unavailable or stale sources preserve raw fallback.
+     *
+     * @param array<int, string> $training
+     * @return array<string, mixed>
+     */
+    private function profileConversionReferences(NhlModelRun $model, array $training): array
+    {
+        $identity = self::conversionProfileIdentity($model);
+        $unavailable = static fn (string $reason): array => ['buckets' => [], 'strengths' => [],
+            'provenance' => ['source' => 'raw_train_fallback', 'reason' => $reason, 'identity' => $identity]];
+        $freshness = $identity['freshness'];
+        if ($identity['active_build'] !== null && ($identity['active_build']['status'] ?? null) !== 'complete') {
+            return $unavailable('skater_profile_build_not_complete');
+        }
+        if (! is_array($freshness) || ($freshness['outdated'] ?? true) !== false
+            || empty($freshness['build_id']) || empty($freshness['profiled_at'])) {
+            return $unavailable('missing_or_stale_skater_profiles');
+        }
+        $sat = NhlExpectedGoalsModel::query()->where('model_run_id', $model->id)
+            ->where('prediction_target', 'shot_on_goal')->whereNotNull('trained_at')
+            ->find($this->filter['sat_model_id']);
+        $models = NhlExpectedGoalsModel::query()->where('model_run_id', $model->id)
+            ->where('prediction_target', 'goal')->whereNotNull('trained_at')->whereHas('buckets')
+            ->orderByDesc('trained_at')->orderByDesc('id')->get();
+        $version = $model->model_version.'__run_'.$model->id;
+        $metadataMatches = static fn (NhlExpectedGoalsModel $candidate): bool =>
+            data_get($candidate->feature_config, 'sample_mode') === 'sog'
+            && in_array(data_get($candidate->feature_config, 'workflow_action'), [null, 'eval_sog'], true);
+        $sog = $models->first(fn ($candidate): bool => $candidate->version === $version && $metadataMatches($candidate))
+            ?? $models->first($metadataMatches)
+            ?? $models->first(fn ($candidate): bool => $candidate->version === $version)
+            ?? $models->first();
+        if ($sat === null || $sog === null) {
+            return $unavailable('missing_evaluated_models');
+        }
+        $sources = NhlSatModelEntityProfileBuilder::probabilitySources($sat, $sog);
+        if (($freshness['probability_sources'] ?? null) != $sources) {
+            return $unavailable('evaluation_revision_mismatch');
+        }
+        $totals = [];
+        $invalid = false;
+        DB::table('nhl_sat_model_entity_profile_buckets')->where('model_run_id', $model->id)
+            ->where('profile_type', 'skater_offense')->where('game_type', 2)
+            ->whereIn('strength', ['ev', 'pp', 'pk'])->whereIn('matched_bucket_key', $this->filter['keys'])
+            ->chunkById(500, function ($rows) use (&$totals, &$invalid, $training, $sat, $sog, $sources): bool {
+                foreach ($rows as $row) {
+                    $seasons = json_decode($row->source_season_ids, true);
+                    if (is_array($seasons)) {
+                        $seasons = array_map('strval', $seasons);
+                        sort($seasons);
+                    }
+                    $metadata = json_decode($row->metadata ?? '{}', true);
+                    if ($seasons !== $training || (int) $row->sat_expected_goals_model_id !== (int) $sat->id
+                        || (int) $row->sog_expected_goals_model_id !== (int) $sog->id
+                        || ($metadata['probability_sources'] ?? null) != $sources || $row->profiled_at === null) {
+                        $invalid = true;
+                        return false;
+                    }
+                    foreach (['source_sat', 'source_sog', 'expected_sog', 'expected_goals'] as $field) {
+                        if (! is_numeric($row->{$field}) || ! is_finite((float) $row->{$field}) || $row->{$field} < 0) {
+                            $invalid = true;
+                            return false;
+                        }
+                    }
+                    // Expected sums are rounded to four decimals in the profile writer.
+                    if ($row->source_sog > $row->source_sat || $row->expected_sog > $row->source_sat + 0.0001
+                        || $row->expected_goals > $row->source_sog + 0.0001) {
+                        $invalid = true;
+                        return false;
+                    }
+                    $lane = strtoupper($row->strength);
+                    foreach (['source_sat', 'source_sog', 'expected_sog', 'expected_goals'] as $field) {
+                        $totals[$lane][$row->matched_bucket_key][$field] =
+                            ($totals[$lane][$row->matched_bucket_key][$field] ?? 0) + (float) $row->{$field};
+                    }
+                }
+                return true;
+            });
+        if (self::conversionProfileIdentity($model->fresh()) !== $identity) {
+            return $unavailable('profile_sources_changed_during_load');
+        }
+        if ($invalid) {
+            return $unavailable('profile_row_provenance_or_counts_mismatch');
+        }
+        if ($totals === []) {
+            return $unavailable('missing_strength_profile_rows');
+        }
+        $references = ['buckets' => $totals, 'strengths' => [], 'provenance' => [
+            'source' => 'smoothed_train_profiles', 'identity' => $identity, 'probability_sources' => $sources,
+            'train_seasons' => $training, 'profile_type' => 'skater_offense']];
+        foreach ($totals as $lane => $buckets) {
+            foreach (['source_sat', 'source_sog', 'expected_sog', 'expected_goals'] as $field) {
+                $references['strengths'][$lane][$field] = array_sum(array_column($buckets, $field));
+            }
+        }
+        return $references;
     }
 
     /** Predict any scheduled state from prior results and supplied or anticipated lineup identities. */
@@ -1029,6 +1148,8 @@ class NhlCustomGamePredictionInputs
         $goalieConfidence = $confidence->goalieConfidenceBuckets($this->metadata['model_id'], $goalieIds, $this->filter['keys']);
         $input = ['game_id' => (int) $game->nhl_game_id, 'source_cutoff_at' => $game->prediction_cutoff_at ?? $game->start_time_utc,
             'retained_bucket_keys' => $this->filter['keys'],
+            'conversion_profile_sources' => $this->conversionReferences['provenance'] ?? null,
+            'conversion_profile_references' => array_intersect_key($this->conversionReferences, array_flip(['buckets', 'strengths'])),
             'teams' => [], 'league_usage_seconds' => [], 'league_pk_probability' => $this->leaguePk((string) $game->season_id)];
         if ($prospective) {
             $dates = collect($contexts['teams'][$game->nhl_game_id] ?? [])
@@ -1170,13 +1291,13 @@ class NhlCustomGamePredictionInputs
                             'defense_allowance' => $allowance, 'defense_reference' => $reference['value'],
                             'defense_allowance_source' => $this->allowanceSources[$game->nhl_game_id][$opponent][$lane][$key],
                             'defense_reference_sources' => $reference['sources'],
-                            'sog_probability' => $this->conversion($sogSource, $league, $key, 'sog', 'sat'),
-                            'goal_probability' => $evGoal['probability'] ?? $this->conversion($goalSource, $league, $key, 'goals', 'sog'),
+                            'sog_probability' => $this->conversion($sogSource, $league, $key, 'sog', 'sat', $lane),
+                            'goal_probability' => $evGoal['probability'] ?? $this->conversion($goalSource, $league, $key, 'goals', 'sog', $lane),
                             'sog_source' => ($sogSource['buckets'][$key]['sat'] ?? 0) > 0
-                                ? $sogWindow : 'train_league_bucket',
+                                ? $sogWindow : $this->leagueConversionSource($lane, $key, 'sat', $league),
                             'goal_source' => $evGoal['source'] ?? (($goalSource['buckets'][$key]['sog'] ?? 0) > 0
                                 ? ($lane === 'PK' ? 'train_player_bucket' : 'season_to_date')
-                                : ((($league['buckets'][$key]['sog'] ?? 0) > 0) ? 'train_league_bucket' : 'train_league_strength')),
+                                : $this->leagueConversionSource($lane, $key, 'sog', $league)),
                             'personal_sog_sample' => $sogSource['buckets'][$key]['sat'] ?? null,
                             'personal_goal_sample' => $goalSource['buckets'][$key]['sog'] ?? null,
                             'source' => $validRate ? 'train_l10' : 'train_league_fallback'];
@@ -1358,18 +1479,23 @@ class NhlCustomGamePredictionInputs
         }
         $source = $sat < $minimum ? 'train_player_team_league_blend'
             : ((($personal['buckets'][$key]['sog'] ?? 0) > 0) ? 'train_player_bucket'
-                : ((($league['buckets'][$key]['sog'] ?? 0) > 0) ? 'train_league_bucket' : 'train_league_strength'));
+                : $this->leagueConversionSource('EV', $key, 'sog', $league));
 
         return ['probability' => $probability, 'source' => $source,
             'evidence' => ['train_sat' => $sat, 'minimum_train_sat' => $minimum,
-                'weights' => $weights, 'probabilities' => $rates]];
+                'weights' => $weights, 'probabilities' => $rates,
+                'league_source' => $this->leagueConversionSource('EV', $key, 'sog', $league)]];
     }
 
     /** Personal observed zeros are supported; only missing denominators reach league fallback. */
-    private function conversion(?array $source, array $league, string $key, string $numerator, string $denominator): float
+    private function conversion(?array $source, array $league, string $key, string $numerator, string $denominator, string $lane = 'EV'): float
     {
         if (($source['buckets'][$key][$denominator] ?? 0) > 0) {
             return ($source['buckets'][$key][$numerator] ?? 0) / $source['buckets'][$key][$denominator];
+        }
+        $profile = $this->profileConversion($lane, $key, $denominator, ($league['buckets'][$key][$denominator] ?? 0) <= 0);
+        if ($profile !== null) {
+            return $profile['probability'];
         }
         if (($league['buckets'][$key][$denominator] ?? 0) > 0) {
             return ($league['buckets'][$key][$numerator] ?? 0) / $league['buckets'][$key][$denominator];
@@ -1383,6 +1509,31 @@ class NhlCustomGamePredictionInputs
         }
 
         return array_sum(array_column($league['buckets'], $numerator)) / $den;
+    }
+
+    /** Resolve only the matching strength; goal-only pooled fallback mirrors the existing raw ladder. */
+    private function profileConversion(string $lane, string $key, string $denominator, bool $allowStrength = true): ?array
+    {
+        $field = $denominator === 'sat' ? 'source_sat' : 'source_sog';
+        $expected = $denominator === 'sat' ? 'expected_sog' : 'expected_goals';
+        $bucket = $this->conversionReferences['buckets'][$lane][$key] ?? [];
+        if (($bucket[$field] ?? 0) > 0) {
+            return ['probability' => min(1.0, $bucket[$expected] / $bucket[$field]),
+                'source' => 'smoothed_train_league_bucket'];
+        }
+        $strength = $this->conversionReferences['strengths'][$lane] ?? [];
+        if ($allowStrength && $denominator === 'sog' && ($strength[$field] ?? 0) > 0) {
+            return ['probability' => min(1.0, $strength[$expected] / $strength[$field]),
+                'source' => 'smoothed_train_league_strength'];
+        }
+        return null;
+    }
+
+    /** Archive the actual fallback used, including raw fallback when that profile denominator is absent. */
+    private function leagueConversionSource(string $lane, string $key, string $denominator, array $league): string
+    {
+        return $this->profileConversion($lane, $key, $denominator, ($league['buckets'][$key][$denominator] ?? 0) <= 0)['source']
+            ?? ((($league['buckets'][$key][$denominator] ?? 0) > 0) ? 'train_league_bucket' : 'train_league_strength');
     }
 
     /** Weight the two source-window defensive references by their offensive rate contributions. */

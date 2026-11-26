@@ -142,6 +142,7 @@ class NhlSeasonGameEvaluation
     public function identity(NhlModelRun $model): string
     {
         return hash('sha256', json_encode([app(NhlCustomGamePredictionEngine::class)->definition(),
+            NhlCustomGamePredictionInputs::conversionProfileIdentity($model),
             $model->train_season_ids, $model->target_season_id, $model->status, $model->model_version,
             $model->updated_at?->format('Y-m-d H:i:s.u'),
             DB::table('nhl_pregame_context_run_games as w')->join('nhl_pregame_context_runs as r', 'r.id', '=', 'w.run_id')

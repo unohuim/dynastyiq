@@ -736,6 +736,7 @@ class NhlCustomGameForecast
             ->unique(fn (object $row): string => implode('|', [(string) $row->nhl_game_id, $row->team_abbrev,
                 (string) $row->nhl_player_id, $row->provider, $row->status]))->values();
         $identity = ['model' => [$model->id, $model->updated_at, $model->train_season_ids], 'definition' => config('nhl-custom-prediction'),
+            'conversion_profiles' => NhlCustomGamePredictionInputs::conversionProfileIdentity($model),
             'date' => $date, 'calculation_date' => now('America/Toronto')->toDateString(),
             'schedule' => $schedule, 'results' => $results,
             'availability' => app(NhlLineupAvailability::class)->evidenceForGames($schedule),

@@ -38,12 +38,18 @@ returned scores and probabilities directly rather than applying this factor
 again. Exact rules remain in
 [NhlCustomGamePrediction.yaml](../architecture/stats/NhlCustomGamePrediction.yaml).
 
-The current `custom_ev_pp_pk_v5` version retains the adopted EV Train
+The current `custom_ev_pp_pk_v6` version retains the adopted EV Train
 bucket-volume conversion rule. Its settings are recorded under
 `inputs.algorithm_definition.ev_goal_conversion`. SOG and PP team-goal
 allocation retain their existing calculations; consumers should use the returned
 scores/probabilities without adding the conversion again. Per-player bucket
 component rates, sample counts and weights remain private revision evidence.
+Committed strength-specific Train offensive profiles now supply smoothed league
+references inside the existing fallback/blend rules. Personal supported rates,
+EV reliability weights and final PP team-goal allocation remain unchanged.
+Unavailable or stale profiles retain raw Train references. Detailed profile
+source counts and freshness evidence remain private; no new consumer fields
+are required. This integration has not established a new measured win rate.
 Earlier revisions retain their original algorithm and are not rewritten.
 
 New calculations also include short-handed (PK) goals. PK time equals the other

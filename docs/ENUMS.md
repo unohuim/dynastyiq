@@ -3043,7 +3043,17 @@ the first executable isolated EV/PP replay. `custom_ev_pp_v2` identifies the
 shared default calculator with fallback-filled inputs for all requested games.
 `custom_ev_pp_v3` adds the all-quarter L5 team-win-percentage EV production
 adjustment at weight 0.50. `custom_ev_pp_v4` adds the adopted EV Train
-bucket-volume reliability conversion. `custom_ev_pp_pk_v5` adds the PK scoring lane with a neutral goalie stage; `saved_pregame_checkpointed_v13` invalidates prepared inputs without PK history. Earlier revisions retain their original algorithm.
+bucket-volume reliability conversion. `custom_ev_pp_pk_v5` adds the PK scoring lane with a neutral goalie stage; `saved_pregame_checkpointed_v13` invalidates prepared inputs without PK history. `custom_ev_pp_pk_v6` connects committed strength-specific smoothed Train profile references to existing league conversion components; `saved_pregame_checkpointed_v14` isolates inputs prepared before that integration. Earlier revisions retain their original algorithm.
+
+Private conversion-profile provenance uses `smoothed_train_profiles` or
+`raw_train_fallback`. Unavailable-profile reasons are
+`missing_or_stale_skater_profiles`, `skater_profile_build_not_complete`,
+`missing_evaluated_models`, `evaluation_revision_mismatch`,
+`profile_row_provenance_or_counts_mismatch`, `missing_strength_profile_rows`,
+and `profile_sources_changed_during_load`. Per-bucket smoothed league sources
+are `smoothed_train_league_bucket` and `smoothed_train_league_strength`;
+existing personal, raw-league and EV blend labels remain valid.
+
 The frozen run definition records
 its schedule mode and coefficient horizon; changing those inputs creates a new
 run rather than rewriting earlier predictions.
