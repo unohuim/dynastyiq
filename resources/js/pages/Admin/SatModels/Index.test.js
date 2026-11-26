@@ -44,7 +44,7 @@ it('shows structured model information without legacy row HTML', () => {
     expect(host.querySelector('[data-admin-sat-models]')).toBeNull();
 });
 it('keeps the compact HQ header separate from shared navigation', () => {
-    mount(); expect(host.querySelector('h1').textContent).toBe('Models & Pregame');
+    mount(); expect(host.querySelector('h1').textContent).toBe('SAT Models');
     expect(host.querySelector('[aria-label="SAT workspace"]')).not.toBeNull();
 });
 it('opens Pregame as a peer tab and retains its URL state', async () => {

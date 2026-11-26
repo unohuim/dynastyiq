@@ -153,7 +153,7 @@ const panelTitle = computed(() => ({ create: 'Create Model', actions: panelModel
     <main data-page="sat-models-workspace" class="min-h-screen bg-[#10151b] pb-8 text-slate-100">
         <div class="mx-auto max-w-screen-2xl space-y-4 p-3 sm:p-5">
             <header class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-4">
-                <div><p class="text-[10px] font-semibold uppercase tracking-widest text-sky-400">SAT Models HQ</p><h1 class="mt-1 text-xl font-semibold sm:text-2xl">Models &amp; Pregame</h1><p class="mt-1 text-xs text-slate-400">Model research and pregame health, in one workspace.</p></div>
+                <div><p class="text-[10px] font-semibold uppercase tracking-widest text-sky-400">SAT Models HQ</p><h1 class="mt-1 text-xl font-semibold sm:text-2xl">SAT Models</h1><p class="mt-1 text-xs text-slate-400">Model research and pregame health, in one workspace.</p></div>
                 <div class="flex gap-5 text-right"><div><p class="text-xl font-semibold">{{ models.length }}</p><p class="text-[10px] text-slate-400">Models on this page</p></div><div><p class="text-xl font-semibold text-sky-300">{{ models.filter(model => model.status === 'running').length }}</p><p class="text-[10px] text-slate-400">Building models</p></div></div>
             </header>
             <nav aria-label="SAT workspace" class="flex items-center gap-1 overflow-x-auto rounded-lg border border-slate-800 bg-[#171d23] p-1 text-xs">
