@@ -168,3 +168,71 @@ it('shows saved team form and schedule context alongside component results', asy
     expect(host.textContent).toContain('Saved team pregame context'); expect(host.textContent).toContain('Back-to-back: Yes');
     expect(host.textContent).toContain('60.00%'); expect(host.textContent).toContain('102.00');
 });
+
+it('shows historical input counts separately from the empty Test prediction count', () => {
+    const host = mount(selected({ selected: run(1, { status: 'running', checkpoint: { phase: 'replay', stage: 'history', processed: 318, total: 3936, unit: 'games' } }), summary: { ...summary(), predicted: 0 } }));
+    const progress = host.querySelector('[aria-label="Run progress"]');
+    expect(progress.textContent).toContain('Preparing historical inputs');
+    expect(progress.textContent).toContain('318 / 3,936 games');
+    expect(progress.querySelector('[role="progressbar"]').getAttribute('aria-valuenow')).toBe('8');
+});
+
+it('shows defensive fit progress using bucket units', () => {
+    const host = mount(selected({ selected: run(1, { status: 'running', checkpoint: { stage: 'fit', processed: 12, total: 24, unit: 'buckets' } }) }));
+    const progress = host.querySelector('[aria-label="Run progress"]');
+    expect(progress.textContent).toContain('Fitting Train defensive buckets');
+    expect(progress.textContent).toContain('12 / 24 buckets');
+    expect(progress.querySelector('[role="progressbar"]').getAttribute('aria-valuenow')).toBe('50');
+});
+
+it('switches from historical preparation to Test progress when new props arrive', async () => {
+    const host = mount(selected({ selected: run(1, { status: 'running', checkpoint: { stage: 'history', processed: 3936, total: 3936, unit: 'games' } }) }));
+    const progress = host.querySelector('[aria-label="Run progress"]');
+    props.selected = run(1, { status: 'running', checkpoint: { stage: 'predictions', processed: 12, total: 1312, unit: 'games' } });
+    await nextTick();
+    expect(host.querySelector('[aria-label="Run progress"]')).toBe(progress);
+    expect(progress.textContent).toContain('Predicting Test games');
+    expect(progress.textContent).toContain('12 / 1,312 games');
+});
+
+it('displays elapsed minutes and seconds alongside last activity', () => {
+    const host = mount(selected({ selected: run(1, { elapsed_seconds: 325, last_activity_at: '2026-11-19T11:59:58Z' }) }));
+    const progress = host.querySelector('[aria-label="Run progress"]');
+    expect(progress.textContent).toContain('Elapsed 5m 25s');
+    expect(progress.querySelector('time').getAttribute('datetime')).toBe('2026-11-19T11:59:58Z');
+});
+
+it('formats longer elapsed runs as hours and minutes', () => {
+    const host = mount(selected({ selected: run(1, { elapsed_seconds: 7560 }) }));
+    expect(host.querySelector('[aria-label="Run progress"]').textContent).toContain('Elapsed 2h 6m');
+});
+
+it('keeps legacy checkpoint totals unknown rather than inventing a percentage', () => {
+    const host = mount(selected({ selected: run(1, { status: 'running', checkpoint: { phase: 'replay', cursor: 318, total: null } }) }));
+    const progress = host.querySelector('[aria-label="Run progress"]');
+    expect(progress.textContent).toContain('Preparing historical inputs');
+    expect(progress.textContent).toContain('318 games');
+    expect(progress.querySelector('[role="progressbar"]').hasAttribute('aria-valuenow')).toBe(false);
+});
+
+it('polls repeatedly without global loading indicators or prediction submissions', async () => {
+    mocks.reload.mockImplementationOnce(options => options.onFinish?.())
+        .mockImplementationOnce(options => options.onFinish?.());
+    mount(selected({ runs: [run(1, { status: 'running' })] }));
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(mocks.reload).toHaveBeenCalledTimes(2);
+    expect(mocks.reload).toHaveBeenCalledWith(expect.objectContaining({ showProgress: false, preserveScroll: true, preserveState: true }));
+    expect(mocks.post).not.toHaveBeenCalled();
+});
+
+it('preserves expanded game details while checkpoint progress updates', async () => {
+    const host = mount(selected());
+    const control = host.querySelector('[aria-label="Game predictions"] button');
+    control.click(); await settle();
+    props.selected = run(1, { status: 'running', checkpoint: { stage: 'predictions', processed: 2, total: 100, unit: 'games' } });
+    await nextTick();
+    expect(host.querySelector('[aria-label="Game predictions"] button')).toBe(control);
+    expect(control.getAttribute('aria-expanded')).toBe('true');
+    expect(host.textContent).toContain('Skater One');
+    expect(mocks.detail).toHaveBeenCalledTimes(1);
+});

@@ -44,7 +44,17 @@ class NhlSeasonGameEvaluationController extends Controller
             $selected->can_resume = ! $selected->requires_new_run && ($selected->definition['entrypoint'] ?? null) === 'season_games'
                 && ($selected->status === 'failed' || (in_array($selected->status, ['queued', 'running'], true)
                     && \Carbon\CarbonImmutable::parse($selected->updated_at)->lessThan(now()->subMinutes(5))));
-            $selected->checkpoint = Cache::get('nhl:season-evaluation:'.$selected->id.':work')['checkpoint'] ?? null;
+            $manifest = Cache::get('nhl:season-evaluation:'.$selected->id.':work');
+            $selected->checkpoint = $manifest['checkpoint'] ?? null;
+            $activity = \Carbon\CarbonImmutable::parse($selected->updated_at, 'UTC');
+            if (! empty($manifest['diagnostics']['saved_at'])) {
+                $activity = $activity->max(\Carbon\CarbonImmutable::parse($manifest['diagnostics']['saved_at']));
+            }
+            $selected->last_activity_at = $activity->toIso8601String();
+            $end = in_array($selected->status, ['queued', 'running'], true)
+                ? now('UTC') : \Carbon\CarbonImmutable::parse($selected->updated_at, 'UTC');
+            $selected->elapsed_seconds = max(0, $end->getTimestamp()
+                - \Carbon\CarbonImmutable::parse($selected->created_at, 'UTC')->getTimestamp());
         }
         $compare = null;
         if ($selected !== null && isset($input['compare'])) {

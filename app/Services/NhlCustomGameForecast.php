@@ -298,6 +298,8 @@ class NhlCustomGameForecast
             'peak_memory_bytes' => memory_get_peak_usage(true),
             'checkpoint_write_ms' => round((hrtime(true) - $started) / 1000000, 2),
             'saved_at' => now()->toIso8601String()];
+        $stageProgress = $work['phase'] === 'season' && is_array($reader)
+            ? $this->seasonCheckpointProgress($reader, $phase, $cursor) : [];
         $manifest = ['checkpoint_format' => self::CHECKPOINT_FORMAT, 'fingerprint' => $work['fingerprint'],
             'phase' => $work['phase'], 'checkpoint' => ['phase' => $phase, 'cursor' => $cursor, 'total' => match ($phase) {
                 'collect' => count($reader['forecastWork']['training'] ?? []),
@@ -305,7 +307,7 @@ class NhlCustomGameForecast
                 'history' => count($reader['forecastWork']['history'] ?? []),
                 'targets' => count($reader['forecastWork']['targets'] ?? []),
                 default => null,
-            }],
+            }, ...$stageProgress],
             'target_game_id' => $target, 'groups' => $groups, 'diagnostics' => $diagnostics];
         if (! Cache::put($key.':work', $manifest, $this->preparationLifetime())) {
             throw new \RuntimeException('Unable to commit prediction preparation checkpoint.');
@@ -752,6 +754,40 @@ class NhlCustomGameForecast
     {
         return 'nhl:custom-inputs:game-v6:'.$model->id.':'.$game->nhl_game_id.':'.(int) $storedBoxscore.':'
             .hash('sha256', json_encode([$rosterOverrides, config('nhl-custom-prediction.input_pipeline_version')], JSON_THROW_ON_ERROR));
+    }
+
+    /**
+     * Describe committed season work without reading facts or changing the replay cursor.
+     *
+     * @param array<string, mixed> $reader
+     * @return array{stage:string, processed:int, total:?int, unit:string}
+     */
+    private function seasonCheckpointProgress(array $reader, string $phase, int $cursor): array
+    {
+        $state = $reader['forecastWork'] ?? [];
+        if ($phase === 'collect') {
+            return ['stage' => 'collect', 'processed' => $cursor,
+                'total' => count($state['training'] ?? []), 'unit' => 'games'];
+        }
+        if ($phase === 'fit') {
+            $keys = $state['defense']['fitKeys'] ?? null;
+            return ['stage' => 'fit', 'processed' => $cursor,
+                'total' => is_array($keys) ? count($keys) : null, 'unit' => 'buckets'];
+        }
+        $historyTotal = $historyProcessed = $testTotal = $testProcessed = 0;
+        foreach ($state['replay_games'] ?? [] as $index => $game) {
+            if (isset($state['test_ids'][$game->nhl_game_id])) {
+                $testTotal++;
+                $testProcessed += (int) ($index < $cursor);
+            } else {
+                $historyTotal++;
+                $historyProcessed += (int) ($index < $cursor);
+            }
+        }
+        $history = $phase !== 'complete' && $historyProcessed < $historyTotal;
+        return ['stage' => $phase === 'complete' ? 'complete' : ($history ? 'history' : 'predictions'),
+            'processed' => $history ? $historyProcessed : $testProcessed,
+            'total' => $history ? $historyTotal : $testTotal, 'unit' => 'games'];
     }
 
     /** Read compact progress without reopening the historical checkpoint parts or hashing source facts. */

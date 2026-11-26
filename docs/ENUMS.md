@@ -3062,6 +3062,13 @@ run rather than rewriting earlier predictions.
 and `failed`. A run is distinct from SAT engine, stack, and next-game evaluation
 statuses.
 
+The season checkpoint's additive presentation `stage` accepts `collect`, `fit`,
+`history`, `predictions`, and `complete`. This does not replace its internal
+replay `phase` or run status. Stage `unit` is `games` or `buckets`; `processed`
+and nullable `total` describe only that stage. Historical preparation counts
+are separate from completed Test predictions. Missing legacy totals stay null.
+
+
 `nhl_custom_game_predictions.status` accepts `pending`, `complete`, `excluded`,
 and `failed`.
 

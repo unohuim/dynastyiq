@@ -19,7 +19,24 @@ const probability = value => value == null ? '—' : percent(100 * Number(value)
 const minutes = value => value == null ? '—' : number(Number(value) / 60, 1);
 const result = row => row.status !== 'complete' ? row.status.toUpperCase() : row.winner_correct == null ? 'NO PICK' : row.winner_correct ? 'WIN' : 'LOSS';
 const compareOptions = computed(() => props.runs.filter(run => run.id !== props.selected?.id && run.season_id === props.selected?.season_id));
-const phases = { collect: 'Collecting Train history', fit: 'Fitting Train defensive buckets', replay: 'Predicting Test games', complete: 'Predictions saved' };
+const phases = { collect: 'Collecting Train history', fit: 'Fitting Train defensive buckets', history: 'Preparing historical inputs', replay: 'Preparing historical inputs', predictions: 'Predicting Test games', complete: 'Predictions saved' };
+const stage = computed(() => props.selected?.checkpoint?.stage ?? props.selected?.checkpoint?.phase);
+const stageCount = computed(() => props.selected?.checkpoint?.processed ?? props.selected?.checkpoint?.cursor);
+const stageTotal = computed(() => props.selected?.checkpoint?.total);
+const stagePercent = computed(() => stageTotal.value > 0 && stageCount.value != null
+    ? Math.max(0, Math.min(100, 100 * stageCount.value / stageTotal.value)) : null);
+const count = value => Number(value).toLocaleString();
+const duration = value => {
+    if (value == null) return '—';
+    const seconds = Math.max(0, Math.floor(Number(value)));
+    if (seconds >= 3600) return `${Math.floor(seconds / 3600)}h ${Math.floor(seconds % 3600 / 60)}m`;
+    if (seconds >= 60) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+    return `${seconds}s`;
+};
+const activityTime = value => {
+    if (!value || !Number.isFinite(Date.parse(value))) return '—';
+    return new Date(value).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+};
 const windows = { train: 'Train', last_game: 'Last Game', last_5: 'Last 5', last_10: 'Last 10', last_20: 'Last 20', last_season: 'Last Season' };
 const teamStats = { goals: 'EV + PP goals', ev_goals: 'EV goals', pp_goals: 'PP goals', sat: 'SAT', sog: 'SOG', pp_opportunities: 'PP opportunities', ev_toi: 'EV minutes', pp_toi: 'PP minutes', pk_toi: 'PK minutes' };
 const teamValue = (values, metric) => metric === 'goals' ? (values.ev_goals == null || values.pp_goals == null ? null : Number(values.ev_goals) + Number(values.pp_goals)) : values[metric];
@@ -63,7 +80,7 @@ let disposed = false;
 function schedule() { if (!disposed) timer = setTimeout(poll, 5000); }
 function poll() {
     if (!active.value || document.hidden) { schedule(); return; }
-    router.reload({ only: ['runs', 'selected', 'summary', 'games', 'comparison', 'activeRunId'], preserveScroll: true, preserveState: true,
+    router.reload({ only: ['runs', 'selected', 'summary', 'games', 'comparison', 'activeRunId'], preserveScroll: true, preserveState: true, showProgress: false,
         onFinish: schedule, onError: () => {} });
 }
 onMounted(schedule);
@@ -102,8 +119,14 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(timer); });
                     <p class="mt-2 text-xs text-slate-400">Saved Train: {{ selected.definition?.source?.train_seasons?.join(', ') ?? 'not archived' }} · Test {{ selected.season_id }}</p>
                     <details class="mt-2 text-xs text-slate-400"><summary class="cursor-pointer">Saved run settings</summary><pre class="mt-2 max-h-48 overflow-auto rounded bg-slate-950 p-3 text-[11px]">{{ JSON.stringify(selected.definition, null, 2) }}</pre></details>
                     <div class="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4"><div><p class="text-xs text-slate-400">Win%</p><p class="mt-1 text-3xl font-semibold text-sky-300">{{ percent(summary?.win_pct) }}</p></div><div><p class="text-xs text-slate-400">Correct / picked games</p><p class="mt-2 text-lg">{{ summary?.wins ?? 0 }} / {{ (summary?.wins ?? 0) + (summary?.losses ?? 0) }}</p></div><div><p class="text-xs text-slate-400">Games predicted</p><p class="mt-2 text-lg">{{ summary?.predicted ?? 0 }} / {{ selected.total_games }}</p></div><div><p class="text-xs text-slate-400">Excluded / no pick</p><p class="mt-2 text-lg">{{ summary?.excluded ?? 0 }} / {{ summary?.unpicked ?? 0 }}</p></div></div>
-                    <div class="mt-4 h-1.5 overflow-hidden rounded-full bg-slate-800"><div class="h-full rounded-full bg-sky-500 transition-[width] duration-300 motion-reduce:transition-none" :style="{ width: `${selected.total_games ? 100 * ((summary?.predicted ?? 0) + (summary?.excluded ?? 0)) / selected.total_games : 0}%` }" /></div>
-                    <p class="mt-2 text-xs text-slate-400">{{ selected.status }}<template v-if="selected.checkpoint"> · {{ phases[selected.checkpoint.phase] ?? selected.checkpoint.phase }}</template></p>
+                    <div class="mt-4 min-h-[5.5rem]" aria-label="Run progress">
+                        <div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-xs">
+                            <p class="font-medium text-slate-200">{{ phases[stage] ?? (selected.status === 'queued' ? 'Queued for a worker' : selected.status) }}</p>
+                            <p class="tabular-nums text-slate-300"><template v-if="stageCount != null">{{ count(stageCount) }}<template v-if="stageTotal != null"> / {{ count(stageTotal) }}</template> {{ selected.checkpoint?.unit ?? (stage === 'fit' ? 'buckets' : 'games') }}</template><template v-else>{{ count((summary?.predicted ?? 0) + (summary?.excluded ?? 0)) }} / {{ count(selected.total_games) }} games</template></p>
+                        </div>
+                        <div role="progressbar" aria-label="Current stage progress" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="stagePercent == null ? undefined : Math.round(stagePercent)" class="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-800"><div class="h-full rounded-full bg-sky-500 transition-[width] duration-300 ease-out motion-reduce:transition-none" :style="{ width: `${stagePercent ?? (selected.total_games ? 100 * ((summary?.predicted ?? 0) + (summary?.excluded ?? 0)) / selected.total_games : 0)}%` }" /></div>
+                        <div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] tabular-nums text-slate-400"><span>{{ selected.status }}</span><span>Elapsed {{ duration(selected.elapsed_seconds) }}</span><span>Last activity <time :datetime="selected.last_activity_at">{{ activityTime(selected.last_activity_at) }}</time></span></div>
+                    </div>
                     <p v-if="selected.requires_new_run && selected.status === 'failed'" class="mt-3 text-xs text-amber-200">The saved model, context or algorithm changed. Start a new run to preserve this record.</p>
                     <p v-if="selected.last_error" role="alert" class="mt-3 text-sm text-red-300">{{ selected.last_error }}</p>
                     <table class="mt-4 w-full text-left text-xs"><thead class="text-slate-400"><tr><th class="py-2 font-medium">Goal accuracy</th><th class="font-medium">Prediction</th><th class="font-medium">Actual</th><th class="font-medium">err%</th><th class="font-medium">p10</th><th class="font-medium">p20</th></tr></thead><tbody><tr v-for="[key, label] in [['team_goals', 'Per team'], ['game_goals', 'Per game']]" :key="key" class="border-t border-slate-800"><th class="py-2 font-normal">{{ label }}</th><td>{{ number(summary?.[key]?.prediction) }}</td><td>{{ number(summary?.[key]?.actual) }}</td><td>{{ percent(summary?.[key]?.err_pct) }}</td><td>{{ percent(summary?.[key]?.p10) }}</td><td>{{ percent(summary?.[key]?.p20) }}</td></tr></tbody></table>

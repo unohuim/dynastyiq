@@ -471,3 +471,77 @@ it('keeps missing PK actuals unknown for PK-enabled comparisons', function (): v
     ]);
     expect($this->service->summary($run)['team_goals']['count'])->toBe(0);
 });
+
+it('publishes historical preparation counts through the admitted runs automatic read path', function (): void {
+    DB::partialMock()->shouldReceive('afterCommit')->andReturnUsing(fn (Closure $callback) => $callback());
+    $id = $this->actingAs($this->admin)->postJson($this->base.'/runs')->assertAccepted()->json('run_id');
+    $this->assertDatabaseHas('nhl_custom_game_prediction_runs', ['id' => $id, 'status' => 'queued']);
+    $reader = new NhlCustomGamePredictionInputs();
+    $reader->restoreCheckpointState(['forecastWork' => ['phase' => 'replay', 'cursor' => 2,
+        'replay_games' => [(object) ['nhl_game_id' => 1], (object) ['nhl_game_id' => 2],
+            (object) ['nhl_game_id' => 3], (object) ['nhl_game_id' => $this->gameId]],
+        'test_ids' => [$this->gameId => true], 'defense' => new \App\Services\NhlCustomGameDefense()]]);
+    $identity = $this->service->identity($this->model);
+    app(NhlCustomGameForecast::class)->writeSeasonCheckpoint($id, ['phase' => 'season', 'fingerprint' => 'fixture', 'reader' => $reader]);
+    $this->get($this->base.'?run='.$id)->assertInertia(fn (Assert $page) => $page
+        ->where('selected.checkpoint.stage', 'history')->where('selected.checkpoint.processed', 2)
+        ->where('selected.checkpoint.total', 3)->where('selected.checkpoint.unit', 'games')
+        ->where('selected.last_activity_at', now()->toIso8601String())->where('selected.elapsed_seconds', 0));
+    expect($this->service->identity($this->model))->toBe($identity);
+    Bus::assertDispatchedTimes(RunNhlSeasonGameEvaluationJob::class, 1);
+});
+
+it('reports Train collection counts without counting them as Test predictions', function (): void {
+    $id = ($this->savedRun)(['status' => 'running', 'completed_games' => 0]);
+    $reader = new NhlCustomGamePredictionInputs();
+    $reader->restoreCheckpointState(['forecastWork' => ['phase' => 'collect', 'cursor' => 1,
+        'training' => [(object) ['nhl_game_id' => 1], (object) ['nhl_game_id' => 2]]]]);
+    app(NhlCustomGameForecast::class)->writeSeasonCheckpoint($id, ['phase' => 'season', 'fingerprint' => 'fixture', 'reader' => $reader]);
+    $this->actingAs($this->admin)->get($this->base.'?run='.$id)->assertInertia(fn (Assert $page) => $page
+        ->where('selected.checkpoint.stage', 'collect')->where('selected.checkpoint.processed', 1)
+        ->where('selected.checkpoint.total', 2)->where('summary.predicted', 0));
+});
+
+it('publishes defensive fitting bucket counts instead of labeling them as games', function (): void {
+    $id = ($this->savedRun)(['status' => 'running']);
+    $defense = new \App\Services\NhlCustomGameDefense();
+    $defense->restoreCheckpointState(['fitCursor' => 1, 'fitKeys' => [['key' => 'A'], ['key' => 'B']]]);
+    $reader = new NhlCustomGamePredictionInputs();
+    $reader->restoreCheckpointState(['forecastWork' => ['phase' => 'fit', 'cursor' => 0, 'defense' => $defense]]);
+    app(NhlCustomGameForecast::class)->writeSeasonCheckpoint($id, ['phase' => 'season', 'fingerprint' => 'fixture', 'reader' => $reader]);
+    $this->actingAs($this->admin)->get($this->base.'?run='.$id)->assertInertia(fn (Assert $page) => $page
+        ->where('selected.checkpoint.stage', 'fit')->where('selected.checkpoint.processed', 1)
+        ->where('selected.checkpoint.total', 2)->where('selected.checkpoint.unit', 'buckets'));
+});
+
+it('separates Test prediction progress from already consumed Train games', function (string $phase, int $cursor, int $processed): void {
+    $id = ($this->savedRun)(['status' => 'running']);
+    $reader = new NhlCustomGamePredictionInputs();
+    $reader->restoreCheckpointState(['forecastWork' => ['phase' => $phase, 'cursor' => $cursor,
+        'replay_games' => [(object) ['nhl_game_id' => 1], (object) ['nhl_game_id' => 2],
+            (object) ['nhl_game_id' => $this->gameId]], 'test_ids' => [$this->gameId => true]]]);
+    app(NhlCustomGameForecast::class)->writeSeasonCheckpoint($id, ['phase' => 'season', 'fingerprint' => 'fixture', 'reader' => $reader]);
+    $this->actingAs($this->admin)->get($this->base.'?run='.$id)->assertInertia(fn (Assert $page) => $page
+        ->where('selected.checkpoint.stage', $phase === 'complete' ? 'complete' : 'predictions')
+        ->where('selected.checkpoint.processed', $processed)->where('selected.checkpoint.total', 1));
+})->with([['replay', 2, 0], ['complete', 3, 1]]);
+
+it('updates elapsed time and checkpoint activity without creating predictions on a read', function (): void {
+    $id = ($this->savedRun)(['status' => 'running']);
+    $this->travel(90)->seconds();
+    $reader = new NhlCustomGamePredictionInputs();
+    app(NhlCustomGameForecast::class)->writeSeasonCheckpoint($id, ['phase' => 'season', 'fingerprint' => 'fixture', 'reader' => $reader]);
+    $this->actingAs($this->admin)->get($this->base.'?run='.$id)->assertInertia(fn (Assert $page) => $page
+        ->where('selected.last_activity_at', now()->toIso8601String())->where('selected.elapsed_seconds', 3690));
+    $this->assertDatabaseCount('nhl_custom_game_predictions', 0);
+    Bus::assertNothingDispatched();
+});
+
+it('retains terminal elapsed duration and handles older runs without checkpoint progress', function (): void {
+    $id = ($this->savedRun)(['created_at' => now()->subMinutes(10), 'updated_at' => now()->subMinutes(5)]);
+    $this->actingAs($this->admin)->get($this->base.'?run='.$id)->assertInertia(fn (Assert $page) => $page
+        ->where('selected.checkpoint', null)->where('selected.elapsed_seconds', 300)
+        ->where('selected.last_activity_at', now()->subMinutes(5)->toIso8601String()));
+    $this->travel(2)->minutes();
+    $this->get($this->base.'?run='.$id)->assertInertia(fn (Assert $page) => $page->where('selected.elapsed_seconds', 300));
+});
