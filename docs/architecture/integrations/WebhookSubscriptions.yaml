@@ -10,15 +10,16 @@ when_to_use:
   - Managing named partner receiving URLs, event selections and enabled settings.
   - Inspecting subscription configuration on desktop and mobile.
 when_not_to_use:
-  - Sending notifications, executing test deliveries, recording attempts or retrying deliveries.
+  - Executing notification delivery or retries; use PredictionWebhookDelivery.yaml.
   - Changing predictions or emitting prediction events.
 rules:
   - Subscriptions are global API-client configuration, not tenant-owned data. All inventory and secret endpoints require the existing authenticated verified super-admin lifecycle boundary. Ordinary members and partner API tokens cannot manage them through these session routes.
   - Each subscription belongs to an existing API client. Deleting that client deletes its configuration; revocation remains visible and does not silently erase inventory.
-  - Store validated HTTPS receiving URLs without embedded credentials or fragments. Saving a URL never contacts it. Network destination checks for a future delivery implementation remain separate from inventory validation.
+  - Store validated HTTPS receiving URLs without embedded credentials or fragments. Saving a URL never contacts it. Delivery-time public-network destination checks remain separate from inventory validation.
   - Signing secrets are server-generated, encrypted at rest and hidden from model serialization, page props and mutation responses. Only an explicit privileged no-store secret read reveals plaintext. API-client credentials are never included in inventory props.
   - Enabling a subscription only persists configuration. CRUD, secret reads and enabled switches dispatch no notification, job or prediction and append no delivery history. Event vocabulary is canonical in ENUMS.md.
   - The page is Vue/Inertia-owned under the shared AppLayout. Backend-owned admin navigation places Webhooks after Admin Faceoffs. Desktop tables and mobile cards share the same inventory, local search and status/subscriber filters. Explicit writes preserve prior data on failure and reuse shell toast feedback.
+  - Latest delivery status, attempt count, HTTP status, safe error and revision/timestamps are explicit read-only inventory fields. Never expose delivery request bodies, destination snapshots or claim tokens. Quiet partial refresh preserves page position and editor state. Missing delivery storage leaves inventory usable with a migration notice.
 public_interface:
   - GET /admin/webhooks
   - POST /admin/webhooks
@@ -28,4 +29,4 @@ public_interface:
   - DELETE /admin/webhooks/{webhook}
 example_usage: |
   A super admin registers Gner8's receiving URL and event selection.
-  The configuration is saved; notifications are not implemented by this inventory.
+  The configuration is saved; later successful prediction publication independently stages delivery.

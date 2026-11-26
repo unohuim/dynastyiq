@@ -5200,5 +5200,33 @@ copy or rebuild runs inside it. No source-game foreign keys are introduced.
 | signing_secret | text | Server-generated secret encrypted by the model cast; excluded from ordinary serialization |
 | created_at / updated_at | timestamp | Configuration timestamps |
 
-This migration creates empty storage. No delivery, attempt, retry, event outbox or
-prediction relationships are added in this phase.
+This migration creates empty subscription storage. Revision notification history
+is stored separately in `webhook_deliveries`.
+
+## webhook_deliveries
+
+**Global:** Yes; subscriber-owned operational prediction notifications.
+**Migration:** `2026_11_26_000001_create_webhook_deliveries_table.php`.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| id | bigint | Primary key |
+| event_id | uuid | Unique stable HTTP delivery identity across retries |
+| webhook_subscription_id | bigint | Subscription FK; cascade delete |
+| prediction_revision_id | bigint | Immutable prediction revision FK; cascade delete |
+| event / transport / status | varchar | Canonical vocabulary in ENUMS.md |
+| destination | text | Encrypted receiving URL snapshot, hidden from serialization |
+| payload | JSON | Whitelisted public prediction event, hidden from model serialization |
+| attempts | smallint | Attempt count, default zero |
+| http_status | smallint nullable | Last HTTP response status |
+| last_error | varchar(250) nullable | Safe fixed diagnostic, no provider exception or token |
+| remote_message_id | varchar(40) nullable | Discord-confirmed message identity |
+| claim_token | uuid nullable | Completion fencing token, hidden from serialization |
+| claim_expires_at | timestamp nullable | Abandoned-claim recovery boundary |
+| next_attempt_at / queued_at | timestamp nullable | Retry due time and queue handoff |
+| last_attempt_at / delivered_at | timestamp nullable | Observed delivery lifecycle |
+| created_at / updated_at | timestamp | Outbox timestamps |
+
+Unique `(webhook_subscription_id, prediction_revision_id, event)` prevents duplicate
+staging. `(status, next_attempt_at)` indexes due delivery selection. This migration
+creates empty storage; it does not backfill historical notifications.

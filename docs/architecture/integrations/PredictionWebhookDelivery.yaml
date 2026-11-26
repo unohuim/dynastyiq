@@ -1,0 +1,33 @@
+name: Prediction Webhook Delivery
+type: Revision Notification Outbox
+location:
+  - app/Services/PredictionWebhookDelivery.php
+  - app/Jobs/DeliverPredictionWebhookJob.php
+  - app/Models/WebhookDelivery.php
+  - app/Services/NhlGamePredictionHistory.php
+  - routes/console.php
+purpose: Notify enabled partner subscribers of committed operational prediction revisions without coupling prediction availability to remote delivery.
+when_to_use:
+  - Publishing a new successful canonical operational prediction revision.
+  - Delivering or recovering its durable subscriber notification.
+when_not_to_use:
+  - Saved prediction reads, research replays, unsuccessful predictions or noncanonical overrides.
+  - Subscription CRUD or historical notification backfills.
+rules:
+  - Stage subscriber outbox records in the revision publication transaction and dispatch only after commit. Unique subscription/revision/event identity prevents repeated staging. Existing saved revisions are immutable and never automatically backfilled.
+  - Only enabled subscriptions with active API clients authorized for NHL reads qualify. Recheck subscription eligibility and unchanged destination before claiming delivery. Inventory authorization remains governed by WebhookSubscriptions.yaml.
+  - Store an encrypted destination snapshot and a whitelisted public revision payload. Queue identifiers only. Never expose tokens, signing secrets, raw request bodies or provider exceptions through delivery status or logs.
+  - Native incoming Discord URLs receive confirmed embed messages with mentions disabled. Other destinations receive signed JSON with stable event identity and timestamp-bound HMAC over the exact body. Units and signature verification are documented in the API usage contract.
+  - Require public HTTPS destinations, pin validated DNS resolution, disallow redirects and proxies, and retain TLS verification. Perform network work outside database locks.
+  - Claims are short, exclusive and fenced on completion. Delivery is at least once; consumers deduplicate event IDs. Bound attempts and request duration, honor rate limits, and recover abandoned claims through the scheduler on the existing projections queue. Delivery failures do not change scores, probabilities or saved prediction availability.
+  - Missing delivery storage does not block prediction publication or subscription inventory. Apply the delivery migration before relying on notifications; pre-migration revisions are not queued later automatically.
+  - Canonical event, transport and status vocabulary belongs to ENUMS.md. Schema details belong to migrations and DB_SCHEMA.md.
+public_interface:
+  - PredictionWebhookDelivery::stage
+  - PredictionWebhookDelivery::deliver
+  - PredictionWebhookDelivery::dispatchDue
+  - DeliverPredictionWebhookJob
+example_usage: |
+  A new canonical prediction commits with one outbox record per enabled subscriber.
+  A projections worker delivers a Discord embed or signed event JSON; the admin
+  inventory quietly displays its latest result independently of the saved forecast.

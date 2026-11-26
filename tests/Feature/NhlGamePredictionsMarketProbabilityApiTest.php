@@ -893,7 +893,7 @@ it('retains a published revision after timestamp only syncs and rebuilds after a
 });
 
 
-it('stores calendar days away and calculated public confidence while retaining internal confidence', function (string $date, int $days): void {
+it('stores completed-game context lag and public confidence independently of the future calendar date', function (string $date, int $days): void {
     $this->game->update(['game_date' => $date]);
     $response = ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction.days_away', $days);
     $prediction = $response->json('prediction');
@@ -907,18 +907,18 @@ it('stores calendar days away and calculated public confidence while retaining i
     ($this->requestPrediction)()->assertOk()->assertJsonPath('meta.prediction_revision_id', (int) $revision->id)
         ->assertJsonPath('prediction.days_away', $days)
         ->assertJsonPath('prediction.public_confidence_score', $expected);
-})->with([['2026-11-05', 0], ['2026-11-06', 1], ['2026-11-12', 7]]);
+})->with([['2026-11-05', 0], ['2026-11-06', 0], ['2026-11-12', 0]]);
 
-it('uses Toronto dates before UTC midnight rollover for forecast horizon', function (): void {
+it('does not add calendar lag at a UTC midnight rollover', function (): void {
     $this->travelTo(\Carbon\CarbonImmutable::parse('2026-11-06 02:00:00 UTC'));
     $this->game->update(['game_date' => '2026-11-06']);
-    ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction.days_away', 1);
+    ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction.days_away', 0);
 });
 
-it('counts calendar days rather than elapsed hours across daylight saving', function (): void {
+it('does not add calendar lag across daylight saving', function (): void {
     $this->travelTo(\Carbon\CarbonImmutable::parse('2026-10-31 16:00:00 UTC'));
     $this->game->update(['game_date' => '2026-11-02']);
-    ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction.days_away', 2);
+    ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction.days_away', 0);
 });
 
 it('preserves the archived horizon when reading a revision on a later date', function (): void {
@@ -927,7 +927,7 @@ it('preserves the archived horizon when reading a revision on a later date', fun
     $revision = DB::table('nhl_game_prediction_revisions')->find($response->json('meta.prediction_revision_id'));
     $this->travelTo(\Carbon\CarbonImmutable::parse('2026-11-06 12:00:00 UTC'));
     $payload = app(\App\Services\NhlGamePredictionHistory::class)->payload($revision);
-    expect($payload['prediction']['days_away'])->toBe(1)
+    expect($payload['prediction']['days_away'])->toBe(0)
         ->and($payload['prediction']['public_confidence_score'])->toBe($response->json('prediction.public_confidence_score'))
         ->and($payload['prediction']['confidence_score'])->toBe(($this->calculate)()['confidence_score']);
 });

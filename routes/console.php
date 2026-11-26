@@ -69,3 +69,9 @@ Schedule::call(fn () => app(\App\Services\NhlSatModelEntityProfileBuilder::class
     ->everyMinute()
     ->onOneServer()
     ->withoutOverlapping(2);
+
+Schedule::call(fn () => app(\App\Services\PredictionWebhookDelivery::class)->dispatchDue())
+    ->name('prediction-webhooks-dispatch-due')
+    ->everyMinute()
+    ->onOneServer()
+    ->withoutOverlapping(2);

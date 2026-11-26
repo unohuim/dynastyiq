@@ -1,11 +1,11 @@
 <script setup>
-import { computed, inject, ref, watch } from 'vue';
-import { Head } from '@inertiajs/vue3';
+import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { Head, router } from '@inertiajs/vue3';
 import axios from 'axios';
 import { DialogRoot, DialogPortal, DialogOverlay, DialogContent, DialogTitle, DialogDescription } from 'reka-ui';
 
 const props = defineProps({ subscriptions: { type: Array, default: () => [] }, apiClients: { type: Array, default: () => [] },
-    eventOptions: { type: Array, default: () => [] }, storeUrl: { type: String, required: true } });
+    eventOptions: { type: Array, default: () => [] }, storeUrl: { type: String, required: true }, deliveryReady: { type: Boolean, default: true } });
 const notify = inject('notify', () => {});
 const rows = ref([...props.subscriptions]);
 watch(() => props.subscriptions, value => { rows.value = [...value]; });
@@ -30,6 +30,22 @@ const visible = computed(() => rows.value.filter(row =>
 ).sort((a, b) => a.name.localeCompare(b.name) || a.id - b.id));
 const label = event => props.eventOptions.find(option => option.value === event)?.label ?? event;
 const message = error => error.response?.data?.message ?? 'The change could not be saved. Please try again.';
+const deliveryText = row => {
+    const delivery = row.latest_delivery;
+    if (!delivery) return 'No deliveries yet';
+    return `${delivery.status} · ${delivery.attempts} attempt${delivery.attempts === 1 ? '' : 's'}${delivery.http_status ? ` · HTTP ${delivery.http_status}` : ''}`;
+};
+let timer;
+let disposed = false;
+function schedule() { if (!disposed) timer = setTimeout(poll, 15000); }
+function poll() {
+    if (document.hidden) { schedule(); return; }
+    router.reload({ only: ['subscriptions', 'deliveryReady'], preserveState: true, preserveScroll: true,
+        showProgress: false, onFinish: schedule, onError: () => {} });
+}
+onMounted(schedule);
+onBeforeUnmount(() => { disposed = true; clearTimeout(timer); });
+
 
 function open(row = null) {
     editing.value = row;
@@ -110,7 +126,8 @@ async function destroy() {
             <div><p class="text-[10px] font-semibold uppercase tracking-[.2em] text-sky-400">Administration</p><h1 class="mt-1 text-2xl font-semibold tracking-tight">Webhooks</h1></div>
             <button type="button" class="rounded-lg bg-sky-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors duration-150 hover:bg-sky-500 disabled:opacity-50 motion-reduce:transition-none" :disabled="!apiClients.length" @click="open()">+ Add Webhook</button>
         </header>
-        <p class="mt-2 text-sm text-slate-400">Manage partner subscriptions. Notification delivery is not connected yet.</p>
+        <p class="mt-2 text-sm text-slate-400">Manage partner subscriptions. New completed predictions notify enabled subscribers.</p>
+        <p v-if="!deliveryReady" class="mt-2 text-xs text-amber-200">Migration required before notification delivery is available.</p>
         <div class="mt-5 grid grid-cols-3 gap-2 sm:gap-4">
             <div class="rounded-xl border border-white/10 bg-[#171D23] p-3 sm:p-4"><p class="text-xs text-slate-400">Subscriptions</p><p class="mt-1 text-2xl font-semibold">{{ rows.length }}</p></div>
             <div class="rounded-xl border border-white/10 bg-[#171D23] p-3 sm:p-4"><p class="text-xs text-slate-400">Enabled</p><p class="mt-1 text-2xl font-semibold text-emerald-400">{{ enabled }}</p></div>
@@ -133,12 +150,13 @@ async function destroy() {
                         <td class="px-4 py-4 align-top"><p class="break-words font-medium">{{ row.name }}</p><p class="mt-1 text-xs text-slate-400">{{ row.client_name }}<span v-if="row.client_revoked" class="ml-1 text-amber-300">· key revoked</span></p></td>
                         <td class="break-all px-4 py-4 align-top font-mono text-xs text-slate-300">{{ row.receiving_url }}</td>
                         <td class="px-4 py-4 align-top"><span v-for="event in row.events" :key="event" class="mb-1 inline-block rounded-md bg-sky-400/10 px-2 py-1 text-xs text-sky-300">{{ label(event) }}</span></td>
-                        <td class="px-4 py-4 align-top"><button type="button" role="switch" :aria-checked="row.is_enabled" :aria-label="`Enable ${row.name}`" :disabled="pending.has(row.id)" class="rounded-full px-2.5 py-1 text-xs font-medium transition-colors duration-150 disabled:opacity-50 motion-reduce:transition-none" :class="row.is_enabled ? 'bg-emerald-400/10 text-emerald-300' : 'bg-white/5 text-slate-400'" @click="toggle(row)">{{ row.is_enabled ? 'Enabled' : 'Disabled' }}</button></td>
+                        <td class="px-4 py-4 align-top"><button type="button" role="switch" :aria-checked="row.is_enabled" :aria-label="`Enable ${row.name}`" :disabled="pending.has(row.id)" class="rounded-full px-2.5 py-1 text-xs font-medium transition-colors duration-150 disabled:opacity-50 motion-reduce:transition-none" :class="row.is_enabled ? 'bg-emerald-400/10 text-emerald-300' : 'bg-white/5 text-slate-400'" @click="toggle(row)">{{ row.is_enabled ? 'Enabled' : 'Disabled' }}</button><p class="mt-2 text-[11px] text-slate-400">{{ deliveryText(row) }}</p><p v-if="row.latest_delivery?.last_error" class="mt-1 text-[11px] text-red-300">{{ row.latest_delivery.last_error }}</p></td>
                         <td class="px-4 py-4 align-top"><button type="button" :aria-label="`Edit ${row.name}`" class="text-sky-300 hover:text-sky-200" @click="open(row)">Edit</button></td>
                     </tr></template></tbody>
                 </table>
                 <div class="divide-y divide-white/10 md:hidden"><article v-for="row in visible" :key="row.id" :data-webhook-card="row.id" class="p-4">
                     <div class="flex items-start justify-between gap-3"><div class="min-w-0"><h2 class="break-words text-sm font-semibold">{{ row.name }}</h2><p class="mt-1 text-xs text-slate-400">{{ row.client_name }}<span v-if="row.client_revoked" class="text-amber-300"> · key revoked</span></p></div><button type="button" role="switch" :aria-checked="row.is_enabled" :aria-label="`Enable ${row.name}`" :disabled="pending.has(row.id)" class="shrink-0 rounded-full px-2.5 py-1 text-xs transition-colors duration-150 disabled:opacity-50 motion-reduce:transition-none" :class="row.is_enabled ? 'bg-emerald-400/10 text-emerald-300' : 'bg-white/5 text-slate-400'" @click="toggle(row)">{{ row.is_enabled ? 'Enabled' : 'Disabled' }}</button></div>
+                    <p class="mt-3 text-[11px] text-slate-400">{{ deliveryText(row) }}</p><p v-if="row.latest_delivery?.last_error" class="mt-1 text-[11px] text-red-300">{{ row.latest_delivery.last_error }}</p>
                     <p class="mt-3 break-all font-mono text-xs text-slate-300">{{ row.receiving_url }}</p><div class="mt-3 flex flex-wrap items-center gap-2"><span v-for="event in row.events" :key="event" class="rounded-md bg-sky-400/10 px-2 py-1 text-[11px] text-sky-300">{{ label(event) }}</span><button type="button" :aria-label="`Edit ${row.name}`" class="ml-auto px-2 py-1 text-xs text-sky-300" @click="open(row)">Edit</button></div>
                 </article></div>
             </div>
@@ -150,7 +168,7 @@ async function destroy() {
                 <Transition enter-active-class="transition-[opacity,transform] duration-300 ease-out motion-reduce:transition-none" leave-active-class="transition-[opacity,transform] duration-200 ease-in motion-reduce:transition-none" enter-from-class="translate-y-4 opacity-0" leave-to-class="translate-y-4 opacity-0">
                     <DialogContent class="fixed left-1/2 top-1/2 z-[61] max-h-[90dvh] w-[calc(100%_-_1.5rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border border-white/15 bg-[#171D23] p-5 text-slate-100 shadow-2xl focus:outline-none sm:p-6" @interact-outside="event => { if (saving) event.preventDefault(); }" @escape-key-down="event => { if (saving) event.preventDefault(); }">
                         <div class="flex justify-between gap-3"><DialogTitle class="text-lg font-semibold">{{ editing ? 'Edit Webhook' : 'Add Webhook' }}</DialogTitle><button type="button" aria-label="Close webhook editor" :disabled="saving" class="text-slate-400 hover:text-white disabled:opacity-50" @click="editor = false; secrets = {}">✕</button></div>
-                        <DialogDescription class="mt-1 text-xs text-slate-400">Store a partner subscription. Delivery will be connected separately.</DialogDescription>
+                        <DialogDescription class="mt-1 text-xs text-slate-400">Choose a receiving URL and events. Discord webhook URLs receive channel messages.</DialogDescription>
                         <form class="mt-5 space-y-4" @submit.prevent="save">
                             <label class="block text-xs font-medium">Name<input v-model="form.name" required maxlength="120" class="mt-1.5 block w-full rounded-lg border-white/10 bg-[#11171D] text-sm focus:border-sky-500 focus:ring-sky-500" /><span v-if="errors.name" class="mt-1 block text-red-300">{{ errors.name[0] }}</span></label>
                             <label class="block text-xs font-medium">Subscriber / API client<select v-model="form.api_client_id" required class="mt-1.5 block w-full rounded-lg border-white/10 bg-[#11171D] text-sm focus:border-sky-500 focus:ring-sky-500"><option value="" disabled>Select a subscriber</option><option v-for="item in apiClients" :key="item.id" :value="item.id">{{ item.name }}{{ item.revoked ? ' (key revoked)' : '' }}</option></select><span v-if="errors.api_client_id" class="mt-1 block text-red-300">{{ errors.api_client_id[0] }}</span></label>

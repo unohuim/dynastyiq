@@ -144,7 +144,7 @@ class NhlGamePredictionPayload
             'selection_score' => ['away' => $away, 'home' => $home],
             'predicted_total_goals' => round($custom['total_goals'], 2), 'goal_differential' => round($home - $away, 4),
             'confidence_score' => $custom['confidence_score'], 'confidence_inputs' => $custom['confidence_inputs'],
-            'days_away' => $this->predictionDaysAway((string) $game->game_date, $forecast['input']['context_source_date'] ?? null),
+            'days_away' => $this->predictionDaysAway((string) $game->game_date, null, $gameId, (int) $model->id, $forecast['input']['source_cutoff_at'] ?? null),
             'public_confidence_score' => null,
             'home_win_probability' => $custom['home_win_probability'], 'away_win_probability' => $custom['away_win_probability'],
             'goalie_edge' => $edge, 'algorithm_version' => config('nhl-custom-prediction.algorithm_version')];
@@ -1387,18 +1387,55 @@ class NhlGamePredictionPayload
         ];
     }
 
-    /** Add reused context age to the calendar horizon, retaining historical signed horizons. */
-    public function predictionDaysAway(string $gameDate, ?string $contextDate = null): int
-    {
-        $today = \Carbon\CarbonImmutable::now('America/Toronto')->startOfDay();
-        $target = \Carbon\CarbonImmutable::parse($gameDate, 'America/Toronto')->startOfDay();
-        $days = (int) $today->diffInDays($target, false);
-        if ($days < 0 || $contextDate === null) {
-            return $days;
+    /**
+     * Count uncovered completed games, using shared same-model context rather than personal record age.
+     * The legacy date arguments remain accepted; dates alone cannot establish completed-game coverage.
+     */
+    public function predictionDaysAway(
+        string $gameDate,
+        ?string $contextDate = null,
+        ?int $gameId = null,
+        ?int $modelId = null,
+        ?string $cutoffAt = null,
+    ): ?int {
+        if ($gameId === null || $modelId === null) {
+            return null;
         }
-        $source = \Carbon\CarbonImmutable::parse($contextDate, 'America/Toronto')->startOfDay();
-
-        return $days + max(0, (int) $source->diffInDays($today, false));
+        $game = DB::table('nhl_games')->where('nhl_game_id', $gameId)->first([
+            'nhl_game_id', 'season_id', 'start_time_utc', 'home_team_id', 'away_team_id',
+        ]);
+        if ($game === null) {
+            return null;
+        }
+        $cutoff = \Carbon\CarbonImmutable::now('UTC');
+        if ($cutoffAt !== null) {
+            $cutoff = $cutoff->min(\Carbon\CarbonImmutable::parse($cutoffAt, 'UTC'));
+        }
+        if ($game->start_time_utc !== null) {
+            $cutoff = $cutoff->min(\Carbon\CarbonImmutable::parse($game->start_time_utc, 'UTC'));
+        }
+        $lag = 0;
+        foreach ([(int) $game->away_team_id, (int) $game->home_team_id] as $teamId) {
+            $coveredThrough = null;
+            foreach (['nhl_team_game_pregame_contexts', 'nhl_player_game_pregame_contexts'] as $table) {
+                $candidate = DB::table($table.' as c')->join('nhl_games as source', 'source.nhl_game_id', '=', 'c.nhl_game_id')
+                    ->where('c.model_run_id', $modelId)->where('c.context_version', NhlPregameContextBuilder::VERSION)
+                    ->where('c.nhl_team_id', $teamId)->where('source.season_id', $game->season_id)
+                    ->where('c.source_cutoff_at', '<=', $cutoff->format('Y-m-d H:i:s'))
+                    ->max('c.source_cutoff_at');
+                if ($candidate !== null && ($coveredThrough === null || $candidate > $coveredThrough)) {
+                    $coveredThrough = $candidate;
+                }
+            }
+            $missing = DB::table('nhl_games')->where('season_id', $game->season_id)->where('game_type', 2)
+                ->whereIn('game_state', ['OFF', 'FINAL'])->where('nhl_game_id', '<>', $gameId)
+                ->where('start_time_utc', '<', $cutoff->format('Y-m-d H:i:s'))
+                ->where(fn ($q) => $q->where('home_team_id', $teamId)->orWhere('away_team_id', $teamId))
+                ->when($coveredThrough !== null, fn ($q) => $q->where('start_time_utc', '>=', $coveredThrough))
+                ->count();
+            $lag = max($lag, $missing);
+        }
+        return $lag;
     }
 
     /** Calculate the separately published confidence rating without changing outcome probabilities.
@@ -1419,7 +1456,7 @@ class NhlGamePredictionPayload
             return null;
         }
 
-        // Historical negative horizons do not earn a timing bonus. No score ceiling or floor is applied.
+        // Legacy negative values do not earn a timing bonus. No score ceiling or floor is applied.
         return round(50 + 1.1 * (100 * (float) $probability - 50)
             + 0.2 * ((float) $internal - 55) - 2 * max(0, $daysAway), 2);
     }

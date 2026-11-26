@@ -3,9 +3,9 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createApp, h, nextTick, reactive } from 'vue';
 import Webhooks from './Webhooks.vue';
 
-const mocks = vi.hoisted(() => ({ post: vi.fn(), put: vi.fn(), patch: vi.fn(), get: vi.fn(), delete: vi.fn(), notify: vi.fn(), copy: vi.fn() }));
+const mocks = vi.hoisted(() => ({ post: vi.fn(), put: vi.fn(), patch: vi.fn(), get: vi.fn(), delete: vi.fn(), notify: vi.fn(), copy: vi.fn(), reload: vi.fn() }));
 vi.mock('axios', () => ({ default: { post: mocks.post, put: mocks.put, patch: mocks.patch, get: mocks.get, delete: mocks.delete } }));
-vi.mock('@inertiajs/vue3', () => ({ Head: { render: () => null } }));
+vi.mock('@inertiajs/vue3', () => ({ Head: { render: () => null }, router: { reload: mocks.reload } }));
 vi.mock('reka-ui', async () => {
     const { h } = await import('vue');
     const wrap = { setup: (_, { slots, attrs }) => () => h('div', attrs, slots.default?.()) };
@@ -34,7 +34,8 @@ const openEdit = async () => { host.querySelector('[aria-label="Edit Gner8 predi
 const submit = () => host.querySelector('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
 
 beforeEach(() => {
-    vi.clearAllMocks();
+    vi.useFakeTimers(); vi.setSystemTime(new Date('2026-11-26T16:00:00Z')); vi.clearAllMocks();
+    vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
     mocks.post.mockResolvedValue({ data: { subscription: row({ id: 2, name: 'New webhook' }) } });
     mocks.put.mockResolvedValue({ data: { subscription: row({ name: 'Renamed' }) } });
     mocks.patch.mockResolvedValue({ data: { subscription: row({ is_enabled: false }) } });
@@ -45,7 +46,7 @@ beforeEach(() => {
     mocks.copy.mockResolvedValue(undefined);
 });
 afterEach(() => {
-    app?.unmount(); app = null; document.body.innerHTML = ''; vi.restoreAllMocks();
+    app?.unmount(); app = null; document.body.innerHTML = ''; vi.restoreAllMocks(); vi.useRealTimers();
     if (clipboardDescriptor) Object.defineProperty(navigator, 'clipboard', clipboardDescriptor);
     else delete navigator.clipboard;
 });
@@ -53,7 +54,7 @@ afterEach(() => {
 it('renders desktop rows and mobile cards from the same inventory', () => {
     mount(); expect(host.querySelectorAll('[data-webhook-id]')).toHaveLength(1);
     expect(host.querySelectorAll('[data-webhook-card]')).toHaveLength(1);
-    expect(host.textContent).toContain('Gner8 predictions'); expect(host.textContent).toContain('Notification delivery is not connected yet.');
+    expect(host.textContent).toContain('Gner8 predictions'); expect(host.textContent).toContain('New completed predictions notify enabled subscribers.');
 });
 it('provides an honest empty inventory', () => {
     mount({ subscriptions: [] }); expect(host.textContent).toContain('No webhooks yet');
@@ -188,4 +189,30 @@ it('clears revealed secrets when the editor closes', async () => {
     mount(); await openEdit(); button('Reveal secret').click(); await settle(); button('Cancel').click(); await nextTick();
     await openEdit(); expect(host.textContent).not.toContain('whsec_test');
     expect(button('Reveal secret')).toBeDefined();
+});
+
+
+it('shows the latest delivery result on desktop and mobile', () => {
+    mount({ subscriptions: [row({ latest_delivery: { status: 'delivered', attempts: 1, http_status: 200 } })] });
+    expect(host.querySelector('[data-webhook-id]').textContent).toContain('delivered · 1 attempt · HTTP 200');
+    expect(host.querySelector('[data-webhook-card]').textContent).toContain('delivered · 1 attempt · HTTP 200');
+});
+it('exposes a delivery failure without displaying a signing secret', () => {
+    mount({ subscriptions: [row({ latest_delivery: { status: 'failed', attempts: 2, http_status: 400, last_error: 'HTTP 400: notification was not accepted.' } })] });
+    expect(host.textContent).toContain('HTTP 400: notification was not accepted.');
+    expect(host.textContent).not.toContain('whsec_');
+});
+it('keeps subscriptions without prior deliveries visible', () => {
+    mount(); expect(host.textContent).toContain('No deliveries yet');
+});
+it('shows migration readiness without hiding subscription management', () => {
+    mount({ deliveryReady: false });
+    expect(host.textContent).toContain('Migration required');
+    expect(button('+ Add Webhook').disabled).toBe(false);
+});
+it('polls delivery results silently and stops polling after unmount', async () => {
+    mount(); await vi.advanceTimersByTimeAsync(15000);
+    expect(mocks.reload).toHaveBeenCalledWith(expect.objectContaining({ only: ['subscriptions', 'deliveryReady'], showProgress: false, preserveState: true, preserveScroll: true }));
+    app.unmount(); app = null; await vi.advanceTimersByTimeAsync(15000);
+    expect(mocks.reload).toHaveBeenCalledTimes(1);
 });

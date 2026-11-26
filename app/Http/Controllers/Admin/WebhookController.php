@@ -10,6 +10,7 @@ use App\Models\WebhookSubscription;
 use Closure;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Inertia\Inertia;
@@ -21,13 +22,14 @@ class WebhookController extends Controller
     /** Serve explicit inventory fields without tokens or signing secrets in page props. */
     public function index(): Response
     {
+        $deliveryReady = Schema::hasTable('webhook_deliveries');
         return Inertia::render('Admin/Webhooks', [
-            'subscriptions' => WebhookSubscription::with('apiClient:id,name,revoked_at')->orderBy('name')->orderBy('id')->get()
-                ->map(fn (WebhookSubscription $webhook): array => $this->payload($webhook)),
+            'subscriptions' => WebhookSubscription::with('apiClient:id,name,revoked_at')->when($deliveryReady, fn ($query) => $query->with('latestDelivery'))->orderBy('name')->orderBy('id')->get()
+                ->map(fn (WebhookSubscription $webhook): array => $this->payload($webhook, $deliveryReady)),
             'apiClients' => ApiClient::orderBy('name')->get(['id', 'name', 'revoked_at'])
                 ->map(fn (ApiClient $client): array => ['id' => $client->id, 'name' => $client->name, 'revoked' => $client->revoked_at !== null]),
             'eventOptions' => collect(WebhookSubscription::EVENTS)->map(fn (string $label, string $value): array => compact('value', 'label'))->values(),
-            'storeUrl' => route('admin.webhooks.store'),
+            'storeUrl' => route('admin.webhooks.store'), 'deliveryReady' => $deliveryReady,
         ]);
     }
 
@@ -89,14 +91,23 @@ class WebhookController extends Controller
     }
 
     /** @return array<string,mixed> Explicit safe inventory contract shared by mutations and page reads. */
-    private function payload(WebhookSubscription $webhook): array
+    private function payload(WebhookSubscription $webhook, ?bool $deliveryReady = null): array
     {
         $webhook->loadMissing('apiClient:id,name,revoked_at');
+        $deliveryReady ??= Schema::hasTable('webhook_deliveries');
+        $delivery = $deliveryReady ? $webhook->loadMissing('latestDelivery')->latestDelivery : null;
 
         return [
             'id' => $webhook->id, 'name' => $webhook->name, 'api_client_id' => $webhook->api_client_id,
             'client_name' => $webhook->apiClient?->name, 'client_revoked' => $webhook->apiClient?->revoked_at !== null,
             'receiving_url' => $webhook->receiving_url, 'events' => $webhook->events, 'is_enabled' => $webhook->is_enabled,
+            'latest_delivery' => $delivery === null ? null : [
+                'id' => $delivery->id, 'status' => $delivery->status, 'attempts' => $delivery->attempts,
+                'http_status' => $delivery->http_status, 'last_error' => $delivery->last_error,
+                'prediction_revision_id' => $delivery->prediction_revision_id,
+                'last_attempt_at' => $delivery->last_attempt_at?->toIso8601String(),
+                'delivered_at' => $delivery->delivered_at?->toIso8601String(),
+            ],
             'created_at' => $webhook->created_at?->toIso8601String(), 'updated_at' => $webhook->updated_at?->toIso8601String(),
             'update_url' => route('admin.webhooks.update', $webhook), 'status_url' => route('admin.webhooks.status', $webhook),
             'secret_url' => route('admin.webhooks.secret', $webhook), 'delete_url' => route('admin.webhooks.destroy', $webhook),

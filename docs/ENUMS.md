@@ -9,10 +9,15 @@
 ## Webhook subscription inventory
 
 - `webhook_subscriptions.events`: currently supports `prediction.available`,
-  displayed as New Prediction Available. This is stored subscription vocabulary,
-  not an emitted event or implemented delivery contract.
+  displayed as New Prediction Available. Successful canonical operational prediction publication emits this delivery event.
 - `webhook_subscriptions.is_enabled`: boolean, default `false`. The UI labels
-  values Enabled/Disabled; configuration does not currently activate delivery.
+  values Enabled/Disabled; enabled subscriptions with an active NHL-read API client receive new prediction notifications.
+
+## Prediction webhook delivery
+
+- `webhook_deliveries.transport`: `json` for signed public event JSON; `discord` for native incoming Discord webhook embeds.
+- `webhook_deliveries.status`: `pending` (staged), `delivering` (leased HTTP attempt), `retrying` (temporary failure or recovered abandoned claim), `delivered` (accepted; Discord confirms a message ID), `failed` (permanent rejection or exhausted attempts), `cancelled` (subscription disabled, changed or revoked).
+- `webhook_deliveries.event` reuses `webhook_subscriptions.events`; `event_id` is the stable delivery identity across retries.
 
 ## Custom prediction defensive history
 

@@ -320,6 +320,9 @@ final class NhlGamePredictionHistory
      */
     public function record(int $gameId, array $input, string $fingerprint, array $evidence, array $payload, ?int $runId = null): array
     {
+        if (DB::transactionLevel() === 0) {
+            return DB::transaction(fn () => $this->record($gameId, $input, $fingerprint, $evidence, $payload, $runId));
+        }
         if (isset($payload['_custom_prediction_evidence'])) {
             $evidence['custom_prediction'] = $payload['_custom_prediction_evidence'];
             unset($payload['_custom_prediction_evidence']);
@@ -334,7 +337,9 @@ final class NhlGamePredictionHistory
         $at = now();
         $date = DB::table('nhl_games')->where('nhl_game_id', $gameId)->value('game_date');
         $daysAway = $date === null ? null : app(NhlGamePredictionPayload::class)->predictionDaysAway(
-            (string) $date, data_get($payload, 'inputs.context.source_date')
+            (string) $date, null, $gameId,
+            is_numeric(data_get($payload, 'inputs.sat_model_run_id')) ? (int) $payload['inputs']['sat_model_run_id'] : null,
+            data_get($evidence, 'custom_prediction.input.source_cutoff_at')
         );
         $publicConfidence = null;
         if (is_array($payload['prediction'] ?? null)) {
@@ -359,6 +364,7 @@ final class NhlGamePredictionHistory
             'summary' => json_encode($this->metrics($payload), JSON_THROW_ON_ERROR), 'predicted_at' => $at,
         ]);
         if ($canonical && ($payload['prediction_available'] ?? false) === true) {
+            app(PredictionWebhookDelivery::class)->stage($id);
             app(NhlPublicGamePage::class)->refreshAfterCommit($gameId);
         }
         if (($payload['prediction_available'] ?? false) === true

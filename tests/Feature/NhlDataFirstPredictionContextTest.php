@@ -98,33 +98,33 @@ it('keeps different games and models in distinct repair identities', function ()
     expect((new UpdateNhlPredictionPregameContextJob(2026020399, $this->model->id + 1, 1))->uniqueId())->not->toBe($this->job->uniqueId());
 });
 
-it('adds one day when todays prediction uses yesterdays context', function (): void {
-    expect($this->saved['prediction']['days_away'])->toBe(1);
-    $this->assertDatabaseHas('nhl_game_prediction_revisions', ['id' => $this->job->revisionId, 'days_away' => 1]);
+it('does not treat an old personal context date as an uncovered completed game', function (): void {
+    expect($this->saved['prediction']['days_away'])->toBe(0);
+    $this->assertDatabaseHas('nhl_game_prediction_revisions', ['id' => $this->job->revisionId, 'days_away' => 0]);
 });
 
 it('keeps fresh same-day context at zero days away', function (): void {
-    expect(app(NhlGamePredictionPayload::class)->predictionDaysAway('2026-11-25', '2026-11-25'))->toBe(0);
+    expect(app(NhlGamePredictionPayload::class)->predictionDaysAway('2026-11-25', '2026-11-25', 2026020399, $this->model->id))->toBe(0);
 });
 
-it('adds context age to the existing future game horizon', function (): void {
-    expect(app(NhlGamePredictionPayload::class)->predictionDaysAway('2026-11-28', '2026-11-23'))->toBe(5);
+it('keeps a future prediction at zero when no completed games are uncovered', function (): void {
+    expect(app(NhlGamePredictionPayload::class)->predictionDaysAway('2026-11-28', '2026-11-23', 2026020399, $this->model->id))->toBe(0);
 });
 
 it('does not add a negative context-age bonus', function (): void {
-    expect(app(NhlGamePredictionPayload::class)->predictionDaysAway('2026-11-26', '2026-11-27'))->toBe(1);
+    expect(app(NhlGamePredictionPayload::class)->predictionDaysAway('2026-11-26', '2026-11-27', 2026020399, $this->model->id))->toBe(0);
 });
 
-it('preserves the signed historical horizon', function (): void {
-    expect(app(NhlGamePredictionPayload::class)->predictionDaysAway('2026-11-24', '2026-11-20'))->toBe(-1);
+it('does not invent negative lag from a historical calendar date', function (): void {
+    expect(app(NhlGamePredictionPayload::class)->predictionDaysAway('2026-11-24', '2026-11-20', 2026020399, $this->model->id))->toBe(0);
 });
 
-it('retains legacy calendar horizons when no context date was recorded', function (): void {
-    expect(app(NhlGamePredictionPayload::class)->predictionDaysAway('2026-11-27'))->toBe(2);
+it('leaves lag unknown when no game and model identities were supplied', function (): void {
+    expect(app(NhlGamePredictionPayload::class)->predictionDaysAway('2026-11-27'))->toBeNull();
 });
 
 it('uses adjusted days away in public confidence without changing win probability', function (): void {
-    expect($this->saved['prediction']['public_confidence_score'])->toBe(59.0)
+    expect($this->saved['prediction']['public_confidence_score'])->toBe(61.0)
         ->and($this->saved['prediction']['away_win_probability'])->toBe(0.6);
 });
 
@@ -210,18 +210,18 @@ it('uses actual participants for a game that finished before context repair exec
 it('preserves the committed prediction if later context repair fails', function (): void {
     $this->contexts->shouldReceive('queuePredictionContexts')->once()->andThrow(new \RuntimeException('Context unavailable'));
     expect(fn () => $this->job->handle($this->forecast, $this->contexts))->toThrow(\RuntimeException::class, 'Context unavailable');
-    $this->assertDatabaseHas('nhl_game_prediction_revisions', ['id' => $this->job->revisionId, 'days_away' => 1]);
+    $this->assertDatabaseHas('nhl_game_prediction_revisions', ['id' => $this->job->revisionId, 'days_away' => 0]);
 });
 
 it('retains the originally saved age when the revision is read on a later day', function (): void {
     $this->travelTo(CarbonImmutable::parse('2026-11-26 15:00:00 UTC'));
-    expect(app(NhlGamePredictionHistory::class)->latestSaved(2026020399)['prediction']['days_away'])->toBe(1);
+    expect(app(NhlGamePredictionHistory::class)->latestSaved(2026020399)['prediction']['days_away'])->toBe(0);
 });
 
 it('serves the persisted adjusted horizon and public confidence through the saved API read', function (): void {
     ApiClient::create(['name' => 'Age reader', 'slug' => 'age-reader', 'token_hash' => ApiClient::hashToken('age-token'), 'scopes' => ['nhl-stats:read']]);
     $this->withToken('age-token')->getJson('/api/nhl-game-predictions?nhl_game_id=2026020399')->assertOk()
-        ->assertJsonPath('prediction.days_away', 1)->assertJsonPath('prediction.confidence_score', fn ($score): bool => (float) $score === 59.0);
+        ->assertJsonPath('prediction.days_away', 0)->assertJsonPath('prediction.confidence_score', fn ($score): bool => (float) $score === 61.0);
 });
 
 
@@ -244,4 +244,102 @@ it('does not dispatch repair when the prediction publication transaction rolls b
     DB::rollBack();
     Bus::assertNotDispatched(UpdateNhlPredictionPregameContextJob::class);
     $this->assertDatabaseCount('nhl_game_prediction_revisions', 1);
+});
+
+describe('completed game context lag', function (): void {
+    beforeEach(function (): void {
+        $this->complete = function (int $id, string $date, int $team = 28): void {
+            NhlGame::create(['nhl_game_id' => $id, 'season_id' => '20262027', 'game_type' => 2,
+                'game_date' => $date, 'game_dow' => 'Monday', 'game_month' => 'November', 'game_state' => 'OFF',
+                'start_time_utc' => $date.' 00:00:00', 'away_team_id' => $team, 'home_team_id' => 99,
+                'away_team_abbrev' => 'SJS', 'home_team_abbrev' => 'AAA']);
+        };
+        $this->marker = function (int $team, string $cutoff, ?int $model = null): int {
+            return DB::table('nhl_team_game_pregame_contexts')->insertGetId([
+                'model_run_id' => $model ?? $this->model->id, 'nhl_game_id' => 2026020399,
+                'nhl_team_id' => $team, 'opponent_team_id' => $team === 28 ? 24 : 28,
+                'game_date' => '2026-11-25', 'source_cutoff_at' => $cutoff, 'venue' => 'home',
+                'context_version' => \App\Services\NhlPregameContextBuilder::VERSION, 'metrics' => '{}',
+            ]);
+        };
+        $this->lag = fn () => app(NhlGamePredictionPayload::class)->predictionDaysAway(
+            '2026-11-25', '2026-10-10', 2026020399, $this->model->id);
+    });
+
+    it('counts uncovered completed games rather than elapsed calendar days', function (): void {
+        ($this->complete)(2026020201, '2026-11-20');
+        ($this->complete)(2026020202, '2026-11-23');
+        ($this->marker)(28, '2026-11-19 12:00:00');
+        expect(($this->lag)())->toBe(2);
+    });
+
+    it('uses the largest team gap rather than adding both teams gaps together', function (): void {
+        ($this->complete)(2026020201, '2026-11-20');
+        ($this->complete)(2026020202, '2026-11-23');
+        ($this->complete)(2026020203, '2026-11-23', 24);
+        expect(($this->lag)())->toBe(2);
+    });
+
+    it('returns zero when context follows the most recent completed game', function (): void {
+        ($this->complete)(2026020201, '2026-11-23');
+        ($this->marker)(28, '2026-11-24 12:00:00');
+        expect(($this->lag)())->toBe(0);
+    });
+
+    it('ignores a returning players old row when a teammate has current context', function (): void {
+        ($this->complete)(2026020201, '2026-11-23');
+        $parent = ($this->marker)(28, '2026-10-10 12:00:00');
+        foreach ([101 => '2026-10-10 12:00:00', 102 => '2026-11-24 12:00:00'] as $id => $cutoff) {
+            DB::table('nhl_player_game_pregame_contexts')->insert([
+                'model_run_id' => $this->model->id, 'team_context_id' => $parent, 'nhl_game_id' => 2026020399,
+                'nhl_player_id' => $id, 'nhl_team_id' => 28, 'opponent_team_id' => 24,
+                'game_date' => '2026-11-25', 'source_cutoff_at' => $cutoff, 'venue' => 'away',
+                'context_version' => \App\Services\NhlPregameContextBuilder::VERSION, 'metrics' => '{}',
+            ]);
+        }
+        expect(($this->lag)())->toBe(0);
+    });
+
+    it('does not use another models fresh context as coverage', function (): void {
+        ($this->complete)(2026020201, '2026-11-23');
+        $other = $this->model->replicate(); $other->run_key = 'other-lag-model'; $other->save();
+        ($this->marker)(28, '2026-11-24 12:00:00', $other->id);
+        expect(($this->lag)())->toBe(1);
+    });
+
+    it('does not let a context rebuilt today for an older cutoff pretend to cover recent results', function (): void {
+        ($this->complete)(2026020201, '2026-11-23');
+        $id = ($this->marker)(28, '2026-11-20 12:00:00');
+        DB::table('nhl_team_game_pregame_contexts')->where('id', $id)->update(['created_at' => now(), 'updated_at' => now()]);
+        expect(($this->lag)())->toBe(1);
+    });
+
+    it('does not use context from after the prediction cutoff', function (): void {
+        ($this->complete)(2026020201, '2026-11-23');
+        ($this->marker)(28, '2026-11-26 12:00:00');
+        expect(($this->lag)())->toBe(1);
+    });
+
+    it('keeps pregame for the completed game itself from claiming that games outcome', function (): void {
+        ($this->complete)(2026020201, '2026-11-23');
+        ($this->marker)(28, '2026-11-23 00:00:00');
+        expect(($this->lag)())->toBe(1);
+    });
+
+    it('excludes upcoming games and results later than the frozen cutoff', function (): void {
+        ($this->complete)(2026020201, '2026-11-26');
+        expect(($this->lag)())->toBe(0);
+    });
+
+    it('archives corrected lag and public confidence through the existing saved prediction path', function (): void {
+        ($this->complete)(2026020201, '2026-11-23');
+        ($this->marker)(28, '2026-11-24 12:00:00');
+        $saved = ($this->save)();
+        expect($saved['prediction']['days_away'])->toBe(0)->and($saved['prediction']['public_confidence_score'])->toBe(61.0);
+        $this->assertDatabaseHas('nhl_game_prediction_revisions', ['id' => $saved['meta']['prediction_revision_id'], 'days_away' => 0]);
+        ApiClient::create(['name' => 'Lag read', 'slug' => 'lag-read', 'token_hash' => ApiClient::hashToken('lag-read-token'), 'scopes' => ['nhl-stats:read']]);
+        $this->withToken('lag-read-token')->getJson('/api/nhl-game-predictions?nhl_game_id=2026020399')
+            ->assertOk()->assertJsonPath('meta.prediction_revision_id', $saved['meta']['prediction_revision_id'])
+            ->assertJsonPath('prediction.days_away', 0);
+    });
 });

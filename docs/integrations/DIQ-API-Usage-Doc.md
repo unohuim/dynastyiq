@@ -81,10 +81,16 @@ New predictions use usable exact-game context first. If it is missing, they use
 the latest committed same-model context before the game/request cutoff and retain
 the existing statistical fallback rules. A failed pregame build does not block the
 prediction. The original context date is returned as `inputs.context.source_date`.
-For today/future games, `days_away` includes that date's age as well as the future
-game horizon: today with yesterday's context is `1`; a game two days ahead with
-context one day old is `3`. Historical negative horizons and older saved revisions
-retain their existing semantics. Public confidence uses the adjusted value.
+New revisions define `days_away` as **completed-game context lag**, not calendar age.
+For each team, DIQ finds the newest same-model, same-season team or teammate
+context source cutoff available before the prediction/game cutoff. It counts
+completed regular-season games not covered by that cutoff and uses the larger
+team gap. Current coverage means `0`, including future games. An injured player's
+older personal snapshot does not inflate it when shared context is current.
+`inputs.context.source_date` remains descriptive evidence, not the lag calculation.
+Rebuilding an old snapshot today does not advance its statistical cutoff. Missing
+game/model identity yields null. Existing saved revisions keep their original values;
+no automatic historical backfill occurs. The public confidence formula is unchanged.
 
 `inputs.context.refresh_needed` means exact context was missing at calculation.
 After the prediction revision is saved, a deduplicated background job requests
@@ -92,7 +98,8 @@ that game's context through the existing builder. Future-game updates wait until
 the game day. An active/paused builder is respected. This repair never delays or
 rewrites the published prediction, and failures do not remove its saved result.
 
-Example for a prediction published November 25 using November 24 context:
+Example: November 24 shared context covers both teams’ latest completed games,
+so a November 25 publication has zero lag:
 
 ```json
 {
@@ -103,7 +110,7 @@ Example for a prediction published November 25 using November 24 context:
       "refresh_needed": true
     }
   },
-  "prediction": { "days_away": 1 }
+  "prediction": { "days_away": 0 }
 }
 ```
 
@@ -393,14 +400,63 @@ This is a persisted-data read: it does not import boxscores, contact X, or calcu
 predictions. Scores/live play are outside this endpoint. Data freshness depends
 on the existing import/sync processes. Existing read and write routes are unchanged.
 
-## Webhook Subscription Inventory
+## Prediction webhooks
 
-Superadmins can register subscription configuration at `/admin/webhooks`,
-including an API client, HTTPS receiving URL, event selection and enabled setting.
-This phase provides inventory only: saving or enabling a subscription sends no
-notification. Test deliveries, delivery history and retries are not implemented.
-Partner API tokens cannot administer subscriptions through these session routes.
-Existing prediction API reads and manual lineup behavior remain unchanged.
+Superadmins manage subscriptions at `/admin/webhooks`: API client, HTTPS receiving
+URL, event selection and enabled setting. Partner API tokens cannot administer
+these session routes. Saving/enabling configuration itself sends nothing.
+
+After migration, a new successful canonical operational prediction revision
+stages `prediction.available` for enabled subscriptions whose API client is active
+and has `nhl-stats:read`. A committed outbox record is dispatched on `projections`.
+Saved prediction reads, unavailable forecasts, overrides and research replays do
+not notify. Existing predictions are not automatically backfilled. The inventory
+shows latest delivery status, attempts, safe error and revision timestamps.
+
+Native incoming Discord webhook URLs receive an embed containing matchup, pick,
+win probability, public confidence, predicted score and revision. Mentions are
+disabled. Other public HTTPS URLs receive signed JSON, for example:
+
+```json
+{
+  "id": "f750305a-f82d-41af-a3db-98843ab95203",
+  "event": "prediction.available",
+  "occurred_at": "2026-11-26T16:00:00+00:00",
+  "data": {
+    "nhl_game_id": 2026020428,
+    "prediction_revision_id": 1009,
+    "game_date": "2026-11-29",
+    "away_team": "MIN",
+    "home_team": "CHI",
+    "predicted_at": "2026-11-26 16:00:00",
+    "winner": { "side": "away", "team_abbrev": "MIN" },
+    "predicted_score": { "away": 3.1, "home": 2.6 },
+    "away_win_probability": 0.6,
+    "home_win_probability": 0.4,
+    "public_confidence_score": 61.0,
+    "days_away": 0,
+    "game_url": "https://dynastyiq.com/games/2026020428"
+  }
+}
+```
+
+JSON headers: `X-DIQ-Event`, `X-DIQ-Delivery-Id` (same as body `id`),
+`X-DIQ-Timestamp` (Unix seconds), and `X-DIQ-Signature`. Verify the latter as
+`sha256=` followed by the hexadecimal HMAC-SHA256 of
+`timestamp + "." + raw_request_body`, using the subscription signing secret.
+Use a constant-time comparison and a reasonable timestamp tolerance. Respond
+quickly with a 2xx after durably accepting the event, then retrieve predictions
+through the existing authenticated API. Do not use internal confidence.
+
+Delivery is at least once: consumers must deduplicate the stable event ID. Staging
+is unique per subscription/revision/event, but a lost response can cause a repeated
+HTTP request. Temporary network failures, 408, 429 and server errors retry up to
+five attempts; rate-limit delays are respected. Other HTTP rejections are terminal.
+A minute scheduler recovers abandoned delivery claims without rerunning predictions.
+Disabled/revoked/changed subscriptions cancel pending delivery. HTTPS port 443,
+public DNS addresses, pinned resolution and no redirects constrain destinations.
+Signing secrets, Discord tokens and raw provider errors are not exposed in delivery
+status. Notification failure leaves the saved prediction available.
 
 ## Submit A Lineup (Authoritative Manual Override)
 
@@ -415,7 +471,8 @@ publication timestamps or claimed submitter identities cannot change it.
 After a valid submission changes the selected players or their assignments and
 commits, DIQ queues a background prediction refresh for that game through the same pathway used by its game-page manual lineup form.
 The submission response remains the accepted lineup and starter; it does not wait
-for prediction calculation. No webhook or outbound prediction is sent. Retrieve
+for prediction calculation. The submission itself sends no webhook; a later new
+successful prediction revision can notify enabled subscribers. Retrieve
 the latest successful revision through `GET /api/nhl-game-predictions`; while work
 is pending, that endpoint retains the existing saved-success response behavior.
 The refresh worker uses current inputs and the normal preparation, deduplication
@@ -1404,7 +1461,7 @@ Successful game predictions additionally expose:
 
 | Field | Meaning |
 | --- | --- |
-| `prediction.days_away` | Stored signed calendar game-date horizon plus nonnegative reused-context age for today/future games in America/Toronto: fresh today `0`, today using yesterday's context `1`, tomorrow using yesterday's context `2`. Historical requests can be negative. A cached or archived revision keeps its original value; older revisions can be null. |
+| `prediction.days_away` | Stored completed-game context lag: maximum of the two teams’ uncovered completed regular-season games since their newest eligible shared same-model context source cutoff. Current coverage is `0`, even for future games or an older returning-player snapshot. Existing saved revisions retain their original values; missing game/model identity is null. |
 | `prediction.public_confidence_score` | Public confidence rating: `50 + 1.1 × (P − 50) + 0.2 × (I − 55) − 2 × max(0, days_away)`, where P is the selected team’s win probability expressed from 0–100 and I is internal confidence. Rounded to two decimals, with no artificial ceiling or floor. Older revisions or missing required inputs may be null. |
 | `prediction.confidence_score` | Public confidence, identical to `prediction.public_confidence_score` on the partner API. Internal confidence remains in stored revisions and admin views; it is not returned in this API field. |
 | `inputs.context.context_mode` | `exact_game` for today/past-date preparation; `latest_available` for future dates. |

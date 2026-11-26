@@ -2,7 +2,8 @@
 
 Operational predictions read available context before considering build work.
 Exact snapshots are preferred; latest usable snapshots preserve model/cutoff
-boundaries and add their age to days_away. A committed prediction may queue a
+boundaries. days_away counts uncovered completed games using the freshest shared
+team/teammate source cutoff; an old returning-player record does not inflate it. A committed prediction may queue a
 unique, scoped pregame repair on projections afterward; old failed run IDs never
 veto usable data. Authority: `docs/architecture/stats/NhlCustomGamePrediction.yaml`.
 
@@ -29,7 +30,11 @@ Superadmins manage global API-client webhook subscription inventory at
 `/admin/webhooks` through Vue/Inertia. Desktop tables and mobile cards expose
 configuration CRUD and filters, with encrypted secrets revealed only by a
 privileged no-store request. Webhooks follows Admin Faceoffs in both account
-menus. This inventory sends no notifications and records no delivery attempts.
+menus. Inventory mutations do not send notifications. New canonical successful
+operational revisions independently stage encrypted-destination outbox records;
+projections workers deliver signed JSON or native Discord embeds with bounded
+retries and recovery. Inventory shows safe latest delivery results.
+Delivery authority: `docs/architecture/integrations/PredictionWebhookDelivery.yaml`.
 Authority: `docs/architecture/integrations/WebhookSubscriptions.yaml`.
 
 Operational default-stack predictions retain immutable revisions through
@@ -4451,9 +4456,9 @@ an immutable revision when ready. No new table or scoring equation is introduced
 Tomorrow-and-later requests skip target-context work and reuse the latest committed
 same-model context available now, retaining source cutoffs and personal bucket alignment.
 Upcoming lineups/opponents and schedule classifications remain target-specific.
-Operational revisions store Toronto-calendar `days_away` and a separately calculated
+Operational revisions store completed-game context lag in `days_away` and a separately calculated
 `public_confidence_score` using probability, internal confidence and the forecast
-horizon; no artificial score cap applies. Internal confidence remains unchanged.
+lag; no artificial score cap applies. Internal confidence remains unchanged.
 Matchup form also includes pooled Last 5 and Last 10 PP/PK percentages, continuing
 into the previous season for short samples. Existing season special-team rates
 and current-season record windows remain unchanged; new revisions retain the fields.
