@@ -164,6 +164,7 @@ rules:
   - SAT model status must move from running to complete after the requested SAT or SOG danger evaluation job finishes successfully.
   - SAT model status must move to failed when the requested SAT or SOG danger evaluation fails.
   - SAT model status changes must broadcast a row update on the admin SAT models channel so the admin page does not require refresh.
+  - Every successfully committed profile child job must publish one progress row invalidation after commit, independent of job size or carried-forward snapshot counts. Replayed, superseded, cancelled and rolled-back work must not publish progress. Notification failure must not undo committed profile work.
   - SAT and SOG inspection must be read-only and scoped to one SAT model.
   - SAT and SOG inspection tables must use whitelisted server-side sortable columns so large trained models remain usable.
   - SAT model list and inspection views must expose excluded training share for the evaluated sample so removed SAT or SOG rows remain auditable.

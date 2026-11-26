@@ -162,15 +162,14 @@ class BuildNhlSatModelEntityProfileForEntityJob implements ShouldQueue
             $metricKey = $this->snapshotSeasonId === null ? 'profile_entities_completed' : 'season_snapshot_entities_completed';
             $metrics[$metricKey] = (int) ($metrics[$metricKey] ?? 0) + count($this->entityKeys);
             $run->forceFill(['metrics' => $metrics])->save();
-            if (((int) ($metrics['profile_entities_completed'] ?? 0) + (int) ($metrics['season_snapshot_entities_completed'] ?? 0)) % self::MAX_ENTITIES === 0) {
-                DB::afterCommit(function (): void {
-                    try {
-                        broadcast(new \App\Events\NhlSatModelUpdated($this->modelRunId, 'predictions-progress'));
-                    } catch (Throwable) {
-                        // Progress delivery must not fail a successfully built entity.
-                    }
-                });
-            }
+            // Every committed job advances progress, including short jobs and reused-snapshot offsets.
+            DB::afterCommit(function (): void {
+                try {
+                    broadcast(new \App\Events\NhlSatModelUpdated($this->modelRunId, 'predictions-progress'));
+                } catch (Throwable) {
+                    // Progress delivery must not fail a successfully built entity.
+                }
+            });
             DB::commit();
         } catch (Throwable $exception) {
             DB::rollBack();

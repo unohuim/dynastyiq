@@ -528,6 +528,7 @@ it('rolls back an entity write when its builder fails before progress is committ
     expect(fn () => $job->handle($builder))->toThrow(RuntimeException::class, 'entity SQL failed');
     expect(DB::table('nhl_sat_model_entity_profile_buckets')->count())->toBe(0)
         ->and(data_get($this->run->fresh()->metrics, 'profile_entities_completed', 0))->toBe(0);
+    Event::assertNotDispatched(NhlSatModelUpdated::class);
 });
 
 it('ignores entity jobs from superseded builds', function (): void {
@@ -1281,4 +1282,45 @@ describe('bounded profile retries', function (): void {
         expect($jobs)->toHaveCount(1)->and($jobs->first()->snapshotSeasonId)->toBeNull()
             ->and(data_get($this->run->fresh()->metrics, 'season_snapshot_entities_completed'))->toBe(1);
     });
+});
+
+it('broadcasts profile progress with a reused snapshot count not divisible by the job size', function (): void {
+    ($this->activate)();
+    $this->run->update(['metrics' => [...$this->run->metrics, 'season_snapshot_entities_completed' => 3722]]);
+    $builder = Mockery::mock(NhlSatModelEntityProfileBuilder::class);
+    $builder->shouldReceive('buildEntity')->times(15)->andReturn(1);
+    (new BuildNhlSatModelEntityProfileForEntityJob($this->run->id, $this->sat->id, null, 'skater_offense',
+        array_map(fn (int $id): string => 'skater_offense:'.$id, range(101, 115)), null, 'build-1'))->handle($builder);
+    expect(data_get($this->run->fresh()->metrics, 'profile_entities_completed'))->toBe(15);
+    Event::assertDispatched(NhlSatModelUpdated::class, fn ($event): bool =>
+        $event->modelId === $this->run->id && $event->reason === 'predictions-progress');
+    Event::assertDispatchedTimes(NhlSatModelUpdated::class, 1);
+});
+
+it('defers short profile job progress notification to its after commit callback', function (): void {
+    ($this->activate)();
+    $callbacks = [];
+    DB::partialMock()->shouldReceive('afterCommit')->once()->andReturnUsing(function (Closure $callback) use (&$callbacks): void {
+        $callbacks[] = $callback;
+    });
+    $builder = Mockery::mock(NhlSatModelEntityProfileBuilder::class);
+    $builder->shouldReceive('buildEntity')->once()->andReturn(1);
+    (new BuildNhlSatModelEntityProfileForEntityJob($this->run->id, $this->sat->id, null,
+        'skater_offense', 'skater_offense:101', null, 'build-1'))->handle($builder);
+    Event::assertNotDispatched(NhlSatModelUpdated::class);
+    expect($callbacks)->toHaveCount(1);
+    $callbacks[0]();
+    Event::assertDispatchedTimes(NhlSatModelUpdated::class, 1);
+});
+
+it('does not rebroadcast profile progress when a committed job is redelivered', function (): void {
+    ($this->activate)();
+    $builder = Mockery::mock(NhlSatModelEntityProfileBuilder::class);
+    $builder->shouldReceive('buildSeasonSnapshotEntity')->once()->andReturn(1);
+    $job = new BuildNhlSatModelEntityProfileForEntityJob($this->run->id, $this->sat->id, null,
+        'skater_offense', 'skater_offense:101', '20242025', 'build-1');
+    $job->handle($builder);
+    $job->handle($builder);
+    expect(data_get($this->run->fresh()->metrics, 'season_snapshot_entities_completed'))->toBe(1);
+    Event::assertDispatchedTimes(NhlSatModelUpdated::class, 1);
 });

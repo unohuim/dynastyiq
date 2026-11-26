@@ -55,7 +55,7 @@ Not applicable: no Vue, Blade or JavaScript changes.
 
 | File | `it(...)` declarations |
 |---|---:|
-| `tests/Feature/NhlBuildPredictionsTest.php` | 97 |
+| `tests/Feature/NhlBuildPredictionsTest.php` | 100 |
 | `tests/Feature/NhlStrengthProbabilityTrainingTest.php` | 52 |
 
 Both exceed the minimum 20. PHP tests remain strict-types Pest with controlled clocks, fake queues/broadcasts and blocked external requests.
@@ -78,3 +78,33 @@ PostgreSQL is required for the real profile SQL assertions. No measured speedup 
 ## Operator follow-up
 
 No migration is required; existing indexes and metadata fields are used. After deployment, run the normal **Build Offensive Skaters** action again. It admits a fresh generation of 15-player jobs. Do not replay old 25-player job payloads through Horizon. Fully completed season snapshots are reused only if all source/scope/evaluation checks still pass. Reevaluating SAT/SOG appropriately invalidates snapshot reuse. Existing timeout remains five minutes; this change reduces query scans and per-job work rather than extending it.
+
+
+## Progress broadcast follow-up
+
+Changed files in this follow-up: `app/Jobs/BuildNhlSatModelEntityProfileForEntityJob.php`,
+`tests/Feature/NhlBuildPredictionsTest.php`,
+`docs/architecture/stats/NhlModelRuns.yaml`, and this review document.
+
+The modulo-based broadcast gate was incorrect for carried-forward counts such as
+3,722. Every committed child job now registers the existing private admin progress
+notification, including a partial final job. No polling, public API, frontend,
+queue routing or profile calculation changes.
+
+Coverage matrix: A/B unchanged existing guards; C committed counters asserted;
+D/E existing action/read contract and authenticated model-row listener unchanged;
+F COVERED by `broadcasts profile progress with a reused snapshot count not divisible
+by the job size`, `defers short profile job progress notification to its after commit
+callback`, and `does not rebroadcast profile progress when a committed job is
+redelivered`; G not applicable, no JavaScript changes. The existing rollback test
+also asserts no notification.
+
+Requirements: SATISFIED — notify each completed job; SATISFIED — defer until commit;
+SATISFIED — keep duplicate/rollback suppression; SATISFIED — preserve existing
+private authorization, queue and calculation. Endpoint/auth matrix above remains
+applicable without route changes. Frontend checklist remains not applicable.
+The touched Pest suite now has 100 declarations; no new test file is introduced.
+
+Checks actually run: diff inspection, `rg` declaration count and
+`git diff --check`. Tests, lint, CI, deployment/worker commands and production
+writes were not executed. No migration required.
