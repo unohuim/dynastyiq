@@ -221,3 +221,16 @@ it('ignores a supplied production identity on pilot allocation requests', functi
     expect($this->production->fresh()->getRawOriginal())->toBe($before)
         ->and(data_get($this->pilot->fresh()->run_config, 'pregame_workspace.league'))->toBe(6);
 });
+
+
+it('reports real registry summary counts without manufacturing performance metrics', function (): void {
+    $this->actingAs($this->admin)->get('/admin/nhl-sat-models')->assertInertia(fn (Assert $page) => $page
+        ->where('headerSummary.total', 2)->where('headerSummary.research', 1)->where('headerSummary.production', 1)
+        ->where('headerSummary.best_test_correlation', null)->where('headerSummary.average_lift', null));
+});
+
+it('uses actual completed Test dates for the coverage strip', function (): void {
+    ($this->game)();
+    ($this->read)()->assertOk()->assertJsonPath('props.pregame.dates.0.date', '2025-10-10')
+        ->assertJsonPath('props.pregame.dates.0.games', 1)->assertJsonPath('props.pregame.dates.0.covered', 0);
+});

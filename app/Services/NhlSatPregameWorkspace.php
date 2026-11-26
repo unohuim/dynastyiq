@@ -149,7 +149,7 @@ class NhlSatPregameWorkspace
                 'toggle_url' => route('admin.nhl-sat-models.context.auto-sync.toggle', $pilot)],
             'source' => ['id' => (int) $pilot->id, 'name' => $pilot->name, 'train' => $pilot->train_season_ids,
                 'test' => $pilot->target_season_id], 'health' => $health, 'issues' => $issues,
-            'workstreams' => $streams, 'workers' => $workers, 'coverage' => $facts['seasons'],
+            'workstreams' => $streams, 'workers' => $workers, 'coverage' => $facts['seasons'], 'dates' => $facts['dates'] ?? [],
             'snapshots' => ['players' => $facts['players'], 'teams' => $facts['teams']],
             'source_cutoff_at' => $facts['cutoff'], 'counts_checked_at' => $facts['checked_at'],
             'last_activity' => $run?->updated_at?->toIso8601String(), 'run' => $progress,
@@ -172,7 +172,15 @@ class NhlSatPregameWorkspace
                 'covered' => (clone $games)->whereIn('nhl_game_id', clone $covered)->count()];
         }
 
-        return ['seasons' => $seasons, 'teams' => (clone $contexts)->count(),
+        $testGames = DB::table('nhl_games')->where('season_id', $pilot->target_season_id)
+            ->where('game_type', 2)->whereIn('game_state', ['OFF', 'FINAL']);
+        $coveredDates = (clone $testGames)->whereIn('nhl_game_id', clone $covered)->select('game_date')
+            ->selectRaw('COUNT(*) AS covered')->groupBy('game_date')->get()->keyBy('game_date');
+        $dates = (clone $testGames)->select('game_date')->selectRaw('COUNT(*) AS games')->groupBy('game_date')
+            ->orderBy('game_date')->get()->map(fn ($date): array => ['date' => $date->game_date,
+                'games' => (int) $date->games, 'covered' => (int) ($coveredDates->get($date->game_date)?->covered ?? 0)])->all();
+
+        return ['dates' => $dates, 'seasons' => $seasons, 'teams' => (clone $contexts)->count(),
             'players' => DB::table('nhl_player_game_pregame_contexts')->where('model_run_id', $pilot->id)
                 ->where('context_version', NhlPregameContextBuilder::VERSION)->count(),
             'cutoff' => ($cutoff = (clone $contexts)->max('source_cutoff_at')) === null ? null : \Carbon\CarbonImmutable::parse($cutoff, 'UTC')->toIso8601String(), 'checked_at' => now()->toIso8601String()];

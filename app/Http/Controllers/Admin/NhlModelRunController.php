@@ -53,6 +53,7 @@ class NhlModelRunController extends Controller
             $query->where('status', $input['status']);
         }
 
+        $summaryQuery = clone $query;
         $runs = $query->paginate(25)->withQueryString();
         return \Inertia\Inertia::render('Admin/SatModels/Index', [
             'models' => fn (): array => $runs->getCollection()->map(fn (NhlModelRun $run): array =>
@@ -64,6 +65,12 @@ class NhlModelRunController extends Controller
                     'training' => $this->trainingSummaryForRun($run),
                 ]))->all(),
             'pagination' => fn (): array => $runs->linkCollection()->all(),
+            'headerSummary' => fn (): array => [
+                'total' => $runs->total(),
+                'research' => (clone $summaryQuery)->whereNotNull('target_season_id')->count(),
+                'production' => (clone $summaryQuery)->whereNull('target_season_id')->count(),
+                'best_test_correlation' => null, 'average_lift' => null,
+            ],
             'filters' => ['status' => $input['status'] ?? null],
             'seasonOptions' => fn (): array => $this->shotAttemptSeasonOptions(),
             'statuses' => NhlModelRun::statuses(),

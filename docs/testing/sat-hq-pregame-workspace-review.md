@@ -24,6 +24,7 @@ means authored assertions, not observed passing results.
 - `docs/architecture/stats/NhlSatModelEntityToiProjection.yaml`
 - `docs/testing/sat-hq-pregame-workspace-review.md`
 - `resources/js/pages/Admin/SatModels/Index.test.js`
+- `public/images/sat-models-rink.png` — reference artwork extracted from the supplied PDF
 - `resources/js/pages/Admin/SatModels/Index.vue`
 - `resources/views/admin/nhl-sat-models/index.blade.php` — deleted obsolete landing template
 - `routes/web.php`
@@ -97,8 +98,8 @@ row/progress assertions remain in the existing action suites.
 
 | File | it(...) declarations | Execution |
 | --- | ---: | --- |
-| tests/Feature/NhlSatWorkspaceTest.php | 29 | Not run |
-| resources/js/pages/Admin/SatModels/Index.test.js | 30 | Not run |
+| tests/Feature/NhlSatWorkspaceTest.php | 31 | Not run |
+| resources/js/pages/Admin/SatModels/Index.test.js | 34 | Not run |
 | tests/Feature/NhlModelPregameBuildTest.php | 107 | Not run |
 | tests/Feature/NhlBuildPredictionsTest.php | 111 | Not run |
 | tests/Feature/NhlStrengthProbabilityTrainingTest.php | 52 | Not run |
@@ -139,3 +140,30 @@ The new landing page never loads Alpine/Livewire. Legacy detail reports and old
 response/broadcast fragments remain for their existing consumers; those pages were
 not part of this landing-page migration. Prediction formulas, configuration
 identity, cached forecasts and partner API contracts are unchanged.
+
+
+## Reference fidelity correction
+
+The later instruction to copy PG-D04 explicitly replaces the simplified visual
+interpretation. The correction changes the existing Index.vue and its component
+suite, adds `public/images/sat-models-rink.png` extracted from the supplied PDF,
+and adds real registry summary/date-strip presentation to NhlModelRunController
+and NhlSatPregameWorkspace. Canonical UI/workspace documentation is updated.
+
+The heading now follows SAT Models Mission Control in white/gold italic type,
+with the exact reference rink illustration, five summary cards and eight icon tabs.
+Models remains first/default; Pregame remains one tab. Research has no existing
+workspace and is disabled rather than implying a working research system.
+Existing routes supply the other linked tools. A compact health/table/control
+arrangement and three-panel footer replace the earlier simplified layout.
+
+New assertions cover title treatment, five cards without manufactured sample
+metrics, reference tab order, actual artwork URL, registry counts and actual
+completed Test dates. Header research/production counts are explicitly with/without
+Test season; unavailable correlation/lift remain null. No model algorithm,
+production context, worker behavior or prediction pathway is changed by this
+visual correction. No database migration is needed.
+
+Checks actually performed: source/reference inspection, artwork inspection and
+`git diff --check`. Tests, build, browser rendering and Playwright verification
+were not run. No pixel-perfect runtime claim is made without browser verification.

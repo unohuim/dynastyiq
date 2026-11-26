@@ -728,26 +728,46 @@ games. Preserve table content, scrolling and expanded detail during progress rea
 ## SAT Models HQ and Pregame pilot
 
 The `/admin/nhl-sat-models` landing page is Vue/Inertia-owned and uses the existing
-shared desktop header, scoreboard and mobile navigation. Use the expandable
-workstream arrangement from PG-D04, with PG-D02 allocation clarity and PG-M01
-mobile interactions. Keep the HQ header compact, graphite surfaces calm and
-primary actions sky blue; omit decorative hero charts and duplicated worker charts.
+shared desktop header, scoreboard and mobile navigation. PG-D04 in the supplied
+DynastyIQ Pregame design PDF is the visual authority. The later explicit request
+to copy it overrides the earlier simplified header direction: preserve its bold
+italic SAT Models Mission Control title, white/gold lettering, gold HQ kicker,
+extracted rink illustration, five compact summary tiles, outlined icons, dark
+navy panel gradients, gold active-tab underline and dense workstream arrangement.
+These treatments are an approved exception to generic decorative-gradient, hero
+and colour restrictions, confined to this workspace. The artwork lives at
+`public/images/sat-models-rink.png` and is extracted from the reference PDF.
 
-Models and Pregame are peer views. Preserve existing model actions in accessible
-Vue panels, with clear prerequisites, confirmation for broad recalculation and
-immediate toast acknowledgement. Keep the refresh switch left of the model action
-menu and automation gear right of it. Link to unmigrated reports using ordinary
-navigation. Those reports retain their existing layouts until separately migrated.
+Models is first and default. Preserve the reference tab order: Models, Research,
+Discovery, Evaluations, Projections, Pregame, Predictions, Production. Reuse existing
+routes where available; Research remains visibly unavailable until implemented.
+Pregame is one peer tab. Keep the title/header and global navigation separate.
+Summary numbers use actual registry counts, with unavailable comparable correlation
+and lift metrics shown as em dashes rather than copying mockup values. Research
+and Production tiles explicitly distinguish models with/without Test seasons;
+their tooltips explain the current registry-filter scope.
 
-Pregame initially identifies Sep2026 as its historical pilot. Show overall health,
-statistical cutoff, coverage, actual date-job claims, issues and expandable
-workstreams. Health and activity have separate meanings; historical coverage must
-not imply today's production games are ready. Label shared claim counts so users
-do not add them across workstreams. Unknown speed, ETA and independently unmeasured
-coverage display an em dash. Allocation adjusts real league/context claim limits,
-not fabricated domain worker pools or physical Horizon provisioning.
+Preserve existing model actions in accessible Vue panels, with clear prerequisites,
+confirmation for broad recalculation and immediate toast acknowledgement. Keep the
+refresh switch left of the model action menu and automation gear right of it. Link
+to unmigrated reports using ordinary navigation. Those reports retain their existing
+layouts until separately migrated.
 
-Use native desktop/mobile arrangements with animated disclosures and accessible
-right-side panels. Quiet updates retain content, scroll and local forms; initial
-Pregame loading is bounded to its section. Inspector rows retain explicit units,
-strengths, periods, sample sizes and missing-value markers. Label bounded results.
+Pregame initially identifies Sep2026 as its historical pilot. The compact health
+strip and expandable workstream table sit beside the control/attention/automation
+rail. Job activity, allocation and coverage occupy a three-panel footer. Show at
+most three attention items in the overview; View all opens the full scoped list.
+Use real date coverage cells and a claim-capacity ring. An unmeasured freshness
+strip stays muted/unavailable rather than inventing current freshness. Actual
+states, snapshots and claims replace illustrative data without claiming complete
+player or metric verification. Throughput and ETA stay unavailable when unmeasured.
+
+Health and activity have separate meanings; historical coverage must not imply
+today's production games are ready. Label shared claim counts so users do not add
+them across workstreams. Allocation adjusts real league/context claim limits, not
+fabricated domain worker pools or physical Horizon provisioning.
+
+Use responsive arrangements with animated disclosures and accessible right-side
+panels. Quiet updates retain content, scroll and local forms; initial Pregame
+loading is bounded to its section. Inspector rows retain explicit units, strengths,
+periods, sample sizes and missing-value markers. Label bounded results.

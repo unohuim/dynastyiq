@@ -23,7 +23,7 @@ const mount = (extra = {}) => {
     app = createApp({ render: () => h(Workspace, props) }); app.provide('notify', mocks.notify); app.mount(host);
 };
 const settle = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); await nextTick(); };
-const button = text => [...host.querySelectorAll('button')].find(node => node.textContent.trim() === text);
+const button = text => [...host.querySelectorAll('button')].find(node => node.getAttribute('aria-label') === text || node.textContent.trim() === text);
 const click = async text => { button(text).click(); await settle(); };
 const fill = async (selector, value) => { const input = host.querySelector(selector); input.value = value; input.dispatchEvent(new Event('input', { bubbles: true })); await nextTick(); };
 const submit = async () => { host.querySelector('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); await settle(); };
@@ -44,7 +44,7 @@ it('shows structured model information without legacy row HTML', () => {
     expect(host.querySelector('[data-admin-sat-models]')).toBeNull();
 });
 it('keeps the compact HQ header separate from shared navigation', () => {
-    mount(); expect(host.querySelector('h1').textContent).toBe('SAT Models');
+    mount(); expect(host.querySelector('h1').textContent).toBe('SAT Models Mission Control');
     expect(host.querySelector('[aria-label="SAT workspace"]')).not.toBeNull();
 });
 it('opens Pregame as a peer tab and retains its URL state', async () => {
@@ -139,7 +139,7 @@ it('disables pilot operations when the source is unavailable', () => {
 });
 it('retains visible progress after a quiet poll', async () => {
     mount({ models: [model({ status: 'running' })] }); await vi.advanceTimersByTimeAsync(5000);
-    expect(mocks.reload).toHaveBeenCalledWith(expect.objectContaining({ only: ['models', 'pregame', 'pagination'], preserveState: true, preserveScroll: true, showProgress: false }));
+    expect(mocks.reload).toHaveBeenCalledWith(expect.objectContaining({ only: ['models', 'pregame', 'pagination', 'headerSummary'], preserveState: true, preserveScroll: true, showProgress: false }));
     expect(host.querySelector('[data-model-id="1"]')).not.toBeNull();
 });
 it('does not poll hidden browser tabs', async () => {
@@ -159,4 +159,34 @@ it('opens the context inspector without starting any jobs', async () => {
 it('renders backend errors as text rather than executable markup', async () => {
     mount({ pregame: pregame({ issues: [{ title: 'Error', detail: '<script>bad()</script>' }] }) });
     expect(host.querySelector('script')).toBeNull(); expect(host.textContent).toContain('<script>bad()</script>');
+});
+
+
+it('uses the reference white and gold italic title treatment', () => {
+    mount(); const title = host.querySelector('h1');
+    expect(title.className).toContain('italic');
+    expect(title.querySelector('span').textContent).toBe('Control');
+    expect(title.querySelector('span').className).toContain('text-[#f7c548]');
+});
+
+it('shows all five reference header cards with unavailable metrics left blank', () => {
+    mount({ headerSummary: { total: 12, research: 8, production: 4 } });
+    const hero = host.querySelector('[data-sat-hq-hero]');
+    expect(hero.querySelectorAll('strong').length).toBe(5);
+    expect(hero.textContent).toContain('Best Test Corr.');
+    expect(hero.textContent).toContain('Avg. Lift');
+    expect(hero.textContent).not.toContain('83.2%');
+});
+
+it('retains the reference tab order with Models first and Pregame as one peer', () => {
+    mount(); const nav = host.querySelector('[aria-label="SAT workspace"]');
+    expect([...nav.querySelectorAll('a,button')].map(item => item.textContent.trim())).toEqual([
+        'Models', 'Research', 'Discovery', 'Evaluations', 'Projections', 'Pregame', 'Predictions', 'Production',
+    ]);
+    expect(nav.querySelector('[aria-current="page"]').textContent.trim()).toBe('Models');
+});
+
+it('uses the actual extracted rink artwork without adding another application header', () => {
+    mount(); expect(host.querySelector('[data-sat-hq-hero] img').getAttribute('src')).toBe('/images/sat-models-rink.png');
+    expect(host.querySelector('[aria-label="Primary navigation"]')).toBeNull();
 });

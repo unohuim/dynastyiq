@@ -16,6 +16,7 @@ when_not_to_use:
   - Changing prediction equations, automatically selecting a production model or migrating shared context storage.
   - Provisioning Horizon processes or pretending domain workstreams are independent processing pools.
 rules:
+  - Visual presentation follows the explicit PG-D04 reference under UI_DESIGN.md. Header summary counts distinguish models with and without Test seasons within the active registry filter; unrecorded correlation and baseline lift remain unavailable. Actual completed Test dates supply cached coverage cells; muted freshness cells do not imply independent source validation.
   - Retain existing super-admin authentication, verification and authorization boundaries. Use the shared Inertia application shell and existing desktop/mobile navigation; never load the legacy UI bootstrap on this landing page.
   - Resolve exactly one explicitly named historical SAT training pilot with Test 20252026. Missing or ambiguous selection disables pilot actions; never substitute the newest, default or production model. Read through model-owned tables without copying, relinking or deleting existing context. Model-specific Train windows retain their identity.
   - Registry actions preserve their existing routes, validation and admission. Explicit Vue requests receive structured acknowledgements; legacy detail-page responses remain compatible. Successful writes reconcile through quiet partial reloads with retained scroll, editor state and disclosures.
