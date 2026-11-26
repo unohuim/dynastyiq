@@ -236,3 +236,33 @@ it('preserves expanded game details while checkpoint progress updates', async ()
     expect(host.textContent).toContain('Skater One');
     expect(mocks.detail).toHaveBeenCalledTimes(1);
 });
+
+it('places W L OTL directly beneath the existing large win percentage', () => {
+    const host = mount(selected({ summary: { ...summary(), regulation_losses: 30, overtime_losses: 12 } }));
+    const record = host.querySelector('[aria-label="Prediction record"]');
+    expect(record.textContent).toContain('58–30–12');
+    expect(record.textContent).toContain('W–L–OTL');
+    expect(record.previousElementSibling.textContent).toBe('58.00%');
+    expect(record.previousElementSibling.classList.contains('text-3xl')).toBe(true);
+    expect(host.querySelector('[aria-label="Run accuracy"]').textContent).toContain('58 / 100');
+});
+
+it('keeps overtime losses in the existing displayed winner accuracy denominator', () => {
+    const host = mount(selected({ summary: { ...summary(), wins: 1, losses: 3, regulation_losses: 1, overtime_losses: 2, win_pct: 25 } }));
+    const record = host.querySelector('[aria-label="Prediction record"]');
+    expect(record.textContent).toContain('1–1–2');
+    expect(record.previousElementSibling.textContent).toBe('25.00%');
+    expect(host.querySelector('[aria-label="Run accuracy"]').textContent).toContain('1 / 4');
+});
+
+it('updates the split record automatically without replacing the displayed percentage region', async () => {
+    const host = mount(selected({ summary: { ...summary(), regulation_losses: 30, overtime_losses: 12 } }));
+    const record = host.querySelector('[aria-label="Prediction record"]');
+    const percentage = record.previousElementSibling;
+    props.summary = { ...summary(), regulation_losses: 29, overtime_losses: 13 };
+    await nextTick();
+    expect(host.querySelector('[aria-label="Prediction record"]')).toBe(record);
+    expect(record.textContent).toContain('58–29–13');
+    expect(record.previousElementSibling).toBe(percentage);
+    expect(percentage.textContent).toBe('58.00%');
+});

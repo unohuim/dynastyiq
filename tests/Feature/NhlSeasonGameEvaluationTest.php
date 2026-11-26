@@ -545,3 +545,61 @@ it('retains terminal elapsed duration and handles older runs without checkpoint 
     $this->travel(2)->minutes();
     $this->get($this->base.'?run='.$id)->assertInertia(fn (Assert $page) => $page->where('selected.elapsed_seconds', 300));
 });
+
+it('splits incorrect picks into regulation and overtime losses without changing win percentage', function (array $ending, int $regulation, int $overtime): void {
+    $id = ($this->savedRun)();
+    ($this->savedGame)($id, ['winner_correct' => false, 'recommendation' => 'BOS']);
+    NhlGame::query()->findOrFail($this->gameId)->update($ending);
+    $summary = $this->service->summary($id);
+    expect($summary['wins'])->toBe(0)->and($summary['losses'])->toBe(1)
+        ->and($summary['regulation_losses'])->toBe($regulation)
+        ->and($summary['overtime_losses'])->toBe($overtime)->and($summary['win_pct'])->toEqual(0);
+})->with([
+    'regulation' => [['game_outcome' => ['lastPeriodType' => 'REG'], 'period_type' => 'REG'], 1, 0],
+    'overtime' => [['game_outcome' => ['lastPeriodType' => 'OT'], 'period_type' => 'REG'], 0, 1],
+    'shootout' => [['game_outcome' => ['lastPeriodType' => 'SO'], 'period_type' => 'REG'], 0, 1],
+    'secondary outcome' => [['game_outcome' => ['periodType' => 'OT'], 'period_type' => 'REG'], 0, 1],
+    'period fallback' => [['game_outcome' => null, 'period_type' => 'SO'], 0, 1],
+    'unknown ending' => [['game_outcome' => null, 'period_type' => null], 1, 0],
+    'authoritative regulation' => [['game_outcome' => ['lastPeriodType' => 'REG'], 'period_type' => 'OT'], 1, 0],
+    'normalized ending' => [['game_outcome' => ['lastPeriodType' => ' ot '], 'period_type' => 'REG'], 0, 1],
+]);
+
+it('counts correct overtime and shootout picks as wins rather than overtime losses', function (string $ending): void {
+    $id = ($this->savedRun)();
+    ($this->savedGame)($id);
+    NhlGame::query()->findOrFail($this->gameId)->update(['game_outcome' => ['lastPeriodType' => $ending]]);
+    $summary = $this->service->summary($id);
+    expect($summary['wins'])->toBe(1)->and($summary['regulation_losses'])->toBe(0)
+        ->and($summary['overtime_losses'])->toBe(0)->and($summary['win_pct'])->toEqual(100);
+})->with(['OT', 'SO']);
+
+it('keeps exclusions and no-picks outside the W L OTL record', function (string $status): void {
+    $id = ($this->savedRun)();
+    ($this->savedGame)($id, ['status' => $status, 'winner_correct' => null, 'recommendation' => 'OT']);
+    NhlGame::query()->findOrFail($this->gameId)->update(['game_outcome' => ['lastPeriodType' => 'OT']]);
+    $summary = $this->service->summary($id);
+    expect($summary['wins'])->toBe(0)->and($summary['losses'])->toBe(0)
+        ->and($summary['regulation_losses'])->toBe(0)->and($summary['overtime_losses'])->toBe(0)
+        ->and($summary['win_pct'])->toBeNull();
+})->with(['complete', 'excluded']);
+
+it('shows the split record through the admitted runs page while preserving its saved picks and denominator', function (): void {
+    $id = $this->actingAs($this->admin)->postJson($this->base.'/runs')->assertAccepted()->json('run_id');
+    $winningGame = NhlGame::query()->findOrFail($this->gameId);
+    $winningGame->update(['game_outcome' => ['lastPeriodType' => 'REG']]);
+    ($this->savedGame)($id);
+    foreach ([2025020002 => 'REG', 2025020003 => 'OT', 2025020004 => 'SO'] as $gameId => $ending) {
+        $game = $winningGame->replicate();
+        $game->nhl_game_id = $gameId;
+        $game->game_outcome = ['lastPeriodType' => $ending];
+        $game->save();
+        ($this->savedGame)($id, ['nhl_game_id' => $gameId, 'winner_correct' => false, 'recommendation' => 'BOS']);
+    }
+    $this->assertDatabaseCount('nhl_custom_game_predictions', 4);
+    $before = DB::table('nhl_custom_game_predictions')->where('run_id', $id)->orderBy('id')->get()->toJson();
+    $this->get($this->base.'?run='.$id)->assertInertia(fn (Assert $page) => $page
+        ->where('summary.wins', 1)->where('summary.losses', 3)
+        ->where('summary.regulation_losses', 1)->where('summary.overtime_losses', 2)->where('summary.win_pct', 25));
+    expect(DB::table('nhl_custom_game_predictions')->where('run_id', $id)->orderBy('id')->get()->toJson())->toBe($before);
+});

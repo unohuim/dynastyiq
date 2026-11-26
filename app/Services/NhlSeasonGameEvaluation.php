@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Jobs\RunNhlSeasonGameEvaluationJob;
+use App\Models\NhlGame;
 use App\Models\NhlModelRun;
 use DomainException;
 use Illuminate\Support\Arr;
@@ -336,14 +337,27 @@ class NhlSeasonGameEvaluation
         return $result;
     }
 
-    /** Derive the familiar three goal errors from frozen rows, never current game data.
+    /** Keep accuracy on frozen picks; official ending metadata only splits displayed losses.
      * @return array<string,mixed>
      */
     public function summary(int $id): array
     {
-        $rows = DB::table('nhl_custom_game_predictions')->where('run_id', $id)->get(['id', 'status', 'winner_correct']);
+        $rows = DB::table('nhl_custom_game_predictions')->where('run_id', $id)->get(['id', 'nhl_game_id', 'status', 'winner_correct']);
         $wins = $rows->where('winner_correct', true)->count();
         $losses = $rows->where('winner_correct', false)->whereNotNull('winner_correct')->count();
+        // Split existing incorrect picks for display; preserve the winner-accuracy denominator.
+        $overtimeLosses = NhlGame::query()->whereIn('nhl_game_id', $rows->where('winner_correct', false)
+            ->whereNotNull('winner_correct')->pluck('nhl_game_id'))
+            ->get(['nhl_game_id', 'game_outcome', 'period_type'])->filter(function (NhlGame $game): bool {
+                foreach ([data_get($game->game_outcome, 'lastPeriodType'),
+                    data_get($game->game_outcome, 'periodType'), $game->period_type] as $value) {
+                    $period = strtoupper(trim((string) $value));
+                    if (in_array($period, ['REG', 'OT', 'SO'], true)) {
+                        return in_array($period, ['OT', 'SO'], true);
+                    }
+                }
+                return false;
+            })->count();
         $teams = DB::table('nhl_custom_game_prediction_teams')->whereIn('prediction_id', $rows->where('status', 'complete')->pluck('id'))->get([
             'prediction_id', 'goals_prediction', 'actual_ev_goals', 'actual_pp_goals', 'actual_pk_goals', 'pk_goals_prediction']);
         $known = static fn ($row): bool => $row->actual_ev_goals !== null && $row->actual_pp_goals !== null
@@ -355,7 +369,8 @@ class NhlSeasonGameEvaluation
         $games = $teams->groupBy('prediction_id')->filter(fn ($group): bool => $group->count() === 2
             && $group->every($known))
             ->map(fn ($group): array => [(float) $group->sum('goals_prediction'), $group->sum($actualGoals)]);
-        return ['wins' => $wins, 'losses' => $losses, 'win_pct' => $wins + $losses > 0 ? 100 * $wins / ($wins + $losses) : null,
+        return ['wins' => $wins, 'losses' => $losses,
+            'regulation_losses' => $losses - $overtimeLosses, 'overtime_losses' => $overtimeLosses, 'win_pct' => $wins + $losses > 0 ? 100 * $wins / ($wins + $losses) : null,
             'predicted' => $rows->where('status', 'complete')->count(), 'unpicked' => $rows->where('status', 'complete')->whereNull('winner_correct')->count(),
             'excluded' => $rows->where('status', 'excluded')->count(),
             'team_goals' => app(NhlCustomGamePredictionEngine::class)->accuracy($pairs->values()->all()),
