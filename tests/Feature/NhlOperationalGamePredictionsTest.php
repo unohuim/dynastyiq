@@ -50,6 +50,11 @@ beforeEach(function (): void {
     };
     $this->start = fn () => $this->actingAs($this->admin)->postJson(route('admin.game-predictions.runs.store'), ['start_date' => '2026-10-22']);
     $this->index = fn () => $this->actingAs($this->admin)->getJson(route('admin.game-predictions.index', ['start_date' => '2026-10-22']));
+    // These tests exercise publication/tracking; preparation has its own full-history suite.
+    $forecastService = Mockery::mock(\App\Services\NhlCustomGameForecast::class)->makePartial();
+    $forecastService->shouldReceive('advancePreparation')->andReturnTrue();
+    app()->instance(\App\Services\NhlCustomGameForecast::class, $forecastService);
+    \Illuminate\Support\Facades\Event::fake([\App\Events\NhlGamePredictionStatusUpdated::class]);
 });
 
 afterEach(function (): void { $this->travelBack(); });
@@ -89,15 +94,14 @@ it('keeps pending API input admission across retries then releases after success
     $this->assertDatabaseCount('nhl_game_prediction_revisions', 1);
 });
 
-it('keeps refresh protection after retryable errors until terminal cleanup', function (): void {
+it('releases a failed direct calculation while retaining the failed tracked attempt', function (): void {
     $cache = app(NhlGamePredictionResponseCache::class);
     $input = ['nhl_game_id' => 2026020001];
     $payload = Mockery::mock(NhlGamePredictionPayload::class);
     $payload->shouldReceive('build')->once()->andThrow(new \RuntimeException('Retryable fixture'));
     expect(fn () => $cache->rebuild(2026020001, $input, 'old-fingerprint', $payload))
         ->toThrow(\RuntimeException::class, 'Retryable fixture');
-    expect(fn () => DB::transaction(fn () => NhlGame::lockForLineupChange(2026020001)))
-        ->toThrow(\Symfony\Component\HttpKernel\Exception\HttpException::class);
+    $this->assertDatabaseHas('nhl_game_prediction_run_games', ['nhl_game_id' => 2026020001, 'status' => 'failed']);
     $cache->refreshFailed(2026020001, $input);
     expect(DB::transaction(fn () => NhlGame::lockForLineupChange(2026020001))->nhl_game_id)->toBe(2026020001);
 });
@@ -391,7 +395,7 @@ it('keeps manual game work queued while pregame context is preparing', function 
     $job->setJob($queue);
     $job->handle($builder, app(NhlGamePredictionResponseCache::class), app(NhlGamePredictionHistory::class));
     $saved = DB::table('nhl_game_prediction_run_games')->find($item->id);
-    expect($saved->status)->toBe('queued')->and($saved->last_error)->toContain('being prepared')
+    expect($saved->status)->toBe('queued')->and($saved->phase)->toBe('matchup')
         ->and($job->tries)->toBe(0);
     $this->assertDatabaseCount('nhl_game_prediction_revisions', 0);
     ($this->index)()->assertOk()->assertJsonPath('run.status', 'running');
@@ -436,10 +440,10 @@ it('preserves the first worker start and total waiting time across preparation r
     ($this->index)()->assertOk()->assertJsonPath('games.0.engine_time_seconds', 85);
 });
 
-it('does not invent engine time without work belonging to the selected run', function (): void {
+it('shows tracked API timing without requiring a selected manual run', function (): void {
     ($this->publish)();
-    ($this->index)()->assertOk()->assertJsonPath('games.0.engine_time_seconds', null)
-        ->assertJsonPath('games.0.work', null);
+    ($this->index)()->assertOk()->assertJsonPath('games.0.engine_time_seconds', 0)
+        ->assertJsonPath('games.0.work.trigger_source', 'api');
 });
 
 it('leaves terminal legacy timing unavailable when a finish timestamp was not recorded', function (): void {
@@ -448,13 +452,13 @@ it('leaves terminal legacy timing unavailable when a finish timestamp was not re
     ($this->index)()->assertOk()->assertJsonPath('games.0.engine_time_seconds', null);
 });
 
-it('uses each selected runs admission time rather than a later run or worker start', function (): void {
+it('shows the latest attempt timing independently of a historical run filter', function (): void {
     $first = ($this->start)()->assertAccepted()->json('run_id');
     $this->travel(60)->seconds();
     $second = ($this->start)()->assertAccepted()->json('run_id');
     $this->travel(12)->seconds();
     $this->getJson(route('admin.game-predictions.index', ['start_date' => '2026-10-22', 'run_id' => $first]))
-        ->assertOk()->assertJsonPath('games.0.engine_time_seconds', 72);
+        ->assertOk()->assertJsonPath('games.0.engine_time_seconds', 12);
     $this->getJson(route('admin.game-predictions.index', ['start_date' => '2026-10-22', 'run_id' => $second]))
         ->assertOk()->assertJsonPath('games.0.engine_time_seconds', 12);
 });

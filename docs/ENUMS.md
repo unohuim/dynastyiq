@@ -3170,11 +3170,11 @@ identifies a completed empty missing-work selection. Updates keep the existing
 ## Operational prediction preparation
 
 - Internal prediction preparation `checkpoint_format`: `1` denotes partitioned, checksummed cache state with a commit-last progress manifest. An absent field denotes the legacy reader-object format, converted at its current cursor when the source fingerprint matches. Other format values fail explicitly. This storage format does not change the algorithm or `input_pipeline_version` and is not a public API field.
-- `nhl-custom-prediction.input_pipeline_version`: `saved_pregame_checkpointed_v11`
+- `nhl-custom-prediction.input_pipeline_version`: `saved_pregame_checkpointed_v12`
   identifies data-first operational context selection, source-age-adjusted
-  `days_away` and post-publication scoped context repair. It supersedes v10;
-  prepared cache namespace `queued-v5` isolates older mandatory-dependency
-  checkpoints. The scoring algorithm remains `custom_ev_pp_v4`.
+  `days_away` and post-publication scoped context repair. It supersedes v11 and additionally identifies independent per-game,
+  bounded preparation and source-evidence pages. Prepared cache namespace
+  `game-v6` isolates old date-wide checkpoints. The scoring algorithm remains `custom_ev_pp_v4`.
 - Calculator `goal_sources.EV`: `train_bucket_reliability`; PP remains `season_to_date`.
   Prepared bucket `goal_source` adds `train_player_bucket` and
   `train_player_team_league_blend`, with existing `train_league_bucket` and
@@ -3265,3 +3265,10 @@ New saved player actual JSON may include `_measured` (known source coverage) and
 actual counts remain in their original positions. Descriptive goalie snapshots
 use `goalie_adjustment: neutral`; official appearance actuals identify their basis
 as `official_full_appearance`. These labels do not enable a goalie scoring layer.
+
+### Operational prediction activity
+
+- `nhl_game_prediction_runs.trigger_source`: `admin`, `automation`, `api`, `lineup`, `injury`.
+- `nhl_game_prediction_run_games.phase`: `queued`, `preparing`, `evidence`, `lineups`, `context`, `collect`, `fit`, `history`, `targets`, `matchup`, `calculating`, `retrying`, `completed`, `unavailable`, `failed`.
+- Item lifecycle `status` remains `queued`, `running`, `completed`, `unavailable`, `failed`; phase describes the bounded operation, not a separate lifecycle.
+- `generation` starts at one and increases on abandoned-delivery recovery. `attempts` counts claimed deliveries including successful checkpoint continuations; `failures` counts retryable exceptions; `recoveries` counts abandoned-delivery replacements. These are operational counters, not model-confidence metrics.

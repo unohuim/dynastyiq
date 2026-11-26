@@ -892,36 +892,35 @@ it('predicts a scheduled game with unknown start time using request time without
         ->and($events[0]['input']['source_cutoff_at'])->toBe('2026-11-05 12:00:00');
 });
 
-it('queues a cold date once and shares completed prepared inputs across its game requests', function (): void {
-    $model = NhlModelRun::query()->create(['run_key' => 'shared-date-inputs', 'name' => 'sat_v2',
+it('prepares each requested game independently without resolving the rest of its slate', function (): void {
+    $model = NhlModelRun::query()->create(['run_key' => 'independent-game-inputs', 'name' => 'sat_v2',
         'model_family' => 'sat', 'workflow_stage' => 'training', 'model_version' => 'fixture', 'status' => 'complete',
         'train_season_ids' => ['20232024', '20242025', '20252026']]);
-    $inputs = [];
     foreach ([2026020001, 2026020002] as $id) {
         NhlGame::query()->create(['nhl_game_id' => $id, 'season_id' => '20262027', 'game_type' => 2,
             'game_date' => '2026-11-05', 'game_dow' => 'Thursday', 'game_month' => 'November',
             'game_state' => 'FUT', 'start_time_utc' => '2026-11-05 23:00:00',
             'away_team_id' => 1, 'home_team_id' => 2, 'away_team_abbrev' => 'BUF', 'home_team_abbrev' => 'COL']);
-        $inputs[$id] = [...$this->input, 'game_id' => $id];
     }
     $reader = Mockery::mock(NhlCustomGamePredictionInputs::class)->makePartial();
-    $reader->shouldReceive('anticipatedParticipants')->twice()->andReturn(['players' => [], 'starters' => []]);
-    $reader->shouldReceive('beginQueuedForecast')->once();
+    $reader->shouldReceive('anticipatedParticipants')->once()->withArgs(fn ($game) => (int) $game->nhl_game_id === 2026020001)
+        ->andReturn(['players' => [], 'starters' => []]);
+    $reader->shouldReceive('beginQueuedForecast')->once()->with($model->id, '2026-11-05', Mockery::type('array'), 2026020001);
     $reader->shouldReceive('advanceQueuedForecast')->once()->andReturn(['complete' => true,
-        'phase' => 'complete', 'cursor' => 2, 'inputs' => $inputs, 'errors' => [], 'metadata' => ['model_id' => $model->id]]);
+        'phase' => 'complete', 'cursor' => 1, 'inputs' => [2026020001 => [...$this->input, 'game_id' => 2026020001]],
+        'errors' => [], 'metadata' => ['model_id' => $model->id]]);
     app()->instance(NhlCustomGamePredictionInputs::class, $reader);
-    $service = Mockery::mock(\App\Services\NhlCustomGameForecast::class)->makePartial();
-    $service->shouldNotReceive('contextEvidence');
-    $service->shouldNotReceive('contextReady');
-    foreach (array_keys($inputs) as $id) {
+    $service = new \App\Services\NhlCustomGameForecast();
+    foreach ([2026020001, 2026020002] as $id) {
         expect(fn () => $service->predict($id))->toThrow(\App\Exceptions\NhlGamePredictionPreparing::class);
     }
-    Bus::assertDispatchedTimes(\App\Jobs\PrepareNhlGamePredictionJob::class, 1);
-    expect($service->advancePreparation(2026020001, $model->id))->toBeFalse()
-        ->and($service->preparationDelay())->toBe(0)
-        ->and($service->advancePreparation(2026020001, $model->id))->toBeTrue()
+    Bus::assertDispatchedTimes(\App\Jobs\PrepareNhlGamePredictionJob::class, 2);
+    foreach (range(1, 4) as $step) {
+        expect($service->advancePreparation(2026020001, $model->id))->toBeFalse();
+    }
+    expect($service->advancePreparation(2026020001, $model->id))->toBeTrue()
         ->and($service->predict(2026020001)['prediction']['game_id'])->toBe(2026020001)
-        ->and($service->predict(2026020002)['prediction']['game_id'])->toBe(2026020002);
+        ->and($service->preparationProgress(2026020002, $model->id)['phase'])->toBe('queued');
 });
 
 it('requires a complete selected SAT model for requested-date predictions', function (): void {
@@ -1534,7 +1533,7 @@ it('skips the pregame dependency queue when preparing a future date through the 
         ->update(['game_date' => '2026-11-07', 'start_time_utc' => '2026-11-07 23:00:00']);
     $reader = Mockery::mock(NhlCustomGamePredictionInputs::class)->makePartial();
     $reader->shouldReceive('anticipatedParticipants')->once()->andReturn($lineups[2026020002]);
-    $reader->shouldReceive('beginQueuedForecast')->once()->with($model, '2026-11-07', $lineups);
+    $reader->shouldReceive('beginQueuedForecast')->once()->with($model, '2026-11-07', $lineups, 2026020002);
     $reader->shouldReceive('advanceQueuedForecast')->once()->andReturn(['complete' => true,
         'phase' => 'complete', 'cursor' => 1, 'inputs' => [2026020002 => ['game_id' => 2026020002]],
         'errors' => [], 'metadata' => ['context_mode' => 'latest_available']]);
@@ -1543,8 +1542,10 @@ it('skips the pregame dependency queue when preparing a future date through the 
     $orchestrator->shouldNotReceive('queuePredictionContexts');
     app()->instance(\App\Services\NhlPregameContextOrchestrator::class, $orchestrator);
     $forecast = new \App\Services\NhlCustomGameForecast();
-    expect($forecast->advancePreparation(2026020002, $model))->toBeFalse()
-        ->and($forecast->advancePreparation(2026020002, $model))->toBeTrue();
+    foreach (range(1, 4) as $step) {
+        expect($forecast->advancePreparation(2026020002, $model))->toBeFalse();
+    }
+    expect($forecast->advancePreparation(2026020002, $model))->toBeTrue();
     Bus::assertNothingDispatched();
 });
 
@@ -2003,7 +2004,7 @@ it('does not wait for a pregame build when preparing todays slate', function ():
     [$fixture, $model, $lineups] = ($this->forecastFixture)('FUT', true);
     $reader = Mockery::mock(NhlCustomGamePredictionInputs::class)->makePartial();
     $reader->shouldReceive('anticipatedParticipants')->once()->andReturn($lineups[2026020002]);
-    $reader->shouldReceive('beginQueuedForecast')->once()->with($model, '2026-11-05', $lineups);
+    $reader->shouldReceive('beginQueuedForecast')->once()->with($model, '2026-11-05', $lineups, 2026020002);
     $reader->shouldReceive('advanceQueuedForecast')->once()->andReturn(['complete' => true,
         'phase' => 'complete', 'cursor' => 1, 'inputs' => [2026020002 => ['game_id' => 2026020002]],
         'errors' => [], 'metadata' => ['context_mode' => 'latest_available']]);
@@ -2012,8 +2013,10 @@ it('does not wait for a pregame build when preparing todays slate', function ():
     $orchestrator->shouldNotReceive('queuePredictionContexts');
     app()->instance(\App\Services\NhlPregameContextOrchestrator::class, $orchestrator);
     $forecast = new \App\Services\NhlCustomGameForecast();
-    expect($forecast->advancePreparation(2026020002, $model))->toBeFalse()
-        ->and($forecast->advancePreparation(2026020002, $model))->toBeTrue();
+    foreach (range(1, 4) as $step) {
+        expect($forecast->advancePreparation(2026020002, $model))->toBeFalse();
+    }
+    expect($forecast->advancePreparation(2026020002, $model))->toBeTrue();
     Bus::assertNotDispatched(\App\Jobs\UpdateNhlPredictionPregameContextJob::class);
 });
 
@@ -2024,7 +2027,7 @@ it('ignores an obsolete failed dependency in a saved preparation checkpoint', fu
     DB::table('nhl_pregame_context_runs')->where('id', $failed)->update(['status' => 'failed']);
     $reader = Mockery::mock(NhlCustomGamePredictionInputs::class)->makePartial();
     $reader->shouldNotReceive('anticipatedParticipants');
-    $reader->shouldReceive('beginQueuedForecast')->once()->with($model, '2026-11-05', $lineups);
+    $reader->shouldReceive('beginQueuedForecast')->once()->with($model, '2026-11-05', $lineups, 2026020002);
     app()->instance(NhlCustomGamePredictionInputs::class, $reader);
     $forecast = new \App\Services\NhlCustomGameForecast();
     $game = DB::table('nhl_games')->where('nhl_game_id', 2026020002)->first();

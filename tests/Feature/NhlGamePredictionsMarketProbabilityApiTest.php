@@ -23,6 +23,7 @@ beforeEach(function (): void {
     config(['cache.default' => 'array', 'nhl-custom-prediction' => require base_path('config/nhl-custom-prediction.php')]);
     Cache::flush();
     Bus::fake();
+    \Illuminate\Support\Facades\Event::fake([\App\Events\NhlGamePredictionStatusUpdated::class]);
     Http::preventStrayRequests();
     $this->model = NhlModelRun::query()->create(['run_key' => 'default-custom-api', 'name' => 'sat_v2',
         'model_family' => 'sat', 'workflow_stage' => 'training', 'model_version' => 'fixture', 'status' => 'complete',
@@ -68,6 +69,7 @@ beforeEach(function (): void {
         ]);
     };
     $service = Mockery::mock(NhlCustomGameForecast::class)->makePartial();
+    $service->shouldReceive('advancePreparation')->andReturnTrue();
     $service->shouldReceive('predict')->andReturnUsing(fn (): array => [
         'game' => (object) $this->game->fresh()->getAttributes(), 'model' => $this->model,
         'input' => $this->input, 'source_fingerprint' => 'api-fixture', 'metadata' => ['context_version' => 'fixture', 'coefficients_transferred' => true],
@@ -787,6 +789,7 @@ it('includes fair odds and model metadata for line-dependent rows', function ():
 
 it('returns an explicit preparing response and queues automatic prediction continuation', function (): void {
     $service = Mockery::mock(NhlCustomGameForecast::class)->makePartial();
+    $service->shouldReceive('advancePreparation')->andReturnTrue();
     $service->shouldReceive('predict')->andThrow(new \App\Exceptions\NhlGamePredictionPreparing(2026020001));
     app()->instance(NhlCustomGameForecast::class, $service);
     ($this->requestPrediction)()->assertStatus(202)->assertHeader('Retry-After', '15')
@@ -794,11 +797,12 @@ it('returns an explicit preparing response and queues automatic prediction conti
         ->assertJsonPath('nhl_game_id', 2026020001)->assertJsonMissingPath('prediction.predicted_score');
     $this->assertDatabaseCount('nhl_game_prediction_revisions', 0);
     Bus::assertDispatched(\App\Jobs\RefreshNhlGamePredictionJob::class,
-        fn ($job): bool => $job->gameId === 2026020001 && $job->queue === 'lineups');
+        fn ($job): bool => $job->gameId === 2026020001 && $job->queue === 'projections');
 });
 
 it('coalesces repeated pending API requests without saving placeholder predictions', function (): void {
     $service = Mockery::mock(NhlCustomGameForecast::class)->makePartial();
+    $service->shouldReceive('advancePreparation')->andReturnTrue();
     $service->shouldReceive('predict')->andThrow(new \App\Exceptions\NhlGamePredictionPreparing(2026020001));
     app()->instance(NhlCustomGameForecast::class, $service);
     foreach (range(1, 3) as $attempt) {
@@ -811,6 +815,7 @@ it('coalesces repeated pending API requests without saving placeholder predictio
 it('automatically saves and publishes the prediction when queued dependencies become ready', function (): void {
     $ready = false;
     $service = Mockery::mock(NhlCustomGameForecast::class)->makePartial();
+    $service->shouldReceive('advancePreparation')->andReturnTrue();
     $service->shouldReceive('predict')->andReturnUsing(function () use (&$ready): array {
         if (! $ready) {
             throw new \App\Exceptions\NhlGamePredictionPreparing(2026020001);
@@ -835,7 +840,8 @@ it('releases pending refresh dependencies without exhausting delivery attempts',
     $builder->shouldReceive('build')->once()->andThrow(new \App\Exceptions\NhlGamePredictionPreparing(2026020001));
     $queue = Mockery::mock(\Illuminate\Contracts\Queue\Job::class);
     $queue->shouldReceive('release')->once()->with(15);
-    $job = new \App\Jobs\RefreshNhlGamePredictionJob(2026020001, ['nhl_game_id' => 2026020001], 'initial');
+    $itemId = app(\App\Services\NhlGamePredictionHistory::class)->queueRefresh(2026020001, ['nhl_game_id' => 2026020001], dispatch: false);
+    $job = new \App\Jobs\RefreshNhlGamePredictionJob(2026020001, ['nhl_game_id' => 2026020001], 'initial', $itemId, 1);
     $job->setJob($queue);
     $deadline = $job->retryUntil();
     $job->handle(app(\App\Services\NhlGamePredictionResponseCache::class), $builder);
@@ -847,6 +853,7 @@ it('releases pending refresh dependencies without exhausting delivery attempts',
 
 it('admits a new refresh after a terminal queued refresh failure', function (): void {
     $service = Mockery::mock(NhlCustomGameForecast::class)->makePartial();
+    $service->shouldReceive('advancePreparation')->andReturnTrue();
     $service->shouldReceive('predict')->andThrow(new \App\Exceptions\NhlGamePredictionPreparing(2026020001));
     app()->instance(NhlCustomGameForecast::class, $service);
     ($this->requestPrediction)()->assertStatus(202);

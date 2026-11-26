@@ -210,13 +210,15 @@ class NhlCustomGamePredictionInputs
         }
     }
 
-    /** Freeze an operational date once; each continuation performs only a bounded page. */
-    public function beginQueuedForecast(int $modelId, string $date, array $lineups): void
+    /** Freeze the selected operational game; date-wide selection remains an explicit compatibility option. */
+    public function beginQueuedForecast(int $modelId, string $date, array $lineups, ?int $gameId = null): void
     {
         $this->useSavedPlayerAggregates = true;
         $this->forecastPlayerCutoffs = $this->forecastRawPlayers = [];
         $asOf = CarbonImmutable::now('UTC');
-        $targets = DB::table('nhl_games')->where('game_date', $date)->orderBy('start_time_utc')->orderBy('nhl_game_id')->get();
+        $targets = DB::table('nhl_games')->where('game_date', $date)
+            ->when($gameId !== null, fn ($query) => $query->where('nhl_game_id', $gameId))
+            ->orderBy('start_time_utc')->orderBy('nhl_game_id')->get();
         if ($targets->isEmpty() || $targets->pluck('season_id')->unique()->count() !== 1) {
             throw new DomainException('A prediction date must identify games in one season.');
         }
@@ -419,13 +421,16 @@ class NhlCustomGamePredictionInputs
     }
 
     /** Invalidate operational inputs from bounded commit markers rather than scanning every context metric row. */
-    public static function futureContextIdentity(int $modelId): array
+    public static function futureContextIdentity(int $modelId, array $teamIds = []): array
     {
         $commit = DB::table('nhl_pregame_context_run_games as work')
             ->join('nhl_pregame_context_runs as runs', 'runs.id', '=', 'work.run_id')
             ->where('runs.model_run_id', $modelId)->where('work.state', 'complete')
             ->whereNotNull('work.comparisons_completed_at')
             ->whereDate('work.game_date', '<=', now('America/Toronto')->toDateString())
+            ->when($teamIds !== [], fn ($query) => $query->whereExists(fn ($source) => $source
+                ->selectRaw('1')->from('nhl_games as context_game')->whereColumn('context_game.nhl_game_id', 'work.nhl_game_id')
+                ->where(fn ($teams) => $teams->whereIn('context_game.away_team_id', $teamIds)->orWhereIn('context_game.home_team_id', $teamIds))))
             ->selectRaw('COUNT(*) AS games, MAX(work.id) AS latest_id, MAX(work.comparisons_completed_at) AS committed_at')->first();
 
         return ['calculation_date' => now('America/Toronto')->toDateString(), 'commit' => $commit];

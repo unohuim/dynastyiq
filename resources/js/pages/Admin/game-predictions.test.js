@@ -44,7 +44,7 @@ describe('Operational Game Predictions', () => {
         vi.stubGlobal('fetch', fetcher);
     });
     afterEach(() => {
-        app?.unmount(); app = null; vi.useRealTimers(); vi.unstubAllGlobals(); document.body.innerHTML = ''; document.head.innerHTML = '';
+        app?.unmount(); app = null; delete window.Echo; vi.useRealTimers(); vi.unstubAllGlobals(); document.body.innerHTML = ''; document.head.innerHTML = '';
     });
 
     it('starts on the backend supplied date', async () => {
@@ -481,6 +481,93 @@ describe('Operational Game Predictions', () => {
         expect(document.querySelector('[role=dialog]').className).toContain('fixed');
         expect(document.querySelector('section[aria-label="Game Predictions"] [role=dialog]')).toBeNull();
         expect(document.querySelector('[aria-label="Configure prediction automation"]').className).toContain('motion-reduce:transition-none');
+    });
+
+    it('shows latest background attempt separately from the saved forecast', async () => {
+        list.games[0].work = { created_at: '2026-10-22T15:10:00Z', trigger_source: 'api', status: 'queued', phase: 'history',
+            progress_current: 25, progress_total: 3000, attempts: 4, failures: 1, recoveries: 0, heartbeat_at: '2026-10-22T15:11:00Z' };
+        await mount();
+        const activity = document.querySelector('[data-prediction-activity]');
+        expect(activity.textContent).toContain('Saved');
+        expect(activity.querySelector('[data-attempt-time]').textContent).toContain('Latest attempt');
+        expect(activity.textContent).toContain('api');
+        expect(activity.textContent).toContain('25 / 3000');
+        expect(activity.textContent).toContain('Retries 1');
+        expect(document.querySelector('tbody').textContent).toContain('2.20–3.10');
+    });
+
+    it('shows the exact game lineup protection reason from tracked work', async () => {
+        list.games[0].work = { status: 'running', phase: 'calculating', lineup_lock_reason: 'This game is calculating; lineup is protected.' };
+        await mount();
+        expect(document.querySelector('[data-prediction-activity]').textContent).toContain('This game is calculating; lineup is protected.');
+    });
+
+    it('subscribes to private prediction activity without changing the import channel', async () => {
+        const listen = vi.fn();
+        window.Echo = { private: vi.fn(() => ({ listen })) };
+        await mount();
+        expect(window.Echo.private).toHaveBeenCalledWith('admin.predictions');
+        expect(listen.mock.calls[0][0]).toBe('.admin.nhl-predictions.updated');
+        delete window.Echo;
+    });
+
+    it('coalesces broadcast checkpoint bursts into one quiet read', async () => {
+        let callback;
+        window.Echo = { private: vi.fn(() => ({ listen: (_name, handler) => { callback = handler; }, stopListening: vi.fn() })) };
+        await mount();
+        const row = document.querySelector('tbody tr');
+        const before = fetcher.mock.calls.length;
+        callback(); callback(); callback();
+        await vi.advanceTimersByTimeAsync(750); await settle();
+        expect(fetcher.mock.calls.length).toBe(before + 1);
+        expect(document.querySelector('tbody tr')).toBe(row);
+        expect(document.querySelector('[role=alert]')).toBeNull();
+        delete window.Echo;
+    });
+
+    it('unsubscribes its own listener and cancels pending invalidation on unmount', async () => {
+        let callback;
+        const stop = vi.fn();
+        window.Echo = { private: vi.fn(() => ({ listen: (_name, handler) => { callback = handler; }, stopListening: stop })) };
+        await mount();
+        const before = fetcher.mock.calls.length;
+        callback();
+        app.unmount(); app = null;
+        await vi.advanceTimersByTimeAsync(15000);
+        expect(stop).toHaveBeenCalledWith('.admin.nhl-predictions.updated', callback);
+        expect(fetcher.mock.calls.length).toBe(before);
+        delete window.Echo;
+    });
+
+    it('keeps the table visible without a background error banner when polling fails', async () => {
+        await mount();
+        const row = document.querySelector('tbody tr');
+        fetcher.mockImplementationOnce(async () => ({ ok: false, json: async () => ({ message: 'Reconnecting' }) }));
+        await vi.advanceTimersByTimeAsync(5000); await settle();
+        expect(document.querySelector('tbody tr')).toBe(row);
+        expect(document.querySelector('[role=alert]')).toBeNull();
+        expect(document.body.textContent).not.toContain('Reconnecting');
+    });
+
+    it('shows updated attempt activity when a background run supersedes the selected run', async () => {
+        list.run = { id: 7, status: 'completed', total_games: 1, counts: { completed: 1 } };
+        await mount();
+        const row = document.querySelector('tbody tr');
+        list.games[0].work = { id: 99, run_id: 9, trigger_source: 'lineup', status: 'running', phase: 'lineups',
+            attempts: 1, failures: 0, recoveries: 0, created_at: '2026-10-22T15:12:00Z' };
+        await vi.advanceTimersByTimeAsync(5000); await settle();
+        expect(document.querySelector('tbody tr')).toBe(row);
+        expect(document.querySelector('[data-prediction-activity]').textContent).toContain('lineup');
+        expect(document.querySelector('[data-prediction-activity]').textContent).toContain('running');
+    });
+
+    it('replaces an obsolete attempt error on the next activity read', async () => {
+        list.games[0].work = { status: 'failed', phase: 'failed', last_error: 'Obsolete dependency 217' };
+        await mount();
+        list.games[0].work = { status: 'queued', phase: 'evidence', last_error: null };
+        await vi.advanceTimersByTimeAsync(5000); await settle();
+        expect(document.querySelector('[data-prediction-activity]').textContent).not.toContain('Obsolete dependency 217');
+        expect(document.querySelector('[data-prediction-activity]').textContent).toContain('evidence');
     });
 
 });

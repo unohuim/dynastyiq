@@ -75,8 +75,18 @@ final class NhlGamePredictionController extends Controller
             ->selectRaw('MAX(id) as id')->groupBy('nhl_game_id');
         $revisions = DB::table('nhl_game_prediction_revisions')->whereIn('id', $latestIds)
             ->get(['id', 'nhl_game_id', 'run_id', 'source', 'predicted_at', 'prediction_available', 'is_canonical', 'summary'])->keyBy('nhl_game_id');
-        $items = $run === null ? collect() : DB::table('nhl_game_prediction_run_games')->where('run_id', $run->id)
-            ->whereIn('nhl_game_id', $ids)->get()->keyBy('nhl_game_id');
+        // Current activity is independent of the selected historical parent run.
+        $latestWorkIds = DB::table('nhl_game_prediction_run_games')->whereIn('nhl_game_id', $ids)
+            ->selectRaw('MAX(id) as id')->groupBy('nhl_game_id');
+        $items = DB::table('nhl_game_prediction_run_games as work')
+            ->join('nhl_game_prediction_runs as parent', 'parent.id', '=', 'work.run_id')
+            ->whereIn('work.id', $latestWorkIds)->get(['work.*', 'parent.trigger_source'])->keyBy('nhl_game_id');
+        foreach ($items as $item) {
+            $active = in_array($item->status, ['queued', 'running'], true);
+            $item->lineup_lock_reason = $active ? 'Prediction '.$item->phase.'; lineup changes are protected until this attempt finishes.' : null;
+            $item->worker_active = $item->claim_token !== null && $item->claim_expires_at > now()->toDateTimeString();
+            unset($item->claim_token, $item->request_inputs);
+        }
         $counts = $run === null ? collect() : DB::table('nhl_game_prediction_run_games')->where('run_id', $run->id)
             ->selectRaw('status, COUNT(*) as total')->groupBy('status')->pluck('total', 'status');
         $recent = DB::table('nhl_game_prediction_runs')->orderByDesc('id')->limit(20)
@@ -95,14 +105,14 @@ final class NhlGamePredictionController extends Controller
                 'revision' => $revisions->has($game->nhl_game_id) ? $history->summary($revisions[$game->nhl_game_id]) : null,
                 'work' => $items->get($game->nhl_game_id),
                 'engine_time_seconds' => $this->engineTime(
-                    $items->get($game->nhl_game_id), $run?->created_at, $measuredAt
+                    $items->get($game->nhl_game_id), $items->get($game->nhl_game_id)?->created_at, $measuredAt
                 ),
             ]),
             'current_page' => $games->currentPage(), 'last_page' => $games->lastPage(), 'total' => $games->total(),
         ]);
     }
 
-    /** Total wall time for the selected run, including queue, preparation and retries. */
+    /** Total wall time for the latest game attempt, including queue, preparation and retries. */
     private function engineTime(?object $work, ?string $queuedAt, Carbon $measuredAt): ?int
     {
         if ($work === null || $queuedAt === null) {

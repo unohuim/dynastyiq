@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Exceptions\NhlGamePredictionPreparing;
-use App\Jobs\RefreshNhlGamePredictionJob;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpKernel\Exception\ServiceUnavailableHttpException;
@@ -16,40 +15,108 @@ final class NhlGamePredictionResponseCache
 {
     private const FRESH_SECONDS = 60;
     private const STALE_SECONDS = 10800;
-    private const BUILD_LOCK_SECONDS = 600;
+    private const BUILD_LOCK_SECONDS = 180;
 
     /** @param array<string,mixed> $input @param callable():array<string,mixed> $build @return array<string,mixed> */
-    public function respond(int $gameId, array $input, callable $build, bool $forceRefresh = false, ?int $runId = null): array
-    {
-        $owner = 'request:'.\Illuminate\Support\Str::uuid();
-        \App\Models\NhlGame::predictionActivity($gameId, $owner, true, self::BUILD_LOCK_SECONDS);
+    public function respond(
+        int $gameId,
+        array $input,
+        callable $build,
+        bool $forceRefresh = false,
+        ?int $runId = null,
+        ?int $itemId = null,
+        ?int $generation = null,
+        ?string $claimToken = null,
+    ): array {
+        if ($runId === null && ($forceRefresh || ! Cache::has($this->key($gameId, $input)))
+            && DB::table('nhl_game_prediction_run_games')->where('nhl_game_id', $gameId)
+                ->whereIn('status', ['queued', 'running'])->exists()) {
+            if (! $this->queue($gameId, $input, '')) {
+                throw new ServiceUnavailableHttpException(15, 'Unable to queue prediction refresh.');
+            }
+            throw new NhlGamePredictionPreparing($gameId);
+        }
+        // Cache-only reads are not calculation attempts. Keep their existing immediate/stale contract.
+        if ($runId === null && ! $forceRefresh && Cache::has($this->key($gameId, $input))) {
+            try {
+                $fingerprint = $this->fingerprint($gameId, $input);
+            } catch (NhlGamePredictionPreparing $pending) {
+                if (! $this->queue($gameId, $input, '')) {
+                    throw new ServiceUnavailableHttpException(15, 'Unable to queue prediction preparation.');
+                }
+                throw $pending;
+            }
+            $cached = Cache::get($this->key($gameId, $input));
+            if ($this->matches($cached, $fingerprint, self::STALE_SECONDS)) {
+                $fresh = $this->matches($cached, $fingerprint, self::FRESH_SECONDS);
+                if (! $fresh) {
+                    if (! $this->queue($gameId, $input, $fingerprint)) {
+                        throw new ServiceUnavailableHttpException(15, 'Unable to queue prediction refresh.');
+                    }
+                }
+                return $this->annotate($cached['payload'], $fresh ? 'fresh' : 'stale');
+            }
+        }
+        $history = app(NhlGamePredictionHistory::class);
+        $synchronous = $runId === null;
+        if ($synchronous) {
+            $itemId = $history->queueRefresh($gameId, $input, dispatch: false);
+            if (DB::table('nhl_game_prediction_run_games')->where('id', $itemId)->whereNotNull('dispatched_at')->exists()) {
+                throw new NhlGamePredictionPreparing($gameId);
+            }
+            $claimToken = (string) \Illuminate\Support\Str::uuid();
+            $generation = (int) DB::table('nhl_game_prediction_run_games')->where('id', $itemId)->value('generation');
+            $item = $history->claim($itemId, $generation, $claimToken);
+            if ($item === null) {
+                throw new NhlGamePredictionPreparing($gameId);
+            }
+            $runId = (int) $item->run_id;
+        }
+        // Durable items already protect queued/running inputs, including after a killed worker.
+        $owner = $itemId === null ? 'request:'.\Illuminate\Support\Str::uuid() : null;
+        if ($owner !== null) {
+            \App\Models\NhlGame::predictionActivity($gameId, $owner, true, self::BUILD_LOCK_SECONDS);
+        }
         try {
-            return $this->respondActive($gameId, $input, $build, $forceRefresh, $runId);
+            $result = $this->respondActive($gameId, $input, $build, $runId, $itemId, $generation, $claimToken);
+            if ($synchronous) {
+                $history->finish($itemId, ($result['prediction_available'] ?? false) ? 'completed' : 'unavailable',
+                    (int) $result['meta']['prediction_revision_id'], generation: $generation, claimToken: $claimToken);
+            }
+            return $result;
+        } catch (NhlGamePredictionPreparing $pending) {
+            if ($synchronous) {
+                $history->progress($itemId, $claimToken, 'preparing', release: true);
+                try {
+                    $admitted = DB::table('nhl_game_prediction_run_games')->where('id', $itemId)->whereNull('dispatched_at')
+                        ->where('generation', $generation)->update(['dispatched_at' => now()]);
+                    if ($admitted) {
+                        \App\Jobs\RefreshNhlGamePredictionJob::dispatch($gameId, $input, '', $itemId, $generation);
+                    }
+                } catch (Throwable $error) {
+                    $history->finish($itemId, 'failed', error: $error->getMessage(), generation: $generation);
+                    throw $error;
+                }
+            }
+            throw $pending;
+        } catch (Throwable $error) {
+            if ($synchronous) {
+                $history->finish($itemId, 'failed', error: mb_substr($error->getMessage(), 0, 2000), generation: $generation, claimToken: $claimToken);
+            }
+            throw $error;
         } finally {
-            \App\Models\NhlGame::predictionActivity($gameId, $owner, false);
+            if ($owner !== null) {
+                \App\Models\NhlGame::predictionActivity($gameId, $owner, false);
+            }
         }
     }
 
     /** Calculate/reuse a response while its game-specific input admission is held. */
-    private function respondActive(int $gameId, array $input, callable $build, bool $forceRefresh, ?int $runId): array
+    private function respondActive(int $gameId, array $input, callable $build, ?int $runId, ?int $itemId, ?int $generation, ?string $claimToken): array
     {
-        $fingerprint = $this->fingerprint($gameId, $input);
         $key = $this->key($gameId, $input);
-        $cached = Cache::get($key);
-        if (! $forceRefresh && $this->matches($cached, $fingerprint, self::STALE_SECONDS)) {
-            if ($this->matches($cached, $fingerprint, self::FRESH_SECONDS)) {
-                return $this->annotate($cached['payload'], 'fresh');
-            }
-            if ($this->queue($gameId, $input, $fingerprint)) {
-                return $this->annotate($cached['payload'], 'stale');
-            }
-        }
-
         $lock = Cache::lock($this->buildLockKey($gameId), self::BUILD_LOCK_SECONDS);
         if (! $lock->get()) {
-            if (! $this->queue($gameId, $input, $fingerprint)) {
-                throw new ServiceUnavailableHttpException(15, 'Unable to queue the pending prediction.');
-            }
             throw new NhlGamePredictionPreparing($gameId);
         }
         try {
@@ -61,26 +128,11 @@ final class NhlGamePredictionResponseCache
             }
             $evidence = $this->evidence($gameId, $input);
             $fingerprint = hash('sha256', json_encode($evidence, JSON_THROW_ON_ERROR));
-            $current = Cache::get($key);
-            if ($runId === null && $this->matches($current, $fingerprint, self::FRESH_SECONDS)
-                && (! $forceRefresh || ($current['build_id'] ?? null) !== ($cached['build_id'] ?? null))) {
-                return $this->annotate($current['payload'], 'fresh');
-            }
-            try {
-                $payload = $build();
-            } catch (NhlGamePredictionPreparing $pending) {
-                if (! $this->queue($gameId, $input, $fingerprint)) {
-                    throw new ServiceUnavailableHttpException(15, 'Unable to queue the pending prediction.');
-                }
-                throw $pending;
-            }
+            $payload = $build();
             if ($fingerprint !== $this->fingerprint($gameId, $input)) {
-                if (! $this->queue($gameId, $input, $fingerprint)) {
-                    throw new ServiceUnavailableHttpException(15, 'Unable to queue the changed-input prediction.');
-                }
                 throw new NhlGamePredictionPreparing($gameId);
             }
-            $payload = $this->store($gameId, $input, $key, $fingerprint, $evidence, $payload, $runId);
+            $payload = $this->store($gameId, $input, $key, $fingerprint, $evidence, $payload, $runId, $itemId, $generation, $claimToken);
 
             return $this->annotate($payload, 'fresh');
         } finally {
@@ -91,42 +143,27 @@ final class NhlGamePredictionResponseCache
     /** @param array<string,mixed> $input */
     public function rebuild(int $gameId, array $input, string $fingerprint, NhlGamePredictionPayload $payload): void
     {
-        \App\Models\NhlGame::predictionActivity($gameId, $this->refreshOwner($input), true);
-        $pending = false;
+        $history = app(NhlGamePredictionHistory::class);
+        $id = $history->queueRefresh($gameId, $input, dispatch: false);
+        $generation = (int) DB::table('nhl_game_prediction_run_games')->where('id', $id)->value('generation');
+        $token = (string) \Illuminate\Support\Str::uuid();
+        $item = $history->claim($id, $generation, $token);
+        if ($item === null) {
+            throw new NhlGamePredictionPreparing($gameId);
+        }
         try {
-            // A waiting prediction follows current source evidence instead of silently abandoning it.
-            $fingerprint = $this->fingerprint($gameId, $input);
-            $lock = Cache::lock($this->buildLockKey($gameId), self::BUILD_LOCK_SECONDS);
-            if (! $lock->get()) {
-                $pending = true;
-                throw new NhlGamePredictionPreparing($gameId);
-            }
-            try {
-                if ($this->matches(Cache::get($this->key($gameId, $input)), $fingerprint, self::FRESH_SECONDS)) {
-                    return;
-                }
-                $evidence = $this->evidence($gameId, $input);
-                $built = $payload->build($gameId, $input);
-                if ($fingerprint !== $this->fingerprint($gameId, $input)) {
-                    throw new NhlGamePredictionPreparing($gameId);
-                }
-                $this->store($gameId, $input, $this->key($gameId, $input), $fingerprint, $evidence, $built);
-            } finally {
-                $lock->release();
-            }
-        } catch (NhlGamePredictionPreparing $waiting) {
-            $pending = true;
-            Cache::put($this->queuedKey($gameId, $input, $fingerprint), true, 21600);
-            throw $waiting;
+            $result = $this->respond($gameId, $input, fn (): array => $payload->build($gameId, $input), true,
+                (int) $item->run_id, $id, $generation, $token);
+            $history->finish($id, ($result['prediction_available'] ?? false) ? 'completed' : 'unavailable',
+                (int) $result['meta']['prediction_revision_id'], generation: $generation, claimToken: $token);
+        } catch (NhlGamePredictionPreparing $pending) {
+            $history->progress($id, $token, $pending->phase, release: true);
+            throw $pending;
         } catch (Throwable $error) {
-            // A retryable worker exception is still active work; failed() owns terminal cleanup.
-            $pending = true;
+            $history->finish($id, 'failed', error: $error->getMessage(), generation: $generation, claimToken: $token);
             throw $error;
         } finally {
-            if (! $pending) {
-                Cache::forget($this->queuedKey($gameId, $input, $fingerprint));
-                \App\Models\NhlGame::predictionActivity($gameId, $this->refreshOwner($input), false);
-            }
+            $this->refreshFailed($gameId, $input);
         }
     }
 
@@ -154,7 +191,7 @@ final class NhlGamePredictionResponseCache
     /** Admit a lineup refresh without loading models or historical inputs in the caller. */
     public function queueLineupRefresh(int $gameId): bool
     {
-        return $this->queue($gameId, ['nhl_game_id' => $gameId], '');
+        return $this->queue($gameId, ['nhl_game_id' => $gameId], '', 'lineup');
     }
 
     /** Refresh only existing forecasts affected by a completed material injury update. */
@@ -182,25 +219,19 @@ final class NhlGamePredictionResponseCache
     {
         $input = ['nhl_game_id' => $gameId];
 
-        return $this->queue($gameId, $input, $this->fingerprint($gameId, $input));
+        return $this->queue($gameId, $input, '', 'injury');
     }
 
     /** @param array<string,mixed> $input */
-    private function queue(int $gameId, array $input, string $fingerprint): bool
+    private function queue(int $gameId, array $input, string $fingerprint, string $trigger = 'api'): bool
     {
-        \App\Models\NhlGame::predictionActivity($gameId, $this->refreshOwner($input), true);
-        $queued = $this->queuedKey($gameId, $input, $fingerprint);
-        if (! Cache::add($queued, true, 21600)) {
-            return true;
-        }
         try {
-            RefreshNhlGamePredictionJob::dispatch($gameId, $input, $fingerprint)->onQueue('lineups');
-
+            app(NhlGamePredictionHistory::class)->queueRefresh($gameId, $input, $trigger);
+            // Replace the legacy cache-only owner with the durable item, without deleting another request's lease.
+            $this->refreshFailed($gameId, $input);
             return true;
-        } catch (Throwable) {
-            Cache::forget($queued);
-            \App\Models\NhlGame::predictionActivity($gameId, $this->refreshOwner($input), false);
-
+        } catch (Throwable $error) {
+            report($error);
             return false;
         }
     }
@@ -244,7 +275,9 @@ final class NhlGamePredictionResponseCache
             ->get(['team_abbrev', 'nhl_player_id', 'provider', 'status'])
             ->unique(fn (object $row): string => implode('|', [$row->team_abbrev, (string) $row->nhl_player_id, $row->provider, $row->status]))->values();
 
-        $source = $forecast->resultEvidence($model, $game);
+        $source = $forecast->resultEvidence($model, $game, bounded: true);
+        $source['future_context'] = NhlCustomGamePredictionInputs::futureContextIdentity((int) $model->id,
+            [(int) $game->away_team_id, (int) $game->home_team_id]);
 
         return ['request' => $input, 'game' => $game, 'stack' => null, 'models' => $models,
             'algorithm' => config('nhl-custom-prediction'), 'source' => $source,
@@ -261,21 +294,35 @@ final class NhlGamePredictionResponseCache
         return 'nhl:game-prediction:pregame-dependencies-v19:' . $gameId . ':' . hash('sha256', json_encode($input, JSON_THROW_ON_ERROR));
     }
 
-    /** @param array<string,mixed> $input */
-    private function queuedKey(int $gameId, array $input, string $fingerprint): string
-    {
-        return $this->key($gameId, $input) . ':queued';
-    }
-
     /** Publish only after the durable revision is saved. Cache hits never append history.
      * @param array<string,mixed> $input
      * @param array<string,mixed> $evidence
      * @param array<string,mixed> $payload
      * @return array<string,mixed>
      */
-    private function store(int $gameId, array $input, string $key, string $fingerprint, array $evidence, array $payload, ?int $runId = null): array
-    {
-        $payload = app(NhlGamePredictionHistory::class)->record($gameId, $input, $fingerprint, $evidence, $payload, $runId);
+    private function store(
+        int $gameId,
+        array $input,
+        string $key,
+        string $fingerprint,
+        array $evidence,
+        array $payload,
+        ?int $runId = null,
+        ?int $itemId = null,
+        ?int $generation = null,
+        ?string $claimToken = null,
+    ): array {
+        $payload = DB::transaction(function () use ($gameId, $input, $fingerprint, $evidence, $payload, $runId, $itemId, $generation, $claimToken): array {
+            if ($itemId !== null) {
+                DB::table('nhl_game_prediction_run_games')->where('id', $itemId)->lockForUpdate()->first();
+                if (! app(NhlGamePredictionHistory::class)->owns($itemId, $generation, $claimToken)) {
+                    throw new \DomainException('This prediction delivery was replaced; it cannot publish.');
+                }
+            }
+
+            return app(NhlGamePredictionHistory::class)->record($gameId, $input, $fingerprint, $evidence, $payload, $runId);
+        });
+        // Never expose a revision through cache before its transaction has committed.
         Cache::put($key, ['fingerprint' => $fingerprint, 'built_at' => now(),
             'build_id' => (string) \Illuminate\Support\Str::uuid(), 'payload' => $payload], self::STALE_SECONDS);
 

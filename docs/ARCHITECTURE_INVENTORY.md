@@ -4589,3 +4589,8 @@ Legacy evaluation history remains accessible.
 `app/Http/Controllers/Admin/NhlSeasonGameEvaluationController.php`,
 `resources/js/pages/Admin/Evaluations/SeasonGames.vue`.
 **Authority:** `docs/architecture/stats/NhlSeasonGameEvaluations.yaml`.
+
+Operational prediction activity uses the existing run/game history tables for all
+triggers, independent game-owned preparation, fenced worker recovery, and private
+admin Reverb invalidations. Canonical rules: `stats/NhlGamePredictionHistory.yaml`
+and `stats/NhlCustomGamePrediction.yaml`.

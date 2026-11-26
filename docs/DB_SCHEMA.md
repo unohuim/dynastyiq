@@ -41,6 +41,15 @@ at calculation publication using Toronto calendar dates. Public confidence is
 calculated using the approved probability/internal-confidence/horizon rating and
 frozen per revision; existing internal confidence remains in the payload/summary. No historical backfill is performed.
 
+Migration `2026_11_25_000003_add_activity_tracking_to_nhl_game_prediction_runs.php`
+adds `trigger_source` to runs and nullable `request_inputs`, `phase`,
+`progress_current`, nullable `progress_total`, `generation`, `attempts`, `failures`,
+`recoveries`, nullable `claim_token`/`claim_expires_at`, `dispatched_at`, `heartbeat_at` and
+`last_progress_at` to game work items. Status/heartbeat and game/status indexes
+support scoped activity reads and abandoned-delivery recovery. No data backfill
+or historical-input duplication is performed. Existing runs default to the
+admin trigger; old work retains its lifecycle and timestamps.
+
 These global operational records are separate from custom-engine forecasts and private admin workspace saves. Latest successful canonical revisions use the indexed game/flags/id lookup. Migration definitions remain authoritative.
 
 ## Scheduled processes

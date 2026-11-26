@@ -48,13 +48,16 @@ final class NhlGamePredictionHistory
             $runId = DB::table('nhl_game_prediction_runs')->insertGetId([
                 'start_date' => $start, 'end_date' => $end, 'status' => 'queued', 'total_games' => $games->count(),
                 'requested_stack' => json_encode($definition, JSON_THROW_ON_ERROR), 'created_by' => $createdBy,
+                'trigger_source' => $automation === [] ? 'admin' : 'automation',
                 'created_at' => now(), 'updated_at' => now(),
             ]);
             DB::table('nhl_game_prediction_run_games')->insert($games->map(fn ($id): array => [
-                'run_id' => $runId, 'nhl_game_id' => $id, 'status' => 'queued', 'created_at' => now(), 'updated_at' => now(),
+                'run_id' => $runId, 'nhl_game_id' => $id, 'status' => 'queued',
+                'heartbeat_at' => now(), 'dispatched_at' => now(), 'created_at' => now(), 'updated_at' => now(),
             ])->all());
             $itemIds = DB::table('nhl_game_prediction_run_games')->where('run_id', $runId)->pluck('id');
             DB::afterCommit(function () use ($itemIds, $runId): void {
+                $this->notify($runId);
                 try {
                     Bus::batch($itemIds->map(fn ($id) => new RunNhlGamePredictionJob((int) $id))->all())
                         ->name('NHL game predictions #'.$runId)->onQueue('projections')->allowFailures()->dispatch();
@@ -68,6 +71,181 @@ final class NhlGamePredictionHistory
 
             return ['run_id' => $runId, 'total_games' => $games->count()];
         });
+    }
+
+    /** Admit background work before expensive reads; repeated requests share the same game/variant item.
+     * @param array<string,mixed> $input
+     */
+    public function queueRefresh(int $gameId, array $input, string $trigger = 'api', bool $dispatch = true): int
+    {
+        return DB::transaction(function () use ($gameId, $input, $trigger, $dispatch): int {
+            $game = DB::table('nhl_games')->where('nhl_game_id', $gameId)->lockForUpdate()->first();
+            abort_if($game === null, 404);
+            $normalized = $input;
+            $normalized['nhl_game_id'] = $gameId;
+            ksort($normalized);
+            $existing = DB::table('nhl_game_prediction_run_games')->where('nhl_game_id', $gameId)
+                ->whereIn('status', ['queued', 'running'])->orderBy('id')->get()->first(function ($row) use ($normalized, $gameId): bool {
+                    $saved = $row->request_inputs === null ? ['nhl_game_id' => $gameId] : json_decode($row->request_inputs, true, 512, JSON_THROW_ON_ERROR);
+                    $saved['nhl_game_id'] = $gameId;
+                    ksort($saved);
+                    return $saved === $normalized;
+                });
+            if ($existing !== null) {
+                return (int) $existing->id;
+            }
+            $runId = DB::table('nhl_game_prediction_runs')->insertGetId([
+                'start_date' => $game->game_date, 'end_date' => $game->game_date, 'total_games' => 1,
+                'status' => 'queued', 'trigger_source' => $trigger, 'requested_stack' => '{}', 'created_at' => now(), 'updated_at' => now(),
+            ]);
+            $id = DB::table('nhl_game_prediction_run_games')->insertGetId([
+                'run_id' => $runId, 'nhl_game_id' => $gameId, 'status' => 'queued', 'phase' => 'queued',
+                'request_inputs' => json_encode($input, JSON_THROW_ON_ERROR),
+                'heartbeat_at' => now(), 'dispatched_at' => $dispatch ? now() : null, 'created_at' => now(), 'updated_at' => now(),
+            ]);
+            DB::afterCommit(function () use ($id, $gameId, $input, $runId, $dispatch, $trigger): void {
+                $this->notify($runId, $gameId);
+                if (! $dispatch) {
+                    return;
+                }
+                try {
+                    \App\Jobs\RefreshNhlGamePredictionJob::dispatch($gameId, $input, '', $id, 1)->onQueue('projections');
+                } catch (Throwable $error) {
+                    $this->finish($id, 'failed', error: 'Unable to queue prediction: '.$error->getMessage());
+                    report($error);
+                    throw new \Symfony\Component\HttpKernel\Exception\ServiceUnavailableHttpException(15,
+                        $trigger === 'lineup' ? 'The lineup was saved, but its prediction refresh could not be queued.' : 'Unable to queue prediction.');
+                }
+            });
+
+            return $id;
+        });
+    }
+
+    /** Fence duplicate or obsolete deliveries and serialize only workers for this game.
+     * @return object|null
+     */
+    public function claim(int $itemId, int $generation, string $token): ?object
+    {
+        return DB::transaction(function () use ($itemId, $generation, $token): ?object {
+            $item = DB::table('nhl_game_prediction_run_games')->find($itemId);
+            if ($item === null) {
+                return null;
+            }
+            DB::table('nhl_games')->where('nhl_game_id', $item->nhl_game_id)->lockForUpdate()->first();
+            DB::table('nhl_game_prediction_runs')->where('id', $item->run_id)->lockForUpdate()->first();
+            $item = DB::table('nhl_game_prediction_run_games')->where('id', $itemId)->lockForUpdate()->first();
+            if ((int) $item->generation !== $generation || ! in_array($item->status, ['queued', 'running'], true)
+                || $item->claim_token !== null) {
+                return null;
+            }
+            $other = DB::table('nhl_game_prediction_run_games')->where('nhl_game_id', $item->nhl_game_id)
+                ->where('id', '<', $itemId)->whereIn('status', ['queued', 'running'])->exists();
+            if ($other) {
+                return null;
+            }
+            DB::table('nhl_game_prediction_run_games')->where('id', $itemId)->update([
+                'status' => 'running', 'started_at' => $item->started_at ?? now(), 'heartbeat_at' => now(),
+                'claim_token' => $token, 'claim_expires_at' => now()->addSeconds(180),
+                'attempts' => (int) $item->attempts + 1, 'last_error' => null, 'updated_at' => now(),
+            ]);
+            DB::table('nhl_game_prediction_runs')->where('id', $item->run_id)->where('status', 'queued')
+                ->update(['status' => 'running', 'started_at' => now(), 'updated_at' => now()]);
+            DB::afterCommit(function () use ($item): void {
+                $input = $item->request_inputs === null ? ['nhl_game_id' => (int) $item->nhl_game_id]
+                    : json_decode($item->request_inputs, true, 512, JSON_THROW_ON_ERROR);
+                app(NhlGamePredictionResponseCache::class)->refreshFailed((int) $item->nhl_game_id, $input);
+                $this->notify((int) $item->run_id, (int) $item->nhl_game_id);
+            });
+
+            return DB::table('nhl_game_prediction_run_games')->find($itemId);
+        });
+    }
+
+    /** Persist a bounded step's progress and release only its own worker claim. */
+    public function progress(int $itemId, string $token, string $phase, int $cursor = 0, ?int $total = null, bool $release = false): void
+    {
+        $query = DB::table('nhl_game_prediction_run_games')->where('id', $itemId)->where('claim_token', $token)
+            ->whereIn('status', ['queued', 'running']);
+        $item = (clone $query)->first();
+        if ($item === null) {
+            return;
+        }
+        $values = ['phase' => $phase, 'progress_current' => $cursor, 'progress_total' => $total,
+            'heartbeat_at' => now(), 'claim_expires_at' => now()->addSeconds(180), 'updated_at' => now()];
+        if ($item->phase !== $phase || (int) $item->progress_current !== $cursor) {
+            $values['last_progress_at'] = now();
+        }
+        if ($release) {
+            $values += ['status' => 'queued', 'claim_token' => null];
+            $values['claim_expires_at'] = null;
+        }
+        if ($query->update($values)) {
+            $this->notify((int) $item->run_id, (int) $item->nhl_game_id);
+        }
+    }
+
+    /** Reject a worker whose claim has expired or was replaced, including publication after recovery. */
+    public function owns(int $itemId, int $generation, string $token): bool
+    {
+        return DB::table('nhl_game_prediction_run_games')->where('id', $itemId)->where('generation', $generation)
+            ->where('claim_token', $token)->where('claim_expires_at', '>', now())
+            ->where('status', 'running')->exists();
+    }
+
+    /** Requeue abandoned deliveries without waiting for Redis's long shared retry_after. */
+    public function recoverActiveGames(): void
+    {
+        DB::table('nhl_game_prediction_run_games')->whereIn('status', ['queued', 'running'])
+            ->whereRaw('COALESCE(heartbeat_at, updated_at) < ?', [now()->subMinutes(5)])
+            ->orderBy('id')->chunkById(100, function ($items): void {
+                foreach ($items as $candidate) {
+                    DB::transaction(function () use ($candidate): void {
+                        DB::table('nhl_games')->where('nhl_game_id', $candidate->nhl_game_id)->lockForUpdate()->first();
+                        DB::table('nhl_game_prediction_runs')->where('id', $candidate->run_id)->lockForUpdate()->first();
+                        $item = DB::table('nhl_game_prediction_run_games')->where('id', $candidate->id)->lockForUpdate()->first();
+                        if (! in_array($item->status, ['queued', 'running'], true)
+                            || ($item->heartbeat_at ?? $item->updated_at) >= now()->subMinutes(5)->toDateTimeString()) {
+                            return;
+                        }
+                        $saved = DB::table('nhl_game_prediction_revisions')->where('run_id', $item->run_id)
+                            ->where('nhl_game_id', $item->nhl_game_id)->first();
+                        if ($saved !== null) {
+                            $this->finish((int) $item->id, $saved->prediction_available ? 'completed' : 'unavailable', (int) $saved->id);
+                            return;
+                        }
+                        if ((int) $item->recoveries >= 3) {
+                            $this->finish((int) $item->id, 'failed', error: 'Prediction worker stopped reporting progress after three recoveries. Retry this game.');
+                            return;
+                        }
+                        $generation = (int) $item->generation + 1;
+                        DB::table('nhl_game_prediction_run_games')->where('id', $item->id)->update([
+                            'status' => 'queued', 'generation' => $generation, 'recoveries' => (int) $item->recoveries + 1,
+                            'claim_token' => null, 'claim_expires_at' => null, 'heartbeat_at' => now(), 'dispatched_at' => now(), 'updated_at' => now(),
+                            'last_error' => 'Recovering an interrupted worker from its last saved checkpoint.',
+                        ]);
+                        DB::afterCommit(function () use ($item, $generation): void {
+                            try {
+                                RunNhlGamePredictionJob::dispatch((int) $item->id, $generation);
+                                $this->notify((int) $item->run_id, (int) $item->nhl_game_id);
+                            } catch (Throwable $error) {
+                                $this->finish((int) $item->id, 'failed', error: $error->getMessage());
+                                report($error);
+                            }
+                        });
+                    });
+                }
+            });
+    }
+
+    /** Broadcast identifiers only; failed Reverb delivery cannot fail calculation or publication. */
+    private function notify(int $runId, ?int $gameId = null): void
+    {
+        try {
+            event(new \App\Events\NhlGamePredictionStatusUpdated($runId, $gameId));
+        } catch (Throwable $error) {
+            report($error);
+        }
     }
 
     /** Read the latest published prediction for one game without refreshing any dependencies.
@@ -119,7 +297,7 @@ final class NhlGamePredictionHistory
             $payload['player_pregame'] = $pages->playerPregamePayload($gameId, $analysis);
         }
         $id = DB::table('nhl_game_prediction_revisions')->insertGetId([
-            'nhl_game_id' => $gameId, 'run_id' => $runId, 'source' => $runId === null ? 'api' : 'admin',
+            'nhl_game_id' => $gameId, 'run_id' => $runId, 'source' => $runId === null || ! in_array(DB::table('nhl_game_prediction_runs')->where('id', $runId)->value('trigger_source'), ['admin', 'automation'], true) ? 'api' : 'admin',
             'fingerprint' => $fingerprint, 'is_canonical' => $canonical,
             'prediction_available' => ($payload['prediction_available'] ?? false) === true,
             'days_away' => $daysAway, 'public_confidence_score' => $publicConfidence,
@@ -223,22 +401,35 @@ final class NhlGamePredictionHistory
     }
 
     /** Finish one work item and derive run status while serializing concurrent completion updates. */
-    public function finish(int $itemId, string $status, ?int $revisionId = null, ?string $error = null): void
-    {
-        DB::transaction(function () use ($itemId, $status, $revisionId, $error): void {
+    public function finish(
+        int $itemId,
+        string $status,
+        ?int $revisionId = null,
+        ?string $error = null,
+        ?int $generation = null,
+        ?string $claimToken = null,
+    ): void {
+        DB::transaction(function () use ($itemId, $status, $revisionId, $error, $generation, $claimToken): void {
             $item = DB::table('nhl_game_prediction_run_games')->find($itemId);
             if ($item === null) {
                 return;
             }
+            DB::table('nhl_games')->where('nhl_game_id', $item->nhl_game_id)->lockForUpdate()->first();
             DB::table('nhl_game_prediction_runs')->where('id', $item->run_id)->lockForUpdate()->first();
             $item = DB::table('nhl_game_prediction_run_games')->find($itemId);
+            if (($generation !== null && (int) $item->generation !== $generation)
+                || ($claimToken !== null && $item->claim_token !== $claimToken)) {
+                return;
+            }
             if (in_array($item->status, ['completed', 'unavailable', 'failed'], true)) {
                 return;
             }
             DB::table('nhl_game_prediction_run_games')->where('id', $itemId)->update([
                 'status' => $status, 'revision_id' => $revisionId, 'last_error' => $error,
-                'finished_at' => now(), 'updated_at' => now(),
+                'finished_at' => now(), 'updated_at' => now(), 'phase' => $status,
+                'claim_token' => null, 'claim_expires_at' => null, 'heartbeat_at' => now(),
             ]);
+            DB::afterCommit(fn () => $this->notify((int) $item->run_id, (int) $item->nhl_game_id));
             $counts = DB::table('nhl_game_prediction_run_games')->where('run_id', $item->run_id)
                 ->selectRaw('status, COUNT(*) as total')->groupBy('status')->pluck('total', 'status');
             if ((int) $counts->get('queued', 0) + (int) $counts->get('running', 0) === 0) {

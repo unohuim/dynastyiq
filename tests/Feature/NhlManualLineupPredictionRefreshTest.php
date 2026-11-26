@@ -23,6 +23,7 @@ beforeEach(function (): void {
     config(['cache.default' => 'array']);
     Cache::flush();
     Bus::fake();
+    \Illuminate\Support\Facades\Event::fake([\App\Events\NhlGamePredictionStatusUpdated::class]);
     Http::preventStrayRequests();
     $this->mock(\App\Services\PlatformState::class)->shouldReceive('seeded')->andReturn(true);
     DB::table('nhl_teams')->insertOrIgnore([['nhl_id' => 10, 'abbrev' => 'TOR'], ['nhl_id' => 8, 'abbrev' => 'MTL']]);
@@ -61,10 +62,12 @@ beforeEach(function (): void {
         $this->callbacks[] = $callback;
     });
     $this->commitCallbacks = function (): void {
-        $callbacks = $this->callbacks;
-        $this->callbacks = [];
-        foreach ($callbacks as $callback) {
-            $callback();
+        while ($this->callbacks !== []) {
+            $callbacks = $this->callbacks;
+            $this->callbacks = [];
+            foreach ($callbacks as $callback) {
+                $callback();
+            }
         }
     };
     $this->submit = fn (?array $body = null) => $this->withToken($this->token)->postJson('/api/nhl-lineups', $body ?? $this->body);
@@ -98,11 +101,11 @@ it('does not dispatch prediction work before the game page save commits', functi
     Bus::assertNotDispatched(RefreshNhlGamePredictionJob::class);
 });
 
-it('uses the existing lineups queue with only the game request input', function (): void {
+it('uses the projections queue with only the game request input', function (): void {
     ($this->submit)()->assertCreated();
     ($this->commitCallbacks)();
     Bus::assertDispatched(RefreshNhlGamePredictionJob::class, fn ($job): bool =>
-        $job->queue === 'lineups' && $job->input === ['nhl_game_id' => 2026020390]);
+        $job->queue === 'projections' && $job->input === ['nhl_game_id' => 2026020390]);
 });
 
 it('does not require a prior saved prediction to trigger work', function (): void {
@@ -161,6 +164,8 @@ it('coalesces duplicate refresh admissions for the same game', function (): void
 it('accepts a changed skater and queues another refresh after previous work ends', function (): void {
     ($this->submit)()->assertCreated();
     ($this->commitCallbacks)();
+    $item = DB::table('nhl_game_prediction_run_games')->where('nhl_game_id', 2026020390)->orderByDesc('id')->first();
+    app(\App\Services\NhlGamePredictionHistory::class)->finish((int) $item->id, 'failed', error: 'Fixture completed previous work');
     app(NhlGamePredictionResponseCache::class)->refreshFailed(2026020390, ['nhl_game_id' => 2026020390]);
     $body = $this->body;
     $body['text'] = str_replace($this->names[1], $this->names[21], $this->text);
@@ -291,6 +296,8 @@ it('reports a queue failure and releases prediction admission without undoing th
 it('does not queue another prediction for an identical partner resubmission', function (): void {
     ($this->submit)()->assertCreated();
     ($this->commitCallbacks)();
+    $item = DB::table('nhl_game_prediction_run_games')->where('nhl_game_id', 2026020390)->orderByDesc('id')->first();
+    app(\App\Services\NhlGamePredictionHistory::class)->finish((int) $item->id, 'failed', error: 'Fixture completed previous work');
     app(NhlGamePredictionResponseCache::class)->refreshFailed(2026020390, ['nhl_game_id' => 2026020390]);
     ($this->submit)()->assertCreated();
     ($this->commitCallbacks)();
@@ -301,6 +308,8 @@ it('does not queue another prediction for an identical partner resubmission', fu
 it('does not queue another prediction for identical first party lineup text', function (): void {
     $this->actingAs($this->admin)->postJson('/games/2026020390/lineup', $this->body)->assertOk();
     ($this->commitCallbacks)();
+    $item = DB::table('nhl_game_prediction_run_games')->where('nhl_game_id', 2026020390)->orderByDesc('id')->first();
+    app(\App\Services\NhlGamePredictionHistory::class)->finish((int) $item->id, 'failed', error: 'Fixture completed previous work');
     app(NhlGamePredictionResponseCache::class)->refreshFailed(2026020390, ['nhl_game_id' => 2026020390]);
     $this->actingAs($this->admin)->postJson('/games/2026020390/lineup', $this->body)->assertOk();
     ($this->commitCallbacks)();

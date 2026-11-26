@@ -99,6 +99,8 @@ const controllers = new Set();
 const historyTokens = new Map();
 let timer;
 let loadController;
+let predictionChannel;
+let invalidationTimer;
 let disposed = false;
 const validDates = computed(() => dateValue(start.value) !== null
     && (!range.value || (dateValue(end.value) !== null && end.value >= start.value)));
@@ -152,7 +154,7 @@ async function load() {
             error.value = '';
         }
     } catch (failure) {
-        if (failure.name !== 'AbortError' && !disposed && !controller.signal.aborted) error.value = failure.message;
+        if (failure.name !== 'AbortError' && !disposed && !controller.signal.aborted && !data.value.games.length) error.value = failure.message;
     } finally {
         if (loadController === controller && !disposed) {
             loading.value = false;
@@ -286,11 +288,26 @@ function movePage(next) {
     void load();
 }
 
-onMounted(load);
+/** Reverb invalidates a compact read; coalesce checkpoint bursts and keep polling as recovery. */
+function activityChanged() {
+    if (disposed || invalidationTimer) return;
+    invalidationTimer = setTimeout(() => {
+        invalidationTimer = undefined;
+        if (!disposed && !loading.value && !submitting.value) void load();
+    }, 750);
+}
+
+onMounted(() => {
+    void load();
+    predictionChannel = window.Echo?.private('admin.predictions');
+    predictionChannel?.listen('.admin.nhl-predictions.updated', activityChanged);
+});
 onBeforeUnmount(() => {
     disposed = true;
     if (automationOpen.value) document.body.style.overflow = previousOverflow ?? '';
     clearTimeout(timer);
+    clearTimeout(invalidationTimer);
+    predictionChannel?.stopListening?.('.admin.nhl-predictions.updated', activityChanged);
     for (const controller of controllers) controller.abort();
 });
 </script>
@@ -347,7 +364,19 @@ onBeforeUnmount(() => {
                     <thead class="bg-gray-50 text-gray-600"><tr><th scope="col" class="p-3">Date / Game</th><th scope="col" class="p-3">Prediction<br /><span class="font-normal">Away–Home</span></th><th scope="col" class="p-3">Spread</th><th scope="col" class="p-3">Total goals</th><th scope="col" class="p-3">Pick</th><th scope="col" class="p-3">Win probability</th><th scope="col" class="p-3">Internal Conf</th><th scope="col" class="p-3">Public Conf</th><th scope="col" class="p-3">Days Away</th><th scope="col" class="p-3">Updated / Status</th><th scope="col" class="whitespace-nowrap p-3">Engine Time</th><th scope="col" class="p-3">History</th></tr></thead>
                     <tbody class="divide-y divide-gray-100">
                         <template v-for="game in data.games" :key="game.nhl_game_id">
-                            <tr><td class="whitespace-nowrap p-3"><p class="text-gray-500">{{ game.date }}</p><b>{{ game.away }} @ {{ game.home }}</b></td><td class="p-3 tabular-nums">{{ score(game.revision) }}</td><td class="p-3 tabular-nums">{{ spread(game.revision) }}</td><td class="p-3 tabular-nums">{{ number(game.revision?.total_goals) }}</td><td class="p-3">{{ game.revision?.winner ?? '—' }}</td><td class="p-3">{{ percent(game.revision?.win_probability) }}</td><td class="p-3">{{ confidence(game.revision?.confidence) }}</td><td class="p-3" data-public-confidence>{{ confidence(game.revision?.public_confidence_score) }}</td><td class="p-3 tabular-nums" data-days-away>{{ game.revision?.days_away ?? '—' }}</td><td class="max-w-xs p-3"><p>{{ dateTime(game.revision?.predicted_at) }}</p><p v-if="game.work" class="mt-1 text-gray-500">{{ game.work.status }}</p><p v-if="game.work?.last_error" class="mt-1 text-red-700">{{ game.work.last_error }}</p></td><td class="whitespace-nowrap p-3 tabular-nums" data-engine-time title="Total elapsed time for this game in the selected run, including queue and preparation waits.">{{ engineTime(game.engine_time_seconds) }}</td><td class="p-3"><button type="button" :aria-expanded="!!histories[game.nhl_game_id]?.open" class="rounded text-indigo-700 hover:underline focus-visible:ring-2 focus-visible:ring-indigo-500" @click="history(game.nhl_game_id, histories[game.nhl_game_id]?.current_page ?? 1)">Revisions</button></td></tr>
+                            <tr><td class="whitespace-nowrap p-3"><p class="text-gray-500">{{ game.date }}</p><b>{{ game.away }} @ {{ game.home }}</b></td><td class="p-3 tabular-nums">{{ score(game.revision) }}</td><td class="p-3 tabular-nums">{{ spread(game.revision) }}</td><td class="p-3 tabular-nums">{{ number(game.revision?.total_goals) }}</td><td class="p-3">{{ game.revision?.winner ?? '—' }}</td><td class="p-3">{{ percent(game.revision?.win_probability) }}</td><td class="p-3">{{ confidence(game.revision?.confidence) }}</td><td class="p-3" data-public-confidence>{{ confidence(game.revision?.public_confidence_score) }}</td><td class="p-3 tabular-nums" data-days-away>{{ game.revision?.days_away ?? '—' }}</td><td class="min-w-64 max-w-sm p-3" data-prediction-activity>
+                                <p class="text-xs text-gray-500">Saved {{ dateTime(game.revision?.predicted_at) }}</p>
+                                <div v-if="game.work" class="mt-1 space-y-1 text-xs">
+                                    <p data-attempt-time>Latest attempt {{ dateTime(game.work.created_at) }} · {{ game.work.trigger_source }}</p>
+                                    <p class="font-medium" :class="game.work.status === 'failed' ? 'text-red-700' : 'text-gray-700'">{{ game.work.status }} · {{ game.work.phase }}</p>
+                                    <p v-if="game.work.progress_total != null">{{ game.work.progress_current }} / {{ game.work.progress_total }}</p>
+                                    <p v-else-if="game.work.progress_current">{{ game.work.progress_current }} processed</p>
+                                    <p>Deliveries {{ game.work.attempts }} · Retries {{ game.work.failures }} · Recoveries {{ game.work.recoveries }}</p>
+                                    <p v-if="game.work.heartbeat_at">Last activity {{ dateTime(game.work.heartbeat_at) }}</p>
+                                    <p v-if="game.work.lineup_lock_reason" class="text-gray-500">{{ game.work.lineup_lock_reason }}</p>
+                                    <p v-if="game.work.last_error" class="text-red-700">{{ game.work.last_error }}</p>
+                                </div>
+                            </td><td class="whitespace-nowrap p-3 tabular-nums" data-engine-time title="Total elapsed time for this game’s latest attempt, including queue and preparation waits.">{{ engineTime(game.engine_time_seconds) }}</td><td class="p-3"><button type="button" :aria-expanded="!!histories[game.nhl_game_id]?.open" class="rounded text-indigo-700 hover:underline focus-visible:ring-2 focus-visible:ring-indigo-500" @click="history(game.nhl_game_id, histories[game.nhl_game_id]?.current_page ?? 1)">Revisions</button></td></tr>
                             <tr v-if="histories[game.nhl_game_id]?.open"><td colspan="12" class="bg-gray-50 p-4">
                                 <p v-if="histories[game.nhl_game_id].loading" role="status">Loading revisions…</p>
                                 <p v-if="histories[game.nhl_game_id].error" role="alert" class="text-red-700">{{ histories[game.nhl_game_id].error }}</p>

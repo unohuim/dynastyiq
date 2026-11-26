@@ -2347,3 +2347,13 @@ Section data contains only that panel's fields. Clients must not replace game id
 ### Live advanced game statistics
 
 The full `/games/live?game_id={id}` snapshot may include `game.advanced_stats` with `available`, pinned `model_ids`, `teams` keyed by NHL team ID, `goalies` keyed by NHL player ID, processing `version`, `processed_at`, and `pending`. Team values include xGF/xGA and EV/PP/PK splits. Goalie values include xGA and GSAx. These are observed-event expectations, not forecasts. Null expectations mean incomplete scoring coverage; missing models are explicitly unavailable. A pending result describes the previous completed processing version. The compact Reverb envelope remains unchanged; clients fetch full details after its changed notification.
+
+### Prediction processing activity
+
+Saved successful predictions still return immediately with their original
+`meta.prediction_revision_id` and `meta.predicted_at`. Background replacements
+use DIQ's per-game activity tracker and projections queue. An unrelated game's
+preparation cannot hold this game's worker. This operational change adds no
+partner payload fields and does not change forecast formulas, confidence,
+lineup authority or requested-market pricing. The internal admin activity
+channel and worker claim tokens are not partner interfaces.

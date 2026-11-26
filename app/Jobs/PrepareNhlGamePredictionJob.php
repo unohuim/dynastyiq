@@ -9,7 +9,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Throwable;
 
-/** Advance one bounded preparation checkpoint, sharing work across a model's date. */
+/** Compatibility delivery for one game's independently checkpointed preparation. */
 class PrepareNhlGamePredictionJob implements ShouldQueue
 {
     use Queueable;
@@ -17,6 +17,7 @@ class PrepareNhlGamePredictionJob implements ShouldQueue
     public int $tries = 0;
     public int $maxExceptions = 3;
     public int $timeout = 120;
+    public bool $failOnTimeout = true;
     public int $backoff = 30;
     public string $deadline;
 
@@ -35,8 +36,12 @@ class PrepareNhlGamePredictionJob implements ShouldQueue
     /** Pending dependencies release without consuming an exception budget. */
     public function handle(NhlCustomGameForecast $forecast): void
     {
-        if (! $forecast->advancePreparation($this->gameId, $this->modelId, $this->storedBoxscore, $this->rosterOverrides)) {
-            $this->release($forecast->preparationDelay());
+        try {
+            if (! $forecast->advancePreparation($this->gameId, $this->modelId, $this->storedBoxscore, $this->rosterOverrides)) {
+                $this->release($forecast->preparationDelay());
+            }
+        } catch (\App\Exceptions\NhlGamePredictionPreparing $pending) {
+            $this->release($pending->continuationSeconds);
         }
     }
 

@@ -57,3 +57,9 @@ Schedule::call(function (): void {
             \App\Jobs\PollNhlLiveGameJob::dispatch((int) $id, now()->timestamp, true);
         });
 })->name('nhl-live-final-reconciliation')->dailyAt('04:00')->timezone('America/Toronto')->onOneServer();
+
+Schedule::call(fn () => app(\App\Services\NhlGamePredictionHistory::class)->recoverActiveGames())
+    ->name('nhl-prediction-recover-active-games')
+    ->everyMinute()
+    ->onOneServer()
+    ->withoutOverlapping(2);

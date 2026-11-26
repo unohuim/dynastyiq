@@ -12,8 +12,13 @@ use Symfony\Component\HttpKernel\Exception\HttpException;
 class NhlGamePredictionPreparing extends HttpException
 {
     /** Identify the requested game without claiming a prediction has been calculated. */
-    public function __construct(public readonly int $gameId)
-    {
+    public function __construct(
+        public readonly int $gameId,
+        public readonly string $phase = 'matchup',
+        public readonly int $continuationSeconds = 15,
+        public readonly ?int $progressCurrent = null,
+        public readonly ?int $progressTotal = null,
+    ) {
         parent::__construct(202, 'Pregame context and prediction inputs are being prepared.', null, ['Retry-After' => '15']);
     }
 
