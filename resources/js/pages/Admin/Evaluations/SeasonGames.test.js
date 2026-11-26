@@ -266,3 +266,31 @@ it('updates the split record automatically without replacing the displayed perce
     expect(record.previousElementSibling).toBe(percentage);
     expect(percentage.textContent).toBe('58.00%');
 });
+
+it('places the smaller history record directly under its own win percentage', () => {
+    const host = mount(selected({ runs: [run(1, { regulation_losses: 30, overtime_losses: 12 })], summary: { ...summary(), regulation_losses: 30, overtime_losses: 12 } }));
+    const record = host.querySelector('[aria-label="Run 1 prediction record"]');
+    expect(record.textContent).toContain('58–30–12');
+    expect(record.previousElementSibling.textContent).toBe('58.00%');
+    expect(record.classList.contains('text-[10px]')).toBe(true);
+    expect(host.querySelector('[aria-label="Prediction record"]').classList.contains('text-xs')).toBe(true);
+});
+
+it('uses independent history records for different runs', () => {
+    const host = mount({ runs: [run(1, { regulation_losses: 30, overtime_losses: 12 }),
+        run(2, { wins: 60, losses: 40, win_pct: 60, regulation_losses: 25, overtime_losses: 15 })] });
+    expect(host.querySelector('[aria-label="Run 1 prediction record"]').textContent).toContain('58–30–12');
+    const second = host.querySelector('[aria-label="Run 2 prediction record"]');
+    expect(second.textContent).toContain('60–25–15');
+    expect(second.previousElementSibling.textContent).toBe('60.00%');
+});
+
+it('updates history records in place when automatic progress arrives', async () => {
+    const host = mount({ runs: [run(1, { regulation_losses: 30, overtime_losses: 12 })] });
+    const record = host.querySelector('[aria-label="Run 1 prediction record"]');
+    props.runs = [run(1, { regulation_losses: 29, overtime_losses: 13 })];
+    await nextTick();
+    expect(host.querySelector('[aria-label="Run 1 prediction record"]')).toBe(record);
+    expect(record.textContent).toContain('58–29–13');
+    expect(record.previousElementSibling.textContent).toBe('58.00%');
+});

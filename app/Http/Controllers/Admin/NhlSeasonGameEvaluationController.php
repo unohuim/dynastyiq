@@ -30,11 +30,14 @@ class NhlSeasonGameEvaluationController extends Controller
         $counts = DB::table('nhl_custom_game_predictions')->whereIn('run_id', $runs->pluck('id'))
             ->selectRaw('run_id, SUM(CASE WHEN winner_correct = true THEN 1 ELSE 0 END) AS wins, SUM(CASE WHEN winner_correct = false THEN 1 ELSE 0 END) AS losses')
             ->groupBy('run_id')->get()->keyBy('run_id');
-        $history = $runs->map(function ($run) use ($counts): array {
+        $overtimeLossCounts = $evaluations->overtimeLossCounts($runs->pluck('id')->map(fn ($id): int => (int) $id)->all());
+        $history = $runs->map(function ($run) use ($counts, $overtimeLossCounts): array {
             $count = $counts->get($run->id);
             $wins = (int) ($count->wins ?? 0);
             $losses = (int) ($count->losses ?? 0);
+            $overtimeLosses = $overtimeLossCounts[$run->id] ?? 0;
             return [...(array) $run, 'definition' => \Illuminate\Support\Arr::except(json_decode($run->definition, true), ['game_ids']), 'wins' => $wins, 'losses' => $losses,
+                'regulation_losses' => $losses - $overtimeLosses, 'overtime_losses' => $overtimeLosses,
                 'win_pct' => $wins + $losses > 0 ? 100 * $wins / ($wins + $losses) : null];
         });
         if ($selected !== null) {

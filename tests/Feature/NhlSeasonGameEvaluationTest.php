@@ -603,3 +603,36 @@ it('shows the split record through the admitted runs page while preserving its s
         ->where('summary.regulation_losses', 1)->where('summary.overtime_losses', 2)->where('summary.win_pct', 25));
     expect(DB::table('nhl_custom_game_predictions')->where('run_id', $id)->orderBy('id')->get()->toJson())->toBe($before);
 });
+
+it('shows each history runs own W L OTL split without changing their win percentages', function (): void {
+    $id = $this->actingAs($this->admin)->postJson($this->base.'/runs')->assertAccepted()->json('run_id');
+    DB::table('nhl_custom_game_prediction_runs')->where('id', $id)->update(['status' => 'complete']);
+    $second = ($this->savedRun)();
+    NhlGame::query()->findOrFail($this->gameId)->update(['game_outcome' => ['lastPeriodType' => 'OT']]);
+    ($this->savedGame)($id, ['winner_correct' => false, 'recommendation' => 'BOS']);
+    ($this->savedGame)($second);
+    $this->assertDatabaseCount('nhl_custom_game_predictions', 2);
+    $this->get($this->base.'?run='.$id)->assertInertia(fn (Assert $page) => $page
+        ->where('runs.0.id', $second)->where('runs.0.wins', 1)->where('runs.0.regulation_losses', 0)
+        ->where('runs.0.overtime_losses', 0)->where('runs.0.win_pct', 100)
+        ->where('runs.1.id', $id)->where('runs.1.wins', 0)->where('runs.1.losses', 1)
+        ->where('runs.1.regulation_losses', 0)->where('runs.1.overtime_losses', 1)->where('runs.1.win_pct', 0)
+        ->where('summary.overtime_losses', 1)->where('summary.win_pct', 0));
+});
+
+it('keeps unknown and regulation endings in history losses using the shared record rule', function (array $ending): void {
+    $id = ($this->savedRun)();
+    NhlGame::query()->findOrFail($this->gameId)->update($ending);
+    ($this->savedGame)($id, ['winner_correct' => false]);
+    $this->actingAs($this->admin)->get($this->base.'?run='.$id)->assertInertia(fn (Assert $page) => $page
+        ->where('runs.0.regulation_losses', 1)->where('runs.0.overtime_losses', 0)
+        ->where('runs.0.losses', 1)->where('runs.0.win_pct', 0)->where('summary.regulation_losses', 1));
+})->with([[['game_outcome' => ['lastPeriodType' => 'REG'], 'period_type' => 'OT']],
+    [['game_outcome' => null, 'period_type' => null]]]);
+
+it('keeps empty history records at zero while retaining an unavailable win percentage', function (): void {
+    $id = ($this->savedRun)();
+    $this->actingAs($this->admin)->get($this->base.'?run='.$id)->assertInertia(fn (Assert $page) => $page
+        ->where('runs.0.wins', 0)->where('runs.0.regulation_losses', 0)
+        ->where('runs.0.overtime_losses', 0)->where('runs.0.win_pct', null));
+});

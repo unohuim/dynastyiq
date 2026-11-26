@@ -345,19 +345,7 @@ class NhlSeasonGameEvaluation
         $rows = DB::table('nhl_custom_game_predictions')->where('run_id', $id)->get(['id', 'nhl_game_id', 'status', 'winner_correct']);
         $wins = $rows->where('winner_correct', true)->count();
         $losses = $rows->where('winner_correct', false)->whereNotNull('winner_correct')->count();
-        // Split existing incorrect picks for display; preserve the winner-accuracy denominator.
-        $overtimeLosses = NhlGame::query()->whereIn('nhl_game_id', $rows->where('winner_correct', false)
-            ->whereNotNull('winner_correct')->pluck('nhl_game_id'))
-            ->get(['nhl_game_id', 'game_outcome', 'period_type'])->filter(function (NhlGame $game): bool {
-                foreach ([data_get($game->game_outcome, 'lastPeriodType'),
-                    data_get($game->game_outcome, 'periodType'), $game->period_type] as $value) {
-                    $period = strtoupper(trim((string) $value));
-                    if (in_array($period, ['REG', 'OT', 'SO'], true)) {
-                        return in_array($period, ['OT', 'SO'], true);
-                    }
-                }
-                return false;
-            })->count();
+        $overtimeLosses = $this->overtimeLossCounts([$id])[$id] ?? 0;
         $teams = DB::table('nhl_custom_game_prediction_teams')->whereIn('prediction_id', $rows->where('status', 'complete')->pluck('id'))->get([
             'prediction_id', 'goals_prediction', 'actual_ev_goals', 'actual_pp_goals', 'actual_pk_goals', 'pk_goals_prediction']);
         $known = static fn ($row): bool => $row->actual_ev_goals !== null && $row->actual_pp_goals !== null
@@ -375,6 +363,32 @@ class NhlSeasonGameEvaluation
             'excluded' => $rows->where('status', 'excluded')->count(),
             'team_goals' => app(NhlCustomGamePredictionEngine::class)->accuracy($pairs->values()->all()),
             'game_goals' => app(NhlCustomGamePredictionEngine::class)->accuracy($games->values()->all())];
+    }
+
+    /**
+     * Batch the shared display-only overtime loss split for the selected run and paginated history.
+     *
+     * @param array<int, int> $runIds
+     * @return array<int, int>
+     */
+    public function overtimeLossCounts(array $runIds): array
+    {
+        $picks = DB::table('nhl_custom_game_predictions')->whereIn('run_id', $runIds)
+            ->where('winner_correct', false)->get(['run_id', 'nhl_game_id']);
+        $overtimeGames = NhlGame::query()->whereIn('nhl_game_id', $picks->pluck('nhl_game_id')->unique())
+            ->get(['nhl_game_id', 'game_outcome', 'period_type'])->filter(function (NhlGame $game): bool {
+                foreach ([data_get($game->game_outcome, 'lastPeriodType'),
+                    data_get($game->game_outcome, 'periodType'), $game->period_type] as $value) {
+                    $period = strtoupper(trim((string) $value));
+                    if (in_array($period, ['REG', 'OT', 'SO'], true)) {
+                        return in_array($period, ['OT', 'SO'], true);
+                    }
+                }
+                return false;
+            })->pluck('nhl_game_id')->flip();
+
+        return $picks->filter(fn (object $pick): bool => $overtimeGames->has($pick->nhl_game_id))
+            ->countBy('run_id')->all();
     }
 
     /** Compare only identical games/outcomes; keep unmatched games visible as a separate count.
