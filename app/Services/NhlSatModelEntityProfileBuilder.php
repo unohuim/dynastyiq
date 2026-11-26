@@ -25,6 +25,23 @@ class NhlSatModelEntityProfileBuilder
     ];
 
     /**
+     * Identify in-place evaluation revisions used by a profile build.
+     *
+     * @return array<string, array<string, mixed>|null>
+     */
+    public static function probabilitySources(NhlExpectedGoalsModel $satModel, ?NhlExpectedGoalsModel $sogModel): array
+    {
+        $describe = static fn (NhlExpectedGoalsModel $model): array => [
+            'model_id' => (int) $model->id,
+            'trained_at' => $model->trained_at?->toIso8601String(),
+            'smoothing_policy' => data_get($model->feature_config, 'probability_smoothing.policy'),
+            'bucket_signature' => data_get($model->feature_config, 'probability_smoothing.bucket_signature'),
+        ];
+
+        return ['sat' => $describe($satModel), 'sog' => $sogModel === null ? null : $describe($sogModel)];
+    }
+
+    /**
      * Build selected entity profile buckets for one SAT model run.
      *
      * @param  array<int, string>  $profileTypes
@@ -676,7 +693,8 @@ SELECT
     ROUND(AVG(strength_profile_facts.confidence_score)::numeric, 4) as confidence_score,
     ROUND(AVG(strength_profile_facts.shrinkage_weight)::numeric, 4) as shrinkage_weight,
     MAX(strength_profile_facts.confidence_bucket) as confidence_bucket,
-    json_build_object('bucket_source', 'model_run_eval', 'profile_type', ?::text, 'profile_sample', ?::text, 'strength', strength_profile_facts.profile_strength) as metadata,
+    json_build_object('bucket_source', 'model_run_eval', 'profile_type', ?::text, 'profile_sample', ?::text,
+        'probability_sources', ?::json, 'strength', strength_profile_facts.profile_strength) as metadata,
     ?::timestamp as profiled_at,
     ?::timestamp as created_at,
     ?::timestamp as updated_at
@@ -742,6 +760,7 @@ SQL;
             $profileType,
             $profileType,
             $profileSample,
+            json_encode(self::probabilitySources($satModel, $sogModel), JSON_THROW_ON_ERROR),
             $now,
             $now,
             $now,

@@ -103,9 +103,12 @@ class NhlModelRun extends Model
     }
 
     /** Require explicit successful profile completion, not merely surviving rows. */
-    public function profilesReadyForRates(): bool
+    public function profilesReadyForRates(string $profileType = 'skater_offense'): bool
     {
         $metrics = $this->metrics ?? [];
+        if (data_get($metrics, 'profile_freshness.' . $profileType . '.outdated', false)) {
+            return false;
+        }
 
         foreach (['eval_sat_completed_at', 'eval_sog_completed_at'] as $evaluation) {
             if (! empty($metrics[$evaluation])
@@ -142,8 +145,29 @@ class NhlModelRun extends Model
 
             $metrics = array_merge($run->metrics ?? [], $stageMetrics);
             if ($stage === 'profiles') {
+                $sources = data_get($metrics, 'profile_build.evaluation_sources');
+                if (! $failed && $sources !== null) {
+                    $sat = NhlExpectedGoalsModel::query()->find(data_get($sources, 'sat.model_id'));
+                    $sogId = data_get($sources, 'sog.model_id');
+                    $sog = $sogId === null ? null : NhlExpectedGoalsModel::query()->find($sogId);
+                    if ($sat === null || ($sogId !== null && $sog === null)
+                        || $sources != \App\Services\NhlSatModelEntityProfileBuilder::probabilitySources($sat, $sog)) {
+                        $failed = true;
+                        $error = 'Bucket evaluations changed during this profile build. Start a fresh profile build.';
+                    }
+                }
                 $metrics['profile_build']['status'] = $failed ? 'failed' : 'complete';
                 $metrics['profiles_completed_at'] = $failed ? null : now()->toIso8601String();
+                if (! $failed && data_get($metrics, 'profile_build.evaluation_sources') !== null) {
+                    foreach (data_get($metrics, 'profile_build.profile_types', ['skater_offense']) as $type) {
+                        $metrics['profile_freshness'][$type] = [
+                            'outdated' => false,
+                            'probability_sources' => $metrics['profile_build']['evaluation_sources'],
+                            'build_id' => $buildId,
+                            'profiled_at' => now()->toIso8601String(),
+                        ];
+                    }
+                }
                 if (data_get($metrics, 'prediction_build.id') !== $buildId) {
                     $metrics['profile_build']['error'] = $failed ? mb_substr($error ?? 'Profile batch failed or was cancelled.', 0, 1000) : null;
                     $run->forceFill([

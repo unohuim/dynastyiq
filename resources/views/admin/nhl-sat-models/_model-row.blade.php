@@ -40,6 +40,9 @@
 <tr data-sat-model-row="{{ $run->id }}" class="relative grid min-w-0 grid-cols-2 transition-colors hover:bg-gray-50/70 lg:table-row">
     <td class="col-span-2 min-w-0 px-4 py-3 pr-40 lg:min-w-56 lg:pr-4">
         <div class="font-medium text-gray-950">{{ $run->name }}</div>
+        @if(data_get($run->metrics, 'profile_freshness.skater_offense.outdated') || data_get($run->metrics, 'profile_freshness.goalie_faced.outdated'))
+            <div class="mt-1 text-xs text-amber-700">Profiles outdated · {{ collect(['skater_offense' => 'Skaters', 'goalie_faced' => 'Goalies'])->filter(fn ($name, $type) => data_get($run->metrics, 'profile_freshness.' . $type . '.outdated'))->implode(', ') }}</div>
+        @endif
         @if($run->notes)
             <div class="mt-1 max-w-xl truncate text-xs text-gray-500">{{ $run->notes }}</div>
         @endif

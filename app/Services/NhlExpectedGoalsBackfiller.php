@@ -17,6 +17,7 @@ class NhlExpectedGoalsBackfiller
     public const DEFAULT_VERSION = 'bucket_smoothed_xg_v1';
     public const TARGET_GOAL = 'goal';
     public const TARGET_SHOT_ON_GOAL = 'shot_on_goal';
+    public const SMOOTHING_POLICY = 'same_strength_context_parent_v1';
 
     private const MODEL_TYPE = 'bucket_smoothed';
     private const SAMPLE_SAT = 'sat';
@@ -213,7 +214,8 @@ class NhlExpectedGoalsBackfiller
             ? $this->sogTrainingEligibilityCounts($trainingSeasonIds)
             : $this->trainingEligibilityCounts($trainingSeasonIds);
         $baselineRate = $baseline['attempts'] > 0 ? $baseline['successes'] / $baseline['attempts'] : 0.0;
-        $buckets = $this->trainedBuckets($bucketStats, $smoothingPriorAttempts, $baselineRate);
+        $priorFactor = $modelRunId === null ? null : ($sampleMode === self::SAMPLE_SOG ? 'distance_group' : 'shot_type_group');
+        $buckets = $this->trainedBuckets($bucketStats, $smoothingPriorAttempts, $baselineRate, $priorFactor);
         $strengthBuckets = [];
         foreach (['ev', 'pp', 'pk'] as $strength) {
             $stats = $this->trainingBucketStats(
@@ -224,10 +226,17 @@ class NhlExpectedGoalsBackfiller
                 $strengthBuckets[$strength] = $this->trainedBuckets(
                     $stats,
                     $smoothingPriorAttempts,
-                    $strengthBaseline['successes'] / $strengthBaseline['attempts']
+                    $strengthBaseline['successes'] / $strengthBaseline['attempts'],
+                    $priorFactor
                 );
             }
         }
+        $signatureBuckets = ['all' => $buckets, ...$strengthBuckets];
+        foreach ($signatureBuckets as &$partition) {
+            ksort($partition);
+        }
+        unset($partition);
+        $bucketSignature = hash('sha256', json_encode($signatureBuckets, JSON_THROW_ON_ERROR));
         $bucketCount = count($buckets);
         $strengthBucketCount = array_sum(array_map('count', $strengthBuckets));
         $workflowAction = $sampleMode === self::SAMPLE_SAT && $predictionTarget === self::TARGET_SHOT_ON_GOAL
@@ -282,6 +291,12 @@ class NhlExpectedGoalsBackfiller
                     'workflow_action' => $workflowAction,
                     'training_season_ids' => $trainingSeasonIds,
                     'strength_probabilities' => 'strength_bucket_v1',
+                    'probability_smoothing' => [
+                        'policy' => $priorFactor === null ? 'league_baseline_v1' : self::SMOOTHING_POLICY,
+                        'parent_factor' => $priorFactor,
+                        'prior_attempts' => $smoothingPriorAttempts,
+                        'bucket_signature' => $bucketSignature,
+                    ],
                     'sat_factor_evaluation' => $sampleMode === self::SAMPLE_SAT
                         && $predictionTarget === self::TARGET_SHOT_ON_GOAL ? $evaluationMetrics : null,
                     'sog_factor_evaluation' => $sampleMode === self::SAMPLE_SOG ? $evaluationMetrics : null,
@@ -331,6 +346,30 @@ class NhlExpectedGoalsBackfiller
             'status' => 'draft',
             'trained_at' => $trainedAt,
         ])->save();
+
+        if ($modelRunId !== null) {
+            // Evaluation changes values in place, so a model ID alone cannot prove profile freshness.
+            DB::transaction(function () use ($modelRunId, $predictionTarget): void {
+                $run = NhlModelRun::query()->whereKey($modelRunId)->lock('for no key update')->first();
+                if ($run === null) {
+                    return;
+                }
+                $metrics = $run->metrics ?? [];
+                foreach (['skater_offense', 'goalie_faced'] as $type) {
+                    if (DB::table('nhl_sat_model_entity_profile_buckets')
+                        ->where('model_run_id', $modelRunId)
+                        ->where('profile_type', $type)
+                        ->exists()) {
+                        $metrics['profile_freshness'][$type] = array_merge($metrics['profile_freshness'][$type] ?? [], [
+                            'outdated' => true,
+                            'changed_target' => $predictionTarget,
+                            'changed_at' => now()->toIso8601String(),
+                        ]);
+                    }
+                }
+                $run->forceFill(['metrics' => $metrics])->save();
+            });
+        }
 
         return [
             'model_id' => (int) $model->id,
@@ -528,15 +567,43 @@ class NhlExpectedGoalsBackfiller
     private function trainedBuckets(
         array $bucketStats,
         int $smoothingPriorAttempts,
-        float $baselineRate
+        float $baselineRate,
+        ?string $priorFactor = null
     ): array {
         $buckets = [];
+        $parents = [];
+        if ($priorFactor !== null) {
+            // Aggregate only the disjoint detailed rows; fallback levels would count the same events again.
+            foreach ($bucketStats as $bucket) {
+                if ($bucket['level'] !== 1) {
+                    continue;
+                }
+                $factor = array_key_exists($priorFactor, $bucket['dimensions'])
+                    ? $priorFactor : array_key_first($bucket['dimensions']);
+                if ($factor === null || $factor === 'baseline') {
+                    continue;
+                }
+                $parentKey = json_encode([$factor, $bucket['dimensions'][$factor]], JSON_THROW_ON_ERROR);
+                $parents[$parentKey]['attempts'] = ($parents[$parentKey]['attempts'] ?? 0) + $bucket['attempts'];
+                $parents[$parentKey]['successes'] = ($parents[$parentKey]['successes'] ?? 0) + $bucket['successes'];
+            }
+        }
 
         foreach ($bucketStats as $key => $bucket) {
             $rawRate = $bucket['attempts'] > 0 ? $bucket['successes'] / $bucket['attempts'] : 0.0;
             $priorAttempts = $bucket['level'] === 99 ? 0 : $smoothingPriorAttempts;
             $denominator = max(1, $bucket['attempts'] + $priorAttempts);
-            $smoothed = ($bucket['successes'] + ($baselineRate * $priorAttempts)) / $denominator;
+            $priorRate = $baselineRate;
+            if ($priorFactor !== null && $bucket['level'] !== 99) {
+                $factor = array_key_exists($priorFactor, $bucket['dimensions'])
+                    ? $priorFactor : array_key_first($bucket['dimensions']);
+                $parentKey = $factor === null ? null : json_encode([$factor, $bucket['dimensions'][$factor]], JSON_THROW_ON_ERROR);
+                $parent = $parentKey === null ? null : ($parents[$parentKey] ?? null);
+                if (($parent['attempts'] ?? 0) > 0) {
+                    $priorRate = $parent['successes'] / $parent['attempts'];
+                }
+            }
+            $smoothed = ($bucket['successes'] + ($priorRate * $priorAttempts)) / $denominator;
             $confidenceScore = $bucket['level'] === 99 ? 1.0 : $bucket['attempts'] / $denominator;
             $shrinkageWeight = $bucket['level'] === 99 ? 0.0 : $priorAttempts / $denominator;
 

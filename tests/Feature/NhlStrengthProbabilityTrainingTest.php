@@ -215,7 +215,7 @@ it('uses the valid strength bucket when primary strength is missing', function (
     expect(($this->baseline)(($this->train)(), 'pk')->attempts)->toBe(5);
 });
 
-it('smooths small PK buckets toward the PK baseline', function (): void {
+it('smooths small PK buckets toward their same-strength shot type parent', function (): void {
     ($this->fact)('pk', 'missed-shot', ['shot_distance' => 65]);
     $model = ($this->train)('shot_on_goal', 100);
     $rows = $model->buckets()->where('strength', 'pk')->where('fallback_level', 1)->get();
@@ -368,6 +368,12 @@ it('builds profiles without multiplying attempts across probability strengths', 
     foreach (['ev', 'pp', 'pk'] as $strength) {
         expect((int) $rows->where('strength', $strength)->sum('source_sat'))->toBe(4);
     }
+    foreach ($rows as $row) {
+        $sources = json_decode($row->metadata, true)['probability_sources'];
+        expect($sources['sat']['model_id'])->toBe($sat->id)
+            ->and($sources['sog']['model_id'])->toBe($sog->id)
+            ->and($sources['sat']['smoothing_policy'])->toBe(NhlExpectedGoalsBackfiller::SMOOTHING_POLICY);
+    }
     $filter = app(NhlPregameContextBuilder::class)->evaluationBucketFilter($this->run->id, ['20242025']);
     expect($filter['keys'])->toHaveCount(1)->and($filter['keys'])->toBe(array_values(array_unique($filter['keys'])));
 });
@@ -405,4 +411,61 @@ it('blocks guests from reading admin probability buckets', function (): void {
 
 it('blocks unprivileged users from reading admin probability buckets', function (): void {
     $this->actingAs(User::factory()->create())->get(route('admin.nhl-sat-models.buckets', $this->run))->assertForbidden();
+});
+
+it('stores contextual smoothing provenance and a bucket revision signature', function (): void {
+    $model = ($this->train)('shot_on_goal', 100);
+    expect(data_get($model->feature_config, 'probability_smoothing.policy'))->toBe(NhlExpectedGoalsBackfiller::SMOOTHING_POLICY)
+        ->and(data_get($model->feature_config, 'probability_smoothing.parent_factor'))->toBe('shot_type_group')
+        ->and(data_get($model->feature_config, 'probability_smoothing.bucket_signature'))->toHaveLength(64);
+});
+
+it('stores distance as the goal conversion smoothing parent', function (): void {
+    $model = ($this->train)('goal', 100);
+    expect(data_get($model->feature_config, 'probability_smoothing.parent_factor'))->toBe('distance_group');
+});
+
+it('changes the evaluation signature when evidence changes within the same clock second', function (): void {
+    $first = ($this->train)();
+    ($this->fact)('pk', 'goal');
+    $second = ($this->train)();
+    expect($first->id)->toBe($second->id)
+        ->and(data_get($first->feature_config, 'probability_smoothing.bucket_signature'))
+        ->not->toBe(data_get($second->feature_config, 'probability_smoothing.bucket_signature'));
+});
+
+it('marks existing profiles outdated after evaluation and exposes that through HTTP', function (): void {
+    $sat = ($this->train)();
+    foreach (['skater_offense', 'goalie_faced'] as $type) {
+        DB::table('nhl_sat_model_entity_profile_buckets')->insert([
+            'model_run_id' => $this->run->id, 'sat_expected_goals_model_id' => $sat->id,
+            'source_season_ids' => '["20242025"]', 'profile_type' => $type,
+            'entity_key' => $type . ':101', 'matched_bucket_key' => 'L01|wrist',
+            'fallback_level' => 1, 'bucket_dimensions' => '{}',
+        ]);
+    }
+    $this->actingAs(($this->admin)())->postJson(route('admin.nhl-sat-models.train', $this->run), ['evaluation' => 'sat'])->assertOk();
+    expect(data_get($this->run->fresh()->metrics, 'profile_freshness.skater_offense.outdated'))->toBeTrue()
+        ->and(data_get($this->run->fresh()->metrics, 'profile_freshness.goalie_faced.outdated'))->toBeTrue();
+    $this->get(route('admin.nhl-sat-models.index'))->assertOk()->assertSee('Profiles outdated')->assertSee('Skaters, Goalies');
+    expect(DB::table('nhl_sat_model_entity_profile_buckets')->where('model_run_id', $this->run->id)->count())->toBe(2);
+});
+
+it('does not label an unbuilt profile type outdated', function (): void {
+    ($this->train)();
+    expect(data_get($this->run->fresh()->metrics, 'profile_freshness'))->toBeNull();
+});
+
+it('does not invalidate profiles during a dry run evaluation', function (): void {
+    ($this->train)();
+    $this->run->update(['metrics' => ['profile_freshness' => ['skater_offense' => ['outdated' => false]]]]);
+    ($this->train)('shot_on_goal', 100, true);
+    expect(data_get($this->run->fresh()->metrics, 'profile_freshness.skater_offense.outdated'))->toBeFalse();
+});
+
+it('keeps the bucket signature stable for identical evidence and smoothing settings', function (): void {
+    $first = ($this->train)('shot_on_goal', 100);
+    $second = ($this->train)('shot_on_goal', 100);
+    expect(data_get($first->feature_config, 'probability_smoothing.bucket_signature'))
+        ->toBe(data_get($second->feature_config, 'probability_smoothing.bucket_signature'));
 });

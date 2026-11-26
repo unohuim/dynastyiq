@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Jobs;
 
 use App\Events\NhlSatModelUpdated;
+use App\Models\NhlExpectedGoalsModel;
 use App\Models\NhlModelRun;
 use App\Services\NhlSatModelGenericBucketStabilityBuilder;
 use App\Services\NhlSatModelEntityProfileBuilder;
@@ -107,6 +108,11 @@ class BuildNhlSatModelEntityProfilesJob implements ShouldQueue, ShouldBeUnique
                 $metrics = $run->metrics ?? [];
                 $metrics['profile_build'] = array_merge($metrics['profile_build'] ?? [], [
                     'id' => $this->predictionBuildId, 'status' => 'running', 'dispatched' => true,
+                    'profile_types' => $this->profileTypes,
+                    'evaluation_sources' => NhlSatModelEntityProfileBuilder::probabilitySources(
+                        NhlExpectedGoalsModel::query()->findOrFail($this->satModelId),
+                        $this->sogModelId === null ? null : NhlExpectedGoalsModel::query()->findOrFail($this->sogModelId)
+                    ),
                 ]);
                 $run->forceFill(['metrics' => $metrics])->save();
 

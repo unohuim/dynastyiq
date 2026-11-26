@@ -3274,3 +3274,17 @@ as `official_full_appearance`. These labels do not enable a goalie scoring layer
 - `generation` starts at one and increases on abandoned-delivery recovery. `attempts` counts claimed deliveries including successful checkpoint continuations; `failures` counts retryable exceptions; `recoveries` counts abandoned-delivery replacements. These are operational counters, not model-confidence metrics.
 
 - Partner `prediction_status.status` uses the existing operational item lifecycle above; `prediction_status.stage` uses the existing phase enum. `prediction_status.progress_scope` is `stage` and never implies an overall prediction-completion percentage. Historic requests with no saved prediction or attempt report `unavailable` without admission; other existing games without an attempt use the approved `queued` presentation.
+
+
+### Probability smoothing provenance
+
+`nhl_expected_goals_models.feature_config.probability_smoothing.policy` identifies
+`same_strength_context_parent_v1` for run-aware evaluations and
+`league_baseline_v1` for legacy non-run baseline smoothing. `parent_factor` uses
+existing selected factor keys (`shot_type_group` for SAT, `distance_group` for
+SOG), or null for legacy training. These labels do not change strength enums.
+
+Profile `metadata.probability_sources` and run `metrics.profile_build.evaluation_sources`
+identify `sat` and optional `sog` sources. Per-type
+`metrics.profile_freshness.{profile_type}.outdated` is a boolean, not a new model
+lifecycle status. Existing profile types remain authoritative.

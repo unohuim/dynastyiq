@@ -1071,3 +1071,111 @@ it('uses EV goalie skill only in EV and keeps PP and PK goalie conversion at lea
         ->and($buckets->get('PK|L01|goalie_faced')->goalie_skill_source)->toBe('league_average_strength')
         ->and($buckets->get('PK|L01|goalie_faced')->projected_ga)->toBe(1.0);
 });
+
+it('freezes evaluation source revisions before dispatching profile children', function (): void {
+    ($this->activate)();
+    $this->sat->update(['trained_at' => now(), 'feature_config' => ['probability_smoothing' => [
+        'policy' => 'same_strength_context_parent_v1', 'bucket_signature' => 'sat-revision-1',
+    ]]]);
+    (new BuildNhlSatModelEntityProfilesJob($this->run->id, $this->sat->id, null, 'build-1'))
+        ->handle(app(NhlSatModelEntityProfileBuilder::class));
+    $sources = data_get($this->run->fresh()->metrics, 'profile_build.evaluation_sources');
+    expect($sources['sat']['model_id'])->toBe($this->sat->id)
+        ->and($sources['sat']['bucket_signature'])->toBe('sat-revision-1')->and($sources['sog'])->toBeNull()
+        ->and(data_get($this->run->fresh()->metrics, 'profile_build.profile_types'))->toBe(['skater_offense']);
+});
+
+it('records optional SOG evaluation revision alongside SAT', function (): void {
+    $sog = NhlExpectedGoalsModel::query()->create([
+        'model_run_id' => $this->run->id, 'name' => 'SOG', 'version' => 'sog-test', 'prediction_target' => 'goal',
+        'trained_at' => now(), 'feature_config' => ['probability_smoothing' => ['bucket_signature' => 'sog-revision-1']],
+    ]);
+    $sources = NhlSatModelEntityProfileBuilder::probabilitySources($this->sat, $sog);
+    expect($sources['sog']['model_id'])->toBe($sog->id)
+        ->and($sources['sog']['bucket_signature'])->toBe('sog-revision-1')
+        ->and($sources['sog']['trained_at'])->toBe(now()->toIso8601String());
+});
+
+it('rejects children if the evaluation changed in place after admission', function (): void {
+    ($this->activate)();
+    (new BuildNhlSatModelEntityProfilesJob($this->run->id, $this->sat->id, null, 'build-1'))
+        ->handle(app(NhlSatModelEntityProfileBuilder::class));
+    $this->sat->update(['feature_config' => ['probability_smoothing' => ['bucket_signature' => 'replaced']]]);
+    $builder = Mockery::mock(NhlSatModelEntityProfileBuilder::class);
+    $builder->shouldNotReceive('buildEntity');
+    $job = new BuildNhlSatModelEntityProfileForEntityJob($this->run->id, $this->sat->id, null, 'skater_offense', 'skater_offense:101', null, 'build-1');
+    expect(fn () => $job->handle($builder))->toThrow(RuntimeException::class, 'Bucket evaluations changed');
+    expect(data_get($this->run->fresh()->metrics, 'profile_entities_completed', 0))->toBe(0);
+});
+
+it('clears only the successfully rebuilt profile type freshness marker', function (): void {
+    ($this->activate)();
+    $metrics = $this->run->fresh()->metrics;
+    $metrics['profile_build'] = [
+        'id' => 'build-1', 'status' => 'running', 'profile_types' => ['skater_offense'],
+        'evaluation_sources' => NhlSatModelEntityProfileBuilder::probabilitySources($this->sat, null),
+    ];
+    $metrics['profile_freshness'] = ['skater_offense' => ['outdated' => true], 'goalie_faced' => ['outdated' => true]];
+    $this->run->update(['metrics' => $metrics]);
+    NhlModelRun::finishPredictionStage($this->run->id, 'build-1', 'profiles', false);
+    expect(data_get($this->run->fresh()->metrics, 'profile_freshness.skater_offense.outdated'))->toBeFalse()
+        ->and(data_get($this->run->fresh()->metrics, 'profile_freshness.goalie_faced.outdated'))->toBeTrue()
+        ->and(data_get($this->run->fresh()->metrics, 'profile_freshness.skater_offense.probability_sources.sat.model_id'))->toBe($this->sat->id);
+});
+
+it('retains outdated profiles when their rebuild fails', function (): void {
+    ($this->activate)();
+    $this->run->update(['metrics' => [...$this->run->metrics,
+        'profile_freshness' => ['skater_offense' => ['outdated' => true]],
+    ]]);
+    NhlModelRun::finishPredictionStage($this->run->id, 'build-1', 'profiles', true);
+    expect(data_get($this->run->fresh()->metrics, 'profile_freshness.skater_offense.outdated'))->toBeTrue();
+});
+
+it('rejects completion when probability sources changed after the last child', function (): void {
+    ($this->activate)();
+    (new BuildNhlSatModelEntityProfilesJob($this->run->id, $this->sat->id, null, 'build-1'))
+        ->handle(app(NhlSatModelEntityProfileBuilder::class));
+    $this->sat->update(['trained_at' => now()->addSecond()]);
+    NhlModelRun::finishPredictionStage($this->run->id, 'build-1', 'profiles', false);
+    expect($this->run->fresh()->status)->toBe('failed')
+        ->and(data_get($this->run->fresh()->metrics, 'profile_build.error'))->toBeNull()
+        ->and(data_get($this->run->fresh()->metrics, 'prediction_build.error'))->toContain('Bucket evaluations changed');
+    Bus::assertNotDispatched(BuildNhlSatModelEntityRateProjectionsJob::class);
+});
+
+it('blocks rates on explicit outdated metadata even at an identical evaluation timestamp', function (): void {
+    $this->run->update(['metrics' => [...$this->readyMetrics,
+        'profile_freshness' => ['skater_offense' => ['outdated' => true]],
+    ]]);
+    expect($this->run->fresh()->profilesReadyForRates())->toBeFalse();
+});
+
+it('keeps skater readiness independent of an outdated goalie profile', function (): void {
+    $this->run->update(['metrics' => [...$this->readyMetrics,
+        'profile_freshness' => ['goalie_faced' => ['outdated' => true]],
+    ]]);
+    expect($this->run->fresh()->profilesReadyForRates())->toBeTrue()
+        ->and($this->run->fresh()->profilesReadyForRates('goalie_faced'))->toBeFalse();
+});
+
+it('leaves outdated markers intact for legacy callbacks without evaluation provenance', function (): void {
+    ($this->activate)();
+    $this->run->update(['metrics' => [...$this->run->metrics,
+        'profile_freshness' => ['skater_offense' => ['outdated' => true]],
+    ]]);
+    NhlModelRun::finishPredictionStage($this->run->id, 'build-1', 'profiles', false);
+    expect(data_get($this->run->fresh()->metrics, 'profile_freshness.skater_offense.outdated'))->toBeTrue();
+});
+
+it('compares evaluation descriptors independent of database JSON key order', function (): void {
+    ($this->activate)();
+    $sources = NhlSatModelEntityProfileBuilder::probabilitySources($this->sat, null);
+    $sources['sat'] = array_reverse($sources['sat'], true);
+    $metrics = $this->run->fresh()->metrics;
+    $metrics['profile_build'] = ['id' => 'build-1', 'status' => 'running', 'evaluation_sources' => $sources];
+    $this->run->update(['metrics' => $metrics]);
+    NhlModelRun::finishPredictionStage($this->run->id, 'build-1', 'profiles', false);
+    expect(data_get($this->run->fresh()->metrics, 'profile_freshness.skater_offense.outdated'))->toBeFalse();
+    Bus::assertDispatched(BuildNhlSatModelEntityRateProjectionsJob::class);
+});

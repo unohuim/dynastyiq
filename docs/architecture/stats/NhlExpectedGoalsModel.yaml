@@ -79,6 +79,9 @@ rules:
   - Eval SOG metrics must distinguish total SOG in the training seasons from SOG eligible for model training after constraints.
   - Eval SOG exclusion metrics must store training_total_sog, training_attempts, training_excluded_sog, and training_excluded_sog_rate.
   - Bucket confidence must be based on direct bucket attempts relative to smoothing prior attempts, and shrinkage_weight must describe the borrowed prior share.
+  - Run-aware probability smoothing must use contextual parent evidence within the same strength partition. SAT-to-SOG prefers the selected shot-type dimension; SOG-to-goal prefers the selected distance dimension. When that dimension is not selected, use the first selected dimension; absent matching parent evidence, use that strength's own baseline.
+  - Parent evidence must sum disjoint detailed training buckets only, including the child; overlapping fallback and baseline rows must not be counted again. Parents with a single detailed child retain that child's raw rate. Keep configured pseudo-attempt counts, raw observations, confidence, shrinkage, factor selection, and eligibility unchanged.
+  - All, EV, PP, and PK must construct independent parent samples. Legacy non-run training retains its existing baseline smoothing. Evaluation feature metadata must record the smoothing policy, preferred parent factor, prior attempts, and bucket-content signature so in-place revisions remain auditable.
   - Run-aware xG/xSOG models and later predictions must reference nhl_model_runs through model_run_id so experiments can be compared without overwriting prior outputs.
   - Bucket fallback must preserve shot type before falling back to the league baseline: exact shot type plus distance plus angle plus sequence, then shot type plus distance plus angle, then shot type plus distance, then shot type, then league.
   - Target or holdout seasons must never be included in the training season list for testing runs.

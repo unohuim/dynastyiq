@@ -127,6 +127,10 @@ class BuildNhlSatModelEntityProfileForEntityJob implements ShouldQueue
             }
             $satModel = NhlExpectedGoalsModel::query()->findOrFail($this->satModelId);
             $sogModel = $this->sogModelId === null ? null : NhlExpectedGoalsModel::query()->findOrFail($this->sogModelId);
+            $evaluationSources = data_get($run->metrics, 'profile_build.evaluation_sources');
+            if ($evaluationSources !== null && $evaluationSources != NhlSatModelEntityProfileBuilder::probabilitySources($satModel, $sogModel)) {
+                throw new \RuntimeException('Bucket evaluations changed during this profile build. Start a fresh profile build.');
+            }
             foreach ($this->entityKeys as $entityKey) {
                 if ($this->snapshotSeasonId !== null) {
                     $builder->buildSeasonSnapshotEntity($run, $satModel, $sogModel, $this->profileType, $entityKey, $this->snapshotSeasonId);

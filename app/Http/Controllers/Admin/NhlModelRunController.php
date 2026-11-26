@@ -201,6 +201,7 @@ class NhlModelRunController extends Controller
             'sog_factor_evaluation' => data_get($model?->metrics, 'sog_factor_evaluation'),
         ], static fn (mixed $value): bool => $value !== null);
 
+        $run->refresh();
         $run->forceFill([
             'status' => NhlModelRun::STATUS_COMPLETE,
             'metrics' => array_merge($run->metrics ?? [], $metrics, [
@@ -403,7 +404,7 @@ class NhlModelRunController extends Controller
             return back()->withErrors(['run' => $message]);
         }
 
-        if (! $run->profilesReadyForRates()
+        if (! $run->profilesReadyForRates($profileType)
             || ! DB::table('nhl_sat_model_entity_profile_buckets')
                 ->where('model_run_id', $run->id)
                 ->where('profile_type', $profileType)
