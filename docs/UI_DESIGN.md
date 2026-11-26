@@ -754,8 +754,8 @@ to unmigrated reports using ordinary navigation. Those reports retain their exis
 layouts until separately migrated.
 
 Pregame initially identifies Sep2026 as its historical pilot. The compact health
-strip and expandable workstream table sit beside the control/attention/automation
-rail. Job activity, allocation and coverage occupy a three-panel footer. Show at
+strip and workstream/active-worker list sit beside the control/attention/automation
+rail. Queue claims/history, allocation and coverage occupy a three-panel footer. Show at
 most three attention items in the overview; View all opens the full scoped list.
 The Overall Health badge, Outstanding count and visible View issues link are
 keyboard-accessible dialog triggers for that same complete list and repair
@@ -763,16 +763,19 @@ panel. Opening it is read-only and remains available when the pilot source is
 missing; processing controls keep their separate eligibility checks. Show an
 explicit empty state when no tracked issues exist.
 The primary Repair missing context action covers this historical pilot's Train
-and Test gaps. In the repair drawer, keep Update Test / prediction season only
-separate from that repair and the confirmed full rebuild. List source-blocked
+and Test gaps. View issues shows only recorded causes, source blockers and one
+repair action. Resume paused or retryable maintenance through that same action;
+disable it while work is already running or no actionable issue is recorded.
+Keep Test-only updates, retries and confirmed full rebuild/stop controls in separate
+Maintenance options. List source-blocked
 games with dates, NHL game IDs and specific missing-source reasons in a bounded
 scroll region; label truncation. Explain terminally skipped dates rather than
 presenting them as calculated league or context data. Health continues to show
 missing coverage even when processing is complete.
 Name each coverage gap directly beside Overall Health and in issue titles, using
 Train/Test membership, season and missing-game count. Show fully covered Test
-seasons separately so they are not mistaken for the cause. The repair drawer lists
-all observed Train and Test seasons with their coverage counts. Repair captions
+seasons separately so they are not mistaken for the cause. All-season coverage
+remains available outside View issues. Repair captions
 use the affected scopes and total observed missing games, with a generic caption
 when there are no observed team gaps. Retain the existing repair process and its
 broader player/metric completeness checks.
@@ -786,16 +789,22 @@ today's production games are ready. Label shared claim counts so users do not ad
 them across workstreams. Allocation adjusts real league/context claim limits, not
 fabricated domain worker pools or physical Horizon provisioning.
 
-Place a prominent Current Update strip above the Pregame workstreams. Show the
-processed percentage and games denominator, successful updates, exclusions and
-failures separately, plus elapsed wall time and independent league/context day
-progress. Unknown selection has an indeterminate bar; a processed selection never
-implies full data coverage. Keep the run status visible even at 100% processed.
+Place a compact current/last-maintenance summary above the Pregame workstreams.
+Show processed percentage/counts, updated/excluded/failed counts, elapsed wall time
+and executing process count. Put active stage progress in the relevant pool row;
+never show a full-width activity bar or filled completed-run bars. Unknown
+selection stays unavailable; processed work never implies complete data coverage.
+Preserve the historical status and counts after work finishes.
 
-Worker Activity shows observed task, server/PID, queue, owning run, game/date where
-available, elapsed time and observation state. Keep durable date claims in a
-separate disclosure and allocation as claim capacity. Reserve the activity list's
-height during quiet refresh; retain old rows as Unknown on telemetry failure.
+Workstreams & active workers lists League averages and Pregame context, with
+player/team/goalie/rankings/travel categories under the shared context pool.
+Show Idle, Queued, Working, Blocked, Paused, Pausing or Unknown from current
+evidence. Running workers appear once under their actual pool, with observed task,
+server/PID, queue, owning run, game/date, elapsed time and measured checkpoints.
+Coordination workers have their own row while present. Count unique host/PIDs
+separately from configured claim capacity. League checkpoints without a measured
+denominator use phase text. Keep durable date claims separate. Reserve the list's
+height during quiet refresh; retain old observations as Unknown on telemetry failure.
 Do not announce an unavailable read as zero workers. Tracking starts when queued
 workers load the deployment; previous executions cannot be reconstructed from
 claims. Poll active work quietly without removing the screen or shifting it for

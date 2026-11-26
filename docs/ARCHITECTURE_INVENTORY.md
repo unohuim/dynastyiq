@@ -18,6 +18,10 @@ Pregame maintenance shows processed selection progress separately from successfu
 updates and data coverage. Best-effort queue lifecycle observations supply actual
 delivery identity, task, host/PID and elapsed time, separately from durable claims.
 Telemetry failure does not interrupt jobs or change prediction authority.
+Live workers are grouped once by league/context pool with optional date checkpoints;
+coordination remains visible separately. Completed maintenance does not imply
+active work. View issues offers one scoped repair action; general maintenance
+options remain separate.
 Authority: `docs/architecture/admin/NhlPregameWorkerActivity.yaml`.
 
 

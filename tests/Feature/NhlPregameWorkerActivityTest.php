@@ -330,3 +330,80 @@ it('observes real provider lifecycle registration and serves the same execution 
     expect(($this->snapshot)()['workers'])->toBe([]);
     Bus::assertNothingDispatched();
 });
+
+it('classifies preparation executions as coordination rather than data calculation', function (): void {
+    ($this->start)();
+    expect(($this->snapshot)()['workers'][0]['pool'])->toBe('coordination')
+        ->and(($this->snapshot)()['workers'][0]['work_progress'])->toBeNull();
+});
+
+it('exposes league checkpoints without manufacturing a percentage or peer count', function (): void {
+    DB::table('nhl_pregame_context_run_days')->where('id', $this->day)->update(['league_cursor' => 2, 'league_entity_cursor' => 8470001]);
+    ($this->start)(($this->makeJob)(new CalculateNhlPregameLeagueBatchJob($this->run->id, $this->day)));
+    $worker = ($this->snapshot)()['workers'][0];
+    expect($worker['pool'])->toBe('league')->and($worker['work_progress']['percent'])->toBeNull()
+        ->and($worker['work_progress']['completed_populations'])->toBe(2)
+        ->and($worker['work_progress']['entity_cursor'])->toBe(8470001)
+        ->and($worker['work_progress'])->not->toHaveKey('peers_processed');
+});
+
+it('identifies league finalization without presenting its sentinel as a sample count', function (): void {
+    DB::table('nhl_pregame_context_run_days')->where('id', $this->day)->update(['league_entity_cursor' => PHP_INT_MAX]);
+    ($this->start)(($this->makeJob)(new CalculateNhlPregameLeagueBatchJob($this->run->id, $this->day)));
+    $progress = ($this->snapshot)()['workers'][0]['work_progress'];
+    expect($progress['finalizing'])->toBeTrue()->and($progress['entity_cursor'])->toBeNull()
+        ->and($progress['label'])->toContain('finalizing metric groups');
+});
+
+it('reports committed context date progress including explicitly excluded games', function (): void {
+    DB::table('nhl_pregame_context_run_days')->where('id', $this->day)->update(['game_count' => 5,
+        'completed_games' => 2, 'blocked_games' => 1]);
+    ($this->start)(($this->makeJob)(new BuildNhlPregameContextDayBatchJob($this->run->id, $this->day)));
+    $worker = ($this->snapshot)()['workers'][0];
+    expect($worker['pool'])->toBe('context')->and($worker['work_progress']['completed'])->toBe(3)
+        ->and($worker['work_progress']['total'])->toBe(5)->and($worker['work_progress']['percent'])->toBe(60.0);
+});
+
+it('retains observed executions when no matching date checkpoint exists', function (): void {
+    ($this->start)(($this->makeJob)(new BuildNhlPregameContextDayBatchJob($this->run->id, 999999)));
+    expect(($this->snapshot)()['workers'])->toHaveCount(1)
+        ->and(($this->snapshot)()['workers'][0]['work_progress'])->toBeNull();
+});
+
+it('keeps execution identity available when optional checkpoint reads fail', function (): void {
+    ($this->start)(($this->makeJob)(new BuildNhlPregameContextDayBatchJob($this->run->id, $this->day)));
+    DB::partialMock()->shouldReceive('table')->with('nhl_pregame_context_run_days')
+        ->andThrow(new RuntimeException('Checkpoint read unavailable'));
+    $snapshot = ($this->snapshot)();
+    expect($snapshot['available'])->toBeTrue()->and($snapshot['workers'])->toHaveCount(1)
+        ->and($snapshot['workers'][0]['pid'])->toBe(42)->and($snapshot['workers'][0]['work_progress'])->toBeNull();
+});
+
+it('never changes durable checkpoint counters when inspecting worker progress', function (): void {
+    $before = DB::table('nhl_pregame_context_run_days')->where('id', $this->day)->first();
+    ($this->start)(($this->makeJob)(new BuildNhlPregameContextDayBatchJob($this->run->id, $this->day)));
+    ($this->snapshot)();
+    expect((array) DB::table('nhl_pregame_context_run_days')->where('id', $this->day)->first())->toBe((array) $before);
+});
+
+it('does not attach live progress to an unconfirmed execution', function (): void {
+    ($this->start)(($this->makeJob)(new CalculateNhlPregameLeagueBatchJob($this->run->id, $this->day)));
+    $this->travel(91)->seconds();
+    expect(($this->snapshot)()['workers'][0]['work_progress'])->toBeNull();
+});
+
+it('serves committed date progress for an observed execution through authorized HTTP', function (): void {
+    $admin = User::factory()->create();
+    $role = Role::firstOrCreate(['slug' => 'super-admin'], ['name' => 'Super Admin', 'level' => 99]);
+    $admin->roles()->attach($role->id, ['organization_id' => null]);
+    DB::table('nhl_pregame_context_run_days')->where('id', $this->day)->update(['game_count' => 5, 'completed_games' => 3]);
+    $job = ($this->makeJob)(new BuildNhlPregameContextDayBatchJob($this->run->id, $this->day));
+    Event::dispatch(new JobProcessing('redis', $job));
+    expect(($this->snapshot)()['workers'])->toHaveCount(1);
+    $this->assertDatabaseHas('nhl_pregame_context_run_days', ['id' => $this->day, 'game_count' => 5, 'completed_games' => 3]);
+    $this->actingAs($admin)->withHeaders(['X-Inertia' => 'true', 'X-Inertia-Partial-Component' => 'Admin/SatModels/Index',
+        'X-Inertia-Partial-Data' => 'pregame'])->get('/admin/nhl-sat-models')->assertOk()
+        ->assertJsonPath('props.pregame.worker_activity.workers.0.pool', 'context')
+        ->assertJsonPath('props.pregame.worker_activity.workers.0.work_progress.percent', 60);
+    Bus::assertNothingDispatched();
+});

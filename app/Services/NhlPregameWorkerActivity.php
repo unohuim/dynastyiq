@@ -144,14 +144,67 @@ class NhlPregameWorkerActivity
                     continue;
                 }
                 $record['state'] = \Carbon\CarbonImmutable::parse($record['deadline_at'])->isPast() ? 'unconfirmed' : 'running';
+                $record['pool'] = match ($record['job'] ?? null) {
+                    'CalculateNhlPregameLeagueBatchJob', 'CalculateNhlPregameContextRunDayLeagueAveragesJob' => 'league',
+                    'BuildNhlPregameContextGameJob', 'BuildNhlPregameContextDayJob', 'BuildNhlPregameContextDayBatchJob',
+                    'CalculateNhlPregameContextLeagueMetricsJob', 'CompareNhlPregameContextRunDayJob' => 'context',
+                    default => 'coordination',
+                };
+                $record['work_progress'] = null;
                 $workers[] = $record;
             }
+            $workers = $this->withProgress($workers);
 
             return ['available' => true, 'workers' => $workers, 'truncated' => count($members) > 200,
                 'observed_at' => now()->toIso8601String()];
         } catch (Throwable) {
             return $empty;
         }
+    }
+
+    /** Attach bounded read-only checkpoints; missing progress never hides a known execution. */
+    private function withProgress(array $workers): array
+    {
+        $dated = collect($workers)->filter(fn (array $worker): bool => $worker['state'] === 'running' && ! empty($worker['game_date']))
+            ->unique(fn (array $worker): string => $worker['run_id'].':'.$worker['game_date']);
+        if ($dated->isEmpty()) {
+            return $workers;
+        }
+        try {
+            $days = DB::table('nhl_pregame_context_run_days')
+                ->where(function ($query) use ($dated): void {
+                    foreach ($dated as $worker) {
+                        $query->orWhere(fn ($pair) => $pair->where('run_id', $worker['run_id'])->where('game_date', $worker['game_date']));
+                    }
+                })
+                ->get(['run_id', 'game_date', 'game_count', 'completed_games', 'blocked_games',
+                    'league_cursor', 'league_entity_cursor'])
+                ->keyBy(fn (object $day): string => $day->run_id.':'.$day->game_date);
+            foreach ($workers as &$worker) {
+                $day = $days->get($worker['run_id'].':'.($worker['game_date'] ?? ''));
+                if ($day === null || $worker['state'] !== 'running') {
+                    continue;
+                }
+                if ($worker['pool'] === 'context' && (int) $day->game_count > 0) {
+                    $total = (int) $day->game_count;
+                    $done = min($total, (int) $day->completed_games + (int) $day->blocked_games);
+                    $worker['work_progress'] = ['completed' => $done, 'total' => $total,
+                        'percent' => round(100 * $done / $total, 1), 'label' => $done.' / '.$total.' games processed on this date'];
+                } elseif ($worker['pool'] === 'league') {
+                    $cursor = (int) $day->league_entity_cursor;
+                    $worker['work_progress'] = ['completed_populations' => (int) $day->league_cursor,
+                        'entity_cursor' => $cursor === PHP_INT_MAX ? null : $cursor,
+                        'finalizing' => $cursor === PHP_INT_MAX, 'percent' => null,
+                        'label' => $day->league_cursor.' league populations completed · '
+                            .($cursor === PHP_INT_MAX ? 'finalizing metric groups' : 'reading peer histories')];
+                }
+            }
+            unset($worker);
+        } catch (Throwable) {
+            // A checkpoint read is optional; execution identity remains available.
+        }
+
+        return $workers;
     }
 
     /** A shared queue Redis connection makes activity visible across application and worker hosts. */

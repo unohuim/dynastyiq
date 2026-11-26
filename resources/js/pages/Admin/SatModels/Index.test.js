@@ -16,7 +16,7 @@ let host;
 let props;
 const base = '/admin/nhl-sat-models';
 const model = (extra = {}) => ({ id: 1, name: 'Sep2026', version: 'sat_v1', train: ['20242025'], test: '20252026', projection: '20252026', status: 'complete', notes: '', updated_at: '2026-11-26T15:00:00Z', training: { excluded_rate: .1, excluded: 10, total: 100 }, build: {}, outdated: [], pregame: null, automation: { enabled: false, settings_url: `${base}/1/context/auto-sync`, toggle_url: `${base}/1/context/auto-sync` }, actions: [{ group: 'Analysis', label: 'Build Pregame', url: `${base}/1/context/build`, data: {}, enabled: true, link: false }, { group: 'Predict', label: 'Run Season Games', url: `${base}/1/season-games`, data: {}, enabled: false, link: true, reason: 'Build profiles first.' }], ...extra });
-const pregame = (extra = {}) => ({ source: { id: 1, name: 'Sep2026', test: '20252026', train: ['20242025'] }, health: 'recorded', run: { id: 10, status: 'completed', completed: 20, total: 20, excluded: 0, failed: 0 }, issues: [], workers: [], coverage: [{ season: '20252026', games: 20, covered: 20 }], workstreams: [{ key: 'players', name: 'Player context', stage: 'context', state: 'completed', completed_days: 10, total_days: 10, active_claims: 0, snapshot_count: 500, description: 'Player form', note: 'Shares the context processing pool.' }], limits: { league: 4, context: 2 }, automation: model().automation, snapshots: { players: 500, teams: 40 }, history: [], workers_url: `${base}/pregame/workers`, inspector_url: `${base}/pregame/inspect`, ...extra });
+const pregame = (extra = {}) => ({ source: { id: 1, name: 'Sep2026', test: '20252026', train: ['20242025'] }, health: 'recorded', run: { id: 10, status: 'completed', completed: 20, total: 20, excluded: 0, failed: 0 }, issues: [], workers: [], worker_activity: { available: true, workers: [] }, coverage: [{ season: '20252026', games: 20, covered: 20 }], workstreams: [{ key: 'players', name: 'Player context', stage: 'context', state: 'completed', completed_days: 10, total_days: 10, active_claims: 0, snapshot_count: 500, description: 'Player form', note: 'Player, team, goalie, rankings and travel tasks share this context pool.' }], limits: { league: 4, context: 2 }, automation: model().automation, snapshots: { players: 500, teams: 40 }, history: [], workers_url: `${base}/pregame/workers`, inspector_url: `${base}/pregame/inspect`, ...extra });
 const mount = (extra = {}) => {
     props = reactive({ models: [model()], pagination: [], statuses: ['complete', 'running'], filters: {}, seasonOptions: ['20242025'], pregame: pregame(), ...extra });
     host = document.createElement('div'); document.body.append(host);
@@ -71,14 +71,14 @@ it('keeps idle processing distinct from usable data', () => {
     expect(host.textContent).toContain('Saved data can remain usable while processing is idle.');
 });
 it('discloses a workstream with an accessible animated caret', async () => {
-    mount(); const control = host.querySelector('[aria-label="Expand Player context"]'); control.click(); await nextTick();
+    mount(); const control = host.querySelector('[aria-label="Expand Pregame context"]'); control.click(); await nextTick();
     expect(control.getAttribute('aria-expanded')).toBe('true');
-    expect(host.querySelector('#workstream-players').className).toContain('grid-rows-[1fr]');
+    expect(host.querySelector('#workstream-context').className).toContain('grid-rows-[1fr]');
 });
 it('collapses a workstream without unmounting its details', async () => {
-    mount(); const control = host.querySelector('[aria-label="Expand Player context"]'); control.click(); await nextTick(); control.click(); await nextTick();
+    mount(); const control = host.querySelector('[aria-label="Expand Pregame context"]'); control.click(); await nextTick(); control.click(); await nextTick();
     expect(control.getAttribute('aria-expanded')).toBe('false');
-    expect(host.querySelector('#workstream-players').textContent).toContain('Shares the context processing pool.');
+    expect(host.querySelector('#workstream-context').textContent).toContain('Player, team, goalie, rankings and travel tasks share this context pool.');
 });
 it('opens model actions in a Vue-owned panel', async () => {
     mount(); host.querySelector('[aria-label="Actions for Sep2026"]').click(); await nextTick();
@@ -199,7 +199,8 @@ it('opens all recorded issues from the Overall Health badge', async () => {
     host.querySelector('[aria-label="View pregame health issues"]').click(); await nextTick();
     const panel = host.querySelector('#sat-pregame-issues-panel');
     expect(panel.textContent).toContain('Saved cause 4');
-    expect(panel.textContent).toContain('Update Test / prediction season only');
+    expect(panel.textContent).not.toContain('Update Test / prediction season only');
+    expect(panel.querySelectorAll('button')).toHaveLength(2);
 });
 
 it('opens the same issue panel from the Outstanding count without processing work', async () => {
@@ -225,8 +226,8 @@ it('allows issue inspection when the pilot is unavailable while repair remains d
         issues: [{ title: 'Sep2026 source unavailable', detail: 'No unambiguous historical pilot exists.' }] }) });
     await click('View issues →');
     expect(host.querySelector('#sat-pregame-issues-panel').textContent).toContain('No unambiguous historical pilot exists.');
-    expect(button('Update Test / prediction season only').disabled).toBe(true);
-    expect(button('Full Train + Test rebuild').disabled).toBe(true);
+    expect(button('Repair missing context').disabled).toBe(true);
+    expect(button('Full Train + Test rebuild')).toBeUndefined();
     expect(mocks.post).not.toHaveBeenCalled();
 });
 
@@ -258,20 +259,20 @@ it('shows a prominent processed percentage with success exclusion and failure co
     expect(progress.textContent).toContain('40 / 100 games processed');
     expect(progress.textContent).toContain('30 updated'); expect(progress.textContent).toContain('5 excluded');
     expect(progress.textContent).toContain('5 failed');
-    expect(progress.querySelector('progress').value).toBe(40);
+    expect(progress.querySelector('progress')).toBeNull();
 });
 
 it('does not manufacture a percentage before game selection is known', () => {
     mount({ pregame: pregame({ run: { id: 10, status: 'queued', total: 0, processed: 0, progress_pct: null } }) });
     expect(host.querySelector('[data-update-percent]').textContent).toBe('Selecting games…');
-    expect(host.querySelector('[aria-label="Current update processed games"]').getAttribute('value')).toBeNull();
+    expect(host.querySelector('[aria-label="Current update processed games"]')).toBeNull();
 });
 
 it('shows independent league and context stage progress rather than averaging them', () => {
     mount({ pregame: pregame({ run: { id: 10, status: 'running', total: 10, processed: 0, progress_pct: 0,
         stages: { total: 4, league: 1, context: 0 } } }) });
     expect(host.querySelector('[aria-label="League averages stage progress"]').value).toBe(25);
-    expect(host.querySelector('[aria-label="Context, rankings & deltas stage progress"]').value).toBe(0);
+    expect(host.querySelector('[aria-label="Pregame context stage progress"]').value).toBe(0);
     expect(host.querySelector('[data-update-percent]').textContent).toBe('0% processed');
 });
 
@@ -288,8 +289,8 @@ it('keeps claimed dates distinct from observed executing workers', () => {
     mount({ pregame: pregame({ workers: [{ key: '1-context', stage: 'context', date: '2025-10-10', state: 'claimed' }],
         worker_activity: activity([]) }) });
     const workers = host.querySelector('[aria-label="Pregame worker activity"]');
-    expect(workers.textContent).toContain('0 observed running');
-    expect(workers.textContent).toContain('1 date claims');
+    expect(workers.textContent).toContain('0 workers executing');
+    expect(host.querySelector('[aria-label="Queue claims"]').textContent).toContain('1 date claims');
 });
 
 it('removes finished execution rows on updates while retaining the fixed activity region', async () => {
@@ -298,7 +299,7 @@ it('removes finished execution rows on updates while retaining the fixed activit
     props.pregame = pregame({ worker_activity: activity([]) }); await nextTick();
     expect(host.querySelector('[aria-label="Pregame worker activity"]')).toBe(region);
     expect(region.querySelector('[data-pregame-execution]')).toBeNull();
-    expect(region.querySelector('.h-\\[152px\\]')).not.toBeNull();
+    expect(region.querySelector('[data-workstream-list]').className).toContain('h-[360px]');
 });
 
 it('retains prior execution evidence as unknown when telemetry is unavailable', async () => {
@@ -306,7 +307,7 @@ it('retains prior execution evidence as unknown when telemetry is unavailable', 
     props.pregame = pregame({ worker_activity: { available: false, workers: [] } }); await nextTick();
     expect(host.querySelector('[data-pregame-execution]').textContent).toContain('queue-one');
     expect(host.querySelector('[data-pregame-execution]').textContent).toContain('Unknown');
-    expect(host.querySelector('[aria-label="Pregame worker activity"]').textContent).toContain('— observed running');
+    expect(host.querySelector('[aria-label="Pregame worker activity"]').textContent).toContain('— workers executing');
 });
 
 it('clears retained telemetry when the selected source changes', async () => {
@@ -319,7 +320,7 @@ it('clears retained telemetry when the selected source changes', async () => {
 it('does not count unconfirmed executions as running workers', () => {
     mount({ pregame: pregame({ worker_activity: activity([execution({ state: 'unconfirmed' })]) }) });
     const workers = host.querySelector('[aria-label="Pregame worker activity"]');
-    expect(workers.textContent).toContain('0 observed running'); expect(workers.textContent).toContain('Unconfirmed');
+    expect(workers.textContent).toContain('0 workers executing'); expect(workers.textContent).toContain('Unconfirmed');
 });
 
 it('continues quiet fast polling while execution telemetry reports ongoing work', async () => {
@@ -335,8 +336,8 @@ it('uses the historical gap repair endpoint from the primary repair button', asy
 });
 
 it('offers Train and Test repair separately from the Test-only update', async () => {
-    mount(); await click('View issues →');
-    expect(button('Repair missing context · Train + Test')).toBeDefined();
+    mount(); await click('Maintenance options');
+    expect(button('Full Train + Test rebuild')).toBeDefined();
     await click('Update Test / prediction season only');
     expect(mocks.post).toHaveBeenCalledWith(`${base}/1/context/update`, {}, expect.any(Object));
 });
@@ -370,7 +371,7 @@ it('disables historical gap repair while the pilot has active maintenance', asyn
     mount({ pregame: pregame({ run: { id: 10, status: 'running' } }) });
     expect(button('Repair missing context').disabled).toBe(true);
     await click('View issues →');
-    expect(button('Repair missing context · Train + Test').disabled).toBe(true);
+    expect(button('Repair in progress').disabled).toBe(true);
 });
 
 it('names the missing Train season beside health and confirms Test coverage', () => {
@@ -398,17 +399,17 @@ it('names both scopes when Train and Test have missing games', async () => {
     expect(mocks.post).toHaveBeenCalledWith(`${base}/pregame/repair`, {}, expect.any(Object));
 });
 
-it('shows each Train and Test season in the repair drawer without dispatching work', async () => {
-    mount({ pregame: pregame({ coverage: [
+it('keeps covered seasons out of the issues drawer while showing the affected cause', async () => {
+    mount({ pregame: pregame({ issues: [{ title: 'Train · 2022–23 — 97 games missing pregame context', detail: 'Missing source summaries.' }], coverage: [
         { season: '20222023', scope: 'Train', games: 1312, covered: 1215 },
         { season: '20232024', scope: 'Train', games: 1312, covered: 1312 },
         { season: '20252026', scope: 'Test', games: 1312, covered: 1312 },
     ] }) });
     await click('View issues →');
-    const coverage = host.querySelector('[aria-label="Train and Test coverage"]');
-    expect(coverage.textContent).toContain('Train · 2023–24 — all 1,312 games covered');
+    const coverage = host.querySelector('#sat-pregame-issues-panel');
+    expect(coverage.textContent).not.toContain('Train · 2023–24 — all 1,312 games covered');
     expect(coverage.textContent).toContain('Train · 2022–23 — 97 games missing pregame context');
-    expect(coverage.textContent).toContain('Test · 2025–26 — all 1,312 games covered');
+    expect(coverage.textContent).not.toContain('Test · 2025–26 — all 1,312 games covered');
     expect(mocks.post).not.toHaveBeenCalled();
 });
 
@@ -427,4 +428,102 @@ it('updates gap labels quietly when refreshed coverage closes the Train gap', as
 it('counts an overlapping Train and Test season once in the repair label', () => {
     mount({ pregame: pregame({ coverage: [{ season: '20252026', scope: 'Train + Test', games: 100, covered: 99 }] }) });
     expect(button('Repair 1 missing Train + Test game')).toBeDefined();
+});
+
+it('shows completed maintenance as idle pools without active progress bars', () => {
+    mount({ pregame: pregame({ run: { id: 10, status: 'completed', stages: { total: 10, league: 10, context: 10 } } }) });
+    const list = host.querySelector('[data-workstream-list]');
+    expect(list.querySelectorAll('[data-workstream]')).toHaveLength(2);
+    expect(list.querySelectorAll('progress')).toHaveLength(0);
+    expect(list.textContent).toContain('Idle · no work running');
+    expect(list.textContent).toContain('0 executing');
+});
+
+it('lists eight executing processes once each beneath their actual pools', () => {
+    const workers = Array.from({ length: 8 }, (_, i) => execution({ job_id: `job-${i}`, pid: 100 + i,
+        pool: i < 4 ? 'league' : 'context' }));
+    mount({ pregame: pregame({ worker_activity: activity(workers) }) });
+    expect(host.querySelector('[aria-label="Pregame worker activity"]').textContent).toContain('8 workers executing');
+    expect(host.querySelector('[data-workstream="league"]').querySelectorAll('[data-pregame-execution]')).toHaveLength(4);
+    expect(host.querySelector('[data-workstream="context"]').querySelectorAll('[data-pregame-execution]')).toHaveLength(4);
+    expect(host.querySelectorAll('[data-pregame-execution]')).toHaveLength(8);
+    expect(host.querySelector('[aria-label="Queue claims"]').textContent).toContain('Configured capacity: 6');
+});
+
+it('uses the latest observation per host and process for concurrent worker counts', () => {
+    mount({ pregame: pregame({ worker_activity: activity([execution(), execution({ job_id: 'new-job',
+        started_at: '2026-11-26T15:59:00Z', task: 'Newer task' })]) }) });
+    expect(host.querySelectorAll('[data-pregame-execution]')).toHaveLength(1);
+    expect(host.querySelector('[data-pregame-execution]').textContent).toContain('Newer task');
+    expect(host.querySelector('[aria-label="Pregame worker activity"]').textContent).toContain('1 worker executing');
+});
+
+it('shows measured progress inside the worker row', () => {
+    mount({ pregame: pregame({ worker_activity: activity([execution({ pool: 'context', work_progress: {
+        label: '3 / 5 games processed on this date', percent: 60,
+    } })]) }) });
+    const worker = host.querySelector('[data-workstream="context"] [data-pregame-execution]');
+    expect(worker.textContent).toContain('3 / 5 games processed on this date');
+    expect(worker.querySelector('progress').value).toBe(60);
+});
+
+it('shows league checkpoint text without inventing percentage progress', () => {
+    mount({ pregame: pregame({ worker_activity: activity([execution({ work_progress: {
+        label: '2 league populations completed · reading peer histories', percent: null,
+    } })]) }) });
+    const worker = host.querySelector('[data-pregame-execution]');
+    expect(worker.textContent).toContain('2 league populations completed');
+    expect(worker.querySelector('progress')).toBeNull();
+});
+
+it('shows queued work without pretending queued date claims are executing processes', () => {
+    mount({ pregame: pregame({ run: { id: 10, status: 'running', stages: { total: 5, league: 0, context: 0 } },
+        workers: [{ key: 'context-1', stage: 'context', state: 'claimed', date: '2025-10-10' }] }) });
+    expect(host.querySelector('[data-workstream="context"]').textContent).toContain('Queued');
+    expect(host.querySelector('[aria-label="Pregame worker activity"]').textContent).toContain('0 workers executing');
+});
+
+it('shows paused pools explicitly when no executions are observed', () => {
+    mount({ pregame: pregame({ run: { id: 10, status: 'paused' } }) });
+    expect(host.querySelector('[data-workstream="context"]').textContent).toContain('Paused');
+});
+
+it('shows source-blocked context as blocked after a maintenance attempt completes', () => {
+    mount({ pregame: pregame({ run: { id: 10, status: 'completed', excluded: 97, source_blocked_days: 60 } }) });
+    expect(host.querySelector('[data-workstream="context"]').textContent).toContain('Blocked · see View issues');
+    expect(host.querySelector('[data-workstream="league"]').textContent).toContain('Blocked · see View issues');
+});
+
+it('keeps coordination workers visible without duplicating them under league or context', () => {
+    mount({ pregame: pregame({ worker_activity: activity([execution({ job: 'PrepareNhlPregameContextRunJob',
+        pool: 'coordination', task: 'Preparing game selection' })]) }) });
+    expect(host.querySelector('[data-workstream="coordination"]').textContent).toContain('Preparing game selection');
+    expect(host.querySelectorAll('[data-pregame-execution]')).toHaveLength(1);
+});
+
+it('presents one repair action and no maintenance menu inside View issues', async () => {
+    mount({ pregame: pregame({ issues: [{ title: 'Missing Train context', detail: '97 games require context.' }] }) });
+    await click('View issues →');
+    const panel = host.querySelector('#sat-pregame-issues-panel');
+    const actions = [...panel.querySelectorAll('button')].filter(node => node.getAttribute('aria-label') !== 'Close panel');
+    expect(actions).toHaveLength(1);
+    expect(actions[0].textContent).toContain('Repair missing context');
+    expect(panel.textContent).not.toContain('Full Train + Test rebuild');
+    expect(panel.textContent).not.toContain('Update Test / prediction season only');
+    actions[0].click(); await settle();
+    expect(mocks.post).toHaveBeenCalledWith(`${base}/pregame/repair`, {}, expect.any(Object));
+});
+
+it('uses the single issue action to resume retryable unfinished repair', async () => {
+    mount({ pregame: pregame({ issues: [{ title: 'Repair interrupted', detail: 'Checkpoint saved.' }],
+        run: { id: 10, status: 'failed', retryable: true } }) });
+    await click('View issues →'); await click('Continue repair');
+    expect(mocks.post).toHaveBeenCalledWith(`${base}/1/context/resume`, {}, expect.any(Object));
+});
+
+it('preserves full-rebuild confirmation in the separate maintenance panel', async () => {
+    mount(); await click('Maintenance options'); await click('Full Train + Test rebuild');
+    expect(mocks.post).not.toHaveBeenCalled();
+    await click('Confirm full rebuild');
+    expect(mocks.post).toHaveBeenCalledWith(`${base}/1/context/build`, {}, expect.any(Object));
 });

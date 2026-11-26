@@ -15,6 +15,7 @@ rules:
   - Store bounded, expiring observation records in shared queue Redis outside queue reservation keys. Completion removes only the matching execution; retries and other workers retain their own observations.
   - Resolve the observer within the queue job container scope so start and finish share cleanup ownership. Exceptions and terminal failures clear observations; expiry bounds abandoned records after process termination.
   - Telemetry failures never fail, release, retry or modify the observed business job. Unavailable telemetry remains distinct from an available empty observation list.
+  - Classify each execution into its actual league/context pool or coordination. Optional progress reads use one bounded query for exact observed run/date pairs, never historical aggregation or per-player reads. Context uses committed date counters; league exposes its population checkpoint and phase without a fabricated denominator or interpreting an entity cursor as a sample count. Failed checkpoint reads retain execution identity with unavailable progress.
   - Observed start without completion is evidence of activity, not independent OS liveness. Past-deadline records lose confirmed-running presentation before pruning. State vocabulary belongs in ENUMS.md.
   - Workspace reads are bounded and may prune expired telemetry only. Never dispatch imports, predictions or context repairs from telemetry reads. Existing admin authorization and production context authority remain unchanged.
 public_interface:

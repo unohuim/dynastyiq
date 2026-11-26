@@ -14,6 +14,8 @@
 - Repair `options.source_blocked_days`: nonnegative count of dates where every selected game failed source preflight. Their existing day stages are terminal `complete` for accounting, meaning skipped rather than calculated; the UI must disclose the count. Existing game rows remain `blocked`.
 - Repair game `readiness.source_blockers`: array of source-presence failure descriptions; `last_error` provides the joined readable reason. It does not certify complete on-ice or shot data. Workspace `blocked_games` returns at most 100 latest-run game/date/reason rows; `blocked_games_truncated` labels additional rows.
 - Workspace coverage `scope`: `Train`, `Test`, or `Train + Test`, derived from the selected model's season membership. `season_label` formats the season ID for display; `missing` is completed games minus games with both team snapshots, floored at zero. Overlapping membership retains one coverage row, not duplicate missing games.
+- Worker activity `pool`: `league`, `context`, or `coordination`, classified from the observed job. Optional `work_progress` is null without a matching live checkpoint. Context progress reports completed plus excluded games, total selected games on that date, percentage and a readable label. League progress reports `completed_populations`, opaque `entity_cursor`, `finalizing`, a readable label and null percentage; a finalization sentinel becomes null cursor, never a count.
+- Frontend pool activity states: `idle`, `queued`, `working`, `blocked`, `paused`, `pausing`, `unknown`. Observed running execution takes precedence; claims alone do not imply working. Finished stage counters do not imply active work. These presentation states do not replace stored run/day lifecycle values.
 
 ## Pregame comparison progress
 
