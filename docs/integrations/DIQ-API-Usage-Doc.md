@@ -1245,7 +1245,7 @@ It bypasses response-cache reuse only when the API has no saved prediction and
 is eligible to calculate. It never forces replacement of an existing saved
 prediction. Request a separate prediction run to publish newer results.
 
-Only one build per game runs under the shared 600-second build-lock lease.
+Only one build per game runs under the shared 180-second build-lock lease.
 When no saved prediction exists and pregame context or prepared inputs are missing, another build owns the lock,
 or source inputs change during calculation, DynastyIQ queues the required work
 and returns HTTP `202` with `Retry-After: 15`:
@@ -1259,6 +1259,129 @@ and returns HTTP `202` with `Retry-After: 15`:
   "retry_after": 15
 }
 ```
+
+### Live prediction status for partner progress bars
+
+Every HTTP 200 prediction response and HTTP 202 preparing response includes an
+additive `prediction_status` object. It reads the latest tracked attempt for this
+game, across admin, API, automatic, lineup and injury triggers. It does not scan
+historical inputs, open checkpoints, run predictions, or admit additional work.
+Existing calculation admission and retry behavior is unchanged.
+
+A saved forecast remains HTTP 200 and retains all of its existing fields even
+when a replacement is queued, running, failed or unavailable. Read
+`prediction_available` to know whether this response contains a usable forecast;
+read `prediction_status.status` for the latest attempt. An active replacement's
+completion timestamp is null; the previous forecast's timestamp remains in
+`meta.predicted_at` and `prediction_status.prediction_completed_at`.
+
+| Status field | Type / units | Meaning |
+|---|---|---|
+| `nhl_game_id` | integer | Requested game; activity from other games is excluded. |
+| `attempt_id`, `run_id` | integer or null | Latest tracked attempt and parent run. Legacy saved publications may have neither. |
+| `status` | string | Existing queued/running/completed/unavailable/failed lifecycle; display these as Queued, Running, Completed, Unavailable, Failed. |
+| `stage` | string | Current preparation/calculation stage; terminal attempts use their terminal status. Stage keys follow the operational activity enum in `docs/ENUMS.md`. |
+| `trigger_source` | string or null | Existing trigger enum; null when no tracked attempt exists. |
+| `processed_count`, `total_count` | integer; total nullable | Work processed in the current stage and that stage's known denominator. These are not deliveries or an overall game-completion count. |
+| `progress_scope` | string | Always `stage`. |
+| `stage_progress_percent` | number or null; 0–100 | Active stage's processed count divided by its positive known total, multiplied by 100 and rounded to two decimals. Clamped for visual display; original counts remain intact. Null for unknown/zero totals and terminal stages. |
+| `progress_indeterminate` | boolean | True for queued/running work without a usable stage total. Show an animated waiting bar. |
+| `deliveries` | integer | Worker pickups, including successful checkpoint continuations. |
+| `retries` | integer | Recorded retryable exceptions, independent from normal deliveries. |
+| `recoveries` | integer | Recorded abandoned-worker replacements. |
+| `elapsed_seconds` | integer or null | Wall time since admission, including queue/preparation/retries. Frozen at the attempt's recorded finish; null when timing is unknown. |
+| `queued_at`, `started_at`, `last_activity_at` | ISO 8601 UTC or null | Attempt admission, first worker start and most recent heartbeat. |
+| `finished_at` | ISO 8601 UTC or null | Latest attempt's terminal finish, including failures/unavailable attempts. |
+| `completed_at` | ISO 8601 UTC or null | Successful attempt completion only. For a legacy saved publication without a tracker, use its original prediction timestamp. |
+| `prediction_revision_id` | integer or null | Saved forecast accompanying HTTP 200; null when there is no saved forecast. Bound to the returned revision even if another publication occurs during the request. |
+| `prediction_completed_at` | ISO 8601 UTC or null | Original publication timestamp of that saved forecast, identical to `meta.predicted_at`. |
+
+Example HTTP 202 response during historical-input processing:
+
+```json
+{
+  "status": "preparing",
+  "prediction_available": false,
+  "nhl_game_id": 2026020394,
+  "message": "Pregame context and prediction inputs are being prepared.",
+  "retry_after": 15,
+  "prediction_status": {
+    "nhl_game_id": 2026020394,
+    "attempt_id": 402,
+    "run_id": 91,
+    "status": "running",
+    "stage": "history",
+    "trigger_source": "api",
+    "processed_count": 1725,
+    "total_count": 3000,
+    "progress_scope": "stage",
+    "stage_progress_percent": 57.5,
+    "progress_indeterminate": false,
+    "deliveries": 257,
+    "retries": 0,
+    "recoveries": 0,
+    "elapsed_seconds": 730,
+    "queued_at": "2026-11-25T13:00:00+00:00",
+    "started_at": "2026-11-25T13:00:02+00:00",
+    "last_activity_at": "2026-11-25T13:12:10+00:00",
+    "finished_at": null,
+    "completed_at": null,
+    "prediction_revision_id": null,
+    "prediction_completed_at": null
+  }
+}
+```
+
+On completion, the existing full HTTP 200 forecast/market/lineup payload gains
+this block (the forecast itself is unchanged):
+
+```json
+{
+  "prediction_status": {
+    "nhl_game_id": 2026020394,
+    "attempt_id": 402,
+    "run_id": 91,
+    "status": "completed",
+    "stage": "completed",
+    "trigger_source": "api",
+    "processed_count": 0,
+    "total_count": null,
+    "progress_scope": "stage",
+    "stage_progress_percent": null,
+    "progress_indeterminate": false,
+    "deliveries": 345,
+    "retries": 0,
+    "recoveries": 0,
+    "elapsed_seconds": 900,
+    "queued_at": "2026-11-25T13:00:00+00:00",
+    "started_at": "2026-11-25T13:00:02+00:00",
+    "last_activity_at": "2026-11-25T13:15:00+00:00",
+    "finished_at": "2026-11-25T13:15:00+00:00",
+    "completed_at": "2026-11-25T13:15:00+00:00",
+    "prediction_revision_id": 1001,
+    "prediction_completed_at": "2026-11-25T13:14:59+00:00"
+  }
+}
+```
+
+Gner8 should display `status` and `stage`, use a determinate bar only for a known
+`stage_progress_percent`, and otherwise animate while
+`progress_indeterminate` is true. A stage transition can reset that percentage;
+it never represents progress through the whole prediction. Completed status can
+render a completed bar independently of the stage percentage. Poll the existing
+endpoint; 202 keeps `Retry-After: 15`. With a saved prediction, HTTP 200 still
+returns the forecast immediately and carries live replacement activity.
+
+For a legacy saved prediction without a tracker, status is completed and unknown
+activity/counters/timing remain null or zero. An existing game with neither a
+saved forecast nor an attempt is presented as queued, without inventing an
+attempt ID or timestamps. Past-date reads with no forecast and no attempt retain
+`historical_prediction_not_found` and report unavailable; they enqueue nothing.
+A publication appearing just after a 202 was generated may already be reflected
+in its live status; request the endpoint again to retrieve that completed
+forecast. Raw errors, request inputs, worker ownership tokens and internal
+confidence are not exposed. Status is response-only and is never written into
+an immutable forecast or its response cache. No new migration is required.
 
 Successful game predictions additionally expose:
 
@@ -1359,7 +1482,7 @@ fresh or stale cached predictions and responses without an available pick. This
 is the same descriptive statistics reader as the game page's Matchup tab; it does
 not adjust scores, probabilities, qualification or confidence. Existing immutable
 prediction revisions are unchanged: the API attaches this block when responding.
-The HTTP 202 preparing response retains its existing shape.
+The HTTP 202 preparing response retains its existing envelope and adds the live `prediction_status` block described below.
 
 ```json
 {

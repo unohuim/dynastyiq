@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api;
 
+use App\Exceptions\NhlGamePredictionPreparing;
 use App\Http\Controllers\Controller;
 use App\Models\NhlGame;
 use App\Services\NhlGamePredictionHistory;
@@ -64,8 +65,15 @@ class NhlGamePredictionsController extends Controller
                     'reasons' => [],
                 ];
             } else {
-                $prediction = $cache->respond((int) $input['nhl_game_id'], $input,
-                    fn (): array => $payload->build((int) $input['nhl_game_id'], $input), $forceRefresh);
+                try {
+                    $prediction = $cache->respond((int) $input['nhl_game_id'], $input,
+                        fn (): array => $payload->build((int) $input['nhl_game_id'], $input), $forceRefresh);
+                } catch (NhlGamePredictionPreparing $pending) {
+                    $body = $pending->render($request)->getData(true);
+                    $body['prediction_status'] = $history->predictionStatus((int) $game->nhl_game_id);
+
+                    return response()->json($body, 202, ['Retry-After' => '15'], JSON_PRESERVE_ZERO_FRACTION);
+                }
                 if (! ($prediction['prediction_available'] ?? false)) {
                     $prediction['matchup'] = $pages->matchup($game);
                 }
@@ -96,6 +104,16 @@ class NhlGamePredictionsController extends Controller
             unset($prediction['teams'][$side]['input_confidence_score']);
         }
         unset($prediction['_internal_confidence'], $prediction['_confidence_components']);
+
+        // Activity is live response metadata, never part of a frozen prediction revision or cache entry.
+        $prediction['prediction_status'] = $history->predictionStatus((int) $game->nhl_game_id,
+            isset($prediction['meta']['prediction_revision_id']) ? (int) $prediction['meta']['prediction_revision_id'] : null);
+        if (($prediction['reason'] ?? null) === 'historical_prediction_not_found'
+            && $prediction['prediction_status']['attempt_id'] === null) {
+            $prediction['prediction_status']['status'] = 'unavailable';
+            $prediction['prediction_status']['stage'] = 'unavailable';
+            $prediction['prediction_status']['progress_indeterminate'] = false;
+        }
 
         return response()->json($prediction, 200, [], JSON_PRESERVE_ZERO_FRACTION);
     }

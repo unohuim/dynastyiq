@@ -112,6 +112,13 @@ beforeEach(function (): void {
         return app(\App\Services\NhlGamePredictionResponseCache::class)->respond(2026020001, $input,
             fn (): array => app(NhlGamePredictionPayload::class)->build(2026020001, $input), true);
     };
+    $this->statusWork = function (array $values = [], int $gameId = 2026020001): int {
+        $id = app(\App\Services\NhlGamePredictionHistory::class)->queueRefresh($gameId, ['nhl_game_id' => $gameId]);
+        if ($values !== []) {
+            DB::table('nhl_game_prediction_run_games')->where('id', $id)->update($values);
+        }
+        return $id;
+    };
     $this->predictionRequest = function (array $query = [], float $awayGoals = 2.4, float $homeGoals = 3.2) {
         $current = ($this->calculate)();
         foreach (['away' => $awayGoals, 'home' => $homeGoals] as $venue => $goals) {
@@ -132,12 +139,12 @@ afterEach(function (): void {
 });
 
 it('requires API authentication for new engine predictions', function (): void {
-    $this->getJson('/api/nhl-game-predictions?nhl_game_id=2026020001')->assertUnauthorized();
+    $this->getJson('/api/nhl-game-predictions?nhl_game_id=2026020001')->assertUnauthorized()->assertJsonMissingPath('prediction_status');
 });
 
 it('requires the NHL statistics scope for new engine predictions', function (): void {
     $this->client->update(['scopes' => ['nhl-reference:read']]);
-    ($this->requestPrediction)()->assertForbidden();
+    ($this->requestPrediction)()->assertForbidden()->assertJsonMissingPath('prediction_status');
 });
 
 it('requires a game identifier', function (): void {
@@ -1401,4 +1408,219 @@ it('rejects unusable saved legacy total normalization without silently substitut
     $payload['prediction']['totals_normalization'] = ['away' => ['goals_per_game' => null], 'home' => ['goals_per_game' => 2]];
     expect(fn () => app(NhlGamePredictionPayload::class)->withRequestedMarkets($payload, ['total' => 6]))
         ->toThrow(\Illuminate\Validation\ValidationException::class);
+});
+
+it('returns completed activity and the saved revision identity after an actual API calculation', function (): void {
+    $response = ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction_status.status', 'completed')
+        ->assertJsonPath('prediction_status.stage', 'completed')->assertJsonPath('prediction_status.progress_indeterminate', false);
+    $revision = $response->json('meta.prediction_revision_id');
+    $response->assertJsonPath('prediction_status.prediction_revision_id', $revision)
+        ->assertJsonPath('prediction_status.prediction_completed_at', $response->json('meta.predicted_at'));
+    $this->assertDatabaseHas('nhl_game_prediction_run_games', ['revision_id' => $revision, 'status' => 'completed']);
+    ($this->requestPrediction)()->assertOk()->assertJsonPath('meta.prediction_revision_id', $revision)
+        ->assertJsonPath('prediction_status.status', 'completed');
+});
+
+it('returns the saved forecast immediately while its newer attempt is queued', function (): void {
+    $saved = ($this->requestPrediction)()->assertOk()->json();
+    $id = ($this->statusWork)();
+    ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction_available', true)
+        ->assertJsonPath('meta.prediction_revision_id', $saved['meta']['prediction_revision_id'])
+        ->assertJsonPath('prediction_status.status', 'queued')->assertJsonPath('prediction_status.attempt_id', $id)
+        ->assertJsonPath('prediction_status.completed_at', null)
+        ->assertJsonPath('prediction_status.prediction_completed_at', $saved['meta']['predicted_at']);
+});
+
+it('keeps saved scores and public confidence intact while a replacement is running', function (): void {
+    $saved = ($this->requestPrediction)()->assertOk()->json();
+    ($this->statusWork)(['status' => 'running', 'phase' => 'history', 'progress_current' => 1725, 'progress_total' => 3000]);
+    ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction_status.status', 'running')
+        ->assertJsonPath('prediction_status.stage', 'history')
+        ->assertJsonPath('prediction.predicted_score', $saved['prediction']['predicted_score'])
+        ->assertJsonPath('prediction.confidence_score', $saved['prediction']['confidence_score'])
+        ->assertJsonPath('market_probabilities', $saved['market_probabilities']);
+});
+
+it('adds queued activity to the existing 202 preparing response without a saved forecast', function (): void {
+    $id = ($this->statusWork)();
+    ($this->requestPrediction)()->assertStatus(202)->assertHeader('Retry-After', '15')
+        ->assertJsonPath('status', 'preparing')->assertJsonPath('prediction_available', false)
+        ->assertJsonPath('retry_after', 15)->assertJsonPath('prediction_status.status', 'queued')
+        ->assertJsonPath('prediction_status.attempt_id', $id)->assertJsonPath('prediction_status.prediction_revision_id', null);
+    $this->assertDatabaseCount('nhl_game_prediction_revisions', 0);
+});
+
+it('calculates a stage progress percentage from that stages processed count and total', function (): void {
+    ($this->statusWork)(['status' => 'running', 'phase' => 'history', 'progress_current' => 1725, 'progress_total' => 3000]);
+    ($this->requestPrediction)()->assertStatus(202)->assertJsonPath('prediction_status.processed_count', 1725)
+        ->assertJsonPath('prediction_status.total_count', 3000)->assertJsonPath('prediction_status.stage_progress_percent', 57.5)
+        ->assertJsonPath('prediction_status.progress_scope', 'stage')->assertJsonPath('prediction_status.progress_indeterminate', false);
+});
+
+it('uses indeterminate progress when the current stage has no known denominator', function (): void {
+    ($this->statusWork)(['status' => 'running', 'phase' => 'calculating', 'progress_current' => 0, 'progress_total' => null]);
+    ($this->requestPrediction)()->assertStatus(202)->assertJsonPath('prediction_status.total_count', null)
+        ->assertJsonPath('prediction_status.stage_progress_percent', null)->assertJsonPath('prediction_status.progress_indeterminate', true);
+});
+
+it('does not divide by a zero stage denominator', function (): void {
+    ($this->statusWork)(['status' => 'running', 'phase' => 'collect', 'progress_total' => 0]);
+    ($this->requestPrediction)()->assertStatus(202)->assertJsonPath('prediction_status.stage_progress_percent', null)
+        ->assertJsonPath('prediction_status.progress_indeterminate', true);
+});
+
+it('preserves a measured zero percent progress value', function (): void {
+    ($this->statusWork)(['phase' => 'history', 'progress_current' => 0, 'progress_total' => 3000]);
+    $response = ($this->requestPrediction)()->assertStatus(202)->assertJsonPath('prediction_status.progress_indeterminate', false);
+    expect((float) $response->json('prediction_status.stage_progress_percent'))->toBe(0.0);
+});
+
+it('returns independent delivery retry and recovery counters', function (): void {
+    ($this->statusWork)(['attempts' => 345, 'failures' => 2, 'recoveries' => 1]);
+    ($this->requestPrediction)()->assertStatus(202)->assertJsonPath('prediction_status.deliveries', 345)
+        ->assertJsonPath('prediction_status.retries', 2)->assertJsonPath('prediction_status.recoveries', 1);
+});
+
+it('measures status elapsed time from admission including time waiting for a worker', function (): void {
+    ($this->statusWork)(['created_at' => now()->subMinutes(12)->subSeconds(10), 'started_at' => now()->subMinutes(10)]);
+    ($this->requestPrediction)()->assertStatus(202)->assertJsonPath('prediction_status.elapsed_seconds', 730);
+});
+
+it('freezes completed attempt elapsed time on later saved reads', function (): void {
+    ($this->requestPrediction)()->assertOk();
+    $item = DB::table('nhl_game_prediction_run_games')->orderByDesc('id')->first();
+    DB::table('nhl_game_prediction_run_games')->where('id', $item->id)->update([
+        'created_at' => now()->subMinutes(5), 'finished_at' => now()]);
+    ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction_status.elapsed_seconds', 300);
+    $this->travel(10)->minutes();
+    ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction_status.elapsed_seconds', 300);
+});
+
+it('exposes a newer terminal failure while retaining the previous successful forecast', function (): void {
+    $saved = ($this->requestPrediction)()->assertOk()->json();
+    $this->travel(30)->seconds();
+    $id = ($this->statusWork)();
+    app(\App\Services\NhlGamePredictionHistory::class)->finish($id, 'failed', error: 'Private SQL or checkpoint details');
+    ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction_status.status', 'failed')
+        ->assertJsonPath('prediction_status.stage', 'failed')->assertJsonPath('prediction_status.completed_at', null)
+        ->assertJsonPath('prediction_status.progress_indeterminate', false)
+        ->assertJsonPath('meta.prediction_revision_id', $saved['meta']['prediction_revision_id'])
+        ->assertJsonMissingPath('prediction_status.last_error');
+});
+
+it('exposes an unavailable replacement independently of the saved prediction', function (): void {
+    $saved = ($this->requestPrediction)()->assertOk()->json();
+    $id = ($this->statusWork)();
+    app(\App\Services\NhlGamePredictionHistory::class)->finish($id, 'unavailable');
+    ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction_status.status', 'unavailable')
+        ->assertJsonPath('prediction_status.progress_indeterminate', false)
+        ->assertJsonPath('meta.prediction_revision_id', $saved['meta']['prediction_revision_id']);
+});
+
+it('derives completion from a saved legacy publication without inventing a tracked attempt', function (): void {
+    $saved = ($this->requestPrediction)()->assertOk()->json();
+    DB::table('nhl_game_prediction_revisions')->where('id', $saved['meta']['prediction_revision_id'])->update(['run_id' => null]);
+    DB::table('nhl_game_prediction_run_games')->delete();
+    DB::table('nhl_game_prediction_runs')->delete();
+    ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction_status.status', 'completed')
+        ->assertJsonPath('prediction_status.attempt_id', null)->assertJsonPath('prediction_status.elapsed_seconds', null)
+        ->assertJsonPath('prediction_status.completed_at', $saved['meta']['predicted_at']);
+});
+
+it('keeps live status out of immutable prediction payloads and response caches', function (): void {
+    $response = ($this->requestPrediction)()->assertOk();
+    $row = DB::table('nhl_game_prediction_revisions')->find($response->json('meta.prediction_revision_id'));
+    expect(json_decode($row->payload, true))->not->toHaveKey('prediction_status');
+    $cache = app(\App\Services\NhlGamePredictionResponseCache::class);
+    $key = (new ReflectionMethod($cache, 'key'))->invoke($cache, 2026020001, ['nhl_game_id' => '2026020001']);
+    expect(Cache::get($key)['payload'])->not->toHaveKey('prediction_status');
+});
+
+it('reads completed status repeatedly without preparing or dispatching more predictions', function (): void {
+    $id = ($this->requestPrediction)()->assertOk()->json('meta.prediction_revision_id');
+    Bus::fake();
+    $forecast = Mockery::mock(NhlCustomGameForecast::class)->makePartial();
+    $forecast->shouldNotReceive('predict');
+    $forecast->shouldNotReceive('advancePreparation');
+    app()->instance(NhlCustomGameForecast::class, $forecast);
+    foreach (range(1, 3) as $poll) {
+        ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction_status.status', 'completed')
+            ->assertJsonPath('meta.prediction_revision_id', $id);
+    }
+    Bus::assertNothingDispatched();
+});
+
+it('does not report another games attempt as the requested games activity', function (): void {
+    $other = $this->game->replicate();
+    $other->nhl_game_id = 2026020002;
+    $other->save();
+    ($this->statusWork)(['status' => 'running', 'phase' => 'history'], 2026020002);
+    ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction_status.nhl_game_id', 2026020001)
+        ->assertJsonPath('prediction_status.status', 'completed');
+});
+
+it('formats activity timestamps in ISO 8601 UTC independently of the forecast timestamp', function (): void {
+    ($this->statusWork)(['status' => 'running', 'created_at' => '2026-11-05 11:45:00',
+        'started_at' => '2026-11-05 11:46:00', 'heartbeat_at' => '2026-11-05 11:59:00']);
+    ($this->requestPrediction)()->assertStatus(202)->assertJsonPath('prediction_status.queued_at', '2026-11-05T11:45:00+00:00')
+        ->assertJsonPath('prediction_status.started_at', '2026-11-05T11:46:00+00:00')
+        ->assertJsonPath('prediction_status.last_activity_at', '2026-11-05T11:59:00+00:00');
+});
+
+it('does not invent elapsed or completion times for a terminal legacy attempt without a finish timestamp', function (): void {
+    ($this->requestPrediction)()->assertOk();
+    ($this->statusWork)(['status' => 'failed', 'finished_at' => null]);
+    ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction_status.status', 'failed')
+        ->assertJsonPath('prediction_status.elapsed_seconds', null)->assertJsonPath('prediction_status.completed_at', null);
+});
+
+it('keeps historical requests without a saved prediction unavailable without admitting work', function (): void {
+    $this->game->update(['game_date' => '2026-11-04']);
+    ($this->requestPrediction)()->assertOk()->assertJsonPath('reason', 'historical_prediction_not_found')
+        ->assertJsonPath('prediction_status.status', 'unavailable')->assertJsonPath('prediction_status.progress_indeterminate', false);
+    $this->assertDatabaseCount('nhl_game_prediction_run_games', 0);
+    Bus::assertNothingDispatched();
+});
+
+it('binds status prediction timestamps to the revision returned rather than a concurrently newer publication', function (): void {
+    $first = ($this->requestPrediction)()->assertOk()->json();
+    $this->travel(2)->seconds();
+    $second = ($this->publishPrediction)();
+    $status = app(\App\Services\NhlGamePredictionHistory::class)->predictionStatus(2026020001, $first['meta']['prediction_revision_id']);
+    expect($status['prediction_revision_id'])->toBe($first['meta']['prediction_revision_id'])
+        ->and($status['prediction_completed_at'])->toBe($first['meta']['predicted_at'])
+        ->and($second['meta']['prediction_revision_id'])->not->toBe($first['meta']['prediction_revision_id']);
+});
+
+it('bounds the visual stage percentage while preserving the recorded counts', function (): void {
+    ($this->statusWork)(['phase' => 'history', 'progress_current' => 101, 'progress_total' => 100]);
+    $response = ($this->requestPrediction)()->assertStatus(202)->assertJsonPath('prediction_status.processed_count', 101)
+        ->assertJsonPath('prediction_status.total_count', 100);
+    expect((float) $response->json('prediction_status.stage_progress_percent'))->toBe(100.0);
+});
+
+it('omits internal input ownership error and confidence details from public activity', function (): void {
+    ($this->statusWork)(['claim_token' => 'private-token', 'last_error' => 'Private diagnostic', 'phase' => 'history']);
+    ($this->requestPrediction)()->assertStatus(202)->assertJsonMissingPath('prediction_status.claim_token')
+        ->assertJsonMissingPath('prediction_status.request_inputs')->assertJsonMissingPath('prediction_status.last_error')
+        ->assertJsonMissingPath('prediction_status.confidence_score')->assertJsonMissingPath('prediction_status.claim_expires_at');
+});
+
+it('distinguishes actual attempt completion from the forecast publication timestamp', function (): void {
+    $saved = ($this->requestPrediction)()->assertOk()->json();
+    $this->travel(3)->seconds();
+    DB::table('nhl_game_prediction_run_games')->where('revision_id', $saved['meta']['prediction_revision_id'])
+        ->update(['finished_at' => now(), 'heartbeat_at' => now()]);
+    ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction_status.completed_at', '2026-11-05T12:00:03+00:00')
+        ->assertJsonPath('prediction_status.prediction_completed_at', $saved['meta']['predicted_at'])
+        ->assertJsonPath('meta.predicted_at', $saved['meta']['predicted_at']);
+});
+
+it('keeps a tracked legacy completions unknown finish separate from its known publication time', function (): void {
+    $saved = ($this->requestPrediction)()->assertOk()->json();
+    DB::table('nhl_game_prediction_run_games')->where('revision_id', $saved['meta']['prediction_revision_id'])
+        ->update(['finished_at' => null]);
+    ($this->requestPrediction)()->assertOk()->assertJsonPath('prediction_status.status', 'completed')
+        ->assertJsonPath('prediction_status.completed_at', null)->assertJsonPath('prediction_status.elapsed_seconds', null)
+        ->assertJsonPath('prediction_status.prediction_completed_at', $saved['meta']['predicted_at']);
 });

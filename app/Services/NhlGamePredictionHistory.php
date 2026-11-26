@@ -260,6 +260,58 @@ final class NhlGamePredictionHistory
         return $revision === null ? null : $this->payload($revision);
     }
 
+    /** Read public activity without opening checkpoints, calculating inputs, or admitting work.
+     * @return array<string,mixed>
+     */
+    public function predictionStatus(int $gameId, ?int $revisionId = null): array
+    {
+        $item = DB::table('nhl_game_prediction_run_games as work')
+            ->join('nhl_game_prediction_runs as parent', 'parent.id', '=', 'work.run_id')
+            ->where('work.nhl_game_id', $gameId)->orderByDesc('work.id')
+            ->first(['work.id', 'work.run_id', 'work.status', 'work.phase', 'work.progress_current', 'work.progress_total',
+                'work.attempts', 'work.failures', 'work.recoveries', 'work.created_at', 'work.started_at',
+                'work.finished_at', 'work.heartbeat_at', 'parent.trigger_source']);
+        $saved = DB::table('nhl_game_prediction_revisions')->where('nhl_game_id', $gameId)
+            ->where('prediction_available', true)->when($revisionId !== null, fn ($query) => $query->where('id', $revisionId))
+            ->orderByDesc('id')->first(['id', 'run_id', 'predicted_at']);
+        // A newer legacy publication can exist without a corresponding tracked work item.
+        if ($item !== null && $saved !== null && ! in_array($item->status, ['queued', 'running'], true)
+            && $item->finished_at !== null && $saved->predicted_at > $item->finished_at
+            && (int) $saved->run_id !== (int) $item->run_id) {
+            $item = null;
+        }
+        $status = $item?->status ?? ($saved === null ? 'queued' : 'completed');
+        $active = in_array($status, ['queued', 'running'], true);
+        $stage = $item === null ? $status : ($active ? $item->phase : $status);
+        $total = $item?->progress_total === null ? null : (int) $item->progress_total;
+        $processed = (int) ($item?->progress_current ?? 0);
+        $progress = $active && $total !== null && $total > 0
+            ? round(min(100.0, max(0.0, 100 * $processed / $total)), 2) : null;
+        $iso = static fn (?string $at): ?string => $at === null ? null
+            : \Illuminate\Support\Carbon::parse($at, 'UTC')->toIso8601String();
+        $completedAt = $status === 'completed' ? ($item === null ? $saved?->predicted_at : $item->finished_at) : null;
+        $elapsed = $item === null || (! $active && $item->finished_at === null) ? null
+            : max(0, ($item->finished_at === null ? now()->timestamp
+                : \Illuminate\Support\Carbon::parse($item->finished_at, 'UTC')->timestamp)
+                - \Illuminate\Support\Carbon::parse($item->created_at, 'UTC')->timestamp);
+
+        return [
+            'nhl_game_id' => $gameId, 'attempt_id' => $item === null ? null : (int) $item->id,
+            'run_id' => $item === null ? null : (int) $item->run_id,
+            'status' => $status, 'stage' => $stage, 'trigger_source' => $item?->trigger_source,
+            'processed_count' => $processed, 'total_count' => $total,
+            'progress_scope' => 'stage', 'stage_progress_percent' => $progress,
+            'progress_indeterminate' => $active && $progress === null,
+            'deliveries' => (int) ($item?->attempts ?? 0), 'retries' => (int) ($item?->failures ?? 0),
+            'recoveries' => (int) ($item?->recoveries ?? 0), 'elapsed_seconds' => $elapsed,
+            'queued_at' => $iso($item?->created_at), 'started_at' => $iso($item?->started_at),
+            'last_activity_at' => $iso($item?->heartbeat_at), 'finished_at' => $iso($item?->finished_at),
+            'completed_at' => $iso($completedAt),
+            'prediction_revision_id' => $saved === null ? null : (int) $saved->id,
+            'prediction_completed_at' => $iso($saved?->predicted_at),
+        ];
+    }
+
     /** Persist once per manual run/game; independent API recalculations always append.
      * @param array<string,mixed> $input
      * @param array<string,mixed> $evidence
