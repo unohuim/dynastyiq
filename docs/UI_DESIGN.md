@@ -769,6 +769,13 @@ games with dates, NHL game IDs and specific missing-source reasons in a bounded
 scroll region; label truncation. Explain terminally skipped dates rather than
 presenting them as calculated league or context data. Health continues to show
 missing coverage even when processing is complete.
+Name each coverage gap directly beside Overall Health and in issue titles, using
+Train/Test membership, season and missing-game count. Show fully covered Test
+seasons separately so they are not mistaken for the cause. The repair drawer lists
+all observed Train and Test seasons with their coverage counts. Repair captions
+use the affected scopes and total observed missing games, with a generic caption
+when there are no observed team gaps. Retain the existing repair process and its
+broader player/metric completeness checks.
 Use real date coverage cells and a claim-capacity ring. An unmeasured freshness
 strip stays muted/unavailable rather than inventing current freshness. Actual
 states, snapshots and claims replace illustrative data without claiming complete

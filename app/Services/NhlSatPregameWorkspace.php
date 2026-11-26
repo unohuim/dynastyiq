@@ -84,6 +84,21 @@ class NhlSatPregameWorkspace
             .':'.($run?->status === 'completed' ? 'completed-'.$run->id : 'active');
         $facts = Cache::remember($coverageKey, 60,
             fn (): array => $this->coverage($pilot));
+        // Decorate outside the count cache so existing cached observations gain explicit scope immediately.
+        $facts['seasons'] = array_map(function (array $season) use ($pilot): array {
+            $id = (string) $season['season'];
+            $roles = [];
+            if (in_array($id, array_map('strval', $pilot->train_season_ids ?? []), true)) {
+                $roles[] = 'Train';
+            }
+            if ($id === (string) $pilot->target_season_id) {
+                $roles[] = 'Test';
+            }
+
+            return [...$season, 'scope' => implode(' + ', $roles),
+                'season_label' => substr($id, 0, 4).'–'.substr($id, 6, 2),
+                'missing' => max(0, (int) $season['games'] - (int) $season['covered'])];
+        }, $facts['seasons']);
         $days = $run === null ? collect() : NhlPregameContextRunDay::query()->where('run_id', $run->id)
             ->where(fn ($q) => $q->whereIn('league_state', ['processing', 'failed'])
                 ->orWhereIn('context_state', ['processing', 'failed'])->orWhereNotNull('last_error'))
@@ -117,8 +132,9 @@ class NhlSatPregameWorkspace
         }
         foreach ($facts['seasons'] as $season) {
             if ($season['covered'] < $season['games']) {
-                $issues[] = ['title' => $season['season'].' coverage gaps',
-                    'detail' => ($season['games'] - $season['covered']).' completed games lack both team snapshots. Player and metric completeness require separate inspection.'];
+                $issues[] = ['title' => $season['scope'].' · '.$season['season_label'].' — '.$season['missing']
+                    .' game'.($season['missing'] === 1 ? '' : 's').' missing pregame context',
+                    'detail' => $season['covered'].' / '.$season['games'].' completed games have both team snapshots. Player and metric completeness require separate inspection.'];
             }
         }
         $health = $issues !== [] ? 'attention' : ($facts['teams'] === 0 ? 'incomplete' : 'recorded');

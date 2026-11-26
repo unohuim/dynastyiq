@@ -372,3 +372,59 @@ it('disables historical gap repair while the pilot has active maintenance', asyn
     await click('View issues →');
     expect(button('Repair missing context · Train + Test').disabled).toBe(true);
 });
+
+it('names the missing Train season beside health and confirms Test coverage', () => {
+    mount({ pregame: pregame({ health: 'attention', coverage: [
+        { season: '20222023', scope: 'Train', games: 1312, covered: 1215 },
+        { season: '20252026', scope: 'Test', games: 1312, covered: 1312 },
+    ] }) });
+    const diagnosis = host.querySelector('[data-coverage-diagnosis]');
+    expect(diagnosis.textContent).toContain('Train · 2022–23 — 97 games missing pregame context');
+    expect(diagnosis.textContent).toContain('Test · 2025–26 — all 1,312 games covered');
+    expect(button('Repair 97 missing Train games')).toBeDefined();
+});
+
+it('names a Test-only gap in the repair action', () => {
+    mount({ pregame: pregame({ coverage: [{ season: '20252026', scope: 'Test', games: 100, covered: 90 }] }) });
+    expect(button('Repair 10 missing Test games')).toBeDefined();
+});
+
+it('names both scopes when Train and Test have missing games', async () => {
+    mount({ pregame: pregame({ coverage: [
+        { season: '20222023', scope: 'Train', games: 100, covered: 95 },
+        { season: '20252026', scope: 'Test', games: 100, covered: 90 },
+    ] }) });
+    await click('Repair 15 missing Train + Test games');
+    expect(mocks.post).toHaveBeenCalledWith(`${base}/pregame/repair`, {}, expect.any(Object));
+});
+
+it('shows each Train and Test season in the repair drawer without dispatching work', async () => {
+    mount({ pregame: pregame({ coverage: [
+        { season: '20222023', scope: 'Train', games: 1312, covered: 1215 },
+        { season: '20232024', scope: 'Train', games: 1312, covered: 1312 },
+        { season: '20252026', scope: 'Test', games: 1312, covered: 1312 },
+    ] }) });
+    await click('View issues →');
+    const coverage = host.querySelector('[aria-label="Train and Test coverage"]');
+    expect(coverage.textContent).toContain('Train · 2023–24 — all 1,312 games covered');
+    expect(coverage.textContent).toContain('Train · 2022–23 — 97 games missing pregame context');
+    expect(coverage.textContent).toContain('Test · 2025–26 — all 1,312 games covered');
+    expect(mocks.post).not.toHaveBeenCalled();
+});
+
+it('updates gap labels quietly when refreshed coverage closes the Train gap', async () => {
+    mount({ pregame: pregame({ coverage: [{ season: '20222023', scope: 'Train', games: 100, covered: 90 }] }) });
+    const health = host.querySelector('[data-pregame-health-strip]');
+    expect(button('Repair 10 missing Train games')).toBeDefined();
+    props.pregame = pregame({ coverage: [{ season: '20222023', scope: 'Train', games: 100, covered: 100 }] });
+    await nextTick();
+    expect(button('Repair missing context')).toBeDefined();
+    expect(host.querySelector('[data-pregame-health-strip]')).toBe(health);
+    expect(host.textContent).not.toContain('10 games missing pregame context');
+    expect(mocks.post).not.toHaveBeenCalled();
+});
+
+it('counts an overlapping Train and Test season once in the repair label', () => {
+    mount({ pregame: pregame({ coverage: [{ season: '20252026', scope: 'Train + Test', games: 100, covered: 99 }] }) });
+    expect(button('Repair 1 missing Train + Test game')).toBeDefined();
+});

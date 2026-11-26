@@ -13,6 +13,7 @@
 - Pregame run `options.trigger`: `manual_repair` identifies the explicit pilot Train-and-Test missing-context repair. It uses `only_missing=true` and `source_preflight=true`; ordinary `manual_update` remains Test/prediction-season only.
 - Repair `options.source_blocked_days`: nonnegative count of dates where every selected game failed source preflight. Their existing day stages are terminal `complete` for accounting, meaning skipped rather than calculated; the UI must disclose the count. Existing game rows remain `blocked`.
 - Repair game `readiness.source_blockers`: array of source-presence failure descriptions; `last_error` provides the joined readable reason. It does not certify complete on-ice or shot data. Workspace `blocked_games` returns at most 100 latest-run game/date/reason rows; `blocked_games_truncated` labels additional rows.
+- Workspace coverage `scope`: `Train`, `Test`, or `Train + Test`, derived from the selected model's season membership. `season_label` formats the season ID for display; `missing` is completed games minus games with both team snapshots, floored at zero. Overlapping membership retains one coverage row, not duplicate missing games.
 
 ## Pregame comparison progress
 

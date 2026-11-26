@@ -10,6 +10,8 @@ The historical pilot's explicit missing-context repair covers Train and Test gap
 with source preflight and bounded per-game blocker reporting. Normal incremental
 updates remain Test/prediction-only; complete games outside selection remain
 untouched. Source-blocked dates skip calculations without hiding health gaps.
+Coverage warnings identify Train/Test season membership and missing counts;
+repair labels summarize these gaps while keeping complete Test coverage distinct.
 Authority: `docs/architecture/stats/NhlPregameContextEvidence.yaml`.
 
 Pregame maintenance shows processed selection progress separately from successful

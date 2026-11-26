@@ -527,3 +527,46 @@ it('refreshes cached coverage immediately after a maintenance run completes', fu
     $run->update(['status' => 'completed']);
     ($this->read)()->assertJsonPath('props.pregame.coverage.0.covered', 1);
 });
+
+it('identifies missing Train context by role season and count after a repair action', function (): void {
+    ($this->repairGame)();
+    $run = ($this->repair)();
+    app(NhlPregameContextOrchestrator::class)->prepare($run);
+    $this->assertDatabaseHas('nhl_pregame_context_run_games', ['run_id' => $run->id,
+        'nhl_game_id' => 2022020001, 'state' => 'pending']);
+    ($this->read)()->assertJsonPath('props.pregame.coverage.0.scope', 'Train')
+        ->assertJsonPath('props.pregame.coverage.0.season_label', '2022–23')
+        ->assertJsonPath('props.pregame.coverage.0.missing', 1)
+        ->assertJsonPath('props.pregame.issues.0.title', 'Train · 2022–23 — 1 game missing pregame context');
+});
+
+it('identifies Test gaps separately from complete empty Train observations', function (): void {
+    ($this->game)();
+    ($this->read)()->assertJsonPath('props.pregame.coverage.3.scope', 'Test')
+        ->assertJsonPath('props.pregame.coverage.3.season_label', '2025–26')
+        ->assertJsonPath('props.pregame.coverage.3.missing', 1)
+        ->assertJsonPath('props.pregame.issues.0.title', 'Test · 2025–26 — 1 game missing pregame context');
+});
+
+it('adds scope to existing cached coverage without losing its observed counts', function (): void {
+    Cache::put('sat-pregame-workspace:'.$this->pilot->id.':'.NhlPregameContextBuilder::VERSION.':active', [
+        'seasons' => [['season' => '20222023', 'games' => 1312, 'covered' => 1215],
+            ['season' => '20252026', 'games' => 1312, 'covered' => 1312]],
+        'dates' => [], 'teams' => 10000, 'players' => 100000, 'cutoff' => null, 'checked_at' => now()->toIso8601String(),
+    ], 60);
+    ($this->read)()->assertJsonPath('props.pregame.coverage.0.scope', 'Train')
+        ->assertJsonPath('props.pregame.coverage.0.missing', 97)
+        ->assertJsonPath('props.pregame.coverage.1.scope', 'Test')
+        ->assertJsonPath('props.pregame.coverage.1.missing', 0)
+        ->assertJsonPath('props.pregame.coverage.1.covered', 1312)
+        ->assertJsonPath('props.pregame.issues.0.title', 'Train · 2022–23 — 97 games missing pregame context');
+    Bus::assertNothingDispatched();
+});
+
+it('labels overlapping Train and Test membership without duplicating coverage rows', function (): void {
+    $this->pilot->update(['train_season_ids' => ['20252026']]);
+    ($this->game)();
+    ($this->read)()->assertJsonCount(1, 'props.pregame.coverage')
+        ->assertJsonPath('props.pregame.coverage.0.scope', 'Train + Test')
+        ->assertJsonPath('props.pregame.coverage.0.missing', 1);
+});
