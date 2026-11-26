@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Jobs\BuildNhlSatModelEntityProfileForEntityJob;
 use App\Models\NhlExpectedGoalsModel;
 use App\Models\NhlModelRun;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Redis;
 use RuntimeException;
 
 /**
@@ -23,6 +25,94 @@ class NhlSatModelEntityProfileBuilder
         'pp' => 'PP',
         'pk' => 'PK',
     ];
+
+    /**
+     * Recover a bounded rotating page of abandoned profile reservations only.
+     * Keep shared queue timeouts and the original exception-attempt budget intact.
+     */
+    public function recoverAbandonedJobs(): int
+    {
+        if (config('queue.default') !== 'redis') {
+            return 0;
+        }
+        $redis = Redis::connection(config('queue.connections.redis.connection', 'default'));
+        $key = 'queues:projections:reserved';
+        $size = (int) $redis->zcard($key);
+        if ($size === 0) {
+            return 0;
+        }
+        $offset = (intdiv(now()->timestamp, 60) % (int) ceil($size / 200)) * 200;
+        $recovered = 0;
+        foreach ($redis->zrange($key, $offset, $offset + 199) as $raw) {
+            if (strlen($raw) > 131072) {
+                continue;
+            }
+            $payload = json_decode($raw, true);
+            if (($payload['displayName'] ?? null) !== BuildNhlSatModelEntityProfileForEntityJob::class
+                || ($payload['timeout'] ?? null) !== 300) {
+                continue;
+            }
+            $score = $redis->zscore($key, $raw);
+            if (! is_numeric($score) || (int) $score <= now()->timestamp + 120
+                || now()->timestamp - ((int) $score - (int) config('queue.connections.redis.retry_after')) < 450) {
+                continue;
+            }
+            try {
+                $job = @unserialize($payload['data']['command'] ?? '', ['allowed_classes' => [BuildNhlSatModelEntityProfileForEntityJob::class]]);
+                if (! $job instanceof BuildNhlSatModelEntityProfileForEntityJob || $job->predictionBuildId === null
+                    || ! in_array($job->profileType, ['skater_offense', 'goalie_faced'], true)
+                    || $job->receiptIndex < 0 || $job->receiptIndex >= 100 || $job->deliveryGeneration < 1
+                    || $job->deliveryGeneration > 3 || $job->entityKeys === []
+                    || count($job->entityKeys) > BuildNhlSatModelEntityProfileForEntityJob::MAX_ENTITIES) {
+                    continue;
+                }
+                $next = DB::transaction(function () use ($job, $payload): ?array {
+                    $run = NhlModelRun::query()->whereKey($job->modelRunId)->lock('for no key update skip locked')->first();
+                    if ($run === null || ! $run->acceptsPredictionStage($job->predictionBuildId, 'profiles')) {
+                        return null;
+                    }
+                    if ($job->batchId !== null) {
+                        $batch = DB::table('job_batches')->where('id', $job->batchId)->first();
+                        if ($batch === null || $batch->cancelled_at !== null || $batch->finished_at !== null) {
+                            return null;
+                        }
+                    }
+                    $receipt = $job->receiptKey();
+                    $metrics = $run->metrics ?? [];
+                    if (($metrics['profile_build']['completed_pages'][$receipt][$job->receiptIndex] ?? '0') !== '1') {
+                        $current = (int) ($metrics['profile_build']['delivery_generations'][$receipt][$job->receiptIndex] ?? 1);
+                        if ($current < $job->deliveryGeneration || $current > $job->deliveryGeneration + 1) {
+                            return null;
+                        }
+                        $replacementGeneration = $job->deliveryGeneration + 1;
+                        if ($current === $job->deliveryGeneration) {
+                            $metrics['profile_build']['delivery_generations'][$receipt][$job->receiptIndex] = $replacementGeneration;
+                            $metrics['profile_build']['reservation_recoveries'] = (int) ($metrics['profile_build']['reservation_recoveries'] ?? 0) + 1;
+                            $run->forceFill(['metrics' => $metrics])->save();
+                        }
+                        $job->deliveryGeneration = $replacementGeneration;
+                    }
+                    $next = $payload;
+                    $next['data']['command'] = serialize($job);
+
+                    return $next;
+                });
+                if ($next === null) {
+                    continue;
+                }
+                // Publish only after the DB fence commits. CAS makes repeated scans safe,
+                // including a Redis failure after the fence was prepared in the prior scan.
+                $lua = "local s=redis.call('ZSCORE',KEYS[1],ARGV[1]); if not s or tonumber(s)~=tonumber(ARGV[2]) then return 0 end; redis.call('ZREM',KEYS[1],ARGV[1]); redis.call('RPUSH',KEYS[2],ARGV[3]); redis.call('RPUSH',KEYS[3],1); return 1";
+                $recovered += (int) $redis->eval($lua, 3, $key, 'queues:projections', 'queues:projections:notify',
+                    $raw, $score, json_encode($next, JSON_THROW_ON_ERROR));
+            } catch (\Throwable $exception) {
+                // Leave an unchanged reservation retryable on the next scheduled scan.
+                report(new RuntimeException(\App\Jobs\BuildNhlSatModelEntityProfilesJob::failureMessage($exception)));
+            }
+        }
+
+        return $recovered;
+    }
 
     /**
      * Identify in-place evaluation revisions used by a profile build.

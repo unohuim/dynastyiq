@@ -63,3 +63,9 @@ Schedule::call(fn () => app(\App\Services\NhlGamePredictionHistory::class)->reco
     ->everyMinute()
     ->onOneServer()
     ->withoutOverlapping(2);
+
+Schedule::call(fn () => app(\App\Services\NhlSatModelEntityProfileBuilder::class)->recoverAbandonedJobs())
+    ->name('nhl-profile-recover-abandoned-jobs')
+    ->everyMinute()
+    ->onOneServer()
+    ->withoutOverlapping(2);

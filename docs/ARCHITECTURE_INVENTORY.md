@@ -4611,3 +4611,11 @@ strength validation use numeric player predicates with existing fact indexes.
 A failed-build retry can retain complete season snapshots after evaluation,
 source freshness and scope checks; combined Train profiles rebuild under a fresh
 build identity. Canonical authority: `docs/architecture/stats/NhlModelRuns.yaml`.
+
+
+Profile reservations now have bounded once-per-minute recovery through the
+existing profile builder and scheduler. Stale five-minute deliveries wait an
+additional two-minute lock grace and thirty-second margin, then retain queue identity/attempts while a
+model-metadata generation fence prevents an abandoned worker from committing.
+Shared long-job reservation settings remain unchanged. Authority:
+`docs/architecture/stats/NhlModelRuns.yaml`.

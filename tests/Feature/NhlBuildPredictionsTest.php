@@ -21,6 +21,7 @@ use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Redis;
 
 beforeEach(function (): void {
     $this->travelTo(\Illuminate\Support\Carbon::parse('2026-09-29 12:00:00 UTC'));
@@ -1323,4 +1324,141 @@ it('does not rebroadcast profile progress when a committed job is redelivered', 
     $job->handle($builder);
     expect(data_get($this->run->fresh()->metrics, 'season_snapshot_entities_completed'))->toBe(1);
     Event::assertDispatchedTimes(NhlSatModelUpdated::class, 1);
+});
+
+describe('abandoned profile reservation recovery', function (): void {
+    beforeEach(function (): void {
+        ($this->activate)();
+        config(['queue.default' => 'redis', 'queue.connections.redis.connection' => 'default', 'queue.connections.redis.retry_after' => 3900]);
+        $this->staleJob = new BuildNhlSatModelEntityProfileForEntityJob($this->run->id, $this->sat->id, null,
+            'skater_offense', 'skater_offense:101', null, 'build-1', 'recovery-page', 0);
+        $this->payload = ['uuid' => 'profile-recovery-fixture', 'displayName' => BuildNhlSatModelEntityProfileForEntityJob::class,
+            'attempts' => 1, 'timeout' => 300, 'maxTries' => 2, 'data' => ['command' => serialize($this->staleJob)]];
+        $this->reservation = function (int $age = 500): mixed {
+            $raw = json_encode($this->payload, JSON_THROW_ON_ERROR);
+            $redis = Mockery::mock();
+            Redis::shouldReceive('connection')->with('default')->andReturn($redis);
+            $redis->shouldReceive('zcard')->with('queues:projections:reserved')->andReturn(1);
+            $redis->shouldReceive('zrange')->with('queues:projections:reserved', 0, 199)->andReturn([$raw]);
+            $redis->shouldReceive('zscore')->with('queues:projections:reserved', $raw)->andReturn(now()->timestamp + 3900 - $age);
+
+            return $redis;
+        };
+    });
+
+    it('requeues only stale profile work after committing its replacement fence', function (): void {
+        $level = DB::transactionLevel();
+        $redis = ($this->reservation)();
+        $redis->shouldReceive('eval')->once()->andReturnUsing(function (...$args) use ($level): int {
+            expect(DB::transactionLevel())->toBe($level);
+            $next = json_decode($args[7], true);
+            $job = unserialize($next['data']['command'], ['allowed_classes' => [BuildNhlSatModelEntityProfileForEntityJob::class]]);
+            expect($job->deliveryGeneration)->toBe(2)->and($next['attempts'])->toBe(1)
+                ->and($next['uuid'])->toBe('profile-recovery-fixture')
+                ->and(data_get($this->run->fresh()->metrics, 'profile_build.delivery_generations.recovery-page.0'))->toBe(2);
+            return 1;
+        });
+        expect(app(NhlSatModelEntityProfileBuilder::class)->recoverAbandonedJobs())->toBe(1);
+    });
+
+    it('does not recover a healthy reservation before timeout and grace expire', function (): void {
+        $redis = ($this->reservation)(449);
+        $redis->shouldNotReceive('eval');
+        expect(app(NhlSatModelEntityProfileBuilder::class)->recoverAbandonedJobs())->toBe(0);
+    });
+
+    it('does not requeue jobs belonging to a failed profile build', function (): void {
+        $this->run->update(['status' => 'failed']);
+        $redis = ($this->reservation)();
+        $redis->shouldNotReceive('eval');
+        expect(app(NhlSatModelEntityProfileBuilder::class)->recoverAbandonedJobs())->toBe(0);
+    });
+
+    it('does not requeue jobs belonging to an older build identity', function (): void {
+        $this->run->update(['metrics' => ['prediction_build' => ['id' => 'replacement', 'status' => 'running', 'stage' => 'profiles']]]);
+        $redis = ($this->reservation)();
+        $redis->shouldNotReceive('eval');
+        expect(app(NhlSatModelEntityProfileBuilder::class)->recoverAbandonedJobs())->toBe(0);
+    });
+
+    it('leaves other projections job types untouched', function (): void {
+        $this->payload['displayName'] = BuildNhlSatModelEntityRateProjectionsJob::class;
+        $redis = ($this->reservation)();
+        $redis->shouldNotReceive('eval');
+        expect(app(NhlSatModelEntityProfileBuilder::class)->recoverAbandonedJobs())->toBe(0);
+    });
+
+    it('retries a prepared fence safely after an uncertain Redis publication', function (): void {
+        $this->mock(\Illuminate\Contracts\Debug\ExceptionHandler::class)->shouldReceive('report')->once();
+        $redis = ($this->reservation)();
+        $calls = 0;
+        $redis->shouldReceive('eval')->twice()->andReturnUsing(function (...$args) use (&$calls): int {
+            if (++$calls === 1) {
+                throw new RuntimeException('Temporary Redis fixture error');
+            }
+            $job = unserialize(json_decode($args[7], true)['data']['command'], ['allowed_classes' => [BuildNhlSatModelEntityProfileForEntityJob::class]]);
+            expect($job->deliveryGeneration)->toBe(2);
+            return 1;
+        });
+        expect(app(NhlSatModelEntityProfileBuilder::class)->recoverAbandonedJobs())->toBe(0)
+            ->and(app(NhlSatModelEntityProfileBuilder::class)->recoverAbandonedJobs())->toBe(1)
+            ->and(data_get($this->run->fresh()->metrics, 'profile_build.reservation_recoveries'))->toBe(1);
+    });
+
+    it('rejects a superseded delivery before writing player profiles', function (): void {
+        $this->run->update(['metrics' => [...$this->run->metrics,
+            'profile_build' => ['delivery_generations' => ['recovery-page' => [0 => 2]]]]]);
+        $builder = Mockery::mock(NhlSatModelEntityProfileBuilder::class);
+        $builder->shouldNotReceive('buildEntity');
+        $this->staleJob->handle($builder);
+        Event::assertNotDispatched(NhlSatModelUpdated::class);
+    });
+
+    it('lets the replacement commit once while older redeliveries remain fenced', function (): void {
+        $this->run->update(['metrics' => [...$this->run->metrics,
+            'profile_build' => ['delivery_generations' => ['recovery-page' => [0 => 2]]]]]);
+        $replacement = clone $this->staleJob;
+        $replacement->deliveryGeneration = 2;
+        $builder = Mockery::mock(NhlSatModelEntityProfileBuilder::class);
+        $builder->shouldReceive('buildEntity')->once()->andReturn(1);
+        $this->staleJob->handle($builder);
+        $replacement->handle($builder);
+        $replacement->handle($builder);
+        expect(data_get($this->run->fresh()->metrics, 'profile_entities_completed'))->toBe(1);
+    });
+
+    it('rolls back profile work if its delivery is fenced during calculation', function (): void {
+        $builder = Mockery::mock(NhlSatModelEntityProfileBuilder::class);
+        $builder->shouldReceive('buildEntity')->once()->andReturnUsing(function (): int {
+            DB::table('nhl_sat_model_entity_profile_buckets')->insert($this->profileRow);
+            $this->run->update(['metrics' => [...$this->run->metrics,
+                'profile_build' => ['delivery_generations' => ['recovery-page' => [0 => 2]]]]]);
+            return 1;
+        });
+        $this->staleJob->handle($builder);
+        expect(DB::table('nhl_sat_model_entity_profile_buckets')->count())->toBe(0);
+        Event::assertNotDispatched(NhlSatModelUpdated::class);
+    });
+
+    it('does not open Redis when the configured queue driver is not Redis', function (): void {
+        config(['queue.default' => 'database']);
+        Redis::shouldReceive('connection')->never();
+        expect(app(NhlSatModelEntityProfileBuilder::class)->recoverAbandonedJobs())->toBe(0);
+    });
+});
+
+it('leaves reservations near normal expiry to the standard queue migration', function (): void {
+    ($this->activate)();
+    config(['queue.default' => 'redis', 'queue.connections.redis.connection' => 'default', 'queue.connections.redis.retry_after' => 3900]);
+    $job = new BuildNhlSatModelEntityProfileForEntityJob($this->run->id, $this->sat->id, null,
+        'skater_offense', 'skater_offense:101', null, 'build-1');
+    $raw = json_encode(['displayName' => BuildNhlSatModelEntityProfileForEntityJob::class, 'timeout' => 300,
+        'data' => ['command' => serialize($job)]]);
+    $redis = Mockery::mock();
+    Redis::shouldReceive('connection')->with('default')->andReturn($redis);
+    $redis->shouldReceive('zcard')->andReturn(1);
+    $redis->shouldReceive('zrange')->andReturn([$raw]);
+    $redis->shouldReceive('zscore')->andReturn(now()->timestamp + 60);
+    $redis->shouldNotReceive('eval');
+    expect(app(NhlSatModelEntityProfileBuilder::class)->recoverAbandonedJobs())->toBe(0);
 });

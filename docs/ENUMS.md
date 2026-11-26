@@ -3306,3 +3306,10 @@ retaining completed snapshots on a failed-build retry. Its fields are
 and `entities`. These reuse existing IDs, source descriptors and profile types;
 they introduce no new lifecycle statuses. `since` remains the original build's
 source cutoff for retry validation, not the latest retry timestamp.
+
+
+Profile queue recovery uses `metrics.profile_build.delivery_generations`, keyed by
+the existing receipt page and chunk index. Missing generation means 1 for
+previously queued payloads; a replacement carries the prepared higher generation.
+`reservation_recoveries` counts prepared replacement fences, not completed
+players or exception attempts. Existing model/build lifecycle states are unchanged.

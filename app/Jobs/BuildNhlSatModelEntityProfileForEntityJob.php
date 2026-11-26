@@ -47,6 +47,9 @@ class BuildNhlSatModelEntityProfileForEntityJob implements ShouldQueue
     /** Default also applies when deserializing a pre-generation job payload. */
     public ?string $predictionBuildId = null;
 
+    /** Recovery fences older deliveries before their final commit. */
+    public int $deliveryGeneration = 1;
+
     public ?string $receiptPage = null;
 
     public int $receiptIndex = 0;
@@ -114,7 +117,7 @@ class BuildNhlSatModelEntityProfileForEntityJob implements ShouldQueue
         if ($this->entityKeys === [] || count($this->entityKeys) > self::MAX_ENTITIES) {
             throw new \RuntimeException('Profile job requires between one and fifteen entities.');
         }
-        $receipt = $this->receiptPage ?? sha1(($this->snapshotSeasonId ?? 'training') . ':' . $this->profileType . ':' . implode(':', $this->entityKeys));
+        $receipt = $this->receiptKey();
         if ($this->receiptIndex < 0 || $this->receiptIndex >= 100) {
             throw new \RuntimeException('Invalid profile completion receipt index.');
         }
@@ -122,6 +125,7 @@ class BuildNhlSatModelEntityProfileForEntityJob implements ShouldQueue
         try {
             $run = NhlModelRun::query()->findOrFail($this->modelRunId);
             if (! $run->acceptsPredictionStage($this->predictionBuildId, 'profiles')
+                || ! $this->ownsDelivery($run, $receipt)
                 || ($run->metrics['profile_build']['completed_pages'][$receipt][$this->receiptIndex] ?? '0') === '1') {
                 DB::rollBack();
 
@@ -147,6 +151,7 @@ class BuildNhlSatModelEntityProfileForEntityJob implements ShouldQueue
             // serializes progress without conflicting with other entity inserts.
             $run = NhlModelRun::query()->whereKey($this->modelRunId)->lock('for no key update')->firstOrFail();
             if (! $run->acceptsPredictionStage($this->predictionBuildId, 'profiles')
+                || ! $this->ownsDelivery($run, $receipt)
                 || ($run->metrics['profile_build']['completed_pages'][$receipt][$this->receiptIndex] ?? '0') === '1'
                 || $this->batch()?->cancelled()) {
                 DB::rollBack();
@@ -175,6 +180,18 @@ class BuildNhlSatModelEntityProfileForEntityJob implements ShouldQueue
             DB::rollBack();
             throw new \RuntimeException(BuildNhlSatModelEntityProfilesJob::failureMessage($exception));
         }
+    }
+
+    /** Stable receipt identity shared with bounded abandoned-reservation recovery. */
+    public function receiptKey(): string
+    {
+        return $this->receiptPage ?? sha1(($this->snapshotSeasonId ?? 'training') . ':' . $this->profileType . ':' . implode(':', $this->entityKeys));
+    }
+
+    /** An abandoned worker must roll back if its replacement has been admitted. */
+    private function ownsDelivery(NhlModelRun $run, string $receipt): bool
+    {
+        return $this->deliveryGeneration === (int) ($run->metrics['profile_build']['delivery_generations'][$receipt][$this->receiptIndex] ?? 1);
     }
 
     public function failed(Throwable $exception): void
