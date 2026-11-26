@@ -762,6 +762,13 @@ keyboard-accessible dialog triggers for that same complete list and repair
 panel. Opening it is read-only and remains available when the pilot source is
 missing; processing controls keep their separate eligibility checks. Show an
 explicit empty state when no tracked issues exist.
+The primary Repair missing context action covers this historical pilot's Train
+and Test gaps. In the repair drawer, keep Update Test / prediction season only
+separate from that repair and the confirmed full rebuild. List source-blocked
+games with dates, NHL game IDs and specific missing-source reasons in a bounded
+scroll region; label truncation. Explain terminally skipped dates rather than
+presenting them as calculated league or context data. Health continues to show
+missing coverage even when processing is complete.
 Use real date coverage cells and a claim-capacity ring. An unmeasured freshness
 strip stays muted/unavailable rather than inventing current freshness. Actual
 states, snapshots and claims replace illustrative data without claiming complete

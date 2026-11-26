@@ -818,6 +818,8 @@ class NhlPregameLeagueResults
     {
         return DB::table('nhl_games as game')->join('nhl_pregame_context_run_games as work', 'work.nhl_game_id', '=', 'game.nhl_game_id')
             ->where('work.run_id', $run->id)->whereDate('work.game_date', $day->game_date)
+            ->when((bool) data_get($run->options, 'source_preflight', false),
+                fn ($query) => $query->where('work.state', '!=', 'blocked'))
             ->where(fn ($query) => $query->whereNotNull('game.start_time_utc')
                 ->orWhereIn('game.nhl_game_id', array_keys(data_get($run->options, 'prediction_evidence', []))))
             ->orderBy('game.start_time_utc')->orderBy('game.nhl_game_id')

@@ -6,6 +6,12 @@ model-owned records. Scoped league/context claim allocation, health, coverage,
 inspection and maintenance controls do not switch production prediction sources.
 Authority: `docs/architecture/admin/NhlSatWorkspace.yaml`.
 
+The historical pilot's explicit missing-context repair covers Train and Test gaps,
+with source preflight and bounded per-game blocker reporting. Normal incremental
+updates remain Test/prediction-only; complete games outside selection remain
+untouched. Source-blocked dates skip calculations without hiding health gaps.
+Authority: `docs/architecture/stats/NhlPregameContextEvidence.yaml`.
+
 Pregame maintenance shows processed selection progress separately from successful
 updates and data coverage. Best-effort queue lifecycle observations supply actual
 delivery identity, task, host/PID and elapsed time, separately from durable claims.

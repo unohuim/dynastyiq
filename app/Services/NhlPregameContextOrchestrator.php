@@ -175,6 +175,23 @@ class NhlPregameContextOrchestrator
         ]), $rejectActive);
     }
 
+    /** Repair missing historical context across this model's Train and Test without a full rebuild. */
+    public function queueModelRepair(NhlModelRun $model, ?int $createdBy = null): NhlPregameContextRun
+    {
+        $seasons = $model->pregameContextSeasonIds();
+        if ($seasons === []) {
+            throw ValidationException::withMessages(['season_ids' => 'This model has no seasons to repair.']);
+        }
+
+        return $this->queueBackfill($seasons, $model->id, $createdBy, array_merge($this->workspaceOptions($model), [
+            'trigger' => 'manual_repair',
+            'only_missing' => true,
+            'source_preflight' => true,
+            'train_season_ids' => array_map('strval', $model->train_season_ids ?? []),
+            'pipeline_version' => self::CHECKPOINT_PIPELINE,
+        ]));
+    }
+
     /** Only opted-in Sep2026 maintenance runs receive workspace-specific concurrency. */
     private function workspaceOptions(NhlModelRun $model): array
     {
@@ -541,9 +558,36 @@ class NhlPregameContextOrchestrator
         $games = $query->orderBy('game_date')
             ->orderBy('start_time_utc')
             ->orderBy('nhl_game_id')
-            ->get(['nhl_game_id', 'game_date']);
+            ->get(['nhl_game_id', 'game_date', 'start_time_utc', 'home_team_id', 'away_team_id', 'game_state']);
 
-        DB::transaction(function () use ($run, $games, $options): void {
+        $blockers = [];
+        if ((bool) data_get($options, 'source_preflight', false)) {
+            // Batch source-presence checks; do not calculate histories or change imported facts.
+            foreach ($games->chunk(500) as $batch) {
+                $summaries = DB::table('nhl_game_summaries')->whereIn('nhl_game_id', $batch->pluck('nhl_game_id'))
+                    ->select('nhl_game_id', 'nhl_team_id')->distinct()->get()->groupBy('nhl_game_id');
+                foreach ($batch as $game) {
+                    $reasons = [];
+                    if ($game->start_time_utc === null) {
+                        $reasons[] = 'Missing scheduled start time';
+                    }
+                    foreach (['home', 'away'] as $side) {
+                        $team = $game->{$side.'_team_id'};
+                        if ($team === null || (int) $team <= 0) {
+                            $reasons[] = 'Missing '.$side.' team identity';
+                        } elseif (in_array($game->game_state, ['OFF', 'FINAL'], true)
+                            && ! $summaries->get($game->nhl_game_id, collect())->contains('nhl_team_id', $team)) {
+                            $reasons[] = 'Missing '.$side.' player summaries (team '.$team.')';
+                        }
+                    }
+                    if ($reasons !== []) {
+                        $blockers[(int) $game->nhl_game_id] = $reasons;
+                    }
+                }
+            }
+        }
+
+        DB::transaction(function () use ($run, $games, $options, $blockers): void {
             $fresh = NhlPregameContextRun::query()->lock(DB::getDriverName() === 'pgsql' ? 'for no key update' : true)->findOrFail($run->id);
             if ($fresh->status !== NhlPregameContextRun::STATUS_QUEUED) {
                 return;
@@ -555,7 +599,11 @@ class NhlPregameContextOrchestrator
                 'nhl_game_id' => $game->nhl_game_id,
                 'game_date' => $game->game_date,
                 'sequence' => $index + 1,
-                'state' => NhlPregameContextRunGame::STATE_PENDING,
+                'state' => isset($blockers[$game->nhl_game_id]) ? NhlPregameContextRunGame::STATE_BLOCKED : NhlPregameContextRunGame::STATE_PENDING,
+                ...((bool) data_get($options, 'source_preflight', false) ? [
+                    'readiness' => json_encode(['source_blockers' => $blockers[$game->nhl_game_id] ?? []], JSON_THROW_ON_ERROR),
+                    'last_error' => isset($blockers[$game->nhl_game_id]) ? implode('; ', $blockers[$game->nhl_game_id]) : null,
+                ] : []),
                 'created_at' => $now,
                 'updated_at' => $now,
             ])->all();
@@ -572,9 +620,10 @@ class NhlPregameContextOrchestrator
                 $dayRows = collect($rows)->groupBy('game_date')->map(fn (Collection $dateRows, string $date): array => [
                     'run_id' => $fresh->id,
                     'game_date' => $date,
-                    'context_state' => NhlPregameContextRunDay::STATE_PENDING,
-                    'league_state' => NhlPregameContextRunDay::STATE_PENDING,
+                    'context_state' => $dateRows->every(fn (array $row): bool => $row['state'] === 'blocked') ? 'complete' : 'pending',
+                    'league_state' => $dateRows->every(fn (array $row): bool => $row['state'] === 'blocked') ? 'complete' : 'pending',
                     'game_count' => $dateRows->count(),
+                    'blocked_games' => $dateRows->where('state', 'blocked')->count(),
                     'created_at' => $now,
                     'updated_at' => $now,
                 ])->values()->all();
@@ -585,6 +634,10 @@ class NhlPregameContextOrchestrator
                         ['game_count', 'updated_at']
                     );
                 }
+                if ((bool) data_get($options, 'source_preflight', false)) {
+                    $options['source_blocked_days'] = collect($dayRows)->where('game_count', '>', 0)
+                        ->filter(fn (array $day): bool => $day['blocked_games'] === $day['game_count'])->count();
+                }
             }
 
             $fresh->update([
@@ -593,6 +646,7 @@ class NhlPregameContextOrchestrator
                     'up_to_date' => $rows === [] && (bool) data_get($fresh->options, 'only_missing', false),
                 ]),
                 'total_games' => count($rows),
+                'blocked_games' => count($blockers),
                 'last_error' => null,
             ]);
             if (data_get($fresh->options, 'trigger') === 'prediction') {

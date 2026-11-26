@@ -7,6 +7,7 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\NhlModelRun;
 use App\Models\NhlPregameContextRun;
+use App\Services\NhlPregameContextOrchestrator;
 use App\Services\NhlSatPregameWorkspace;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -17,6 +18,17 @@ use Illuminate\Validation\ValidationException;
 /** Pilot-only controls for the shared Pregame workspace; prediction sources stay model-owned. */
 class NhlSatWorkspaceController extends Controller
 {
+    /** Queue only missing Train/Test context for the uniquely selected historical pilot. */
+    public function repair(Request $request, NhlSatPregameWorkspace $workspace, NhlPregameContextOrchestrator $orchestrator): JsonResponse
+    {
+        $pilot = $workspace->pilot();
+        abort_if($pilot === null, 409, 'Sep2026 pilot source is unavailable.');
+        $run = $orchestrator->queueModelRepair($pilot, $request->user()?->id);
+
+        return response()->json(['message' => 'Queued missing Train and Test context repair. Source blockers will be listed by game.',
+            'progress' => $workspace->progress($run)], 202);
+    }
+
     /** Change claim concurrency for the pilot without provisioning or stopping Horizon workers. */
     public function workers(Request $request, NhlSatPregameWorkspace $workspace): JsonResponse
     {

@@ -94,7 +94,7 @@ it('submits a confirmed action as JSON with the workspace contract header', asyn
 });
 it('preserves failed submissions and reports the scoped error', async () => {
     mocks.post.mockRejectedValue({ response: { data: { message: 'Build already active.' } } });
-    mount(); await click('Update Missing Data'); expect(button('Update Missing Data').disabled).toBe(false);
+    mount(); await click('Repair missing context'); expect(button('Repair missing context').disabled).toBe(false);
     expect(mocks.notify).toHaveBeenCalledWith(expect.objectContaining({ type: 'error', message: 'Build already active.' }));
 });
 it('filters models without requesting another page', async () => {
@@ -135,7 +135,7 @@ it('uses the pilot even when it is absent from the current model page', async ()
     expect(mocks.get).toHaveBeenCalledWith(`${base}/1/context/auto-sync`, expect.any(Object));
 });
 it('disables pilot operations when the source is unavailable', () => {
-    mount({ pregame: pregame({ source: null, health: 'unavailable' }) }); expect(button('Update Missing Data').disabled).toBe(true);
+    mount({ pregame: pregame({ source: null, health: 'unavailable' }) }); expect(button('Repair missing context').disabled).toBe(true);
 });
 it('retains visible progress after a quiet poll', async () => {
     mount({ models: [model({ status: 'running' })] }); await vi.advanceTimersByTimeAsync(5000);
@@ -199,7 +199,7 @@ it('opens all recorded issues from the Overall Health badge', async () => {
     host.querySelector('[aria-label="View pregame health issues"]').click(); await nextTick();
     const panel = host.querySelector('#sat-pregame-issues-panel');
     expect(panel.textContent).toContain('Saved cause 4');
-    expect(panel.textContent).toContain('Update missing Test context');
+    expect(panel.textContent).toContain('Update Test / prediction season only');
 });
 
 it('opens the same issue panel from the Outstanding count without processing work', async () => {
@@ -225,7 +225,7 @@ it('allows issue inspection when the pilot is unavailable while repair remains d
         issues: [{ title: 'Sep2026 source unavailable', detail: 'No unambiguous historical pilot exists.' }] }) });
     await click('View issues →');
     expect(host.querySelector('#sat-pregame-issues-panel').textContent).toContain('No unambiguous historical pilot exists.');
-    expect(button('Update missing Test context').disabled).toBe(true);
+    expect(button('Update Test / prediction season only').disabled).toBe(true);
     expect(button('Full Train + Test rebuild').disabled).toBe(true);
     expect(mocks.post).not.toHaveBeenCalled();
 });
@@ -326,4 +326,49 @@ it('continues quiet fast polling while execution telemetry reports ongoing work'
     mount({ pregame: pregame({ worker_activity: activity([execution()]) }) });
     await vi.advanceTimersByTimeAsync(5000);
     expect(mocks.reload).toHaveBeenCalledWith(expect.objectContaining({ showProgress: false, preserveScroll: true, preserveState: true }));
+});
+
+it('uses the historical gap repair endpoint from the primary repair button', async () => {
+    mount(); await click('Repair missing context');
+    expect(mocks.post).toHaveBeenCalledWith(`${base}/pregame/repair`, {}, expect.any(Object));
+    expect(mocks.post).not.toHaveBeenCalledWith(`${base}/1/context/update`, expect.anything(), expect.anything());
+});
+
+it('offers Train and Test repair separately from the Test-only update', async () => {
+    mount(); await click('View issues →');
+    expect(button('Repair missing context · Train + Test')).toBeDefined();
+    await click('Update Test / prediction season only');
+    expect(mocks.post).toHaveBeenCalledWith(`${base}/1/context/update`, {}, expect.any(Object));
+});
+
+it('shows blocked game dates identifiers and specific missing-source reasons', async () => {
+    mount({ pregame: pregame({ blocked_games: [{ nhl_game_id: 2022020001, game_date: '2022-10-10',
+        last_error: 'Missing away player summaries (team 2)' }] }) });
+    await click('View issues →');
+    const sources = host.querySelector('[aria-label="Source blockers"]');
+    expect(sources.textContent).toContain('2022-10-10'); expect(sources.textContent).toContain('2022020001');
+    expect(sources.textContent).toContain('Missing away player summaries (team 2)');
+    expect(mocks.post).not.toHaveBeenCalled();
+});
+
+it('explains skipped source-blocked dates without claiming calculated data coverage', () => {
+    mount({ pregame: pregame({ run: { id: 10, status: 'completed', total: 97, processed: 97,
+        completed: 0, excluded: 97, failed: 0, progress_pct: 100, source_blocked_days: 60 } }) });
+    expect(host.querySelector('[aria-label="Current pregame update"]').textContent)
+        .toContain('60 days skipped because all selected games lack required sources');
+    expect(host.querySelector('[aria-label="Current pregame update"]').textContent).toContain('0 updated');
+});
+
+it('labels bounded source blocker lists instead of suggesting all rows are displayed', async () => {
+    mount({ pregame: pregame({ blocked_games: [{ nhl_game_id: 1, game_date: '2022-10-10', last_error: 'Missing source' }],
+        blocked_games_truncated: true }) });
+    await click('View issues →');
+    expect(host.querySelector('[aria-label="Source blockers"]').textContent).toContain('Showing the first 100 blocked games');
+});
+
+it('disables historical gap repair while the pilot has active maintenance', async () => {
+    mount({ pregame: pregame({ run: { id: 10, status: 'running' } }) });
+    expect(button('Repair missing context').disabled).toBe(true);
+    await click('View issues →');
+    expect(button('Repair missing context · Train + Test').disabled).toBe(true);
 });

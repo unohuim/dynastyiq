@@ -517,6 +517,8 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                     ->whereNumber('run')->name('admin.nhl-sat-models.context.build');
                 Route::post('/nhl-sat-models/{run}/context/update', [\App\Http\Controllers\Admin\NhlPregameContextController::class, 'updateForModel'])
                     ->whereNumber('run')->name('admin.nhl-sat-models.context.update');
+                Route::post('/nhl-sat-models/pregame/repair', [\App\Http\Controllers\Admin\NhlSatWorkspaceController::class, 'repair'])
+                    ->name('admin.nhl-sat-models.workspace.repair');
                 Route::post('/nhl-sat-models/{run}/context/pause', [\App\Http\Controllers\Admin\NhlPregameContextController::class, 'pauseForModel'])
                     ->whereNumber('run')->name('admin.nhl-sat-models.context.pause');
                 Route::post('/nhl-sat-models/{run}/context/resume', [\App\Http\Controllers\Admin\NhlPregameContextController::class, 'resumeForModel'])

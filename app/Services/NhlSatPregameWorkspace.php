@@ -61,6 +61,7 @@ class NhlSatPregameWorkspace
 
         return ['id' => (int) $run->id, 'status' => $run->status, 'completed' => (int) $run->completed_games,
             'processed' => $processed, 'progress_pct' => $percent, 'created_at' => $run->created_at?->toIso8601String(),
+            'source_blocked_days' => (int) data_get($run->options, 'source_blocked_days', 0),
             'total' => (int) $run->total_games, 'excluded' => (int) $run->blocked_games,
             'failed' => (int) $run->failed_games, 'error' => $run->last_error,
             'updated_at' => $run->updated_at?->toIso8601String(), 'stages' => $run->stageProgress(),
@@ -79,7 +80,9 @@ class NhlSatPregameWorkspace
             ], 'workstreams' => [], 'workers' => [], 'coverage' => [], 'history' => [], 'run' => null];
         }
         $run = NhlPregameContextRun::latestForModel($pilot->id);
-        $facts = Cache::remember('sat-pregame-workspace:'.$pilot->id.':'.NhlPregameContextBuilder::VERSION, 60,
+        $coverageKey = 'sat-pregame-workspace:'.$pilot->id.':'.NhlPregameContextBuilder::VERSION
+            .':'.($run?->status === 'completed' ? 'completed-'.$run->id : 'active');
+        $facts = Cache::remember($coverageKey, 60,
             fn (): array => $this->coverage($pilot));
         $days = $run === null ? collect() : NhlPregameContextRunDay::query()->where('run_id', $run->id)
             ->where(fn ($q) => $q->whereIn('league_state', ['processing', 'failed'])
@@ -148,6 +151,10 @@ class NhlSatPregameWorkspace
         $history = NhlPregameContextRun::query()->where('model_run_id', $pilot->id)->orderByDesc('id')->limit(10)->get()
             ->map(fn ($item) => $this->progress($item));
 
+        $blocked = $run === null ? collect() : DB::table('nhl_pregame_context_run_games')
+            ->where('run_id', $run->id)->where('state', 'blocked')->orderBy('game_date')->orderBy('nhl_game_id')
+            ->limit(101)->get(['nhl_game_id', 'game_date', 'last_error']);
+
         $schedule = \App\Models\ScheduledProcess::query()->where('key', ScheduledProcessManager::pregameContextKey($pilot->id))->first();
 
         return ['automation' => ['enabled' => (bool) $schedule?->enabled,
@@ -161,6 +168,8 @@ class NhlSatPregameWorkspace
             'source_cutoff_at' => $facts['cutoff'], 'counts_checked_at' => $facts['checked_at'],
             'last_activity' => $run?->updated_at?->toIso8601String(), 'run' => $progress,
             'limits' => self::limits($pilot), 'history' => $history->all(),
+            'blocked_games' => $blocked->take(100)->values()->all(), 'blocked_games_truncated' => $blocked->count() > 100,
+            'repair_url' => route('admin.nhl-sat-models.workspace.repair'),
             'inspector_url' => route('admin.nhl-sat-models.workspace.inspect'),
             'workers_url' => route('admin.nhl-sat-models.workspace.workers')];
     }

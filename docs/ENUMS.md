@@ -10,6 +10,9 @@
 - Workspace run `processed`: successful `completed` plus `excluded` plus `failed` games. `progress_pct` is their share of selected `total` games, rounded to one decimal and capped at 100. It is null before a nonempty selection is known; a completed empty selection is 100 with zero updated games. This is processing progress, not data completeness or successful coverage.
 - Workspace `worker_activity.available`: whether shared execution telemetry was read successfully. An available empty `workers` list means no executions were observed, not that no work is queued. `truncated` marks a list bounded to 200 observations; `observed_at` timestamps the read.
 - Observed worker `state`: `running` (start observed, no finish observed, within the declared timeout plus grace); `unconfirmed` (deadline passed, awaiting bounded pruning). The frontend uses `unknown` for retained observations after telemetry read failure. These are presentation states, not persisted pregame run or queue reservation statuses.
+- Pregame run `options.trigger`: `manual_repair` identifies the explicit pilot Train-and-Test missing-context repair. It uses `only_missing=true` and `source_preflight=true`; ordinary `manual_update` remains Test/prediction-season only.
+- Repair `options.source_blocked_days`: nonnegative count of dates where every selected game failed source preflight. Their existing day stages are terminal `complete` for accounting, meaning skipped rather than calculated; the UI must disclose the count. Existing game rows remain `blocked`.
+- Repair game `readiness.source_blockers`: array of source-presence failure descriptions; `last_error` provides the joined readable reason. It does not certify complete on-ice or shot data. Workspace `blocked_games` returns at most 100 latest-run game/date/reason rows; `blocked_games_truncated` labels additional rows.
 
 ## Pregame comparison progress
 

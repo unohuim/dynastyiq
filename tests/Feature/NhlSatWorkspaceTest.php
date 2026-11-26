@@ -50,6 +50,22 @@ beforeEach(function (): void {
             'game_date' => '2025-10-10', 'game_dow' => 'Fri', 'game_month' => 'Oct', 'game_state' => 'FINAL',
             'start_time_utc' => '2025-10-10 23:00:00', 'home_team_id' => 1, 'away_team_id' => 2]);
     };
+    $this->repairGame = function (int $id = 2022020001, string $season = '20222023', string $date = '2022-10-10', bool $sources = true): void {
+        DB::table('nhl_games')->insert(['nhl_game_id' => $id, 'season_id' => $season, 'game_type' => 2,
+            'game_date' => $date, 'game_dow' => 'Mon', 'game_month' => 'Oct', 'game_state' => 'FINAL',
+            'start_time_utc' => $date.' 23:00:00', 'home_team_id' => 1, 'away_team_id' => 2]);
+        if ($sources) {
+            foreach ([1, 2] as $team) {
+                DB::table('nhl_game_summaries')->insert(['nhl_game_id' => $id,
+                    'nhl_team_id' => $team, 'nhl_player_id' => 100 + $team, 'toi' => 900]);
+            }
+        }
+    };
+    $this->repair = function (): NhlPregameContextRun {
+        $response = $this->actingAs($this->admin)->postJson('/admin/nhl-sat-models/pregame/repair')->assertAccepted();
+
+        return NhlPregameContextRun::findOrFail($response->json('progress.id'));
+    };
 });
 
 afterEach(function (): void {
@@ -59,11 +75,11 @@ afterEach(function (): void {
 
 it('blocks guests from every workspace endpoint', function (string $method, string $url): void {
     $this->json($method, $url, ['league' => 3, 'context' => 2])->assertUnauthorized();
-})->with([['GET', '/admin/nhl-sat-models'], ['PUT', '/admin/nhl-sat-models/pregame/workers'], ['GET', '/admin/nhl-sat-models/pregame/inspect']]);
+})->with([['GET', '/admin/nhl-sat-models'], ['PUT', '/admin/nhl-sat-models/pregame/workers'], ['GET', '/admin/nhl-sat-models/pregame/inspect'], ['POST', '/admin/nhl-sat-models/pregame/repair']]);
 
 it('blocks ordinary members from every workspace endpoint', function (string $method, string $url): void {
     $this->actingAs(User::factory()->create())->json($method, $url, ['league' => 3, 'context' => 2])->assertForbidden();
-})->with([['GET', '/admin/nhl-sat-models'], ['PUT', '/admin/nhl-sat-models/pregame/workers'], ['GET', '/admin/nhl-sat-models/pregame/inspect']]);
+})->with([['GET', '/admin/nhl-sat-models'], ['PUT', '/admin/nhl-sat-models/pregame/workers'], ['GET', '/admin/nhl-sat-models/pregame/inspect'], ['POST', '/admin/nhl-sat-models/pregame/repair']]);
 
 it('serves the shared Vue shell and structured model actions to super admins', function (): void {
     $this->actingAs($this->admin)->get('/admin/nhl-sat-models')->assertOk()->assertInertia(fn (Assert $page) => $page
@@ -300,4 +316,214 @@ it('publishes run timestamps and phase counts alongside the progress bar inputs'
     ($this->read)()->assertOk()->assertJsonPath('props.pregame.run.stages.league', 1)
         ->assertJsonPath('props.pregame.run.stages.context', 0)->assertJsonPath('props.pregame.run.stages.total', 1)
         ->assertJsonPath('props.pregame.run.created_at', '2026-11-26T16:00:00+00:00');
+});
+
+it('admits missing Train and Test repair through HTTP and reads its scoped run', function (): void {
+    $run = ($this->repair)();
+    expect($run->season_ids)->toBe(['20222023', '20232024', '20242025', '20252026'])
+        ->and($run->options['only_missing'])->toBeTrue()->and($run->options['source_preflight'])->toBeTrue();
+    $this->assertDatabaseHas('nhl_pregame_context_runs', ['id' => $run->id, 'model_run_id' => $this->pilot->id,
+        'created_by' => $this->admin->id, 'status' => 'queued']);
+    ($this->read)()->assertJsonPath('props.pregame.run.id', $run->id)
+        ->assertJsonPath('props.pregame.repair_url', url('/admin/nhl-sat-models/pregame/repair'));
+    Bus::assertDispatched(PrepareNhlPregameContextRunJob::class, fn ($job) => $job->runId === $run->id);
+});
+
+it('repairs the historical pilot even when a caller supplies a production model identity', function (): void {
+    $before = $this->production->getRawOriginal();
+    $response = $this->actingAs($this->admin)->postJson('/admin/nhl-sat-models/pregame/repair', [
+        'model_id' => $this->production->id, 'season_ids' => ['20262027'],
+    ])->assertAccepted();
+    $run = NhlPregameContextRun::findOrFail($response->json('progress.id'));
+    expect($run->model_run_id)->toBe($this->pilot->id)->and($run->season_ids)->not->toContain('20262027')
+        ->and($this->production->fresh()->getRawOriginal())->toBe($before);
+});
+
+it('refuses repair when the historical pilot is missing', function (): void {
+    $this->pilot->delete();
+    $this->actingAs($this->admin)->postJson('/admin/nhl-sat-models/pregame/repair')->assertStatus(409);
+    Bus::assertNothingDispatched();
+});
+
+it('refuses repair when the historical pilot is ambiguous', function (): void {
+    $other = $this->pilot->replicate();
+    $other->run_key = 'ambiguous-repair';
+    $other->save();
+    $this->actingAs($this->admin)->postJson('/admin/nhl-sat-models/pregame/repair')->assertStatus(409);
+    Bus::assertNothingDispatched();
+});
+
+it('preserves existing active-run admission when repair is requested', function (): void {
+    ($this->build)();
+    $this->actingAs($this->admin)->postJson('/admin/nhl-sat-models/pregame/repair')->assertUnprocessable();
+    expect(NhlPregameContextRun::count())->toBe(1);
+    Bus::assertNothingDispatched();
+});
+
+it('selects missing Train games while keeping ordinary updates Test-only', function (): void {
+    ($this->repairGame)();
+    ($this->repairGame)(2025020001, '20252026', '2025-10-10');
+    $run = ($this->repair)();
+    app(NhlPregameContextOrchestrator::class)->prepare($run);
+    expect(DB::table('nhl_pregame_context_run_games')->where('run_id', $run->id)->orderBy('nhl_game_id')
+        ->pluck('nhl_game_id')->all())->toBe([2022020001, 2025020001]);
+    $run->update(['status' => 'stopped']);
+    $update = app(NhlPregameContextOrchestrator::class)->queueModelUpdate($this->pilot);
+    expect($update->season_ids)->toBe(['20252026'])->and($update->options)->not->toHaveKey('source_preflight');
+});
+
+it('leaves ready source games pending for the existing league and context pipeline', function (): void {
+    ($this->repairGame)();
+    $run = ($this->repair)();
+    app(NhlPregameContextOrchestrator::class)->prepare($run);
+    $this->assertDatabaseHas('nhl_pregame_context_run_games', ['run_id' => $run->id,
+        'nhl_game_id' => 2022020001, 'state' => 'pending', 'last_error' => null]);
+    $this->assertDatabaseHas('nhl_pregame_context_run_days', ['run_id' => $run->id,
+        'league_state' => 'pending', 'context_state' => 'pending']);
+});
+
+it('records precise missing source reasons and reads them through HTTP', function (): void {
+    ($this->repairGame)(sources: false);
+    $run = ($this->repair)();
+    app(NhlPregameContextOrchestrator::class)->prepare($run);
+    $this->assertDatabaseHas('nhl_pregame_context_run_games', ['run_id' => $run->id,
+        'nhl_game_id' => 2022020001, 'state' => 'blocked',
+        'last_error' => 'Missing home player summaries (team 1); Missing away player summaries (team 2)']);
+    ($this->read)()->assertJsonPath('props.pregame.blocked_games.0.nhl_game_id', 2022020001)
+        ->assertJsonPath('props.pregame.blocked_games.0.last_error', 'Missing home player summaries (team 1); Missing away player summaries (team 2)')
+        ->assertJsonPath('props.pregame.run.excluded', 1)->assertJsonPath('props.pregame.run.source_blocked_days', 1);
+});
+
+it('identifies missing summaries for only the affected team', function (): void {
+    ($this->repairGame)();
+    DB::table('nhl_game_summaries')->where('nhl_team_id', 2)->delete();
+    $run = ($this->repair)();
+    app(NhlPregameContextOrchestrator::class)->prepare($run);
+    $this->assertDatabaseHas('nhl_pregame_context_run_games', ['run_id' => $run->id,
+        'last_error' => 'Missing away player summaries (team 2)', 'state' => 'blocked']);
+});
+
+it('skips expensive work for entirely blocked dates while preserving run accounting', function (): void {
+    ($this->repairGame)(sources: false);
+    $run = ($this->repair)();
+    $orchestrator = app(NhlPregameContextOrchestrator::class);
+    $orchestrator->prepare($run);
+    $orchestrator->load($run->id);
+    expect($run->fresh()->status)->toBe('completed')->and($run->fresh()->blocked_games)->toBe(1);
+    Bus::assertNotDispatched(\App\Jobs\CalculateNhlPregameLeagueBatchJob::class);
+    Bus::assertNotDispatched(\App\Jobs\BuildNhlPregameContextDayBatchJob::class);
+    expect(DB::table('nhl_team_game_pregame_contexts')->count())->toBe(0);
+});
+
+it('keeps a mixed date pending when at least one selected game has ready sources', function (): void {
+    ($this->repairGame)(sources: false);
+    ($this->repairGame)(2022020002);
+    $run = ($this->repair)();
+    app(NhlPregameContextOrchestrator::class)->prepare($run);
+    $this->assertDatabaseHas('nhl_pregame_context_run_days', ['run_id' => $run->id,
+        'game_count' => 2, 'blocked_games' => 1, 'league_state' => 'pending', 'context_state' => 'pending']);
+    expect(data_get($run->fresh()->options, 'source_blocked_days'))->toBe(0);
+});
+
+it('reconsiders blocked games on a later repair after sources arrive', function (): void {
+    ($this->repairGame)(sources: false);
+    $old = ($this->repair)();
+    $orchestrator = app(NhlPregameContextOrchestrator::class);
+    $orchestrator->prepare($old);
+    $orchestrator->load($old->id);
+    foreach ([1, 2] as $team) {
+        DB::table('nhl_game_summaries')->insert(['nhl_game_id' => 2022020001,
+            'nhl_team_id' => $team, 'nhl_player_id' => 100 + $team, 'toi' => 900]);
+    }
+    $new = ($this->repair)();
+    $orchestrator->prepare($new);
+    $this->assertDatabaseHas('nhl_pregame_context_run_games', ['run_id' => $new->id,
+        'nhl_game_id' => 2022020001, 'state' => 'pending', 'last_error' => null]);
+    $this->assertDatabaseHas('nhl_pregame_context_run_games', ['run_id' => $old->id, 'state' => 'blocked']);
+});
+
+it('does not select or rewrite a game with complete team player and metric context', function (): void {
+    ($this->repairGame)();
+    $owner = ($this->build)(['status' => 'completed']);
+    foreach ([1 => 'home', 2 => 'away'] as $team => $venue) {
+        $context = DB::table('nhl_team_game_pregame_contexts')->insertGetId([
+            'run_id' => $owner->id, 'model_run_id' => $this->pilot->id, 'nhl_game_id' => 2022020001,
+            'nhl_team_id' => $team, 'opponent_team_id' => 3 - $team, 'venue' => $venue,
+            'game_date' => '2022-10-10', 'source_cutoff_at' => '2022-10-10 23:00:00',
+            'context_version' => NhlPregameContextBuilder::VERSION, 'metrics' => '{}',
+            'schedule_metrics' => '{}', 'opponent_metrics' => '{}',
+        ]);
+        DB::table('nhl_team_game_pregame_context_metrics')->insert(['team_context_id' => $context,
+            'metric_key' => 'games', 'window_key' => 'l5', 'strength' => 'ALL', 'measure_key' => 'value', 'value' => 5]);
+        $player = DB::table('nhl_player_game_pregame_contexts')->insertGetId([
+            'run_id' => $owner->id, 'model_run_id' => $this->pilot->id, 'team_context_id' => $context,
+            'nhl_game_id' => 2022020001, 'nhl_player_id' => 100 + $team, 'nhl_team_id' => $team,
+            'opponent_team_id' => 3 - $team, 'venue' => $venue, 'game_date' => '2022-10-10',
+            'source_cutoff_at' => '2022-10-10 23:00:00', 'participant_source' => 'boxscore',
+            'context_version' => NhlPregameContextBuilder::VERSION, 'metrics' => '{}',
+        ]);
+        DB::table('nhl_player_game_pregame_context_metrics')->insert(['player_context_id' => $player,
+            'metric_key' => 'games', 'window_key' => 'l5', 'strength' => 'ALL', 'measure_key' => 'value', 'value' => 5]);
+    }
+    $before = DB::table('nhl_team_game_pregame_contexts')->orderBy('id')->get()->toJson();
+    $run = ($this->repair)();
+    app(NhlPregameContextOrchestrator::class)->prepare($run);
+    expect($run->fresh()->total_games)->toBe(0)
+        ->and(DB::table('nhl_team_game_pregame_contexts')->orderBy('id')->get()->toJson())->toBe($before);
+});
+
+it('does not calculate league populations for preflight-blocked cutoffs on mixed dates', function (): void {
+    ($this->repairGame)(sources: false);
+    ($this->repairGame)(2022020002);
+    $run = ($this->repair)();
+    app(NhlPregameContextOrchestrator::class)->prepare($run);
+    $builder = Mockery::mock(NhlPregameContextBuilder::class);
+    $builder->shouldReceive('contextGame')->once()->withArgs(fn ($owner, $game): bool => $game->nhl_game_id === 2022020002)
+        ->andReturnUsing(fn ($owner, $game): object => $game);
+    $builder->shouldReceive('leagueResultRows')->twice()
+        ->withArgs(fn ($owner, $game, $type, $stopped): bool => $game->nhl_game_id === 2022020002)
+        ->andReturnUsing(function (): \Generator {
+            yield from [];
+        });
+    $day = \App\Models\NhlPregameContextRunDay::where('run_id', $run->id)->firstOrFail();
+    (new \App\Services\NhlPregameLeagueResults($builder))->buildAverages($run->fresh(), $day);
+    expect(DB::table('nhl_pregame_context_league_averages')->count())->toBe(0);
+});
+
+it('reports missing schedule fields before starting historical repair calculations', function (): void {
+    ($this->repairGame)();
+    DB::table('nhl_games')->where('nhl_game_id', 2022020001)->update(['start_time_utc' => null]);
+    $run = ($this->repair)();
+    app(NhlPregameContextOrchestrator::class)->prepare($run);
+    $this->assertDatabaseHas('nhl_pregame_context_run_games', ['run_id' => $run->id,
+        'state' => 'blocked', 'last_error' => 'Missing scheduled start time']);
+});
+
+it('bounds source blocker rows and explicitly labels truncation', function (): void {
+    $run = ($this->build)(['status' => 'completed', 'blocked_games' => 105]);
+    $rows = [];
+    for ($index = 0; $index < 105; $index++) {
+        $rows[] = ['run_id' => $run->id, 'nhl_game_id' => 2022020001 + $index,
+            'game_date' => '2022-10-10', 'sequence' => $index + 1, 'state' => 'blocked', 'last_error' => 'Missing source'];
+    }
+    DB::table('nhl_pregame_context_run_games')->insert($rows);
+    ($this->read)()->assertJsonCount(100, 'props.pregame.blocked_games')
+        ->assertJsonPath('props.pregame.blocked_games_truncated', true);
+});
+
+it('refreshes cached coverage immediately after a maintenance run completes', function (): void {
+    ($this->repairGame)();
+    ($this->read)()->assertJsonPath('props.pregame.coverage.0.covered', 0);
+    $run = ($this->build)();
+    foreach ([1 => 'home', 2 => 'away'] as $team => $venue) {
+        DB::table('nhl_team_game_pregame_contexts')->insert([
+            'run_id' => $run->id, 'model_run_id' => $this->pilot->id, 'nhl_game_id' => 2022020001,
+            'nhl_team_id' => $team, 'opponent_team_id' => 3 - $team, 'venue' => $venue,
+            'game_date' => '2022-10-10', 'source_cutoff_at' => '2022-10-10 23:00:00',
+            'context_version' => NhlPregameContextBuilder::VERSION, 'metrics' => '{}',
+            'schedule_metrics' => '{}', 'opponent_metrics' => '{}',
+        ]);
+    }
+    $run->update(['status' => 'completed']);
+    ($this->read)()->assertJsonPath('props.pregame.coverage.0.covered', 1);
 });
