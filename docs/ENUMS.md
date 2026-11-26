@@ -7,6 +7,9 @@
 - Workspace `health`: `recorded` (team evidence observed without tracked gaps/errors), `attention` (tracked gaps/errors), `incomplete` (no observed team evidence), `unavailable` (pilot missing or ambiguous). None certifies full player/metric readiness.
 - Workspace claim `state`: `claimed` (queued or executing under a durable claim), `expired` (claim expired). Workstream `state` reuses context-run statuses, with `no_run` when no maintenance exists and `waiting` when context is waiting for league references. Finished stage counts remain completed even if another stage fails.
 - Workstream keys: `players`, `teams`, `goalies`, `league`, `rankings`, `travel`. Processing pools are `league` and `context`; the latter is shared across the other workstreams.
+- Workspace run `processed`: successful `completed` plus `excluded` plus `failed` games. `progress_pct` is their share of selected `total` games, rounded to one decimal and capped at 100. It is null before a nonempty selection is known; a completed empty selection is 100 with zero updated games. This is processing progress, not data completeness or successful coverage.
+- Workspace `worker_activity.available`: whether shared execution telemetry was read successfully. An available empty `workers` list means no executions were observed, not that no work is queued. `truncated` marks a list bounded to 200 observations; `observed_at` timestamps the read.
+- Observed worker `state`: `running` (start observed, no finish observed, within the declared timeout plus grace); `unconfirmed` (deadline passed, awaiting bounded pruning). The frontend uses `unknown` for retained observations after telemetry read failure. These are presentation states, not persisted pregame run or queue reservation statuses.
 
 ## Pregame comparison progress
 

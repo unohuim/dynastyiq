@@ -243,3 +243,87 @@ it('restores closed issue-trigger state without removing the health summary', as
     expect(button('View issues →').getAttribute('aria-expanded')).toBe('false');
     expect(host.querySelector('[data-pregame-health-strip]')).not.toBeNull();
 });
+
+const execution = (extra = {}) => ({ job_id: 'job-1', run_id: 10, task: 'Calculating league averages',
+    job: 'CalculateNhlPregameLeagueBatchJob', game_date: '2025-10-10', game_id: null,
+    server: 'queue-one', pid: 42, queue: 'projections', attempt: 1,
+    started_at: '2026-11-26T15:58:30Z', deadline_at: '2026-11-26T16:03:00Z', state: 'running', ...extra });
+const activity = (workers = []) => ({ available: true, workers, truncated: false, observed_at: '2026-11-26T16:00:00Z' });
+
+it('shows a prominent processed percentage with success exclusion and failure counts separate', () => {
+    mount({ pregame: pregame({ run: { id: 10, status: 'running', total: 100, processed: 40, progress_pct: 40,
+        completed: 30, excluded: 5, failed: 5 } }) });
+    const progress = host.querySelector('[aria-label="Current pregame update"]');
+    expect(progress.textContent).toContain('40% processed');
+    expect(progress.textContent).toContain('40 / 100 games processed');
+    expect(progress.textContent).toContain('30 updated'); expect(progress.textContent).toContain('5 excluded');
+    expect(progress.textContent).toContain('5 failed');
+    expect(progress.querySelector('progress').value).toBe(40);
+});
+
+it('does not manufacture a percentage before game selection is known', () => {
+    mount({ pregame: pregame({ run: { id: 10, status: 'queued', total: 0, processed: 0, progress_pct: null } }) });
+    expect(host.querySelector('[data-update-percent]').textContent).toBe('Selecting games…');
+    expect(host.querySelector('[aria-label="Current update processed games"]').getAttribute('value')).toBeNull();
+});
+
+it('shows independent league and context stage progress rather than averaging them', () => {
+    mount({ pregame: pregame({ run: { id: 10, status: 'running', total: 10, processed: 0, progress_pct: 0,
+        stages: { total: 4, league: 1, context: 0 } } }) });
+    expect(host.querySelector('[aria-label="League averages stage progress"]').value).toBe(25);
+    expect(host.querySelector('[aria-label="Context, rankings & deltas stage progress"]').value).toBe(0);
+    expect(host.querySelector('[data-update-percent]').textContent).toBe('0% processed');
+});
+
+it('shows actual worker identity task date queue and elapsed time', () => {
+    mount({ pregame: pregame({ worker_activity: activity([execution()]) }) });
+    const worker = host.querySelector('[data-pregame-execution]');
+    expect(worker.textContent).toContain('queue-one'); expect(worker.textContent).toContain('PID 42');
+    expect(worker.textContent).toContain('Calculating league averages');
+    expect(worker.textContent).toContain('projections'); expect(worker.textContent).toContain('2025-10-10');
+    expect(worker.textContent).toContain('1m 30s');
+});
+
+it('keeps claimed dates distinct from observed executing workers', () => {
+    mount({ pregame: pregame({ workers: [{ key: '1-context', stage: 'context', date: '2025-10-10', state: 'claimed' }],
+        worker_activity: activity([]) }) });
+    const workers = host.querySelector('[aria-label="Pregame worker activity"]');
+    expect(workers.textContent).toContain('0 observed running');
+    expect(workers.textContent).toContain('1 date claims');
+});
+
+it('removes finished execution rows on updates while retaining the fixed activity region', async () => {
+    mount({ pregame: pregame({ worker_activity: activity([execution()]) }) });
+    const region = host.querySelector('[aria-label="Pregame worker activity"]');
+    props.pregame = pregame({ worker_activity: activity([]) }); await nextTick();
+    expect(host.querySelector('[aria-label="Pregame worker activity"]')).toBe(region);
+    expect(region.querySelector('[data-pregame-execution]')).toBeNull();
+    expect(region.querySelector('.h-\\[152px\\]')).not.toBeNull();
+});
+
+it('retains prior execution evidence as unknown when telemetry is unavailable', async () => {
+    mount({ pregame: pregame({ worker_activity: activity([execution()]) }) });
+    props.pregame = pregame({ worker_activity: { available: false, workers: [] } }); await nextTick();
+    expect(host.querySelector('[data-pregame-execution]').textContent).toContain('queue-one');
+    expect(host.querySelector('[data-pregame-execution]').textContent).toContain('Unknown');
+    expect(host.querySelector('[aria-label="Pregame worker activity"]').textContent).toContain('— observed running');
+});
+
+it('clears retained telemetry when the selected source changes', async () => {
+    mount({ pregame: pregame({ worker_activity: activity([execution()]) }) });
+    props.pregame = pregame({ source: { id: 99, name: 'Different source', test: '20252026' },
+        worker_activity: { available: false, workers: [] } }); await nextTick();
+    expect(host.querySelector('[data-pregame-execution]')).toBeNull();
+});
+
+it('does not count unconfirmed executions as running workers', () => {
+    mount({ pregame: pregame({ worker_activity: activity([execution({ state: 'unconfirmed' })]) }) });
+    const workers = host.querySelector('[aria-label="Pregame worker activity"]');
+    expect(workers.textContent).toContain('0 observed running'); expect(workers.textContent).toContain('Unconfirmed');
+});
+
+it('continues quiet fast polling while execution telemetry reports ongoing work', async () => {
+    mount({ pregame: pregame({ worker_activity: activity([execution()]) }) });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(mocks.reload).toHaveBeenCalledWith(expect.objectContaining({ showProgress: false, preserveScroll: true, preserveState: true }));
+});

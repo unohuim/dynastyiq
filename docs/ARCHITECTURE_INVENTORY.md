@@ -6,6 +6,12 @@ model-owned records. Scoped league/context claim allocation, health, coverage,
 inspection and maintenance controls do not switch production prediction sources.
 Authority: `docs/architecture/admin/NhlSatWorkspace.yaml`.
 
+Pregame maintenance shows processed selection progress separately from successful
+updates and data coverage. Best-effort queue lifecycle observations supply actual
+delivery identity, task, host/PID and elapsed time, separately from durable claims.
+Telemetry failure does not interrupt jobs or change prediction authority.
+Authority: `docs/architecture/admin/NhlPregameWorkerActivity.yaml`.
+
 
 Operational predictions read available context before considering build work.
 Exact snapshots are preferred; latest usable snapshots preserve model/cutoff

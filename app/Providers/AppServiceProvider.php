@@ -28,6 +28,7 @@ class AppServiceProvider extends ServiceProvider
         $this->app->scoped(\App\Services\NhlHistoricalPredictionService::class);
         $this->app->scoped(\App\Services\NhlSatModelPredictionService::class);
         $this->app->scoped(\App\Services\NhlPredictionInputContext::class);
+        $this->app->scoped(\App\Services\NhlPregameWorkerActivity::class);
     }
 
     /**
@@ -88,6 +89,11 @@ class AppServiceProvider extends ServiceProvider
             Event::listen('eloquent.saved: '.$model, function ($row): void {
                 app(\App\Services\NhlPublicGamePage::class)->refreshAfterCommit((int) $row->nhl_game_id);
             });
+        }
+        Event::listen(\Illuminate\Queue\Events\JobProcessing::class, [\App\Services\NhlPregameWorkerActivity::class, 'started']);
+        foreach ([\Illuminate\Queue\Events\JobProcessed::class, \Illuminate\Queue\Events\JobExceptionOccurred::class,
+            \Illuminate\Queue\Events\JobFailed::class] as $event) {
+            Event::listen($event, [\App\Services\NhlPregameWorkerActivity::class, 'finished']);
         }
         Player::observe(PlayerNhlIdentityObserver::class);
 

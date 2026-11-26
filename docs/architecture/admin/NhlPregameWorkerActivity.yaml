@@ -1,0 +1,27 @@
+name: Pregame Worker Execution Observation
+type: Best Effort Scoped Queue Telemetry
+location:
+  - app/Services/NhlPregameWorkerActivity.php
+  - app/Providers/AppServiceProvider.php
+purpose: Expose observed historical-pilot queue execution separately from durable date claims without participating in processing authority.
+when_to_use:
+  - Monitoring actual started pregame deliveries from the authorized SAT Pregame workspace.
+when_not_to_use:
+  - Admitting, retrying, cancelling or recovering business jobs.
+  - Certifying process liveness, provisioning workers or bypassing Horizon authorization.
+rules:
+  - Observe only allowlisted pregame job classes belonging to the uniquely resolved historical workspace pilot. Other model jobs and synchronous calls produce no execution records.
+  - Read bounded inert serialized metadata with all classes disabled. Never instantiate queued commands, restore serialized models or expose command inputs and claim secrets.
+  - Store bounded, expiring observation records in shared queue Redis outside queue reservation keys. Completion removes only the matching execution; retries and other workers retain their own observations.
+  - Resolve the observer within the queue job container scope so start and finish share cleanup ownership. Exceptions and terminal failures clear observations; expiry bounds abandoned records after process termination.
+  - Telemetry failures never fail, release, retry or modify the observed business job. Unavailable telemetry remains distinct from an available empty observation list.
+  - Observed start without completion is evidence of activity, not independent OS liveness. Past-deadline records lose confirmed-running presentation before pruning. State vocabulary belongs in ENUMS.md.
+  - Workspace reads are bounded and may prune expired telemetry only. Never dispatch imports, predictions or context repairs from telemetry reads. Existing admin authorization and production context authority remain unchanged.
+public_interface:
+  - Queue JobProcessing event observer
+  - Queue JobProcessed, JobExceptionOccurred and JobFailed cleanup observers
+  - NhlPregameWorkerActivity.snapshot
+example_usage: |
+  The workspace shows a pilot league-calculation delivery with its server, PID,
+  date and elapsed time. Its durable date claim remains a separate observation.
+  A Redis outage marks telemetry unavailable without interrupting calculations.

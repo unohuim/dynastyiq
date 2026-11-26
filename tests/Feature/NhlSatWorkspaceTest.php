@@ -20,6 +20,9 @@ use Inertia\Testing\AssertableInertia as Assert;
 beforeEach(function (): void {
     $this->travelTo(\Carbon\CarbonImmutable::parse('2026-11-26 16:00:00 UTC'));
     $this->withoutVite();
+    $this->mock(\App\Services\NhlPregameWorkerActivity::class)->shouldReceive('snapshot')->andReturn([
+        'available' => true, 'workers' => [], 'truncated' => false, 'observed_at' => '2026-11-26T16:00:00+00:00',
+    ]);
     Bus::fake();
     Http::preventStrayRequests();
     config(['cache.default' => 'array', 'cache.stores.redis.driver' => 'array', 'nhl-pregame.workspace_model_name' => 'Sep2026', 'nhl-pregame.league_concurrency' => 4, 'nhl-pregame.context_concurrency' => 2]);
@@ -152,6 +155,27 @@ it('returns structured pregame action progress for Vue without rendering fragmen
         ->assertJsonPath('progress.status', 'queued')->assertJsonMissingPath('progress_html');
 });
 
+it('reads committed progress through HTTP after admitting a maintenance action', function (): void {
+    $response = $this->actingAs($this->admin)->withHeader('X-DIQ-SAT-Workspace', '1')
+        ->postJson(route('admin.nhl-sat-models.context.build', $this->pilot))->assertAccepted();
+    $run = NhlPregameContextRun::findOrFail($response->json('progress.id'));
+    $this->assertDatabaseHas('nhl_pregame_context_runs', ['id' => $run->id, 'model_run_id' => $this->pilot->id]);
+    $run->update(['total_games' => 4]);
+    foreach (['complete', 'blocked', 'failed', 'ready'] as $index => $state) {
+        DB::table('nhl_pregame_context_run_games')->insert([
+            'run_id' => $run->id, 'nhl_game_id' => 2025020001 + $index,
+            'game_date' => '2025-10-10', 'sequence' => $index + 1, 'state' => $state,
+        ]);
+    }
+    app(NhlPregameContextOrchestrator::class)->refreshRunCounts($run);
+    $this->assertDatabaseHas('nhl_pregame_context_runs', ['id' => $run->id,
+        'completed_games' => 1, 'blocked_games' => 1, 'failed_games' => 1]);
+    ($this->read)()->assertOk()->assertJsonPath('props.pregame.run.progress_pct', 75)
+        ->assertJsonPath('props.pregame.run.processed', 3)->assertJsonPath('props.pregame.run.total', 4)
+        ->assertJsonPath('props.pregame.run.completed', 1)->assertJsonPath('props.pregame.run.excluded', 1)
+        ->assertJsonPath('props.pregame.run.failed', 1);
+});
+
 it('returns structured model creation acknowledgement for Vue', function (): void {
     $response = $this->actingAs($this->admin)->withHeader('X-DIQ-SAT-Workspace', '1')->postJson('/admin/nhl-sat-models', [
         'name' => 'Another experiment', 'model_version' => 'v1', 'train_season_ids' => ['20242025'],
@@ -233,4 +257,47 @@ it('uses actual completed Test dates for the coverage strip', function (): void 
     ($this->game)();
     ($this->read)()->assertOk()->assertJsonPath('props.pregame.dates.0.date', '2025-10-10')
         ->assertJsonPath('props.pregame.dates.0.games', 1)->assertJsonPath('props.pregame.dates.0.covered', 0);
+});
+
+
+it('measures handled work separately from successful context updates', function (): void {
+    ($this->build)(['total_games' => 10, 'completed_games' => 3, 'blocked_games' => 1, 'failed_games' => 1]);
+    ($this->read)()->assertOk()->assertJsonPath('props.pregame.run.processed', 5)
+        ->assertJsonPath('props.pregame.run.progress_pct', 50)->assertJsonPath('props.pregame.run.completed', 3)
+        ->assertJsonPath('props.pregame.run.excluded', 1)->assertJsonPath('props.pregame.run.failed', 1);
+});
+
+it('keeps selection progress unknown until the denominator exists', function (): void {
+    ($this->build)(['status' => 'queued', 'total_games' => 0]);
+    ($this->read)()->assertOk()->assertJsonPath('props.pregame.run.progress_pct', null);
+});
+
+it('shows a completed empty selection as processed without claiming updated games', function (): void {
+    ($this->build)(['status' => 'completed', 'total_games' => 0]);
+    ($this->read)()->assertOk()->assertJsonPath('props.pregame.run.progress_pct', 100)
+        ->assertJsonPath('props.pregame.run.completed', 0);
+});
+
+it('does not turn failed processed work into a successful run', function (): void {
+    ($this->build)(['status' => 'failed', 'total_games' => 2, 'completed_games' => 1, 'failed_games' => 1]);
+    ($this->read)()->assertOk()->assertJsonPath('props.pregame.run.progress_pct', 100)
+        ->assertJsonPath('props.pregame.run.status', 'failed')->assertJsonPath('props.pregame.health', 'attention');
+});
+
+it('exposes actual queue observations independently of durable claimed dates', function (): void {
+    $this->mock(\App\Services\NhlPregameWorkerActivity::class)->shouldReceive('snapshot')->andReturn([
+        'available' => true, 'workers' => [['pid' => 123, 'task' => 'Preparing game selection', 'state' => 'running']],
+        'truncated' => false, 'observed_at' => '2026-11-26T16:00:00+00:00',
+    ]);
+    ($this->read)()->assertOk()->assertJsonPath('props.pregame.worker_activity.workers.0.pid', 123)
+        ->assertJsonPath('props.pregame.workers', []);
+});
+
+it('publishes run timestamps and phase counts alongside the progress bar inputs', function (): void {
+    $run = ($this->build)();
+    DB::table('nhl_pregame_context_run_days')->insert(['run_id' => $run->id, 'game_date' => '2025-10-10',
+        'league_state' => 'complete', 'context_state' => 'pending']);
+    ($this->read)()->assertOk()->assertJsonPath('props.pregame.run.stages.league', 1)
+        ->assertJsonPath('props.pregame.run.stages.context', 0)->assertJsonPath('props.pregame.run.stages.total', 1)
+        ->assertJsonPath('props.pregame.run.created_at', '2026-11-26T16:00:00+00:00');
 });

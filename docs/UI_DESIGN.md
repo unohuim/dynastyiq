@@ -772,6 +772,21 @@ today's production games are ready. Label shared claim counts so users do not ad
 them across workstreams. Allocation adjusts real league/context claim limits, not
 fabricated domain worker pools or physical Horizon provisioning.
 
+Place a prominent Current Update strip above the Pregame workstreams. Show the
+processed percentage and games denominator, successful updates, exclusions and
+failures separately, plus elapsed wall time and independent league/context day
+progress. Unknown selection has an indeterminate bar; a processed selection never
+implies full data coverage. Keep the run status visible even at 100% processed.
+
+Worker Activity shows observed task, server/PID, queue, owning run, game/date where
+available, elapsed time and observation state. Keep durable date claims in a
+separate disclosure and allocation as claim capacity. Reserve the activity list's
+height during quiet refresh; retain old rows as Unknown on telemetry failure.
+Do not announce an unavailable read as zero workers. Tracking starts when queued
+workers load the deployment; previous executions cannot be reconstructed from
+claims. Poll active work quietly without removing the screen or shifting it for
+background loading messages.
+
 Use responsive arrangements with animated disclosures and accessible right-side
 panels. Quiet updates retain content, scroll and local forms; initial Pregame
 loading is bounded to its section. Inspector rows retain explicit units, strengths,

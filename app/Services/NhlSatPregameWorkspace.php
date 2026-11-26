@@ -54,7 +54,13 @@ class NhlSatPregameWorkspace
             return null;
         }
 
+        $processed = (int) $run->completed_games + (int) $run->blocked_games + (int) $run->failed_games;
+        $total = (int) $run->total_games;
+        $percent = $total > 0 ? round(min(100, 100 * $processed / $total), 1)
+            : ($run->status === 'completed' ? 100.0 : null);
+
         return ['id' => (int) $run->id, 'status' => $run->status, 'completed' => (int) $run->completed_games,
+            'processed' => $processed, 'progress_pct' => $percent, 'created_at' => $run->created_at?->toIso8601String(),
             'total' => (int) $run->total_games, 'excluded' => (int) $run->blocked_games,
             'failed' => (int) $run->failed_games, 'error' => $run->last_error,
             'updated_at' => $run->updated_at?->toIso8601String(), 'stages' => $run->stageProgress(),
@@ -68,7 +74,7 @@ class NhlSatPregameWorkspace
     {
         $pilot = $this->pilot();
         if ($pilot === null) {
-            return ['source' => null, 'health' => 'unavailable', 'issues' => [
+            return ['source' => null, 'worker_activity' => ['available' => false, 'workers' => []], 'health' => 'unavailable', 'issues' => [
                 ['title' => 'Sep2026 source unavailable', 'detail' => 'Exactly one Sep2026 SAT training model with Test 2025–26 is required. Production is never selected automatically.'],
             ], 'workstreams' => [], 'workers' => [], 'coverage' => [], 'history' => [], 'run' => null];
         }
@@ -149,7 +155,8 @@ class NhlSatPregameWorkspace
                 'toggle_url' => route('admin.nhl-sat-models.context.auto-sync.toggle', $pilot)],
             'source' => ['id' => (int) $pilot->id, 'name' => $pilot->name, 'train' => $pilot->train_season_ids,
                 'test' => $pilot->target_season_id], 'health' => $health, 'issues' => $issues,
-            'workstreams' => $streams, 'workers' => $workers, 'coverage' => $facts['seasons'], 'dates' => $facts['dates'] ?? [],
+            'workstreams' => $streams, 'workers' => $workers,
+            'worker_activity' => app(NhlPregameWorkerActivity::class)->snapshot($pilot), 'coverage' => $facts['seasons'], 'dates' => $facts['dates'] ?? [],
             'snapshots' => ['players' => $facts['players'], 'teams' => $facts['teams']],
             'source_cutoff_at' => $facts['cutoff'], 'counts_checked_at' => $facts['checked_at'],
             'last_activity' => $run?->updated_at?->toIso8601String(), 'run' => $progress,
