@@ -37,7 +37,7 @@ class NhlModelRunController extends Controller
     /**
      * Show SAT models.
      */
-    public function index(Request $request): View
+    public function index(Request $request): \Inertia\Response
     {
         $input = $request->validate([
             'status' => ['nullable', Rule::in(NhlModelRun::statuses())],
@@ -54,29 +54,20 @@ class NhlModelRunController extends Controller
         }
 
         $runs = $query->paginate(25)->withQueryString();
-        $scheduleKeys = $runs->getCollection()->map(
-            fn (NhlModelRun $run): string => ScheduledProcessManager::pregameContextKey($run->id)
-        );
-        $pregameSchedulesByKey = ScheduledProcess::query()->whereIn('key', $scheduleKeys)->get()->keyBy('key');
-
-        return view('admin.nhl-sat-models.index', [
-            'filters' => [
-                'status' => $input['status'] ?? null,
-            ],
-            'seasonOptions' => $this->shotAttemptSeasonOptions(),
+        return \Inertia\Inertia::render('Admin/SatModels/Index', [
+            'models' => fn (): array => $runs->getCollection()->map(fn (NhlModelRun $run): array =>
+                app(\App\Services\NhlSatModelPresentation::class)->row($run, [
+                    'comparison' => $this->rateComparisonStateForRun($run),
+                    'stability' => $this->genericBucketStabilityStateForRun($run),
+                    'toi' => $this->toiProjectionStateForRun($run),
+                    'drift' => $this->trainingDriftStateForRun($run),
+                    'training' => $this->trainingSummaryForRun($run),
+                ]))->all(),
+            'pagination' => fn (): array => $runs->linkCollection()->all(),
+            'filters' => ['status' => $input['status'] ?? null],
+            'seasonOptions' => fn (): array => $this->shotAttemptSeasonOptions(),
             'statuses' => NhlModelRun::statuses(),
-            'comparisonStates' => $this->rateComparisonStatesForRuns($runs->getCollection()),
-            'genericBucketStabilityStates' => $this->genericBucketStabilityStatesForRuns($runs->getCollection()),
-            'toiProjectionStates' => $this->toiProjectionStatesForRuns($runs->getCollection()),
-            'trainingDriftStates' => $this->trainingDriftStatesForRuns($runs->getCollection()),
-            'trainingSummaries' => $this->trainingSummariesForRuns($runs->getCollection()),
-            'runs' => $runs,
-            'pregameBuilds' => $runs->getCollection()->mapWithKeys(fn (NhlModelRun $run): array => [
-                $run->id => \App\Models\NhlPregameContextRun::latestForModel($run->id),
-            ]),
-            'pregameSchedules' => $runs->getCollection()->mapWithKeys(fn (NhlModelRun $run): array => [
-                $run->id => $pregameSchedulesByKey->get(ScheduledProcessManager::pregameContextKey($run->id)),
-            ]),
+            'pregame' => \Inertia\Inertia::defer(fn (): array => app(\App\Services\NhlSatPregameWorkspace::class)->payload()),
         ]);
     }
 
@@ -120,7 +111,7 @@ class NhlModelRunController extends Controller
         if ($request->expectsJson()) {
             return response()->json([
                 'message' => 'Model created.',
-                'row_html' => $this->renderRow($run),
+                ...$this->actionPresentation($request, $run),
             ], 201);
         }
 
@@ -219,7 +210,7 @@ class NhlModelRunController extends Controller
         if ($request->expectsJson()) {
             return response()->json([
                 'message' => $message,
-                'row_html' => $this->renderRow($run),
+                ...$this->actionPresentation($request, $run),
             ]);
         }
 
@@ -372,7 +363,7 @@ class NhlModelRunController extends Controller
         if ($request->expectsJson()) {
             return response()->json([
                 'message' => $profileType === 'goalie_faced' ? 'Goalie profiles queued.' : 'Offensive skater profiles queued.',
-                'row_html' => $this->renderRow($run),
+                ...$this->actionPresentation($request, $run),
             ]);
         }
 
@@ -453,7 +444,7 @@ class NhlModelRunController extends Controller
         if ($request->expectsJson()) {
             return response()->json([
                 'message' => 'Queued offensive /60.',
-                'row_html' => $this->renderRow($run),
+                ...$this->actionPresentation($request, $run),
             ]);
         }
 
@@ -512,7 +503,7 @@ class NhlModelRunController extends Controller
         }
         $run->refresh();
         return $request->expectsJson()
-            ? response()->json(['message' => 'Queued Build Predictions: Profiles → /60 → TOI/GP.', 'row_html' => $this->renderRow($run)])
+            ? response()->json(['message' => 'Queued Build Predictions: Profiles → /60 → TOI/GP.', ...$this->actionPresentation($request, $run)])
             : redirect()->route('admin.nhl-sat-models.index')->with('status', 'Queued Build Predictions.');
     }
 
@@ -603,7 +594,7 @@ class NhlModelRunController extends Controller
         if ($request->expectsJson()) {
             return response()->json([
                 'message' => 'Queued TOI.',
-                'row_html' => $this->renderRow($run),
+                ...$this->actionPresentation($request, $run),
             ]);
         }
 
@@ -711,7 +702,7 @@ class NhlModelRunController extends Controller
         if ($request->expectsJson()) {
             return response()->json([
                 'message' => 'Queued Compare /60.',
-                'row_html' => $this->renderRow($run),
+                ...$this->actionPresentation($request, $run),
             ]);
         }
 
@@ -4253,6 +4244,13 @@ SQL;
             ->filter(fn (string $seasonId): bool => preg_match('/^\d{8}$/', $seasonId) === 1)
             ->sort()
             ->last();
+    }
+
+    /** Preserve legacy detail-page responses while Vue actions never render Blade fragments. */
+    private function actionPresentation(Request $request, NhlModelRun $run): array
+    {
+        return $request->header('X-DIQ-SAT-Workspace') === '1'
+            ? ['model_id' => (int) $run->id] : ['row_html' => $this->renderRow($run)];
     }
 
     private function renderRow(NhlModelRun $run): string

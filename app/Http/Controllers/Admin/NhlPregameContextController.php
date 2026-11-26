@@ -46,7 +46,7 @@ class NhlPregameContextController extends Controller
 
         return response()->json([
             'message' => 'Queued Build Pregame.',
-            'progress_html' => view('admin.nhl-sat-models._pregame-progress', ['pregameBuild' => $build])->render(),
+            ...$this->progressPresentation($request, $build),
         ], 202);
     }
 
@@ -113,24 +113,30 @@ class NhlPregameContextController extends Controller
 
         return response()->json([
             'message' => $message,
-            'progress_html' => view('admin.nhl-sat-models._pregame-progress', [
-                'pregameBuild' => $build,
-                'modelRunId' => $run->id,
-            ])->render(),
+            ...$this->progressPresentation($request, $build),
         ], $status);
     }
 
     /** Read progress without loading model projections or changing the model's training state. */
-    public function modelProgress(NhlModelRun $run): JsonResponse
+    public function modelProgress(Request $request, NhlModelRun $run): JsonResponse
     {
         $this->assertSatModel($run);
 
         return response()->json([
-            'progress_html' => view('admin.nhl-sat-models._pregame-progress', [
-                'pregameBuild' => NhlPregameContextRun::latestForModel($run->id),
-                'modelRunId' => $run->id,
-            ])->render(),
+            ...$this->progressPresentation($request, NhlPregameContextRun::latestForModel($run->id)),
         ])->header('Cache-Control', 'no-store');
+    }
+
+    /** The migrated workspace consumes JSON; old detail-page clients keep their existing response. */
+    private function progressPresentation(Request $request, ?NhlPregameContextRun $build): array
+    {
+        if ($request->header('X-DIQ-SAT-Workspace') === '1') {
+            return ['progress' => app(\App\Services\NhlSatPregameWorkspace::class)->progress($build)];
+        }
+
+        return ['progress_html' => view('admin.nhl-sat-models._pregame-progress', [
+            'pregameBuild' => $build, 'modelRunId' => $build?->model_run_id,
+        ])->render()];
     }
 
     /** Read one model's automatic pregame-update settings and latest build status. */

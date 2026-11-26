@@ -18,6 +18,7 @@ use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
 
 beforeEach(function (): void {
+    $this->withoutVite();
     $this->travelTo(\Illuminate\Support\Carbon::parse('2026-11-25 12:00:00 UTC'));
     Http::preventStrayRequests();
     Bus::fake();
@@ -461,7 +462,8 @@ it('marks existing profiles outdated after evaluation and exposes that through H
     $this->actingAs(($this->admin)())->postJson(route('admin.nhl-sat-models.train', $this->run), ['evaluation' => 'sat'])->assertOk();
     expect(data_get($this->run->fresh()->metrics, 'profile_freshness.skater_offense.outdated'))->toBeTrue()
         ->and(data_get($this->run->fresh()->metrics, 'profile_freshness.goalie_faced.outdated'))->toBeTrue();
-    $this->get(route('admin.nhl-sat-models.index'))->assertOk()->assertSee('Profiles outdated')->assertSee('Skaters, Goalies');
+    $this->get(route('admin.nhl-sat-models.index'))->assertOk()->assertInertia(fn (\Inertia\Testing\AssertableInertia $page) => $page
+        ->where('models.0.outdated', ['Skaters', 'Goalies']));
     expect(DB::table('nhl_sat_model_entity_profile_buckets')->where('model_run_id', $this->run->id)->count())->toBe(2);
 });
 

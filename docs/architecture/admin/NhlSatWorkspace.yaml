@@ -1,0 +1,36 @@
+name: SAT HQ And Pregame Workspace
+type: Scoped Administrative Workspace
+location:
+  - app/Services/NhlSatPregameWorkspace.php
+  - app/Services/NhlSatModelPresentation.php
+  - app/Http/Controllers/Admin/NhlSatWorkspaceController.php
+  - app/Http/Controllers/Admin/NhlModelRunController.php
+  - app/Http/Controllers/Admin/NhlPregameContextController.php
+  - resources/js/pages/Admin/SatModels/Index.vue
+  - config/nhl-pregame.php
+purpose: Provide a Vue-owned model registry and shared Pregame health workspace while isolating its first historical pilot from production prediction sources.
+when_to_use:
+  - Inspecting SAT models and explicitly requesting existing model workflows.
+  - Monitoring or maintaining the Sep2026 Pregame pilot.
+when_not_to_use:
+  - Changing prediction equations, automatically selecting a production model or migrating shared context storage.
+  - Provisioning Horizon processes or pretending domain workstreams are independent processing pools.
+rules:
+  - Retain existing super-admin authentication, verification and authorization boundaries. Use the shared Inertia application shell and existing desktop/mobile navigation; never load the legacy UI bootstrap on this landing page.
+  - Resolve exactly one explicitly named historical SAT training pilot with Test 20252026. Missing or ambiguous selection disables pilot actions; never substitute the newest, default or production model. Read through model-owned tables without copying, relinking or deleting existing context. Model-specific Train windows retain their identity.
+  - Registry actions preserve their existing routes, validation and admission. Explicit Vue requests receive structured acknowledgements; legacy detail-page responses remain compatible. Successful writes reconcile through quiet partial reloads with retained scroll, editor state and disclosures.
+  - Derive health from observed evidence, separately from processing activity. Historical team-snapshot coverage does not certify player, goalie, normalized-metric or current production readiness. Missing values stay unavailable. Label statistical cutoff independently of rebuild timestamps and display limited coverage honestly.
+  - Player, team, goalie, ranking and travel workstreams share context processing. League work is independent until each context date consumes its reference. Display durable claims as claimed jobs, not proof of operating-system workers executing. Expired claims require attention and use existing recovery; never expose claim tokens.
+  - Allocation controls change only pilot claim limits in existing model configuration and active maintenance options. Apply limits to subsequent claims without cancelling live work, changing global configuration or touching other models. Existing scoped pause, resume, stop and automation semantics remain authoritative in NhlPregameContextEvidence.yaml.
+  - Use bounded reads, cached historical coverage counts and deferred Pregame props. Poll progress quietly while preserving rendered content; dispose timers and requests on unmount. Reads cannot queue imports, rebuilds or predictions.
+  - The context inspector reads existing pilot metric rows with explicit windows, measures, strengths and samples. Bound response size and label truncation; missing pilot evidence never borrows production values or performs calculations.
+  - UI presentation and motion follow UI_DESIGN.md and UI_MOTION.md. Canonical pilot metadata and health vocabulary belong in ENUMS.md; physical storage remains unchanged.
+public_interface:
+  - GET /admin/nhl-sat-models
+  - PUT /admin/nhl-sat-models/pregame/workers
+  - GET /admin/nhl-sat-models/pregame/inspect
+  - X-DIQ-SAT-Workspace header for structured action acknowledgements
+example_usage: |
+  A super admin opens Pregame and inspects Sep2026 coverage and active claims.
+  Changing its league/context allocation affects that pilot's subsequent claims;
+  the current production model continues using its own snapshots and defaults.

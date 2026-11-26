@@ -146,7 +146,7 @@ class NhlPregameContextOrchestrator
             return null;
         }
 
-        return $this->queueBackfill($seasons, $model->id, $createdBy, array_merge($runOptions, [
+        return $this->queueBackfill($seasons, $model->id, $createdBy, array_merge($runOptions, $this->workspaceOptions($model), [
             'train_season_ids' => array_map('strval', $model->train_season_ids ?? []),
             'pipeline_version' => self::CHECKPOINT_PIPELINE,
         ]), $rejectActive);
@@ -168,11 +168,31 @@ class NhlPregameContextOrchestrator
             return null;
         }
 
-        return $this->queueBackfill([$season], $model->id, $createdBy, array_merge($runOptions, [
+        return $this->queueBackfill([$season], $model->id, $createdBy, array_merge($runOptions, $this->workspaceOptions($model), [
             'only_missing' => true,
             'train_season_ids' => array_map('strval', $model->train_season_ids ?? []),
             'pipeline_version' => self::CHECKPOINT_PIPELINE,
         ]), $rejectActive);
+    }
+
+    /** Only opted-in Sep2026 maintenance runs receive workspace-specific concurrency. */
+    private function workspaceOptions(NhlModelRun $model): array
+    {
+        return NhlSatPregameWorkspace::isPilot($model) && is_array(data_get($model->run_config, 'pregame_workspace'))
+            ? ['workspace_concurrency' => NhlSatPregameWorkspace::limits($model)] : [];
+    }
+
+    /** Production and preexisting unconfigured runs retain the original global limits. */
+    private function workspaceLimits(NhlPregameContextRun $run): array
+    {
+        $defaults = ['league' => max(1, (int) config('nhl-pregame.league_concurrency', 4)),
+            'context' => max(1, (int) config('nhl-pregame.context_concurrency', 2))];
+        if (! is_array(data_get($run->options, 'workspace_concurrency'))) {
+            return $defaults;
+        }
+        $model = NhlModelRun::query()->find($run->model_run_id);
+
+        return $model !== null && NhlSatPregameWorkspace::isPilot($model) ? NhlSatPregameWorkspace::limits($model) : $defaults;
     }
 
     /** Queue a shared, explicitly scoped date dependency for the current prediction lineups. */
@@ -799,8 +819,9 @@ class NhlPregameContextOrchestrator
                     return ['context' => [], 'league' => [], 'comparison' => []];
                 }
 
+                $limits = $this->workspaceLimits($run);
                 $contextDays = collect();
-                $availableSlots = max(0, ($independent ? max(1, (int) config('nhl-pregame.context_concurrency', 2)) : 2) - $activeContextCount);
+                $availableSlots = max(0, ($independent ? $limits['context'] : 2) - $activeContextCount);
                 if ($availableSlots > 0) {
                     $contextDays = NhlPregameContextRunDay::query()->where('run_id', $runId)
                         ->where('context_state', NhlPregameContextRunDay::STATE_PENDING)
@@ -828,9 +849,9 @@ class NhlPregameContextOrchestrator
                 }
 
                 $leagueDays = [];
-                $availableLeagueSlots = max(0, ($independent ? max(1, (int) config('nhl-pregame.league_concurrency', 4)) : 2) - $activeLeagueCount);
+                $availableLeagueSlots = max(0, ($independent ? $limits['league'] : 2) - $activeLeagueCount);
                 // Bound transient peer storage while allowing configured worker concurrency.
-                $lookahead = max((int) config('nhl-pregame.league_concurrency', 4), (int) config('nhl-pregame.league_lookahead_days', 8));
+                $lookahead = max($limits['league'], (int) config('nhl-pregame.league_lookahead_days', 8));
                 $preparedDays = $checkpointed ? NhlPregameContextRunDay::query()->where('run_id', $runId)
                     ->where('context_state', '<>', 'complete')->where(fn ($query) => $query->whereIn('league_state', ['complete', 'processing'])
                         ->orWhere('league_cursor', '>', 0)->orWhere('league_entity_cursor', '>', 0))->count() : 0;

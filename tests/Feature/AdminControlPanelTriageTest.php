@@ -48,6 +48,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 
 beforeEach(function () {
+    $this->withoutVite();
     $this->makeSuperAdmin = function (): User {
         $user = User::factory()->create();
         $role = Role::firstOrCreate([
@@ -1235,7 +1236,8 @@ it('keeps SAT forecast season independent of optional evaluation season', functi
         ->and($run->run_config['projection_season_id'])->toBe($projectionSeason)
         ->and($run->projectionSeasonId())->toBe($expected);
     $this->assertDatabaseHas('nhl_model_runs', ['id' => $run->id, 'target_season_id' => $testSeason]);
-    $this->get(route('admin.nhl-sat-models.index'))->assertOk()->assertSee('Projection: ' . $expected);
+    $this->get(route('admin.nhl-sat-models.index'))->assertOk()->assertInertia(fn (\Inertia\Testing\AssertableInertia $page) => $page
+        ->where('models.0.projection', $expected));
 })->with([
     'no test explicit forecast' => [null, '20262027', '20262027'],
     'no test automatic forecast' => [null, null, '20262027'],
@@ -1283,14 +1285,11 @@ it('creates draft NHL SAT models from the admin workflow', function () {
     $this->actingAs($admin)
         ->get(route('admin.nhl-sat-models.index'))
         ->assertOk()
-        ->assertSee('SAT Models')
-        ->assertSee('Create Model')
-        ->assertSee('SAT train 2023 2024 test 2025')
-        ->assertSee('20232024, 20242025')
-        ->assertSee('20252026')
-        ->assertSee('Eval SOG')
-        ->assertSee('Eval SAT')
-        ->assertDontSee('Family');
+        ->assertInertia(fn (\Inertia\Testing\AssertableInertia $page) => $page->component('Admin/SatModels/Index')
+            ->where('models.0.name', 'SAT train 2023 2024 test 2025')
+            ->where('models.0.train', ['20232024', '20242025'])->where('models.0.test', '20252026')
+            ->where('models.0.actions', fn ($actions): bool => collect($actions)->contains('label', 'Eval SOG')
+                && collect($actions)->contains('label', 'Eval SAT')));
 });
 
 it('evaluates SAT model SOG danger immediately without scoring the test season', function () {
@@ -2013,9 +2012,9 @@ it('shows sortable trained SAT model buckets to super admins', function () {
     $this->actingAs($admin)
         ->get(route('admin.nhl-sat-models.index'))
         ->assertOk()
-        ->assertSee('Excluded')
-        ->assertSee('View SAT')
-        ->assertSee('Eval SAT');
+        ->assertInertia(fn (\Inertia\Testing\AssertableInertia $page) => $page
+            ->has('models.0.training')->where('models.0.actions', fn ($actions): bool => collect($actions)->contains('label', 'View SAT')
+                && collect($actions)->contains('label', 'Eval SAT')));
 
     $this->actingAs($admin)
         ->get(route('admin.nhl-sat-models.buckets', [

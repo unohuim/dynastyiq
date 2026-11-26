@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 return [
+    'workspace_model_name' => 'Sep2026',
     'context_concurrency' => (int) env('NHL_PREGAME_CONTEXT_CONCURRENCY', 2),
     'league_concurrency' => (int) env('NHL_PREGAME_LEAGUE_CONCURRENCY', 4),
     'player_batch_size' => 8,

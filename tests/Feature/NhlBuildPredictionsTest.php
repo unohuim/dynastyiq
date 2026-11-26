@@ -24,6 +24,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Redis;
 
 beforeEach(function (): void {
+    $this->withoutVite();
     $this->travelTo(\Illuminate\Support\Carbon::parse('2026-09-29 12:00:00 UTC'));
     Http::preventStrayRequests();
     $this->realBus = Bus::getFacadeRoot();
@@ -274,7 +275,8 @@ it('exposes persisted current stage counts in refreshed row HTML', function (): 
         'profile_entities_queued' => 20, 'profile_entities_completed' => 7,
         'season_snapshot_entities_queued' => 30, 'season_snapshot_entities_completed' => 10,
     ]]);
-    $this->get(route('admin.nhl-sat-models.index'))->assertOk()->assertSee('17/50')->assertSee('Profiles');
+    $this->get(route('admin.nhl-sat-models.index'))->assertOk()->assertInertia(fn (\Inertia\Testing\AssertableInertia $page) => $page
+        ->where('models.0.build.completed', 17)->where('models.0.build.total', 50));
     $payload = (new NhlSatModelUpdated($this->run->id, 'predictions-progress'))->broadcastWith();
     expect($payload['row_html'])->toContain('17/50', 'aria-live="polite"');
 });
@@ -307,8 +309,10 @@ it('shows the failed stage and escapes its error in the model row', function ():
     ($this->activate)('rates');
     NhlModelRun::finishPredictionStage($this->run->id, 'build-1', 'rates', true, error: '<script>failed</script>');
     $response = $this->actingAs($this->admin)->get(route('admin.nhl-sat-models.index'))->assertOk();
-    $response->assertSee('Build Predictions failed')->assertSee('/60')
-        ->assertSee('&lt;script&gt;failed&lt;/script&gt;', false)->assertDontSee('<script>failed</script>', false);
+    $response->assertInertia(fn (\Inertia\Testing\AssertableInertia $page) => $page
+        ->where('models.0.build.status', 'failed')->where('models.0.build.stage', 'rates')
+        ->where('models.0.build.error', '<script>failed</script>'));
+    $response->assertDontSee('<script>failed</script>', false);
 });
 
 it('does not execute a parent stage from a stale build', function (): void {
@@ -1261,7 +1265,8 @@ describe('bounded profile retries', function (): void {
         ($this->failedSnapshots)();
         $this->actingAs($this->admin)->postJson(route('admin.nhl-sat-models.profiles.build', $this->run))->assertOk();
         expect(data_get($this->run->fresh()->metrics, 'profile_build.snapshot_reuse.entities'))->toBe(1);
-        $this->get(route('admin.nhl-sat-models.index'))->assertOk()->assertSee('Build predictions');
+        $this->get(route('admin.nhl-sat-models.index'))->assertOk()->assertInertia(fn (\Inertia\Testing\AssertableInertia $page) => $page
+            ->where('models.0.build.status', 'running'));
     });
 
     it('queues only combined Train work when complete snapshots can be reused', function (): void {

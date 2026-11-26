@@ -469,6 +469,10 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                 });
                 Route::get('/nhl-sat-models', [\App\Http\Controllers\Admin\NhlModelRunController::class, 'index'])
                     ->name('admin.nhl-sat-models.index');
+                Route::put('/nhl-sat-models/pregame/workers', [\App\Http\Controllers\Admin\NhlSatWorkspaceController::class, 'workers'])
+                    ->name('admin.nhl-sat-models.workspace.workers');
+                Route::get('/nhl-sat-models/pregame/inspect', [\App\Http\Controllers\Admin\NhlSatWorkspaceController::class, 'inspect'])
+                    ->name('admin.nhl-sat-models.workspace.inspect');
                 Route::get('/nhl-sat-models/{model}/season-games', [\App\Http\Controllers\Admin\NhlSeasonGameEvaluationController::class, 'index'])
                     ->whereNumber('model')->name('admin.nhl-sat-models.season-games');
                 Route::post('/nhl-sat-models/{model}/season-games/runs', [\App\Http\Controllers\Admin\NhlSeasonGameEvaluationController::class, 'store'])

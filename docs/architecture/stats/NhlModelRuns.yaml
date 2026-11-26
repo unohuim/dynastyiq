@@ -36,7 +36,8 @@ location:
   - database/migrations/2026_08_26_000003_create_nhl_sat_model_rate_comparison_splits_table.php
   - database/migrations/2026_08_26_000004_add_split_hdsat_to_nhl_summary_tables.php
   - database/migrations/2026_08_26_000005_create_nhl_sat_model_rate_projection_splits_table.php
-  - resources/views/admin/nhl-sat-models/index.blade.php
+  - resources/js/pages/Admin/SatModels/Index.vue
+  - app/Services/NhlSatModelPresentation.php
   - resources/views/admin/nhl-sat-models/_model-row.blade.php
   - resources/views/admin/nhl-sat-models/buckets.blade.php
   - resources/views/admin/nhl-sat-models/profiles.blade.php
@@ -59,6 +60,7 @@ when_not_to_use:
   - Replacing domain-specific prediction, profile, or projection output tables.
   - Modeling non-SAT stats before those aggregate/modeling workflows exist.
 rules:
+  - The registry landing page is Vue/Inertia-owned under the shared application shell. Its model actions retain existing admission and workflow rules; the Pregame workspace pilot is governed by admin/NhlSatWorkspace.yaml. Vue action requests use explicit JSON acknowledgements rather than rendering Blade rows; legacy detail-page clients retain their existing response contracts.
   - Analysis > Build Pregame starts the existing bounded context backfill using the selected model's Train and optional Test seasons. Its independent Building/progress indicator does not modify model training status or outputs; NhlPregameContextEvidence.yaml owns this workflow.
   - Build Predictions is a super-admin action on an existing SAT training run. Atomically reserve the run, then run Build Profiles (including all training/evaluation snapshots and generic stability), Build /60, and standalone Build TOI/GP in that order. Reuse existing per-entity batches; a parent dispatch is not stage completion.
   - Combined prediction builds remain running between stages and advance only after the full stage batch succeeds. Failed, cancelled, or empty stages stop the workflow; record the failed stage and error. A build identifier plus stage guard makes stale or duplicate completion callbacks inert. Individual build/evaluation actions must not overlap a running combined build.

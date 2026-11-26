@@ -15,6 +15,7 @@ use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
 
 beforeEach(function (): void {
+    $this->withoutVite();
     $this->travelTo(\Illuminate\Support\Carbon::parse('2026-10-09 12:00:00', 'UTC'));
     Bus::fake();
     \Illuminate\Support\Facades\Http::preventStrayRequests();
@@ -108,9 +109,10 @@ it('queues model seasons and exposes progress without changing the model', funct
     Bus::assertDispatched(PrepareNhlPregameContextRunJob::class, fn ($job): bool => $job->runId === $build->id && $job->queue === 'projections');
     $this->getJson(route('admin.nhl-sat-models.context.progress', $this->model))
         ->assertOk()->assertJsonPath('progress_html', $response->json('progress_html'));
-    $this->get(route('admin.nhl-sat-models.index'))->assertOk()
-        ->assertSee('Build Pregame')->assertSee('Analysis')->assertSee('Building')
-        ->assertSee('View Pregame Impacts')->assertSee(route('admin.nhl-sat-models.context.effects'));
+    $this->get(route('admin.nhl-sat-models.index'))->assertOk()->assertInertia(fn (\Inertia\Testing\AssertableInertia $page) => $page
+        ->component('Admin/SatModels/Index')->where('models.0.pregame.status', 'queued')
+        ->where('models.0.actions', fn ($actions): bool => collect($actions)->contains('label', 'Build Pregame')
+            && collect($actions)->contains('label', 'View Pregame Impacts')));
 });
 
 it('materializes one run-day row for each selected game date', function (): void {
@@ -298,8 +300,8 @@ it('enables pregame inspection only for completed model builds with saved eviden
     $html = $this->getJson(route('admin.nhl-sat-models.context.progress', $this->model))
         ->assertOk()->json('progress_html');
     expect($html)->toContain('data-pregame-viewable="' . ($enabled ? '1' : '0') . '"');
-    $page = $this->get(route('admin.nhl-sat-models.index'))->assertOk()->getContent();
-    expect($page)->toContain('data-pregame-viewable="' . ($enabled ? '1' : '0') . '"');
+    $this->get(route('admin.nhl-sat-models.index'))->assertOk()->assertInertia(fn (\Inertia\Testing\AssertableInertia $page) => $page
+        ->where('models.0.actions', fn ($actions): bool => collect($actions)->firstWhere('label', 'View Pregame Impacts')['enabled'] === $enabled));
 })->with([
     'completed with current data' => ['completed', true, true, true],
     'completed without data' => ['completed', false, true, false],
@@ -1268,9 +1270,12 @@ it('supports the existing non JSON redirect for manual updates', function (): vo
 });
 
 it('displays Update Pregame immediately below Build Pregame', function (): void {
-    $html = $this->actingAs($this->admin)->get(route('admin.nhl-sat-models.index'))->assertOk()->getContent();
-    expect($html)->toContain('data-sat-model-pregame-update-form', route('admin.nhl-sat-models.context.update', $this->model))
-        ->and(strpos($html, '>Build Pregame</button>'))->toBeLessThan(strpos($html, '>Update Pregame</button>'));
+    $this->actingAs($this->admin)->get(route('admin.nhl-sat-models.index'))->assertOk()
+        ->assertInertia(fn (\Inertia\Testing\AssertableInertia $page) => $page->where('models.0.actions', function ($actions): bool {
+            $labels = collect($actions)->pluck('label')->all();
+
+            return array_search('Update Pregame', $labels, true) === array_search('Build Pregame', $labels, true) + 1;
+        }));
 });
 
 it('prevents duplicate incremental runs while their target season is active', function (string $state): void {

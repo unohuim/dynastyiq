@@ -1,5 +1,12 @@
 # Architecture Inventory
 
+The SAT model landing page is Vue/Inertia-owned under the shared application shell.
+Its peer Pregame view monitors the Sep2026 historical pilot through existing
+model-owned records. Scoped league/context claim allocation, health, coverage,
+inspection and maintenance controls do not switch production prediction sources.
+Authority: `docs/architecture/admin/NhlSatWorkspace.yaml`.
+
+
 Operational predictions read available context before considering build work.
 Exact snapshots are preferred; latest usable snapshots preserve model/cutoff
 boundaries. days_away counts uncovered completed games using the freshest shared
@@ -1163,7 +1170,7 @@ season, automatically refining offense/defense weights and searching score gaps 
 - `database/migrations/2026_08_21_000005_add_game_counts_to_nhl_sat_model_entity_rate_comparison_aggregates.php`
 - `database/migrations/2026_08_21_000007_create_nhl_sat_model_generic_bucket_stabilities_table.php`
 - `database/migrations/2026_08_23_000001_create_nhl_sat_model_entity_toi_projections_table.php`
-- `resources/views/admin/nhl-sat-models/index.blade.php`
+- `resources/js/pages/Admin/SatModels/Index.vue`
 - `resources/views/admin/nhl-sat-models/_model-row.blade.php`
 - `resources/views/admin/nhl-sat-models/buckets.blade.php`
 - `resources/views/admin/nhl-sat-models/profiles.blade.php`

@@ -723,3 +723,31 @@ not request another prediction. Label goalie baseline and actual measurement
 scope explicitly. Comparison controls choose another run for the same model/Test
 season and show matched win percentages, unmatched counts and corrected/spoiled
 games. Preserve table content, scrolling and expanded detail during progress reads.
+
+
+## SAT Models HQ and Pregame pilot
+
+The `/admin/nhl-sat-models` landing page is Vue/Inertia-owned and uses the existing
+shared desktop header, scoreboard and mobile navigation. Use the expandable
+workstream arrangement from PG-D04, with PG-D02 allocation clarity and PG-M01
+mobile interactions. Keep the HQ header compact, graphite surfaces calm and
+primary actions sky blue; omit decorative hero charts and duplicated worker charts.
+
+Models and Pregame are peer views. Preserve existing model actions in accessible
+Vue panels, with clear prerequisites, confirmation for broad recalculation and
+immediate toast acknowledgement. Keep the refresh switch left of the model action
+menu and automation gear right of it. Link to unmigrated reports using ordinary
+navigation. Those reports retain their existing layouts until separately migrated.
+
+Pregame initially identifies Sep2026 as its historical pilot. Show overall health,
+statistical cutoff, coverage, actual date-job claims, issues and expandable
+workstreams. Health and activity have separate meanings; historical coverage must
+not imply today's production games are ready. Label shared claim counts so users
+do not add them across workstreams. Unknown speed, ETA and independently unmeasured
+coverage display an em dash. Allocation adjusts real league/context claim limits,
+not fabricated domain worker pools or physical Horizon provisioning.
+
+Use native desktop/mobile arrangements with animated disclosures and accessible
+right-side panels. Quiet updates retain content, scroll and local forms; initial
+Pregame loading is bounded to its section. Inspector rows retain explicit units,
+strengths, periods, sample sizes and missing-value markers. Label bounded results.

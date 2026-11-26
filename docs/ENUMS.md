@@ -1,5 +1,13 @@
 # ENUMS - Canonical Enum Authority
 
+## SAT Pregame workspace pilot
+
+- Pilot selector: `config/nhl-pregame.php` key `workspace_model_name`, initially `Sep2026`. Match normalized name, SAT training family/stage and Test `20252026`; exactly one match is required.
+- `nhl_model_runs.run_config.pregame_workspace`: integer `league` and `context` claim limits, each 1–25 with combined maximum 25. Configured limits apply only to the approved pilot. Active maintenance run `options.workspace_concurrency` marks that pilot run as opted in; it is not a physical worker count.
+- Workspace `health`: `recorded` (team evidence observed without tracked gaps/errors), `attention` (tracked gaps/errors), `incomplete` (no observed team evidence), `unavailable` (pilot missing or ambiguous). None certifies full player/metric readiness.
+- Workspace claim `state`: `claimed` (queued or executing under a durable claim), `expired` (claim expired). Workstream `state` reuses context-run statuses, with `no_run` when no maintenance exists and `waiting` when context is waiting for league references. Finished stage counts remain completed even if another stage fails.
+- Workstream keys: `players`, `teams`, `goalies`, `league`, `rankings`, `travel`. Processing pools are `league` and `context`; the latter is shared across the other workstreams.
+
 ## Pregame comparison progress
 
 - `nhl_pregame_context_run_games.readiness.comparison_progress.version`: `1` identifies resumable comparison pages.
