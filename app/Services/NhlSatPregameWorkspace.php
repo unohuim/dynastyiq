@@ -65,6 +65,9 @@ class NhlSatPregameWorkspace
             : ($run->status === 'completed' ? 100.0 : null);
 
         return ['id' => (int) $run->id, 'status' => $run->status, 'completed' => (int) $run->completed_games,
+            'rebuilt_pct' => $total > 0 ? round(100 * (int) $run->completed_games / $total, 1) : ($run->status === 'completed' ? 100.0 : null),
+            'blocked' => $excluded, 'unfinished' => max(0, $total - $processed),
+            'incomplete_games' => $run->games()->whereJsonLength('readiness->incomplete_player_ids', '>', 0)->count(),
             'processed' => $processed, 'progress_pct' => $percent, 'created_at' => $run->created_at?->toIso8601String(),
             'source_blocked_days' => data_get($run->options, 'repair_sources') && ! data_get($run->options, 'source_repairs_complete')
                 ? 0 : (int) data_get($run->options, 'source_blocked_days', 0),
@@ -133,6 +136,16 @@ class NhlSatPregameWorkspace
         if ((int) $run?->failed_games > 0) {
             $issues[] = ['title' => $run->failed_games.' failed games', 'detail' => 'Retry unfinished work after reviewing the source error.'];
         }
+        $incomplete = $run === null ? collect() : DB::table('nhl_pregame_context_run_games')->where('run_id', $run->id)
+            ->whereJsonLength('readiness->incomplete_player_ids', '>', 0)->orderBy('game_date')->limit(51)
+            ->get(['nhl_game_id', 'game_date', 'readiness'])->map(fn ($work) => [
+                'game_id' => (int) $work->nhl_game_id, 'date' => $work->game_date,
+                'player_ids' => data_get(json_decode($work->readiness, true), 'incomplete_player_ids', []),
+            ]);
+        if ($incomplete->isNotEmpty()) {
+            $issues[] = ['title' => 'Incomplete recent player windows',
+                'detail' => 'Snapshots retain usable metrics. Some recent windows are unavailable because historical sources are missing; inspect the affected games and repair the actual source games.'];
+        }
         if (collect($workers)->contains('state', 'expired')) {
             $issues[] = ['title' => 'Expired work claims', 'detail' => 'A delivery has not renewed its claim. Existing scheduled recovery can reclaim it; no worker process is stopped here.'];
         }
@@ -197,6 +210,7 @@ class NhlSatPregameWorkspace
                 'test' => $pilot->target_season_id], 'health' => $health, 'issues' => $issues,
             'workstreams' => $streams, 'workers' => $workers,
             'workstream_goals' => $goals, 'goals_url' => route('admin.nhl-sat-models.workspace.goals'),
+            'incomplete_contexts' => $incomplete->take(50)->all(), 'incomplete_contexts_truncated' => $incomplete->count() > 50,
             'source_repairs' => $run === null ? [] : app(NhlPregameSourceRepairs::class)->rows($run),
             'worker_activity' => app(NhlPregameWorkerActivity::class)->snapshot($pilot), 'coverage' => $facts['seasons'], 'dates' => $facts['dates'] ?? [],
             'snapshots' => ['players' => $facts['players'], 'teams' => $facts['teams']],

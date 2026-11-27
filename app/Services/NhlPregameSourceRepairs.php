@@ -12,6 +12,57 @@ use Illuminate\Support\Facades\DB;
 /** Bridge pilot source gaps into independently owned canonical Full imports. */
 class NhlPregameSourceRepairs
 {
+    /** Find actual model-season source games needing import, independently of dependent context windows. */
+    public function gaps(NhlPregameContextRun $run): array
+    {
+        if (! data_get($run->options, 'workstream_pipeline') || ! data_get($run->options, 'repair_sources')
+            || (int) data_get($run->options, 'source_audit_version') !== 1) {
+            return [];
+        }
+        $pilot = app(NhlSatPregameWorkspace::class)->pilot();
+        if ($pilot === null || (int) $pilot->id !== (int) $run->model_run_id) {
+            return [];
+        }
+        $games = DB::table('nhl_games')->whereIn('season_id', $run->season_ids)->where('game_type', 2)
+            ->whereIn('game_state', ['OFF', 'FINAL'])
+            ->when(data_get($run->options, 'game_ids') !== null, fn ($query) => $query->whereIn('nhl_game_id', data_get($run->options, 'game_ids')))
+            ->when($run->start_date !== null, fn ($query) => $query->whereDate('game_date', '>=', $run->start_date))
+            ->when($run->end_date !== null, fn ($query) => $query->whereDate('game_date', '<=', $run->end_date))
+            ->orderBy('nhl_game_id')->pluck('nhl_game_id');
+        $gaps = [];
+        foreach ($games->chunk(250) as $ids) {
+            $withoutFacts = DB::table('nhl_games as game')->whereIn('game.nhl_game_id', $ids)
+                ->whereNotExists(fn ($facts) => $facts->selectRaw('1')->from('nhl_shot_attempts_facts as fact')
+                    ->whereColumn('fact.nhl_game_id', 'game.nhl_game_id')->where('fact.is_shot_attempt', true)
+                    ->where(fn ($period) => $period->whereNull('fact.period_type')->orWhere('fact.period_type', '!=', 'SO')))
+                ->pluck('game.nhl_game_id');
+            foreach ($withoutFacts as $id) {
+                $gaps[(int) $id][] = 'Missing shot-attempt facts for this historical game.';
+            }
+            $withoutExposure = DB::table('nhl_game_summaries as summary')->whereIn('summary.nhl_game_id', $ids)->where('summary.toi', '>', 0)
+                ->whereNotExists(fn ($exposure) => $exposure->selectRaw('1')->from('nhl_player_game_strength_summaries as strength')
+                    ->whereColumn('strength.nhl_game_id', 'summary.nhl_game_id')->whereColumn('strength.nhl_player_id', 'summary.nhl_player_id'))
+                ->distinct()->pluck('summary.nhl_game_id');
+            foreach ($withoutExposure as $id) {
+                $gaps[(int) $id][] = 'Missing player strength/on-ice summaries for this historical game.';
+            }
+            $badStrength = DB::table('nhl_shot_attempts_facts as fact')->whereIn('fact.nhl_game_id', $ids)
+                ->where('fact.is_shot_attempt', true)
+                ->where(fn ($period) => $period->whereNull('fact.period_type')->orWhere('fact.period_type', '!=', 'SO'))
+                ->whereExists(fn ($summary) => $summary->selectRaw('1')->from('nhl_game_summaries as summary')
+                    ->whereColumn('summary.nhl_game_id', 'fact.nhl_game_id')->whereColumn('summary.nhl_player_id', 'fact.shooter_player_id')->where('summary.toi', '>', 0))
+                ->whereNotExists(fn ($exposure) => $exposure->selectRaw('1')->from('nhl_player_game_strength_summaries as strength')
+                    ->whereColumn('strength.nhl_game_id', 'fact.nhl_game_id')->whereColumn('strength.nhl_player_id', 'fact.shooter_player_id')
+                    ->whereRaw("strength.strength = CASE WHEN UPPER(fact.strength) IN ('EV', 'PP', 'PK') THEN UPPER(fact.strength) ELSE UPPER(fact.strength_bucket) END")
+                    ->where('strength.toi', '>', 0))
+                ->distinct()->pluck('fact.nhl_game_id');
+            foreach ($badStrength as $id) {
+                $gaps[(int) $id][] = 'Shot strength lacks matching player exposure in this historical game.';
+            }
+        }
+        return $gaps;
+    }
+
     /** Persist one linked discovery per excluded game; replay never creates a second child. */
     public function begin(NhlPregameContextRun $run): void
     {
@@ -71,7 +122,8 @@ class NhlPregameSourceRepairs
         if (collect($rows)->contains(fn ($row) => in_array($row['state'], ['queued', 'discovering', 'importing', 'paused'], true))) {
             return false;
         }
-        DB::transaction(function () use ($run, $rows): void {
+        $remainingGaps = collect($rows)->contains('imported', true) ? $this->gaps($run) : [];
+        DB::transaction(function () use ($run, $rows, $remainingGaps): void {
             $owner = NhlPregameContextRun::whereKey($run->id)->lockForUpdate()->firstOrFail();
             if ($owner->status !== 'running') {
                 return;
@@ -83,6 +135,11 @@ class NhlPregameSourceRepairs
                     ->distinct()->count('nhl_team_id') < 2) {
                     $row['imported'] = false;
                     $row['error'] = 'Full import finished without player summaries for both teams.';
+                    $readiness['source_repair']['error'] = $row['error'];
+                }
+                if ($row['imported'] && isset($remainingGaps[$row['game_id']])) {
+                    $row['imported'] = false;
+                    $row['error'] = implode(' ', $remainingGaps[$row['game_id']]);
                     $readiness['source_repair']['error'] = $row['error'];
                 }
                 $readiness['source_blockers'] = $row['imported'] ? [] : [$row['error']];

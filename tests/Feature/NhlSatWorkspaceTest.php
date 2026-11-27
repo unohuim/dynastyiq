@@ -56,9 +56,18 @@ beforeEach(function (): void {
             'start_time_utc' => $date.' 23:00:00', 'home_team_id' => 1, 'away_team_id' => 2]);
         if ($sources) {
             foreach ([1, 2] as $team) {
+                $player = \App\Models\Player::withoutEvents(fn () => \App\Models\Player::firstOrCreate(['nhl_id' => 100 + $team],
+                    ['first_name' => 'Player', 'last_name' => (string) $team, 'nhl_team_id' => $team, 'is_goalie' => false]));
                 DB::table('nhl_game_summaries')->insert(['nhl_game_id' => $id,
                     'nhl_team_id' => $team, 'nhl_player_id' => 100 + $team, 'toi' => 900]);
+                DB::table('nhl_player_game_strength_summaries')->insert(['nhl_game_id' => $id, 'player_id' => $player->id,
+                    'nhl_player_id' => 100 + $team, 'team_id' => $team, 'strength' => 'EV', 'toi' => 900]);
             }
+            $play = DB::table('play_by_plays')->insertGetId(['nhl_game_id' => $id, 'period' => 1,
+                'seconds_in_game' => 120, 'type_desc_key' => 'shot-on-goal']);
+            DB::table('nhl_shot_attempts_facts')->insert(['play_by_play_id' => $play, 'nhl_game_id' => $id,
+                'shooter_player_id' => 101, 'team_id' => 1, 'is_shot_attempt' => true, 'is_shot_on_goal' => true,
+                'is_goal' => false, 'attempt_result' => 'shot', 'strength' => 'EV', 'strength_bucket' => 'ev', 'period_type' => 'REG']);
         }
     };
     $this->repair = function (): NhlPregameContextRun {
@@ -385,6 +394,7 @@ it('leaves ready source games pending for the existing league and context pipeli
 it('records precise missing source reasons and reads them through HTTP', function (): void {
     ($this->repairGame)(sources: false);
     $run = ($this->repair)();
+    $run->update(['options' => array_merge($run->options, ['repair_sources' => false])]);
     app(NhlPregameContextOrchestrator::class)->prepare($run);
     $this->assertDatabaseHas('nhl_pregame_context_run_games', ['run_id' => $run->id,
         'nhl_game_id' => 2022020001, 'state' => 'blocked',
@@ -466,6 +476,8 @@ it('does not select or rewrite a game with complete team player and metric conte
         ]);
         DB::table('nhl_player_game_pregame_context_metrics')->insert(['player_context_id' => $player,
             'metric_key' => 'games', 'window_key' => 'l5', 'strength' => 'ALL', 'measure_key' => 'value', 'value' => 5]);
+        DB::table('nhl_player_game_pregame_context_metrics')->insert(['player_context_id' => $player,
+            'metric_key' => 'individual_missing_games', 'window_key' => 'train', 'strength' => 'EV', 'measure_key' => 'value', 'value' => 1]);
     }
     $before = DB::table('nhl_team_game_pregame_contexts')->orderBy('id')->get()->toJson();
     $run = ($this->repair)();

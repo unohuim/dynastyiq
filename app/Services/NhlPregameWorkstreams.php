@@ -56,6 +56,7 @@ class NhlPregameWorkstreams
         $run = app(NhlPregameContextOrchestrator::class)->queueModelRepair($model, $userId, [
             'workstream_pipeline' => true, 'source_dirty_from' => $dirty,
             'repair_sources' => $userId !== null,
+            'source_audit_version' => $userId !== null ? 1 : null,
             ...($gameIds === [] ? [] : ['game_ids' => $gameIds]),
             'goal_generations' => $goals->pluck('generation', 'area')->all(),
         ]);
@@ -341,6 +342,15 @@ class NhlPregameWorkstreams
                     'claim_token' => null, 'lease_expires_at' => null, 'attempts' => 0, 'last_error' => null,
                     'completed_at' => $page['complete'] ? now() : null, 'updated_at' => now(),
                 ]);
+                if (! empty($page['incomplete_player_ids'])) {
+                    $work = DB::table('nhl_pregame_context_run_games')->where('run_id', $run->id)
+                        ->where('nhl_game_id', $task->nhl_game_id)->lockForUpdate()->first();
+                    $readiness = json_decode($work->readiness ?? '{}', true);
+                    $readiness['incomplete_player_ids'] = array_values(array_unique(array_merge(
+                        $readiness['incomplete_player_ids'] ?? [], $page['incomplete_player_ids'])));
+                    DB::table('nhl_pregame_context_run_games')->where('id', $work->id)->update([
+                        'readiness' => json_encode($readiness, JSON_THROW_ON_ERROR), 'updated_at' => now()]);
+                }
                 if ($page['complete'] && $goal->area === 'league') {
                     $day->update(['league_state' => 'complete', 'league_completed_at' => now()]);
                 } elseif ($page['complete'] && $task->kind === 'cleanup') {

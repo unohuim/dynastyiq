@@ -790,10 +790,11 @@ them across workstreams. Allocation adjusts real task or legacy claim limits,
 not physical Horizon provisioning.
 
 Place a compact current/last-maintenance summary above the Pregame workstreams.
-Show processed percentage/counts, updated/excluded/failed counts, elapsed wall time
+Show rebuilt percentage/counts prominently and assessed percentage separately;
+list blocked, unfinished, failed and incomplete-recent-window counts, elapsed wall time
 and executing process count. Put active stage progress in the relevant pool row;
 never show a full-width activity bar or filled completed-run bars. Unknown
-selection stays unavailable; processed work never implies complete data coverage.
+selection stays unavailable; assessed work never implies rebuilt snapshots or complete data coverage.
 Preserve the historical status and counts after work finishes.
 
 Workstreams & active workers lists six independently managed areas after the
@@ -814,6 +815,11 @@ counts and errors. A failed row offers Retry, disabled until the current parent
 repair settles. Updates retain the open drawer and require no navigation to Game
 Imports. Explain historical-source prerequisites while context awaits admission.
 Queued source imports do not count as completed exclusions or repaired games.
+When recent player windows remain incomplete, keep other metrics available and
+show bounded affected game/player identities in the area drawer. An Inspect
+player windows action opens the existing inspector for that game; preserve its
+explicit nulls and sample sizes. Usable Train samples do not block every later
+matchup. Full imports target actual source games with missing evidence.
 
 Executing workers appear beneath their own area; several may work in one area.
 Reserve list height during quiet updates. Before migrations, show the legacy

@@ -43,6 +43,14 @@ No statistical or operational table migration is required for these metadata lin
 Authorities: `NhlPregameWorkstreamGoals.yaml`, `NhlDiscoveryPipeline.yaml` and
 `NhlImportOrchestrator.yaml` in their canonical architecture directories.
 
+Pilot area snapshots preserve usable Train samples even when some historical
+appearances are missing. Recent unavailable metrics remain null while other
+metrics are saved; bounded game/player quality warnings support inspection.
+Explicit source audits target the actual historical games with missing facts or
+strength exposure, not each later dependent matchup. Header rebuilt progress is
+separate from assessed, blocked and unfinished counts. No migration is required.
+Authority: `docs/architecture/stats/NhlPregameWorkstreamGoals.yaml`.
+
 
 Operational predictions read available context before considering build work.
 Exact snapshots are preferred; latest usable snapshots preserve model/cutoff

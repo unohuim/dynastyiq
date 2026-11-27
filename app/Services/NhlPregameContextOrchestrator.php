@@ -446,6 +446,7 @@ class NhlPregameContextOrchestrator
         }
 
         $options = $run->options ?? [];
+        $sourceGaps = app(NhlPregameSourceRepairs::class)->gaps($run);
         $explicitGames = data_get($options, 'game_ids');
         $today = now('America/Toronto')->toDateString();
         $futureNeeded = $futureReady = [];
@@ -481,7 +482,7 @@ class NhlPregameContextOrchestrator
         if ((bool) data_get($run->options, 'only_missing', false)) {
             $contextVersion = (string) data_get($run->options, 'context_version', NhlPregameContextBuilder::VERSION);
             $modelRunId = $run->model_run_id;
-            $query->where(function ($missing) use ($contextVersion, $modelRunId, $futureNeeded, $run): void {
+            $query->where(function ($missing) use ($contextVersion, $modelRunId, $futureNeeded, $run, $sourceGaps): void {
                 $missing->where(function ($teamMissing) use ($contextVersion, $modelRunId): void {
                     foreach (['home', 'away'] as $index => $side) {
                         $method = $index === 0 ? 'whereNotExists' : 'orWhereNotExists';
@@ -533,6 +534,9 @@ class NhlPregameContextOrchestrator
                 if ($futureNeeded !== []) {
                     $missing->orWhereIn('nhl_games.nhl_game_id', $futureNeeded);
                 }
+                if ($sourceGaps !== []) {
+                    $missing->orWhereIn('nhl_games.nhl_game_id', array_keys($sourceGaps));
+                }
                 // Finalized games replace earlier anticipated snapshots with actual participants.
                 $missing->orWhere(function ($finished) use ($contextVersion, $modelRunId): void {
                     $finished->whereIn('nhl_games.game_state', ['OFF', 'FINAL'])
@@ -570,7 +574,8 @@ class NhlPregameContextOrchestrator
                             ->where(fn ($incomplete) => $incomplete->whereNull('audit_player.metrics->individual_strength_version')
                                 ->orWhereExists(fn ($metric) => $metric->selectRaw('1')->from('nhl_player_game_pregame_context_metrics as audit_metric')
                                     ->whereColumn('audit_metric.player_context_id', 'audit_player.id')
-                                    ->where('audit_metric.metric_key', 'individual_missing_games')->where('audit_metric.value', '>', 0)));
+                                    ->where('audit_metric.metric_key', 'individual_missing_games')->where('audit_metric.value', '>', 0)
+                                    ->whereNotIn('audit_metric.window_key', ['train', 'venue_train', 'opponent_train'])));
                     });
                 }
             });
@@ -600,6 +605,9 @@ class NhlPregameContextOrchestrator
                             && ! $summaries->get($game->nhl_game_id, collect())->contains('nhl_team_id', $team)) {
                             $reasons[] = 'Missing '.$side.' player summaries (team '.$team.')';
                         }
+                    }
+                    if ($reasons === []) {
+                        $reasons = $sourceGaps[(int) $game->nhl_game_id] ?? [];
                     }
                     if ($reasons !== []) {
                         $blockers[(int) $game->nhl_game_id] = $reasons;

@@ -41,10 +41,17 @@ beforeEach(function (): void {
             'game_date' => $date, 'game_dow' => 'Mon', 'game_month' => 'Oct', 'game_state' => 'FINAL',
             'start_time_utc' => $date.' 23:00:00', 'home_team_id' => 1, 'away_team_id' => 2]);
         foreach ([101 => [1, false], 102 => [2, false], 103 => [1, true], 104 => [2, true]] as $player => [$team, $goalie]) {
-            Player::withoutEvents(fn () => Player::firstOrCreate(['nhl_id' => $player], ['first_name' => 'Player',
+            $identity = Player::withoutEvents(fn () => Player::firstOrCreate(['nhl_id' => $player], ['first_name' => 'Player',
                 'last_name' => (string) $player, 'is_goalie' => $goalie, 'nhl_team_id' => $team]));
             DB::table('nhl_game_summaries')->insert(['nhl_game_id' => $id, 'nhl_player_id' => $player, 'nhl_team_id' => $team, 'toi' => 900]);
+            DB::table('nhl_player_game_strength_summaries')->insert(['nhl_game_id' => $id, 'player_id' => $identity->id,
+                'nhl_player_id' => $player, 'team_id' => $team, 'strength' => 'EV', 'toi' => 900]);
         }
+        $play = DB::table('play_by_plays')->insertGetId(['nhl_game_id' => $id, 'period' => 1,
+            'seconds_in_game' => 120, 'type_desc_key' => 'shot-on-goal']);
+        DB::table('nhl_shot_attempts_facts')->insert(['play_by_play_id' => $play, 'nhl_game_id' => $id,
+            'team_id' => 1, 'shooter_player_id' => 101, 'attempt_result' => 'shot', 'is_shot_attempt' => true,
+            'is_shot_on_goal' => true, 'is_goal' => false, 'strength' => 'EV', 'strength_bucket' => 'ev', 'period_type' => 'REG']);
     };
     $this->start = function (): NhlPregameContextRun {
         $response = $this->actingAs($this->admin)->postJson('/admin/nhl-sat-models/pregame/repair')->assertAccepted();
@@ -396,7 +403,8 @@ it('preserves canonical team and player metrics when splitting the legacy snapsh
     DB::table('nhl_games')->where('nhl_game_id', 2022020000)->update(['home_team_score' => 3, 'away_team_score' => 2,
         'home_team_sog' => 28, 'away_team_sog' => 25]);
     foreach ([101 => 1, 102 => 2, 103 => 1, 104 => 2] as $player => $team) {
-        DB::table('nhl_player_game_strength_summaries')->insert(['nhl_game_id' => 2022020000,
+        DB::table('nhl_player_game_strength_summaries')->updateOrInsert(['nhl_game_id' => 2022020000,
+            'nhl_player_id' => $player, 'strength' => 'EV'], [
             'player_id' => Player::where('nhl_id', $player)->value('id'), 'nhl_player_id' => $player,
             'team_id' => $team, 'strength' => 'EV', 'toi' => 900, 'satf' => 15, 'sata' => 12,
             'sf' => 8, 'sa' => 6, 'gf' => 2, 'ga' => 1, 'individual_pts' => 1]);
@@ -619,4 +627,98 @@ it('accepts a settled failed game retry with a new game scoped repair and expose
     $retry = NhlPregameContextRun::findOrFail($response->json('progress.id'));
     expect($retry->id)->not->toBe($old->id)->and(data_get($retry->options, 'game_ids'))->toBe([2022020001]);
     ($this->read)()->assertJsonPath('props.pregame.run.id', $retry->id);
+});
+
+it('imports the actual missing historical source game instead of its later dependent game', function (): void {
+    ($this->game)(2022020000, '2022-10-09');
+    ($this->game)();
+    DB::table('nhl_shot_attempts_facts')->where('nhl_game_id', 2022020000)->delete();
+    ($this->start)();
+    expect(\App\Models\NhlGameImportRun::count())->toBe(1)
+        ->and(data_get(($this->sourceChild)()->payload, 'pregame_repair_game_id'))->toBe(2022020000);
+    ($this->read)()->assertJsonCount(1, 'props.pregame.source_repairs')
+        ->assertJsonPath('props.pregame.source_repairs.0.game_id', 2022020000);
+});
+
+it('finds the specific historical game with missing player exposure', function (): void {
+    ($this->game)(2022020000, '2022-10-09');
+    ($this->game)();
+    DB::table('nhl_player_game_strength_summaries')->where('nhl_game_id', 2022020000)->where('nhl_player_id', 101)->delete();
+    ($this->start)();
+    expect(data_get(($this->sourceChild)()->payload, 'pregame_repair_game_id'))->toBe(2022020000);
+});
+
+it('finds shot strengths without matching positive player exposure in the source game', function (): void {
+    ($this->game)(2022020000, '2022-10-09');
+    ($this->game)();
+    DB::table('nhl_shot_attempts_facts')->where('nhl_game_id', 2022020000)->update(['strength' => 'PP', 'strength_bucket' => 'pp']);
+    ($this->start)();
+    expect(data_get(($this->sourceChild)()->payload, 'pregame_repair_game_id'))->toBe(2022020000);
+});
+
+it('preserves valid Train samples and unavailable recent windows without rejecting the entire player page', function (): void {
+    ($this->game)(2022020000, '2022-10-08');
+    ($this->game)(2022020001, '2022-10-09');
+    ($this->game)(2022020002, '2022-10-10');
+    DB::table('nhl_shot_attempts_facts')->where('nhl_game_id', 2022020000)->delete();
+    $run = $this->service->repair($this->model);
+    app(NhlPregameContextOrchestrator::class)->prepare($run);
+    $builder = app(NhlPregameContextBuilder::class);
+    $builder->buildAreaPage($run, 2022020002, 'teams');
+    $page = $builder->buildAreaPage($run, 2022020002, 'players');
+    $metrics = json_decode(DB::table('nhl_player_game_pregame_contexts')->where('nhl_game_id', 2022020002)
+        ->where('nhl_player_id', 101)->value('metrics'), true);
+    expect($metrics['strength']['EV']['train']['usable_games'])->toBe(1)
+        ->and($metrics['strength']['EV']['train']['individual_missing_games'])->toBe(1)
+        ->and($metrics['strength']['EV']['train']['sat'])->toBe(1)
+        ->and((float) $metrics['strength']['EV']['train']['sat_per_60'])->toBe(4.0)
+        ->and($metrics['strength']['EV']['last_5']['sat_per_60'])->toBeNull()
+        ->and($page['incomplete_player_ids'])->toContain(101);
+});
+
+it('commits and exposes per game recent window quality without converting the snapshot into a source exclusion', function (): void {
+    ($this->game)(2022020000, '2022-10-09');
+    ($this->game)();
+    DB::table('nhl_shot_attempts_facts')->where('nhl_game_id', 2022020000)->delete();
+    $run = $this->service->repair($this->model);
+    app(NhlPregameContextOrchestrator::class)->prepare($run);
+    app(NhlPregameContextBuilder::class)->buildAreaPage($run, 2022020001, 'teams');
+    $task = DB::table('nhl_pregame_workstream_tasks as t')->join('nhl_pregame_workstream_goals as g', 'g.id', '=', 't.goal_id')
+        ->where('t.run_id', $run->id)->where('t.nhl_game_id', 2022020001)->where('g.area', 'players')->first('t.*');
+    $token = '00000000-0000-4000-8000-000000000001';
+    DB::table('nhl_pregame_workstream_tasks')->where('id', $task->id)->update(['state' => 'claimed',
+        'claim_token' => $token, 'lease_expires_at' => now()->addMinutes(5)]);
+    $this->service->execute($task->id, $token);
+    expect(DB::table('nhl_pregame_workstream_tasks')->where('id', $task->id)->value('state'))->toBe('complete');
+    ($this->read)()->assertJsonPath('props.pregame.run.incomplete_games', 1)
+        ->assertJsonPath('props.pregame.incomplete_contexts.0.game_id', 2022020001)
+        ->assertJsonPath('props.pregame.incomplete_contexts.0.player_ids.0', 101);
+});
+
+it('rechecks historical source quality after an import reports Full completion', function (): void {
+    ($this->game)();
+    DB::table('nhl_shot_attempts_facts')->delete();
+    $run = ($this->start)();
+    $child = ($this->sourceChild)();
+    $child->update(['status' => 'completed', 'payload' => array_merge($child->payload,
+        ['post_process_enrichment_completed_at' => now()->toIso8601String()])]);
+    $this->service->coordinate($this->model->id);
+    $this->assertDatabaseHas('nhl_pregame_context_run_games', ['run_id' => $run->id, 'state' => 'blocked',
+        'last_error' => 'Missing shot-attempt facts for this historical game.']);
+});
+
+it('keeps source auditing inside the exact requested game selection on a scoped retry', function (): void {
+    ($this->game)(2022020000, '2022-10-09');
+    ($this->game)();
+    DB::table('nhl_shot_attempts_facts')->delete();
+    $run = $this->service->repair($this->model, $this->admin->id, [2022020001]);
+    app(NhlPregameContextOrchestrator::class)->prepare($run);
+    expect(\App\Models\NhlGameImportRun::count())->toBe(1)
+        ->and(data_get(($this->sourceChild)()->payload, 'pregame_repair_game_id'))->toBe(2022020001);
+});
+
+it('does not audit production model sources through the historical pilot bridge', function (): void {
+    $run = $this->service->repair($this->model, $this->admin->id);
+    $this->model->update(['name' => 'Production']);
+    expect(app(\App\Services\NhlPregameSourceRepairs::class)->gaps($run))->toBe([]);
 });

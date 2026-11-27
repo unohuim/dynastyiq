@@ -63,6 +63,7 @@ class NhlPregameContextBuilder
         $teams = DB::table('nhl_team_game_pregame_contexts')->where('model_run_id', $run->model_run_id)
             ->where('nhl_game_id', $gameId)->where('context_version', self::VERSION)->pluck('id', 'nhl_team_id');
         $inputs = $page->isEmpty() ? [] : $this->loadDayPlayerInputs([$gameId], $page->pluck('nhl_player_id')->all(), $cutoff, $page)[$gameId]['players'];
+        $incompletePlayers = [];
         foreach ($page as $participant) {
             $this->assertRunNotStopped($isStopped);
             $team = (int) $participant->nhl_team_id;
@@ -75,9 +76,9 @@ class NhlPregameContextBuilder
                 (string) $game->season_id, $training, null, $inputs[$participant->nhl_player_id] ?? null);
             foreach ($metrics['strength'] as $strength => $windows) {
                 foreach ($windows as $window => $values) {
-                    if ((int) ($values['individual_missing_games'] ?? 0) > 0) {
-                        throw new NhlPregameContextDataUnavailable('Player '.$participant->nhl_player_id.' has '
-                            .$values['individual_missing_games'].' prior games missing shot facts or strength/on-ice summaries in '.$strength.' '.$window.'.');
+                    if ((int) ($values['individual_missing_games'] ?? 0) > 0
+                        && ! in_array($window, ['train', 'venue_train', 'opponent_train'], true)) {
+                        $incompletePlayers[(int) $participant->nhl_player_id] = (int) $participant->nhl_player_id;
                     }
                 }
             }
@@ -93,7 +94,7 @@ class NhlPregameContextBuilder
         $this->assertRunNotStopped($isStopped);
 
         return ['complete' => $complete, 'cursor' => (int) ($page->last()?->nhl_player_id ?? $afterPlayerId),
-            'processed' => $page->count(), 'total' => $total];
+            'processed' => $page->count(), 'total' => $total, 'incomplete_player_ids' => array_values($incompletePlayers)];
     }
 
     /**

@@ -251,13 +251,14 @@ const execution = (extra = {}) => ({ job_id: 'job-1', run_id: 10, task: 'Calcula
     started_at: '2026-11-26T15:58:30Z', deadline_at: '2026-11-26T16:03:00Z', state: 'running', ...extra });
 const activity = (workers = []) => ({ available: true, workers, truncated: false, observed_at: '2026-11-26T16:00:00Z' });
 
-it('shows a prominent processed percentage with success exclusion and failure counts separate', () => {
+it('shows rebuilt progress separately from assessed blocked failed and unfinished work', () => {
     mount({ pregame: pregame({ run: { id: 10, status: 'running', total: 100, processed: 40, progress_pct: 40,
         completed: 30, excluded: 5, failed: 5 } }) });
     const progress = host.querySelector('[aria-label="Current pregame update"]');
-    expect(progress.textContent).toContain('40% processed');
-    expect(progress.textContent).toContain('40 / 100 games processed');
-    expect(progress.textContent).toContain('30 updated'); expect(progress.textContent).toContain('5 excluded');
+    expect(progress.textContent).toContain('30% rebuilt');
+    expect(progress.textContent).toContain('30 / 100 games rebuilt');
+    expect(progress.textContent).toContain('40% assessed'); expect(progress.textContent).toContain('5 blocked');
+    expect(progress.textContent).toContain('60 unfinished');
     expect(progress.textContent).toContain('5 failed');
     expect(progress.querySelector('progress')).toBeNull();
 });
@@ -357,7 +358,7 @@ it('explains skipped source-blocked dates without claiming calculated data cover
         completed: 0, excluded: 97, failed: 0, progress_pct: 100, source_blocked_days: 60 } }) });
     expect(host.querySelector('[aria-label="Current pregame update"]').textContent)
         .toContain('60 days skipped because all selected games lack required sources');
-    expect(host.querySelector('[aria-label="Current pregame update"]').textContent).toContain('0 updated');
+    expect(host.querySelector('[aria-label="Current pregame update"]').textContent).toContain('0 / 97 games rebuilt');
 });
 
 it('labels bounded source blocker lists instead of suggesting all rows are displayed', async () => {
@@ -631,4 +632,26 @@ it('sends a failed game retry without leaving Pregame', async () => {
     await click('Investigate Teams'); await click('Retry CHI @ SJS');
     expect(mocks.post).toHaveBeenCalledWith(`${base}/pregame/repair`, { game_id: 38 }, expect.any(Object));
     expect(mocks.navigate).not.toHaveBeenCalled();
+});
+
+it('does not present thousands of blocked games as successfully rebuilt', () => {
+    mount({ pregame: pregame({ run: { id: 227, status: 'running', total: 5149, completed: 26,
+        processed: 4424, progress_pct: 85.9, rebuilt_pct: .5, blocked: 4398, unfinished: 725, failed: 0 } }) });
+    expect(host.querySelector('[data-update-percent]').textContent).toBe('0.5% rebuilt');
+    const header = host.querySelector('[aria-label="Current pregame update"]');
+    expect(header.textContent).toContain('85.9% assessed');
+    expect(header.textContent).toContain('4,398 blocked');
+    expect(header.textContent).toContain('725 unfinished');
+});
+
+it('opens the player inspector for a game with incomplete recent windows', async () => {
+    mount({ pregame: pregame({ workstream_goals: goalFixture(), incomplete_contexts: [
+        { game_id: 2022020038, date: '2022-10-15', player_ids: [101, 102] },
+    ] }) });
+    await click('Investigate Players');
+    expect(host.textContent).toContain('Incomplete recent windows');
+    await click('Inspect player windows');
+    expect(mocks.get).toHaveBeenCalledWith(`${base}/pregame/inspect`, expect.objectContaining({
+        params: expect.objectContaining({ game_id: 2022020038, entity: 'player' }),
+    }));
 });
