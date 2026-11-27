@@ -23,6 +23,79 @@ class NhlPregameContextBuilder
 
     public const EVALUATION_BUCKET_VERSION = 1;
 
+    /** Compute one owned area/page while preserving the canonical historical formulas and other areas. */
+    public function buildAreaPage(NhlPregameContextRun $run, int $gameId, string $area, int $afterPlayerId = 0, ?Closure $isStopped = null): array
+    {
+        $game = DB::table('nhl_games')->where('nhl_game_id', $gameId)->first();
+        if ($game === null || $game->start_time_utc === null || $game->home_team_id === null || $game->away_team_id === null
+            || ! in_array($game->game_state, ['OFF', 'FINAL'], true)) {
+            throw new NhlPregameContextDataUnavailable('Historical work requires a completed game with schedule and team identities.');
+        }
+        $cutoff = now()->parse($game->start_time_utc);
+        $training = array_map('strval', data_get($run->options, 'train_season_ids', []));
+        $this->assertRunNotStopped($isStopped);
+        if (in_array($area, ['teams', 'travel'], true)) {
+            $buffer = null;
+            foreach (['away', 'home'] as $venue) {
+                $team = (int) $game->{$venue.'_team_id'};
+                $this->storeTeamContext($run, $game, $cutoff, ['team_id' => $team,
+                    'opponent_id' => (int) $game->{($venue === 'away' ? 'home' : 'away').'_team_id'}, 'venue' => $venue],
+                    $training, $isStopped, $buffer, $area);
+            }
+
+            return ['complete' => true, 'cursor' => 0, 'processed' => 2, 'total' => 2];
+        }
+        if (! in_array($area, ['players', 'goalies'], true)) {
+            throw new RuntimeException('Unsupported context workstream area.');
+        }
+        $participants = DB::table('nhl_game_summaries as summary')->join('players as player', 'player.nhl_id', '=', 'summary.nhl_player_id')
+            ->where('summary.nhl_game_id', $gameId)->whereIn('summary.nhl_team_id', [$game->home_team_id, $game->away_team_id])
+            ->where('player.is_goalie', $area === 'goalies');
+        $total = (clone $participants)->count();
+        if ((clone $participants)->distinct()->count('summary.nhl_team_id') !== 2) {
+            throw new NhlPregameContextDataUnavailable('Completed '.$area.' participants are missing for one or both teams. Import the game summaries first.');
+        }
+        $page = (clone $participants)->where('summary.nhl_player_id', '>', $afterPlayerId)->orderBy('summary.nhl_player_id')
+            ->limit(max(1, min(8, (int) config('nhl-pregame.player_batch_size', 8))) + 1)
+            ->get(['summary.nhl_player_id', 'summary.nhl_team_id']);
+        $complete = $page->count() <= max(1, min(8, (int) config('nhl-pregame.player_batch_size', 8)));
+        $page = $page->take(max(1, min(8, (int) config('nhl-pregame.player_batch_size', 8))));
+        $teams = DB::table('nhl_team_game_pregame_contexts')->where('model_run_id', $run->model_run_id)
+            ->where('nhl_game_id', $gameId)->where('context_version', self::VERSION)->pluck('id', 'nhl_team_id');
+        $inputs = $page->isEmpty() ? [] : $this->loadDayPlayerInputs([$gameId], $page->pluck('nhl_player_id')->all(), $cutoff, $page)[$gameId]['players'];
+        foreach ($page as $participant) {
+            $this->assertRunNotStopped($isStopped);
+            $team = (int) $participant->nhl_team_id;
+            if (! isset($teams[$team])) {
+                throw new NhlPregameContextDataUnavailable('The player needs its same-game team context first.');
+            }
+            $venue = $team === (int) $game->home_team_id ? 'home' : 'away';
+            $opponent = (int) $game->{($venue === 'home' ? 'away' : 'home').'_team_id'};
+            $metrics = $this->playerMetrics((int) $participant->nhl_player_id, $team, $opponent, $venue, $cutoff,
+                (string) $game->season_id, $training, null, $inputs[$participant->nhl_player_id] ?? null);
+            foreach ($metrics['strength'] as $strength => $windows) {
+                foreach ($windows as $window => $values) {
+                    if ((int) ($values['individual_missing_games'] ?? 0) > 0) {
+                        throw new NhlPregameContextDataUnavailable('Player '.$participant->nhl_player_id.' has '
+                            .$values['individual_missing_games'].' prior games missing shot facts or strength/on-ice summaries in '.$strength.' '.$window.'.');
+                    }
+                }
+            }
+            $buffer = null;
+            $this->storePlayerContextBatch($run->model_run_id, $gameId, [['metrics' => $metrics, 'row' => [
+                'run_id' => $run->id, 'model_run_id' => $run->model_run_id, 'team_context_id' => $teams[$team],
+                'nhl_game_id' => $gameId, 'nhl_player_id' => $participant->nhl_player_id, 'nhl_team_id' => $team,
+                'opponent_team_id' => $opponent, 'game_date' => $game->game_date, 'source_cutoff_at' => $cutoff,
+                'venue' => $venue, 'participant_source' => 'completed_game_summary', 'context_version' => self::VERSION,
+                'metrics' => json_encode($metrics, JSON_THROW_ON_ERROR), 'ranks' => '{}', 'created_at' => now(), 'updated_at' => now(),
+            ]]], $buffer);
+        }
+        $this->assertRunNotStopped($isStopped);
+
+        return ['complete' => $complete, 'cursor' => (int) ($page->last()?->nhl_player_id ?? $afterPlayerId),
+            'processed' => $page->count(), 'total' => $total];
+    }
+
     /**
      * Stream fresh league peer values from prior results, without reading or writing context rows.
      *
@@ -712,8 +785,9 @@ class NhlPregameContextBuilder
         array $training,
         ?Closure $isStopped,
         ?array &$metricWriteBuffer,
+        string $area = 'all',
     ): int {
-        [$teamMetrics, $opponent, $schedule] = $this->teamResultEvidence($game, $cutoff, $side, $training, $isStopped);
+        [$teamMetrics, $opponent, $schedule] = $this->teamResultEvidence($game, $cutoff, $side, $training, $isStopped, $area);
         $predictionEvidence = data_get($run->options, 'prediction_evidence.'.$game->nhl_game_id);
         if (is_array($predictionEvidence)) {
             $schedule['prediction_evidence'] = array_intersect_key($predictionEvidence, array_flip(['fingerprint', 'history_fingerprint', 'cutoff_at']));
@@ -735,9 +809,10 @@ class NhlPregameContextBuilder
             'ranks' => json_encode([], JSON_THROW_ON_ERROR),
             'created_at' => now(),
             'updated_at' => now(),
-        ]], ['model_run_id', 'nhl_game_id', 'nhl_team_id', 'context_version'], [
-            'run_id', 'opponent_team_id', 'game_date', 'source_cutoff_at', 'venue', 'schedule_metrics', 'opponent_metrics', 'metrics', 'ranks', 'updated_at',
-        ]);
+        ]], ['model_run_id', 'nhl_game_id', 'nhl_team_id', 'context_version'], array_merge([
+            'run_id', 'opponent_team_id', 'game_date', 'source_cutoff_at', 'venue', 'updated_at',
+        ], $area === 'travel' ? ['schedule_metrics'] : ($area === 'teams' ? ['opponent_metrics', 'metrics']
+            : ['schedule_metrics', 'opponent_metrics', 'metrics', 'ranks'])));
 
         $this->assertRunNotStopped($isStopped);
         $contextId = (int) DB::table('nhl_team_game_pregame_contexts')
@@ -746,7 +821,7 @@ class NhlPregameContextBuilder
         $this->storeNormalizedMetrics('nhl_team_game_pregame_context_metrics', 'team_context_id', $contextId, $teamMetrics, [
             'opponent' => $opponent,
             'schedule' => $schedule,
-        ], $metricWriteBuffer);
+        ], $metricWriteBuffer, $area !== 'all');
 
         return $contextId;
     }
@@ -793,11 +868,15 @@ class NhlPregameContextBuilder
     }
 
     /** Calculate team evidence from results and schedule references without saving context. */
-    private function teamResultEvidence(object $game, CarbonInterface $cutoff, array $side, array $training, ?Closure $isStopped): array
+    private function teamResultEvidence(object $game, CarbonInterface $cutoff, array $side, array $training, ?Closure $isStopped, string $area = 'all'): array
     {
         $history = $this->teamHistory($side['team_id'], $cutoff);
         $this->assertRunNotStopped($isStopped);
         $headToHead = $history->filter(fn (object $row): bool => (int) $row->opponent_team_id === $side['opponent_id']);
+        if ($area === 'teams') {
+            return [$this->teamMetrics($history, (string) $game->season_id, $training),
+                $this->headToHeadMetrics($headToHead, (string) $game->season_id, $training), []];
+        }
         $lastGame = $history->first();
         $travel = $this->travelMetrics($side['team_id'], $game, $lastGame, $history);
         $daysSinceLastGame = $lastGame === null
@@ -829,8 +908,8 @@ class NhlPregameContextBuilder
             'days_on_road' => $this->daysOnRoad($side['venue'], $game, $history),
             ...$travel,
         ];
-        $opponent = $this->headToHeadMetrics($headToHead, (string) $game->season_id, $training);
-        $teamMetrics = $this->teamMetrics($history, (string) $game->season_id, $training);
+        $opponent = $area === 'travel' ? [] : $this->headToHeadMetrics($headToHead, (string) $game->season_id, $training);
+        $teamMetrics = $area === 'travel' ? [] : $this->teamMetrics($history, (string) $game->season_id, $training);
         $this->assertRunNotStopped($isStopped);
 
         return [$teamMetrics, $opponent, $schedule];
@@ -1071,7 +1150,7 @@ class NhlPregameContextBuilder
     }
 
     /** Persist explicit metric/window rows while retaining the JSON snapshot for compatibility. */
-    private function storeNormalizedMetrics(string $table, string $foreignKey, int $contextId, array $metrics, array $supplemental, ?array &$writeBuffer = null): void
+    private function storeNormalizedMetrics(string $table, string $foreignKey, int $contextId, array $metrics, array $supplemental, ?array &$writeBuffer = null, bool $partial = false): void
     {
         $rows = [];
         $timestamp = now()->toDateTimeString();
@@ -1134,7 +1213,7 @@ class NhlPregameContextBuilder
         $staleMetricIds = $existingRows
             ->reject(fn (object $row): bool => $expectedKeys->has($rowKey($row)))
             ->pluck('id')->all();
-        if ($staleMetricIds !== []) {
+        if (! $partial && $staleMetricIds !== []) {
             DB::table($table)->whereIn('id', $staleMetricIds)->delete();
         }
 

@@ -786,8 +786,8 @@ player or metric verification. Throughput and ETA stay unavailable when unmeasur
 
 Health and activity have separate meanings; historical coverage must not imply
 today's production games are ready. Label shared claim counts so users do not add
-them across workstreams. Allocation adjusts real league/context claim limits, not
-fabricated domain worker pools or physical Horizon provisioning.
+them across workstreams. Allocation adjusts real task or legacy claim limits,
+not physical Horizon provisioning.
 
 Place a compact current/last-maintenance summary above the Pregame workstreams.
 Show processed percentage/counts, updated/excluded/failed counts, elapsed wall time
@@ -796,10 +796,25 @@ never show a full-width activity bar or filled completed-run bars. Unknown
 selection stays unavailable; processed work never implies complete data coverage.
 Preserve the historical status and counts after work finishes.
 
-Workstreams & active workers lists League averages and Pregame context, with
-player/team/goalie/rankings/travel categories under the shared context pool.
+Workstreams & active workers lists six independently managed areas after the
+goal/task migrations: Players, Teams, Goalies, League averages, Rankings and
+Travel. Each row states its goal, health, completed/remaining task counts, editable
+assigned-worker limit and an Investigate action. Zero pauses subsequent claims;
+current pages finish. Apply changed limits on the fly and acknowledge writes
+with the existing toast. Explain unmet prerequisites and source errors rather
+than showing healthy green bars for incomplete work. A satisfied goal says
+Idle — goal satisfied; an unassessed goal explicitly asks for assessment.
+Area investigation shows bounded date/game/task-specific blockers and one repair
+action. Distinguish an area repair from global maintenance. Retain completed
+checkpoints and make required source imports explicit when repair cannot proceed.
+
+Executing workers appear beneath their own area; several may work in one area.
+Reserve list height during quiet updates. Before migrations, show the legacy
+two-pool view and an explicit migration requirement with new repair disabled.
+Keep an active legacy run separately visible; independent area scheduling waits
+for it to become idle. New assignments use existing Horizon capacity.
 Show Idle, Queued, Working, Blocked, Paused, Pausing or Unknown from current
-evidence. Running workers appear once under their actual pool, with observed task,
+evidence. Running workers appear once under their actual area or legacy pool, with observed task,
 server/PID, queue, owning run, game/date, elapsed time and measured checkpoints.
 Coordination workers have their own row while present. Count unique host/PIDs
 separately from configured claim capacity. League checkpoints without a measured

@@ -799,8 +799,10 @@ class NhlPregameLeagueResults
 
         return DB::transaction(function () use ($run, $day, $page, $limit, $isStopped): bool {
             $this->assertActive($isStopped);
-            $deleted = DB::delete('DELETE FROM nhl_pregame_context_league_peers AS peer USING ('.$page->toSql().') AS page '
-                .'WHERE peer.league_average_id = page.league_average_id AND peer.entity_id = page.entity_id', $page->getBindings());
+            $deleted = DB::getDriverName() === 'pgsql'
+                ? DB::delete('DELETE FROM nhl_pregame_context_league_peers AS peer USING ('.$page->toSql().') AS page '
+                    .'WHERE peer.league_average_id = page.league_average_id AND peer.entity_id = page.entity_id', $page->getBindings())
+                : DB::table('nhl_pregame_context_league_peers')->whereRaw('(league_average_id, entity_id) IN ('.$page->toSql().')', $page->getBindings())->delete();
             $owner = NhlPregameContextRun::query()->whereKey($run->id)
                 ->lock(DB::getDriverName() === 'pgsql' ? 'for no key update' : true)->firstOrFail();
             if (! in_array($owner->status, ['running', 'pausing'], true)) {
@@ -819,7 +821,8 @@ class NhlPregameLeagueResults
         return DB::table('nhl_games as game')->join('nhl_pregame_context_run_games as work', 'work.nhl_game_id', '=', 'game.nhl_game_id')
             ->where('work.run_id', $run->id)->whereDate('work.game_date', $day->game_date)
             ->when((bool) data_get($run->options, 'source_preflight', false),
-                fn ($query) => $query->where('work.state', '!=', 'blocked'))
+                fn ($query) => $query->where(fn ($source) => $source
+                    ->whereJsonLength('work.readiness->source_blockers', 0)->orWhereNull('work.readiness->source_blockers')))
             ->where(fn ($query) => $query->whereNotNull('game.start_time_utc')
                 ->orWhereIn('game.nhl_game_id', array_keys(data_get($run->options, 'prediction_evidence', []))))
             ->orderBy('game.start_time_utc')->orderBy('game.nhl_game_id')

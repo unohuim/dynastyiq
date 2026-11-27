@@ -9,6 +9,7 @@ use App\Models\NhlModelRun;
 use App\Models\NhlPregameContextRun;
 use App\Services\NhlPregameContextOrchestrator;
 use App\Services\NhlSatPregameWorkspace;
+use App\Services\NhlPregameWorkstreams;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -23,10 +24,28 @@ class NhlSatWorkspaceController extends Controller
     {
         $pilot = $workspace->pilot();
         abort_if($pilot === null, 409, 'Sep2026 pilot source is unavailable.');
-        $run = $orchestrator->queueModelRepair($pilot, $request->user()?->id);
+        $input = $request->validate(['area' => ['nullable', Rule::in(array_keys(NhlPregameWorkstreams::AREAS))]]);
+        $run = isset($input['area']) ? app(NhlPregameWorkstreams::class)->repairArea($pilot, $input['area'], $request->user()?->id)
+            : app(NhlPregameWorkstreams::class)->repair($pilot, $request->user()?->id);
 
         return response()->json(['message' => 'Queued missing Train and Test context repair. Source blockers will be listed by game.',
             'progress' => $workspace->progress($run)], 202);
+    }
+
+    /** Assign six independently schedulable area limits without changing Horizon process counts. */
+    public function goals(Request $request, NhlSatPregameWorkspace $workspace, NhlPregameWorkstreams $workstreams): JsonResponse
+    {
+        $rules = ['areas' => ['required', 'array:'.implode(',', array_keys(NhlPregameWorkstreams::AREAS))]];
+        foreach (NhlPregameWorkstreams::AREAS as $area => $name) {
+            $rules['areas.'.$area] = ['required', 'integer', 'between:0,25'];
+        }
+        $input = $request->validate($rules);
+        $pilot = $workspace->pilot();
+        abort_if($pilot === null, 409, 'Sep2026 pilot source is unavailable.');
+        $limits = array_map('intval', $input['areas']);
+        $workstreams->allocate($pilot, $limits);
+
+        return response()->json(['message' => 'Area allocations updated. Claimed tasks finish their current page; new assignments use these limits.', 'areas' => $limits]);
     }
 
     /** Change claim concurrency for the pilot without provisioning or stopping Horizon workers. */

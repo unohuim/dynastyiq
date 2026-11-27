@@ -82,6 +82,15 @@ class AppServiceProvider extends ServiceProvider
         Event::listen(\App\Events\NhlSeasonStatsSynced::class, \App\Listeners\QueueNhlGoalieProjectionRefresh::class);
         Event::listen(\App\Events\NhlSeasonStatsSynced::class, \App\Listeners\QueueNhlStatsDashboardRefresh::class);
         Event::listen(\App\Events\NhlStatsSourceUpdated::class, \App\Listeners\QueueNhlStatsDashboardRefresh::class);
+        foreach ([\App\Events\NhlStatsSourceUpdated::class, \App\Events\NhlSeasonStatsSynced::class] as $sourceEvent) {
+            Event::listen($sourceEvent, function ($event): void {
+                app(\App\Services\NhlPregameWorkstreams::class)->sourcesChanged($event->seasonId);
+            });
+        }
+        Event::listen(\App\Events\SatImported::class, function (\App\Events\SatImported $event): void {
+            $start = \Illuminate\Support\Facades\DB::table('nhl_games')->where('nhl_game_id', $event->nhlGameId)->value('start_time_utc');
+            app(\App\Services\NhlPregameWorkstreams::class)->sourcesChanged($event->seasonId, $start);
+        });
         Event::listen(\App\Events\SatImported::class, function (\App\Events\SatImported $event): void {
             app(\App\Services\NhlPublicGamePage::class)->refreshAfterCommit($event->nhlGameId);
         });

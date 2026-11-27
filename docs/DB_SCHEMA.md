@@ -5230,3 +5230,57 @@ is stored separately in `webhook_deliveries`.
 Unique `(webhook_subscription_id, prediction_revision_id, event)` prevents duplicate
 staging. `(status, next_attempt_at)` indexes due delivery selection. This migration
 creates empty storage; it does not backfill historical notifications.
+
+## nhl_pregame_workstream_goals
+
+**Scope:** Explicitly enrolled historical SAT pilot maintenance; model-owned operational data.
+**Migration:** `2026_11_26_000001_create_nhl_pregame_workstream_goals.php`.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| id | bigint | Primary key |
+| model_run_id | bigint | Model FK; cascade delete |
+| area | varchar(24) | Concern key; vocabulary in ENUMS.md |
+| worker_limit | unsigned smallint | Live task allocation, default one |
+| run_id | bigint nullable | Current maintenance run FK; null on run deletion |
+| context_version | varchar(40) | Statistical definition version |
+| scope_hash | varchar(64) nullable | Model Train/Test/version definition fingerprint |
+| status | varchar(24) | Goal lifecycle; vocabulary in ENUMS.md |
+| generation | unsigned bigint | Source invalidation counter, default zero |
+| dirty_from | timestamp nullable | Earliest invalidated historical source cutoff |
+| checked_at | timestamp nullable | Last task-based reconciliation |
+| last_error | text nullable | Visible source or assessment failure |
+| created_at / updated_at | timestamp | Operational timestamps |
+
+Unique `(model_run_id, area)` prevents duplicate maintenance goals. Migration
+creates empty storage; viewing the workspace does not enrol a model or dispatch
+work. Statistical snapshots and production model ownership remain unchanged.
+
+## nhl_pregame_workstream_tasks
+
+**Scope:** Bounded game/date work for an enrolled goal and existing maintenance run.
+**Migration:** `2026_11_26_000002_create_nhl_pregame_workstream_tasks.php`.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| id | bigint | Primary key |
+| goal_id / run_id / run_day_id | bigint | Goal/run/day FKs; cascade delete |
+| nhl_game_id | unsigned integer nullable | NHL game identity for game tasks; date tasks leave null |
+| unit_key | varchar(48) | Stable game/date/cleanup identity within the goal/run |
+| kind / state | varchar(24) | Canonical task vocabulary in ENUMS.md |
+| cursor | unsigned bigint | Committed player-page checkpoint, default zero |
+| completed_units | unsigned integer | Committed entity count, default zero |
+| total_units | unsigned integer nullable | Measured entity denominator when available |
+| attempts | unsigned smallint | Delivery budget at the current checkpoint |
+| claim_token | uuid nullable | Internal execution fence, never exposed to the UI |
+| lease_expires_at | timestamp nullable | Queued or executing lease boundary |
+| started_at / completed_at | timestamp nullable | Observed page start and terminal task completion |
+| server | varchar nullable | Executing host identity |
+| worker_pid | unsigned integer nullable | Executing process identity |
+| last_error | text nullable | Specific source, dependency or execution error |
+| created_at / updated_at | timestamp | Operational timestamps |
+
+Unique `(run_id, goal_id, unit_key)` makes seeding replay-safe. Indexes support
+goal/state claims, run/game dependency reads and expired-lease recovery.
+League and comparison cursors remain in existing run-day/run-game storage;
+this table does not duplicate statistical metrics or league peer values.

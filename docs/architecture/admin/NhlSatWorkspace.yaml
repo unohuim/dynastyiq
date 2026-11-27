@@ -14,32 +14,33 @@ when_to_use:
   - Monitoring or maintaining the Sep2026 Pregame pilot.
 when_not_to_use:
   - Changing prediction equations, automatically selecting a production model or migrating shared context storage.
-  - Provisioning Horizon processes or pretending domain workstreams are independent processing pools.
+  - Provisioning Horizon processes or presenting legacy shared claims as independent area tasks.
 rules:
   - Visual presentation follows the explicit PG-D04 reference under UI_DESIGN.md. Header summary counts distinguish models with and without Test seasons within the active registry filter; unrecorded correlation and baseline lift remain unavailable. Actual completed Test dates supply cached coverage cells; muted freshness cells do not imply independent source validation.
   - Retain existing super-admin authentication, verification and authorization boundaries. Use the shared Inertia application shell and existing desktop/mobile navigation; never load the legacy UI bootstrap on this landing page.
   - Resolve exactly one explicitly named historical SAT training pilot with Test 20252026. Missing or ambiguous selection disables pilot actions; never substitute the newest, default or production model. Read through model-owned tables without copying, relinking or deleting existing context. Model-specific Train windows retain their identity.
   - Registry actions preserve their existing routes, validation and admission. Explicit Vue requests receive structured acknowledgements; legacy detail-page responses remain compatible. Successful writes reconcile through quiet partial reloads with retained scroll, editor state and disclosures.
   - Derive health from observed evidence, separately from processing activity. Historical team-snapshot coverage does not certify player, goalie, normalized-metric or current production readiness. Missing values stay unavailable. Label statistical cutoff independently of rebuild timestamps and display limited coverage honestly.
-  - Player, team, goalie, ranking and travel workstreams share context processing. League work is independent until each context date consumes its reference. Display durable claims as claimed jobs, not proof of operating-system workers executing. Expired claims require attention and use existing recovery; never expose claim tokens.
+  - Legacy player, team, goalie, ranking and travel workstreams share context processing. League work is independent until each context date consumes its reference. Display durable claims as claimed jobs, not proof of operating-system workers executing. Expired claims require attention and use existing recovery; never expose claim tokens. Opted-in pilot goals use the separate bounded task authority.
   - Maintenance progress measures terminally processed games separately from successful updates and historical coverage. Preserve failed run status even when all selected items have been processed; leave an unknown selection denominator unavailable.
   - The pilot's Repair missing context action targets existing completeness gaps across its own Train and Test seasons. Retain ordinary Test/prediction-only updates as a separately labelled action; never offer that narrow update as the repair for Train coverage gaps. Complete games outside the repair selection remain untouched.
   - Show bounded per-game source blockers from the latest run and label truncation. Refresh cached coverage when a maintenance run completes; completed processing does not clear genuine missing-data health issues.
   - Coverage issues explicitly identify model-defined Train/Test membership, human-readable season and missing game count. The health summary and repair drawer distinguish affected seasons from fully covered Test seasons. Repair captions summarize observed missing team coverage without changing the existing missing-context selection or certifying player/metric completeness.
   - Display actual queue lifecycle observations through NhlPregameWorkerActivity.yaml separately from durable claims and configured concurrency. Background refresh retains prior execution evidence as uncertain when telemetry becomes unavailable.
-  - Present current activity in the two real league/context pools, with context categories available for inspection and coordination deliveries separately visible while executing. Each observed host/PID appears once using its latest execution. Finished maintenance is historical evidence, not an active workstream; show no completed-run activity bars. Optional checkpoints belong to their observed run and date, not a different latest run.
+  - Present six concern areas with durable goals and independent task allocations under stats/NhlPregameWorkstreamGoals.yaml. Each area shows its goal, current health, remaining work and actual executing workers. Legacy league/context deliveries remain separately visible until the old run is idle; never relabel legacy claim capacity as independent area capacity. Finished maintenance is historical evidence, not active processing.
   - View issues contains causes and one scoped repair action, selecting existing resume semantics for paused or retryable work. Keep general Test-only updates and confirmed full rebuild/stop controls in separate maintenance options; do not change admission, worker allocation or production processing as part of presentation.
-  - Allocation controls change only pilot claim limits in existing model configuration and active maintenance options. Apply limits to subsequent claims without cancelling live work, changing global configuration or touching other models. Existing scoped pause, resume, stop and automation semantics remain authoritative in NhlPregameContextEvidence.yaml.
+  - New area controls persist only the pilot's goal allocations. The existing two-pool allocation endpoint remains compatible for legacy processing. Apply changed limits to subsequent claims without cancelling live pages, provisioning physical workers or changing other models. Pause/Stop semantics follow the task coordinator for opted-in runs and the unchanged legacy workflow otherwise.
   - Use bounded reads, cached historical coverage counts and deferred Pregame props. Poll progress quietly while preserving rendered content; dispose timers and requests on unmount. Reads cannot queue imports, rebuilds or predictions.
   - The context inspector reads existing pilot metric rows with explicit windows, measures, strengths and samples. Bound response size and label truncation; missing pilot evidence never borrows production values or performs calculations.
-  - UI presentation and motion follow UI_DESIGN.md and UI_MOTION.md. Canonical pilot metadata and health vocabulary belong in ENUMS.md; physical storage remains unchanged.
+  - UI presentation and motion follow UI_DESIGN.md and UI_MOTION.md. Canonical pilot metadata and health vocabulary belong in ENUMS.md; statistical storage remains unchanged and new operational goal/task tables require migrations.
 public_interface:
   - GET /admin/nhl-sat-models
   - PUT /admin/nhl-sat-models/pregame/workers
   - GET /admin/nhl-sat-models/pregame/inspect
   - POST /admin/nhl-sat-models/pregame/repair
+  - PUT /admin/nhl-sat-models/pregame/goals
   - X-DIQ-SAT-Workspace header for structured action acknowledgements
 example_usage: |
   A super admin opens Pregame and inspects Sep2026 coverage and active claims.
-  Changing its league/context allocation affects that pilot's subsequent claims;
+  Changing an area allocation affects that pilot's subsequent task claims;
   the current production model continues using its own snapshots and defaults.

@@ -176,14 +176,14 @@ class NhlPregameContextOrchestrator
     }
 
     /** Repair missing historical context across this model's Train and Test without a full rebuild. */
-    public function queueModelRepair(NhlModelRun $model, ?int $createdBy = null): NhlPregameContextRun
+    public function queueModelRepair(NhlModelRun $model, ?int $createdBy = null, array $runOptions = []): NhlPregameContextRun
     {
         $seasons = $model->pregameContextSeasonIds();
         if ($seasons === []) {
             throw ValidationException::withMessages(['season_ids' => 'This model has no seasons to repair.']);
         }
 
-        return $this->queueBackfill($seasons, $model->id, $createdBy, array_merge($this->workspaceOptions($model), [
+        return $this->queueBackfill($seasons, $model->id, $createdBy, array_merge($runOptions, $this->workspaceOptions($model), [
             'trigger' => 'manual_repair',
             'only_missing' => true,
             'source_preflight' => true,
@@ -270,6 +270,9 @@ class NhlPregameContextOrchestrator
     public function resumeModelBackfill(NhlModelRun $model): NhlPregameContextRun
     {
         $run = $this->latestModelRun($model);
+        if (data_get($run->options, 'workstream_pipeline')) {
+            return app(NhlPregameWorkstreams::class)->resume($run);
+        }
         $nextStatus = DB::transaction(function () use ($run): string {
             $fresh = NhlPregameContextRun::query()->lock(DB::getDriverName() === 'pgsql' ? 'for no key update' : true)->findOrFail($run->id);
             if (! in_array($fresh->status, [NhlPregameContextRun::STATUS_PAUSED, NhlPregameContextRun::STATUS_PAUSING], true)
@@ -322,6 +325,9 @@ class NhlPregameContextOrchestrator
     public function stopModelBackfill(NhlModelRun $model): NhlPregameContextRun
     {
         $run = $this->latestModelRun($model);
+        if (data_get($run->options, 'workstream_pipeline')) {
+            return app(NhlPregameWorkstreams::class)->requestStop($run);
+        }
         $activeStatuses = [
             NhlPregameContextRun::STATUS_QUEUED,
             NhlPregameContextRun::STATUS_RUNNING,
@@ -475,7 +481,7 @@ class NhlPregameContextOrchestrator
         if ((bool) data_get($run->options, 'only_missing', false)) {
             $contextVersion = (string) data_get($run->options, 'context_version', NhlPregameContextBuilder::VERSION);
             $modelRunId = $run->model_run_id;
-            $query->where(function ($missing) use ($contextVersion, $modelRunId, $futureNeeded): void {
+            $query->where(function ($missing) use ($contextVersion, $modelRunId, $futureNeeded, $run): void {
                 $missing->where(function ($teamMissing) use ($contextVersion, $modelRunId): void {
                     foreach (['home', 'away'] as $index => $side) {
                         $method = $index === 0 ? 'whereNotExists' : 'orWhereNotExists';
@@ -552,6 +558,21 @@ class NhlPregameContextOrchestrator
                         ->where('partial_context.context_version', $contextVersion)
                         ->where('unfinished.state', '!=', NhlPregameContextRunGame::STATE_COMPLETE);
                 });
+                $dirtyFrom = data_get($run->options, 'source_dirty_from');
+                if (is_string($dirtyFrom)) {
+                    $missing->orWhere('nhl_games.start_time_utc', '>', $dirtyFrom);
+                }
+                if (data_get($run->options, 'workstream_pipeline')) {
+                    $missing->orWhereExists(function ($players) use ($contextVersion, $modelRunId): void {
+                        $players->selectRaw('1')->from('nhl_player_game_pregame_contexts as audit_player')
+                            ->whereColumn('audit_player.nhl_game_id', 'nhl_games.nhl_game_id')
+                            ->where('audit_player.model_run_id', $modelRunId)->where('audit_player.context_version', $contextVersion)
+                            ->where(fn ($incomplete) => $incomplete->whereNull('audit_player.metrics->individual_strength_version')
+                                ->orWhereExists(fn ($metric) => $metric->selectRaw('1')->from('nhl_player_game_pregame_context_metrics as audit_metric')
+                                    ->whereColumn('audit_metric.player_context_id', 'audit_player.id')
+                                    ->where('audit_metric.metric_key', 'individual_missing_games')->where('audit_metric.value', '>', 0)));
+                    });
+                }
             });
         }
 
@@ -656,7 +677,9 @@ class NhlPregameContextOrchestrator
             }
         });
 
-        if ($run->fresh()->status === NhlPregameContextRun::STATUS_RUNNING) {
+        if (data_get($run->options, 'workstream_pipeline') && in_array($run->fresh()->status, ['running', 'completed'], true)) {
+            app(NhlPregameWorkstreams::class)->seed($run->fresh());
+        } elseif ($run->fresh()->status === NhlPregameContextRun::STATUS_RUNNING) {
             LoadNhlPregameContextRunJob::dispatch($run->id);
         }
     }
@@ -665,6 +688,11 @@ class NhlPregameContextOrchestrator
     public function load(int $runId): void
     {
         $run = NhlPregameContextRun::query()->find($runId);
+        if (data_get($run?->options, 'workstream_pipeline')) {
+            app(NhlPregameWorkstreams::class)->coordinate((int) $run->model_run_id);
+
+            return;
+        }
         if (in_array(data_get($run?->options, 'pipeline_version'), ['game_day_batch_v1', self::THREE_STAGE_PIPELINE, self::RESULTS_PIPELINE, self::CHECKPOINT_PIPELINE], true)) {
             $this->loadDayBatch($runId);
             $this->announceCompletedPredictionDay($runId);

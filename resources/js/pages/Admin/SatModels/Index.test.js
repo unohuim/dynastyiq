@@ -435,7 +435,7 @@ it('shows completed maintenance as idle pools without active progress bars', () 
     const list = host.querySelector('[data-workstream-list]');
     expect(list.querySelectorAll('[data-workstream]')).toHaveLength(2);
     expect(list.querySelectorAll('progress')).toHaveLength(0);
-    expect(list.textContent).toContain('Idle · no work running');
+    expect(list.textContent).toContain('Idle - no work running');
     expect(list.textContent).toContain('0 executing');
 });
 
@@ -490,8 +490,8 @@ it('shows paused pools explicitly when no executions are observed', () => {
 
 it('shows source-blocked context as blocked after a maintenance attempt completes', () => {
     mount({ pregame: pregame({ run: { id: 10, status: 'completed', excluded: 97, source_blocked_days: 60 } }) });
-    expect(host.querySelector('[data-workstream="context"]').textContent).toContain('Blocked · see View issues');
-    expect(host.querySelector('[data-workstream="league"]').textContent).toContain('Blocked · see View issues');
+    expect(host.querySelector('[data-workstream="context"]').textContent).toContain('Blocked - see View issues');
+    expect(host.querySelector('[data-workstream="league"]').textContent).toContain('Blocked - see View issues');
 });
 
 it('keeps coordination workers visible without duplicating them under league or context', () => {
@@ -526,4 +526,79 @@ it('preserves full-rebuild confirmation in the separate maintenance panel', asyn
     expect(mocks.post).not.toHaveBeenCalled();
     await click('Confirm full rebuild');
     expect(mocks.post).toHaveBeenCalledWith(`${base}/1/context/build`, {}, expect.any(Object));
+});
+
+const goalFixture = (overrides = {}) => ({ available: true, areas: [
+    ['players', 'Players'], ['teams', 'Teams'], ['goalies', 'Goalies'], ['league', 'League averages'], ['rankings', 'Rankings'], ['travel', 'Travel'],
+].map(([key, name]) => ({ key, name, goal: `Keep ${name} context complete.`, enrolled: true, state: 'complete',
+    worker_limit: 1, completed: 10, remaining: 0, total: 10, counts: { complete: 10 }, workers: [], blockers: [], ...overrides[key] })) });
+
+it('restores all six areas as independently managed workstreams', () => {
+    mount({ pregame: pregame({ workstream_goals: goalFixture({ players: { worker_limit: 3, counts: { claimed: 2, working: 1 } } }) }) });
+    expect(host.querySelectorAll('[data-workstream]')).toHaveLength(6);
+    expect(host.querySelectorAll('[aria-label^="Workers for "]')).toHaveLength(6);
+    expect(host.querySelector('[data-workstream="goalies"]').textContent).toContain('Goalies');
+    expect(host.querySelector('[data-active-claims]').textContent).toBe('3 / 8');
+});
+
+it('sends an inline area allocation change with all six current limits', async () => {
+    mount({ pregame: pregame({ workstream_goals: goalFixture(), goals_url: `${base}/pregame/goals` }) });
+    const input = host.querySelector('[aria-label="Workers for Players"]');
+    input.value = '3'; input.dispatchEvent(new Event('change', { bubbles: true })); await settle();
+    expect(mocks.put).toHaveBeenCalledWith(`${base}/pregame/goals`, { areas: {
+        players: 3, teams: 1, goalies: 1, league: 1, rankings: 1, travel: 1,
+    } }, expect.any(Object));
+});
+
+it('offers six area controls in the allocation drawer and permits zero', async () => {
+    mount({ pregame: pregame({ workstream_goals: goalFixture(), goals_url: `${base}/pregame/goals` }) });
+    await click('Manage allocation →');
+    const form = host.querySelector('form');
+    expect(form.querySelectorAll('input[type="number"]')).toHaveLength(6);
+    expect(form.querySelector('[aria-label="Players allocation"]').min).toBe('0');
+    await submit();
+    expect(mocks.put).toHaveBeenCalledWith(`${base}/pregame/goals`, expect.objectContaining({ areas: expect.objectContaining({ players: 1, goalies: 1 }) }), expect.any(Object));
+});
+
+it('places several executing workers inside their own area rather than a combined context row', () => {
+    mount({ pregame: pregame({ workstream_goals: goalFixture({ players: { state: 'working', remaining: 2,
+        completed: 8, workers: [execution({ pid: 41, pool: 'players' }), execution({ pid: 42, pool: 'players' })] } }) }) });
+    expect(host.querySelector('[data-workstream="players"]').querySelectorAll('[data-pregame-execution]')).toHaveLength(2);
+    expect(host.querySelector('[data-workstream="goalies"]').querySelectorAll('[data-pregame-execution]')).toHaveLength(0);
+    expect(host.querySelector('[aria-label="Pregame worker activity"]').textContent).toContain('2 workers executing');
+});
+
+it('states that a completed area goal is satisfied without showing an active bar', () => {
+    mount({ pregame: pregame({ workstream_goals: goalFixture() }) });
+    const players = host.querySelector('[data-workstream="players"]');
+    expect(players.textContent).toContain('goal satisfied');
+    expect(players.querySelector('progress')).toBeNull();
+});
+
+it('investigates an area blocker and sends an area-specific repair request', async () => {
+    mount({ pregame: pregame({ repair_url: `${base}/pregame/repair`, workstream_goals: goalFixture({ goalies: {
+        state: 'blocked', blockers: [{ id: 33, nhl_game_id: 2022020001, last_error: 'Missing goalie summaries.' }],
+    } }) }) });
+    await click('Investigate Goalies');
+    expect(host.textContent).toContain('Missing goalie summaries.');
+    await click('Assess and repair Goalies');
+    expect(mocks.post).toHaveBeenCalledWith(`${base}/pregame/repair`, { area: 'goalies' }, expect.any(Object));
+});
+
+it('explains waiting dependencies instead of reporting an idle incomplete area', () => {
+    mount({ pregame: pregame({ workstream_goals: goalFixture({ rankings: { state: 'waiting', remaining: 3 } }) }) });
+    expect(host.querySelector('[data-workstream="rankings"]').textContent).toContain('Waiting for completed metrics and matching league references');
+});
+
+it('disables new repair controls with an explicit migration message before schema deployment', () => {
+    mount({ pregame: pregame({ workstream_goals: { available: false, areas: [] } }) });
+    expect(host.textContent).toContain('Migration required to enable independent area goals');
+    expect(button('Repair missing context').disabled).toBe(true);
+});
+
+it('keeps original legacy maintenance visible while new area admission waits', () => {
+    mount({ pregame: pregame({ workstream_goals: { ...goalFixture(), legacy_active: true },
+        worker_activity: activity([execution()]) }) });
+    expect(host.textContent).toContain('finishing its original checkpoints');
+    expect(host.querySelector('[data-workstream="legacy"]').querySelectorAll('[data-pregame-execution]')).toHaveLength(1);
 });

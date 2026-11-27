@@ -1,0 +1,41 @@
+name: Pregame Workstream Maintenance Goals
+type: Pilot Scoped Durable Goal And Task Coordinator
+location:
+  - app/Services/NhlPregameWorkstreams.php
+  - app/Services/NhlPregameContextBuilder.php
+  - app/Jobs/CoordinateNhlPregameWorkstreamsJob.php
+  - app/Jobs/WorkNhlPregameWorkstreamTaskJob.php
+  - database/migrations/2026_11_26_000001_create_nhl_pregame_workstream_goals.php
+  - database/migrations/2026_11_26_000002_create_nhl_pregame_workstream_tasks.php
+purpose: Independently allocate bounded workers to explicit pregame maintenance goals while retaining existing statistical snapshots and legacy checkpoints.
+when_to_use:
+  - Explicitly enrolling the unique Sep2026 historical pilot in autonomous area maintenance.
+  - Adjusting area allocations, investigating missing data and resuming committed task pages.
+when_not_to_use:
+  - Migrating production prediction sources or changing statistical formulas.
+  - Provisioning or killing Horizon processes, treating queued claims as executing workers or automatically resuming stopped work.
+rules:
+  - Existing NhlPregameContextEvidence owns statistical chronology and legacy run/day processing. Its whole-game leases cannot express independently allocated area tasks; this abstraction adds only goal/task ownership and uses the same canonical calculations and statistical tables.
+  - Only the uniquely resolved historical workspace pilot may enrol goals. Reads never enrol, dispatch or repair. Schema migrations create empty operational storage and perform no data backfill. Production models retain their existing paths.
+  - Explicit area limits apply to subsequent claims on existing projections workers. Zero pauses new area assignments, while already-claimed pages may finish. Validate every area and a shared maximum allocation; vocabulary and limits are canonical in ENUMS.md.
+  - Seed idempotent game/date tasks only after source preflight, and fence seeding against stopped, superseded or already-seeded runs. Existing active legacy work finishes or remains explicitly paused before new goal admission; its checkpoints and numerical outputs remain unchanged.
+  - Team tasks establish same-model/game/version team contexts. Skater and goalie tasks own disjoint participants and preserve composite team links. Travel owns schedule fields and corresponding normalized metrics; team tasks own team/opponent fields. Partial writes must never delete another area's metrics or overwrite its JSON columns.
+  - League tasks prepare references independently from prior facts. Rankings require all component tasks and matching date references. Peer cleanup requires successful game rankings; references needed by failed tasks remain for resumable repair. Use canonical bounded page calculations, preserve sample/strength semantics and never infer a peer count from a cursor ID.
+  - Source preflight exclusions freeze a date's calculation cutoffs. Later task failures cannot reorder league population checkpoints. Newly ready source-preflight exclusions require fresh assessment after active maintenance finishes, rather than changing a partially processed date population.
+  - Task claims use durable unique units and renewable fenced tokens. Start is conditional on an unexpired queued claim. Page writes and checkpoint advance commit atomically only with live task and run authority. Stop commits the parent fence before child cleanup, avoiding parent/child lock cycles; unfinished tokens are revoked, completed snapshots remain and stopped work is never automatically resumed.
+  - Recover lost deliveries from committed checkpoints with bounded retry attempts. Explicit failures remain visible and block dependent work rather than unrelated games. Missing task inventory or unaccounted selected games must fail visibly, never report completion. A fresh missing-context assessment handles corrupted inventory.
+  - Committed SAT imports invalidate later cutoffs precisely when a game start is known. Existing season/source-stat events invalidate conservatively from that season's start. Only enrolled pilot goals are affected. Source generations and model Train/Test/version hashes prevent a run from clearing later changes. Coalesced wakeups and the existing minute scheduler reconcile goals without a busy loop or one job per player.
+  - Complete goals require terminal successful task outcomes; missing prior shot facts or strength/on-ice evidence is a source blocker with player/window/strength detail. Legitimate empty histories retain canonical null values. Empty source seasons remain unassessed with a source error. Team-row coverage alone never certifies player or metric quality.
+  - Present actual started tasks with valid leases as executing workers. Counts and bounded blocker lists are read from the current goal run; failed optional telemetry must not invent completion. Operational progress is distinct from data health, stored results and the current production model.
+public_interface:
+  - PUT /admin/nhl-sat-models/pregame/goals
+  - POST /admin/nhl-sat-models/pregame/repair with optional area
+  - NhlPregameWorkstreams.tick
+  - NhlPregameWorkstreams.sourcesChanged
+  - nhl_pregame_workstream_goals
+  - nhl_pregame_workstream_tasks
+example_usage: |
+  A super admin assigns three Players workers and one each to the other areas.
+  Team identity tasks complete first; several independent player tasks then run
+  concurrently. Lowering Players to zero lets claimed pages finish and leaves
+  remaining work paused. A later source import marks affected goals outdated.

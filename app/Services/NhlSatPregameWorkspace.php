@@ -66,7 +66,7 @@ class NhlSatPregameWorkspace
             'failed' => (int) $run->failed_games, 'error' => $run->last_error,
             'updated_at' => $run->updated_at?->toIso8601String(), 'stages' => $run->stageProgress(),
             'up_to_date' => (bool) data_get($run->options, 'up_to_date', false),
-            'retryable' => $run->status === 'failed' && in_array(data_get($run->options, 'pipeline_version'),
+            'retryable' => $run->status === 'failed' && ! data_get($run->options, 'workstream_inventory_failed') && in_array(data_get($run->options, 'pipeline_version'),
                 [NhlPregameContextOrchestrator::RESULTS_PIPELINE, NhlPregameContextOrchestrator::CHECKPOINT_PIPELINE], true)];
     }
 
@@ -138,6 +138,17 @@ class NhlSatPregameWorkspace
             }
         }
         $health = $issues !== [] ? 'attention' : ($facts['teams'] === 0 ? 'incomplete' : 'recorded');
+        $goals = app(NhlPregameWorkstreams::class)->payload($pilot);
+        foreach ($goals['areas'] as $area) {
+            if ($area['remaining'] > 0 && $health === 'recorded') {
+                $health = 'incomplete';
+            }
+            if (in_array($area['state'], ['blocked', 'outdated'], true) || ! empty($area['last_error']) || $area['blockers'] !== []) {
+                $issues[] = ['title' => $area['name'].' needs attention', 'detail' => $area['last_error']
+                    ?? $area['blockers'][0]->last_error ?? 'Source data changed; the goal is waiting for its next maintenance tasks.'];
+                $health = 'attention';
+            }
+        }
         $progress = $this->progress($run);
         $streams = [];
         foreach ([['players', 'Player context', 'context', 'Player form, usage and opponent history'],
@@ -179,6 +190,7 @@ class NhlSatPregameWorkspace
             'source' => ['id' => (int) $pilot->id, 'name' => $pilot->name, 'train' => $pilot->train_season_ids,
                 'test' => $pilot->target_season_id], 'health' => $health, 'issues' => $issues,
             'workstreams' => $streams, 'workers' => $workers,
+            'workstream_goals' => $goals, 'goals_url' => route('admin.nhl-sat-models.workspace.goals'),
             'worker_activity' => app(NhlPregameWorkerActivity::class)->snapshot($pilot), 'coverage' => $facts['seasons'], 'dates' => $facts['dates'] ?? [],
             'snapshots' => ['players' => $facts['players'], 'teams' => $facts['teams']],
             'source_cutoff_at' => $facts['cutoff'], 'counts_checked_at' => $facts['checked_at'],

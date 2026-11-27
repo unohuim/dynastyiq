@@ -460,7 +460,7 @@ it('does not select or rewrite a game with complete team player and metric conte
             'nhl_game_id' => 2022020001, 'nhl_player_id' => 100 + $team, 'nhl_team_id' => $team,
             'opponent_team_id' => 3 - $team, 'venue' => $venue, 'game_date' => '2022-10-10',
             'source_cutoff_at' => '2022-10-10 23:00:00', 'participant_source' => 'boxscore',
-            'context_version' => NhlPregameContextBuilder::VERSION, 'metrics' => '{}',
+            'context_version' => NhlPregameContextBuilder::VERSION, 'metrics' => '{"individual_strength_version":1}',
         ]);
         DB::table('nhl_player_game_pregame_context_metrics')->insert(['player_context_id' => $player,
             'metric_key' => 'games', 'window_key' => 'l5', 'strength' => 'ALL', 'measure_key' => 'value', 'value' => 5]);

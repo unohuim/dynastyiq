@@ -8,6 +8,12 @@ Schedule::call(fn () => app(\App\Services\NhlPregameContextOrchestrator::class)-
     ->onOneServer()
     ->withoutOverlapping(2);
 
+Schedule::call(fn () => app(\App\Services\NhlPregameWorkstreams::class)->tick())
+    ->name('nhl-pregame-workstream-goals')
+    ->everyMinute()
+    ->onOneServer()
+    ->withoutOverlapping(2);
+
 Schedule::command('nhl:import --players')
     ->dailyAt('03:30')
     ->timezone('America/Toronto')

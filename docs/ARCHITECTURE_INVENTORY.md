@@ -2,7 +2,7 @@
 
 The SAT model landing page is Vue/Inertia-owned under the shared application shell.
 Its peer Pregame view monitors the Sep2026 historical pilot through existing
-model-owned records. Scoped league/context claim allocation, health, coverage,
+model-owned records. Scoped area task allocation, health, coverage,
 inspection and maintenance controls do not switch production prediction sources.
 Authority: `docs/architecture/admin/NhlSatWorkspace.yaml`.
 
@@ -18,11 +18,21 @@ Pregame maintenance shows processed selection progress separately from successfu
 updates and data coverage. Best-effort queue lifecycle observations supply actual
 delivery identity, task, host/PID and elapsed time, separately from durable claims.
 Telemetry failure does not interrupt jobs or change prediction authority.
-Live workers are grouped once by league/context pool with optional date checkpoints;
+Legacy workers are grouped once by league/context pool with optional date checkpoints;
 coordination remains visible separately. Completed maintenance does not imply
 active work. View issues offers one scoped repair action; general maintenance
 options remain separate.
 Authority: `docs/architecture/admin/NhlPregameWorkerActivity.yaml`.
+
+Explicit pilot enrolment adds six durable maintenance goals with live allocations
+and bounded, independently claimed game/date tasks on the existing projections
+queue. Team, player, goalie, travel, league and ranking writers retain canonical
+calculations and existing statistical tables. Task leases fence commits, preserve
+checkpoints and recover lost deliveries. Area blockers remain visible; source
+events invalidate later historical cutoffs only for enrolled pilot goals. Legacy
+runs retain their workflow and production models remain independent. Two empty
+operational tables require migrations before area controls can be used.
+Authority: `docs/architecture/stats/NhlPregameWorkstreamGoals.yaml`.
 
 
 Operational predictions read available context before considering build work.
