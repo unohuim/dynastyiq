@@ -46,6 +46,7 @@ class NhlGameImportRunControl
         }
         $run = NhlGameImportRun::query()->find($runId);
         return $run !== null && in_array($run->status, ['queued', 'running'], true)
+            && $this->repairParentAllows($run)
             && ! $this->signalled($runId, $this->generation($run));
     }
 
@@ -55,6 +56,7 @@ class NhlGameImportRunControl
         return $this->metadataTransaction(function () use ($runId, $generation, $key, $timeout): ?string {
             $run = NhlGameImportRun::query()->lock('for no key update')->find($runId);
             if ($run === null || $this->generation($run) !== $generation
+                || ! $this->repairParentAllows($run)
                 || ! in_array($run->status, ['queued', 'running'], true) || $this->signalled($runId, $generation)) {
                 return null;
             }
@@ -74,6 +76,7 @@ class NhlGameImportRunControl
     {
         $run = NhlGameImportRun::query()->lock('for no key update')->find($runId);
         if ($run === null || $this->generation($run) !== $generation || in_array($run->status, ['cancelling', 'cancelled'], true)
+            || ! $this->repairParentAllows($run, true)
             || $this->signalled($runId, $generation)) {
             throw new NhlGameImportRunCancelled();
         }
@@ -242,6 +245,7 @@ class NhlGameImportRunControl
         return $this->metadataTransaction(function () use ($snapshot, $updates): bool {
             $run = NhlGameImportRun::query()->lock('for no key update')->find($snapshot->id);
             if ($run === null || in_array($run->status, ['cancelling', 'cancelled'], true)
+                || ! $this->repairParentAllows($run, true)
                 || $this->generation($run) !== $this->generation($snapshot)) {
                 return false;
             }
@@ -281,6 +285,20 @@ class NhlGameImportRunControl
         unset($payload['completed_at'], $payload['overlap_excluded_games'], $payload['progress_summary']);
         $payload['run_control'] = ['generation' => (string) Str::uuid()];
         return $payload;
+    }
+
+    /** A linked repair's parent fences admission immediately and permits only admitted pages to drain on Pause. */
+    private function repairParentAllows(NhlGameImportRun $run, bool $committing = false): bool
+    {
+        $id = data_get($run->payload, 'pregame_repair_run_id');
+        if ($id === null) {
+            return true;
+        }
+        $query = DB::table('nhl_pregame_context_runs')->where('id', $id);
+        if ($committing) {
+            $query->sharedLock();
+        }
+        return in_array($query->value('status'), $committing ? ['running', 'pausing', 'paused'] : ['running'], true);
     }
 
     /** Resolve Pausing to Paused when no live claims remain, including after a worker timeout. */

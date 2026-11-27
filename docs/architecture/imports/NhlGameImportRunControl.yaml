@@ -17,6 +17,7 @@ when_not_to_use:
   - Terminating queue workers or clearing a shared queue.
   - Controlling season sync, schedule refresh, repair or model-building runs.
 rules:
+  - A Full/discovery child explicitly linked to a Pregame source repair additionally checks its parent for admission and final commit. Parent Pause blocks new work immediately while admitted pages may drain. Parent Stop or failure rejects late commits. Use a short parent shared commit fence after transformation, and commit parent Stop before child cleanup to avoid parent/child lock-order cycles. Unlinked imports retain their existing controls.
   - Targeted on-ice rebuilds use the existing scoped-game checkpoint mechanism and batch Resume/Cancel handling. An admitted game may finish all derived stages during Pause. Full-import post-processing must not accidentally add on-ice rebuild jobs to its existing enrichment batch. Once on-ice work completes, its separately tracked season syncs follow their existing independent lifecycle.
   - Admin Pause, Resume and Cancel endpoints share the existing authenticated super-admin and lifecycle authorization. Controls are scoped by persisted run identity, not date ranges or queue names.
   - Pause stops admission immediately. Previously admitted jobs may finish and checkpoint their results. The run remains Pausing until its live claims drain, then becomes Paused. Resume waits for live claims to finish; expired claims may be reclaimed after their job timeout and grace period.

@@ -602,3 +602,33 @@ it('keeps original legacy maintenance visible while new area admission waits', (
     expect(host.textContent).toContain('finishing its original checkpoints');
     expect(host.querySelector('[data-workstream="legacy"]').querySelectorAll('[data-pregame-execution]')).toHaveLength(1);
 });
+
+it('shows per game import and context progress inside the Pregame area drawer', async () => {
+    mount({ pregame: pregame({ workstream_goals: goalFixture(), source_repairs: [
+        { game_id: 2022020038, date: '2022-10-15', matchup: 'CHI @ SJS', import_run_id: 88, state: 'importing', imported: false },
+    ] }) });
+    await click('Investigate Teams');
+    const progress = host.querySelector('[aria-label="Game repair progress"]');
+    expect(progress.textContent).toContain('0 / 1 games repaired');
+    expect(progress.textContent).toContain('CHI @ SJS');
+    expect(progress.textContent).toContain('Importing');
+    expect(progress.querySelectorAll('[data-source-repair]')).toHaveLength(1);
+});
+
+it('updates repaired game counts without closing the current area drawer', async () => {
+    mount({ pregame: pregame({ workstream_goals: goalFixture(), source_repairs: [
+        { game_id: 1, matchup: 'A @ B', state: 'building_context', imported: true },
+    ] }) });
+    await click('Investigate Players');
+    props.pregame.source_repairs[0].state = 'repaired'; await nextTick();
+    expect(host.querySelector('[aria-label="Game repair progress"]').textContent).toContain('1 / 1 games repaired');
+});
+
+it('sends a failed game retry without leaving Pregame', async () => {
+    mount({ pregame: pregame({ repair_url: `${base}/pregame/repair`, workstream_goals: goalFixture(), source_repairs: [
+        { game_id: 38, matchup: 'CHI @ SJS', state: 'failed', imported: false, error: 'Source unavailable.' },
+    ] }) });
+    await click('Investigate Teams'); await click('Retry CHI @ SJS');
+    expect(mocks.post).toHaveBeenCalledWith(`${base}/pregame/repair`, { game_id: 38 }, expect.any(Object));
+    expect(mocks.navigate).not.toHaveBeenCalled();
+});

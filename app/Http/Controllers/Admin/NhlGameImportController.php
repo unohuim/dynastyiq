@@ -60,7 +60,7 @@ class NhlGameImportController extends Controller
      */
     public function status(Request $request): JsonResponse
     {
-        $request->validate(['include_games' => ['sometimes', 'boolean']]);
+        $request->validate(['include_games' => ['sometimes', 'boolean'], 'show_single_games' => ['sometimes', 'boolean']]);
         $runs = NhlGameImportRun::query()
             ->latest()
             ->get();
@@ -83,6 +83,16 @@ class NhlGameImportController extends Controller
                 NhlGameImportRun::ACTION_SCHEDULE_REFRESH,
             ], true))
             ->values();
+        if (! $request->boolean('show_single_games', true)) {
+            $gameCounts = DB::table('nhl_import_progress')->whereIn('run_id', $orchestrationRuns->pluck('id'))
+                ->selectRaw('run_id, COUNT(DISTINCT game_id) AS qty')->groupBy('run_id')->pluck('qty', 'run_id');
+            $orchestrationRuns = $orchestrationRuns->reject(function (NhlGameImportRun $run) use ($gameCounts): bool {
+                if (data_get($run->payload, 'pregame_repair_game_id') !== null) {
+                    return true;
+                }
+                return (int) $gameCounts->get($run->id, 0) === 1;
+            })->values();
+        }
         $hasActiveRuns = $runs->contains(
             fn (NhlGameImportRun $run): bool => in_array($run->status, [
                 NhlGameImportRun::STATUS_QUEUED,
@@ -1896,6 +1906,9 @@ class NhlGameImportController extends Controller
      */
     private function duplicateRunKey(NhlGameImportRun $run): string
     {
+        if (data_get($run->payload, 'pregame_repair_game_id') !== null) {
+            return 'run:'.$run->id;
+        }
         if (in_array(data_get($run->payload, 'process_scope'), ['shots', 'faceoffs', 'refs_staff', 'on_ice'], true)) {
             return 'scope:'.data_get($run->payload, 'process_scope').':'.$this->runRangeKey($run);
         }

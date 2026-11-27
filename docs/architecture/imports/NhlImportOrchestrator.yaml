@@ -25,6 +25,7 @@ when_not_to_use:
   - One-off admin imports that do not use nhl_import_progress.
   - Synchronous request-time imports.
 rules:
+  - Recent Orchestrations supports an explicit single-game visibility query applied before pagination and totals. The Vue UI defaults to hiding known single-game discoveries and their processing runs; a single date with several games stays visible. Unknown discovery counts stay visible until known. Targeted repair discoveries retain distinct identities even on the same date. Hidden jobs remain active for global polling and operational controls. Unspecified API visibility retains the existing inclusive status contract.
   - The orchestrator owns NHL import stage advancement.
   - New canonical stage jobs, discovery coordinators, game-data repairs/backfills and scoped or Full enrichment batches use games-processing. Constructor routing must be retained by explicit batch options so bulk work cannot occupy prediction workers. Existing serialized jobs and batch routing are preserved; queue changes never silently relocate active work. Season-stat rollups and prediction-required preparation remain on projections; live processing retains its dedicated queues.
   - Run-owned jobs and callbacks obey the admission, checkpoint and commit-fence contract in NhlGameImportRunControl.yaml. Pausing/Paused/Cancelling/Cancelled runs cannot claim new stages or be reopened by inferred progress; Pause permits already admitted work to finish.

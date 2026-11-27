@@ -406,6 +406,7 @@ it('identifies missing summaries for only the affected team', function (): void 
 it('skips expensive work for entirely blocked dates while preserving run accounting', function (): void {
     ($this->repairGame)(sources: false);
     $run = ($this->repair)();
+    $run->update(['options' => array_merge($run->options, ['repair_sources' => false])]);
     $orchestrator = app(NhlPregameContextOrchestrator::class);
     $orchestrator->prepare($run);
     $orchestrator->load($run->id);
@@ -428,6 +429,7 @@ it('keeps a mixed date pending when at least one selected game has ready sources
 it('reconsiders blocked games on a later repair after sources arrive', function (): void {
     ($this->repairGame)(sources: false);
     $old = ($this->repair)();
+    $old->update(['options' => array_merge($old->options, ['repair_sources' => false])]);
     $orchestrator = app(NhlPregameContextOrchestrator::class);
     $orchestrator->prepare($old);
     $orchestrator->load($old->id);

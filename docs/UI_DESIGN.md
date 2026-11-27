@@ -807,6 +807,13 @@ Idle — goal satisfied; an unassessed goal explicitly asks for assessment.
 Area investigation shows bounded date/game/task-specific blockers and one repair
 action. Distinguish an area repair from global maintenance. Retain completed
 checkpoints and make required source imports explicit when repair cannot proceed.
+For explicit source repairs, keep per-game discovery/import/context progress inside
+each area's Investigate drawer. Show overall repaired/total, imported, remaining
+and failed counts; compact date/matchup rows, current step, canonical import-stage
+counts and errors. A failed row offers Retry, disabled until the current parent
+repair settles. Updates retain the open drawer and require no navigation to Game
+Imports. Explain historical-source prerequisites while context awaits admission.
+Queued source imports do not count as completed exclusions or repaired games.
 
 Executing workers appear beneath their own area; several may work in one area.
 Reserve list height during quiet updates. Before migrations, show the legacy
@@ -829,3 +836,9 @@ Use responsive arrangements with animated disclosures and accessible right-side
 panels. Quiet updates retain content, scroll and local forms; initial Pregame
 loading is bounded to its section. Inspector rows retain explicit units, strengths,
 periods, sample sizes and missing-value markers. Label bounded results.
+
+Recent Orchestrations in Game Imports has an unchecked Show single-game discoveries
+checkbox beside the section heading. Changes request page one and filtering is
+server-side before pagination. One game means one NHL game, not one date containing
+several games. Unknown discoveries remain visible until counts resolve. Hiding a
+run does not pause, cancel or delete it; active hidden work keeps status polling on.

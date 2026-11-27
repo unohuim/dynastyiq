@@ -1025,6 +1025,7 @@ export default {
                     <div class="border-t border-gray-200 px-4 py-3">
                         <div class="mb-2 flex items-center justify-between gap-2">
                             <h4 class="text-xs font-semibold uppercase text-gray-500">Recent Orchestrations</h4>
+                            <label class="ml-auto flex items-center gap-2 text-[11px] text-gray-500"><input v-model="gameImports.showSingleGames" type="checkbox" class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" @change="loadGameImports({ page: 1 })" />Show single-game discoveries</label>
                             <div class="text-[11px] text-gray-500">Live updates enabled</div>
                         </div>
 

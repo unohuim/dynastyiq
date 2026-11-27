@@ -51,9 +51,13 @@ class NhlDiscoverGames
 
         $now  = now();
         $rows = [];
+        $targetGame = $runId === null ? null : data_get(\App\Models\NhlGameImportRun::find($runId)?->payload, 'pregame_repair_game_id');
 
         foreach ($games as $g) {
             $gameId   = (string) ($g['id'] ?? '');
+            if ($targetGame !== null && $gameId !== (string) $targetGame) {
+                continue;
+            }
             $seasonId = (string) ($g['season'] ?? '');
             if ($gameId === '' || $seasonId === '') {
                 continue;

@@ -42,6 +42,50 @@ afterEach(function (): void {
     $this->travelBack();
 });
 
+it('hides a known single game when the recent list explicitly excludes singles', function (): void {
+    ($this->source)();
+    $this->actingAs($this->admin)->getJson($this->statusUrl.'?show_single_games=0')->assertOk()
+        ->assertJsonPath('pagination.total', 0)->assertJsonCount(0, 'runs')->assertJsonPath('has_active_runs', true);
+});
+
+it('includes single game progress when the checkbox query is enabled', function (): void {
+    ($this->source)();
+    $this->actingAs($this->admin)->getJson($this->statusUrl.'?show_single_games=1')->assertOk()
+        ->assertJsonPath('pagination.total', 1)->assertJsonPath('runs.0.id', $this->run->id);
+});
+
+it('retains a single date discovery containing several games', function (): void {
+    ($this->source)();
+    ($this->source)('scheduled', 'pbp', 2026020300);
+    $this->actingAs($this->admin)->getJson($this->statusUrl.'?show_single_games=0')->assertOk()
+        ->assertJsonPath('pagination.total', 1)->assertJsonPath('runs.0.id', $this->run->id);
+});
+
+it('filters targeted repair discoveries before pagination without hiding unknown discoveries', function (): void {
+    foreach (range(1, 17) as $id) {
+        NhlGameImportRun::create(['action' => 'discover', 'mode' => 'date', 'status' => 'queued',
+            'start_date' => '2026-11-12', 'end_date' => '2026-11-12', 'date_count' => 1,
+            'payload' => ['pregame_repair_game_id' => 2026020400 + $id]]);
+    }
+    $this->actingAs($this->admin)->getJson($this->statusUrl.'?show_single_games=0')->assertOk()
+        ->assertJsonPath('pagination.total', 1)->assertJsonPath('runs.0.id', $this->run->id);
+});
+
+it('keeps distinct targeted discoveries on the same date available when singles are shown', function (): void {
+    foreach ([2026020300, 2026020301] as $id) {
+        NhlGameImportRun::create(['action' => 'discover', 'mode' => 'date', 'status' => 'queued',
+            'start_date' => '2026-11-12', 'end_date' => '2026-11-12', 'date_count' => 1,
+            'payload' => ['pregame_repair_game_id' => $id]]);
+    }
+    $this->actingAs($this->admin)->getJson($this->statusUrl.'?show_single_games=1')->assertOk()
+        ->assertJsonPath('pagination.total', 3);
+});
+
+it('validates the single game visibility flag without changing any run', function (): void {
+    $this->actingAs($this->admin)->getJson($this->statusUrl.'?show_single_games=anything')->assertUnprocessable();
+    expect($this->run->fresh()->status)->toBe('running');
+});
+
 it('denies guests the saved import status endpoint', function (): void {
     $this->getJson($this->statusUrl)->assertUnauthorized();
 });

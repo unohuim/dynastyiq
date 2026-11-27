@@ -116,6 +116,7 @@ export default function adminHub(options = {}) {
             },
         },
         gameImports: {
+            showSingleGames: false,
             drawerOpen: false,
             loading: false,
             discovering: false,
@@ -960,15 +961,12 @@ export default function adminHub(options = {}) {
         gameImportStatusPageUrl(page) {
             const normalizedPage = Number(page) || 1;
 
-            if (normalizedPage <= 1) {
-                return this.gameImportStatusUrl;
-            }
-
             const base = typeof window !== 'undefined' && window.location?.origin
                 ? window.location.origin
                 : 'http://localhost';
             const url = new URL(this.gameImportStatusUrl, base);
-            url.searchParams.set('page', String(normalizedPage));
+            if (normalizedPage > 1) url.searchParams.set('page', String(normalizedPage));
+            url.searchParams.set('show_single_games', this.gameImports.showSingleGames ? '1' : '0');
 
             return url.origin === base
                 ? `${url.pathname}${url.search}`

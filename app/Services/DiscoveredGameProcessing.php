@@ -21,6 +21,10 @@ class DiscoveredGameProcessing
                 return false;
             }
             $payload = $run->payload ?? [];
+            $repairParent = $payload['pregame_repair_run_id'] ?? null;
+            if ($repairParent !== null && ! \App\Models\NhlPregameContextRun::whereKey($repairParent)->where('status', 'running')->exists()) {
+                return false;
+            }
             // Preserve already-queued scheduler runs; unmarked manual discoveries never opt in.
             $autoProcess = $payload['auto_process']
                 ?? (($payload['scheduled_process'] ?? null) === ScheduledProcessManager::NHL_DISCOVERY);

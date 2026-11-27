@@ -2,6 +2,33 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { parse, compileTemplate } from '@vue/compiler-sfc';
 
+describe('single game orchestration visibility', () => {
+    afterEach(() => vi.unstubAllGlobals());
+
+    it('requests multi game history by default before server pagination', async () => {
+        const hub = (await loadAdminHub())();
+        expect(hub.gameImports.showSingleGames).toBe(false);
+        const url = new URL(hub.gameImportStatusPageUrl(2), 'http://localhost');
+        expect(url.searchParams.get('show_single_games')).toBe('0');
+        expect(url.searchParams.get('page')).toBe('2');
+    });
+
+    it('includes single game history when enabled without changing queued work', async () => {
+        const hub = (await loadAdminHub())();
+        hub.gameImports.showSingleGames = true;
+        const url = new URL(hub.gameImportStatusPageUrl(1), 'http://localhost');
+        expect(url.searchParams.get('show_single_games')).toBe('1');
+        expect(hub.gameImports.runs).toEqual([]);
+    });
+
+    it('renders the checkbox beside Recent Orchestrations in the active Vue dashboard', () => {
+        const source = readFileSync(new URL('../pages/Admin/Dashboard.vue', import.meta.url), 'utf8');
+        expect(source).toContain('v-model="gameImports.showSingleGames"');
+        expect(source).toContain('@change="loadGameImports({ page: 1 })"');
+        expect(source).toContain('Show single-game discoveries');
+    });
+});
+
 describe('game discovery schedule settings', () => {
     it('renders the schedule controls in the active Vue dashboard rather than a legacy view', () => {
         const source = readFileSync(new URL('../pages/Admin/Dashboard.vue', import.meta.url), 'utf8');
@@ -1112,7 +1139,7 @@ describe('admin-hub import listeners', () => {
         expect(fetch).toHaveBeenNthCalledWith(3, '/admin/nhl-validations?admin_panel=1&status=shiftchart-mismatch', {
             headers: { Accept: 'application/json' },
         });
-        expect(fetch).toHaveBeenNthCalledWith(4, '/admin/nhl-game-imports/status', {
+        expect(fetch).toHaveBeenNthCalledWith(4, '/admin/nhl-game-imports/status?show_single_games=0', {
             headers: { Accept: 'application/json' },
             signal: expect.anything(),
         });
@@ -1167,7 +1194,7 @@ describe('admin-hub import listeners', () => {
 
         await instance.setTab('game-imports');
 
-        expect(fetch).toHaveBeenNthCalledWith(1, '/admin/nhl-game-imports/status', {
+        expect(fetch).toHaveBeenNthCalledWith(1, '/admin/nhl-game-imports/status?show_single_games=0', {
             headers: { Accept: 'application/json' },
             signal: expect.anything(),
         });
@@ -1517,7 +1544,7 @@ describe('admin-hub import listeners', () => {
             },
             body: JSON.stringify({ season: '20252026' }),
         });
-        expect(fetch).toHaveBeenNthCalledWith(2, '/admin/nhl-game-imports/status', {
+        expect(fetch).toHaveBeenNthCalledWith(2, '/admin/nhl-game-imports/status?show_single_games=0', {
             headers: { Accept: 'application/json' },
             signal: expect.anything(),
         });
@@ -1567,7 +1594,7 @@ describe('admin-hub import listeners', () => {
             },
             body: JSON.stringify({}),
         });
-        expect(fetch).toHaveBeenNthCalledWith(2, '/admin/nhl-game-imports/status', {
+        expect(fetch).toHaveBeenNthCalledWith(2, '/admin/nhl-game-imports/status?show_single_games=0', {
             headers: { Accept: 'application/json' },
             signal: expect.anything(),
         });
@@ -1824,7 +1851,7 @@ describe('admin-hub import listeners', () => {
             },
             body: JSON.stringify({ date: '2026-01-15' }),
         });
-        expect(fetch).toHaveBeenNthCalledWith(2, '/admin/nhl-game-imports/status', {
+        expect(fetch).toHaveBeenNthCalledWith(2, '/admin/nhl-game-imports/status?show_single_games=0', {
             headers: { Accept: 'application/json' },
             signal: expect.anything(),
         });
@@ -1904,7 +1931,7 @@ describe('admin-hub import listeners', () => {
             },
             body: JSON.stringify({ run_id: 23 }),
         });
-        expect(fetch).toHaveBeenNthCalledWith(2, '/admin/nhl-game-imports/status', {
+        expect(fetch).toHaveBeenNthCalledWith(2, '/admin/nhl-game-imports/status?show_single_games=0', {
             headers: { Accept: 'application/json' },
             signal: expect.anything(),
         });
@@ -1945,7 +1972,7 @@ describe('admin-hub import listeners', () => {
             },
             body: JSON.stringify({ run_id: 23 }),
         });
-        expect(fetch).toHaveBeenNthCalledWith(2, '/admin/nhl-game-imports/status', {
+        expect(fetch).toHaveBeenNthCalledWith(2, '/admin/nhl-game-imports/status?show_single_games=0', {
             headers: { Accept: 'application/json' },
             signal: expect.anything(),
         });
@@ -1986,7 +2013,7 @@ describe('admin-hub import listeners', () => {
             },
             body: JSON.stringify({ run_id: 23 }),
         });
-        expect(fetch).toHaveBeenNthCalledWith(2, '/admin/nhl-game-imports/status', {
+        expect(fetch).toHaveBeenNthCalledWith(2, '/admin/nhl-game-imports/status?show_single_games=0', {
             headers: { Accept: 'application/json' },
             signal: expect.anything(),
         });
@@ -2029,7 +2056,7 @@ describe('admin-hub import listeners', () => {
             },
             body: JSON.stringify({ run_id: 24, start: '2026-01-17', end: '2026-01-15' }),
         });
-        expect(fetch).toHaveBeenNthCalledWith(2, '/admin/nhl-game-imports/status', {
+        expect(fetch).toHaveBeenNthCalledWith(2, '/admin/nhl-game-imports/status?show_single_games=0', {
             headers: { Accept: 'application/json' },
             signal: expect.anything(),
         });
@@ -2076,7 +2103,7 @@ describe('admin-hub import listeners', () => {
             },
             body: JSON.stringify({ run_id: 24 }),
         });
-        expect(fetch).toHaveBeenNthCalledWith(2, '/admin/nhl-game-imports/status', {
+        expect(fetch).toHaveBeenNthCalledWith(2, '/admin/nhl-game-imports/status?show_single_games=0', {
             headers: { Accept: 'application/json' },
             signal: expect.anything(),
         });
@@ -2139,7 +2166,7 @@ describe('admin-hub import listeners', () => {
             },
             body: JSON.stringify({ season: '20252026' }),
         });
-        expect(fetch).toHaveBeenNthCalledWith(2, '/admin/nhl-game-imports/status', {
+        expect(fetch).toHaveBeenNthCalledWith(2, '/admin/nhl-game-imports/status?show_single_games=0', {
             headers: { Accept: 'application/json' },
             signal: expect.anything(),
         });
@@ -2233,7 +2260,7 @@ describe('admin-hub import listeners', () => {
         expect(fetch).toHaveBeenNthCalledWith(2, '/admin/nhl-game-imports/source-gaps', {
             headers: { Accept: 'application/json' },
         });
-        expect(fetch).toHaveBeenNthCalledWith(3, '/admin/nhl-game-imports/status', {
+        expect(fetch).toHaveBeenNthCalledWith(3, '/admin/nhl-game-imports/status?show_single_games=0', {
             headers: { Accept: 'application/json' },
             signal: expect.anything(),
         });
@@ -2279,7 +2306,7 @@ describe('admin-hub import listeners', () => {
         expect(fetch).toHaveBeenNthCalledWith(2, '/admin/nhl-game-imports/source-gaps', {
             headers: { Accept: 'application/json' },
         });
-        expect(fetch).toHaveBeenNthCalledWith(3, '/admin/nhl-game-imports/status', {
+        expect(fetch).toHaveBeenNthCalledWith(3, '/admin/nhl-game-imports/status?show_single_games=0', {
             headers: { Accept: 'application/json' },
             signal: expect.anything(),
         });

@@ -34,6 +34,15 @@ runs retain their workflow and production models remain independent. Two empty
 operational tables require migrations before area controls can be used.
 Authority: `docs/architecture/stats/NhlPregameWorkstreamGoals.yaml`.
 
+Explicit pilot source repair links each affected game to a targeted automatic Full
+discovery/import, then admits bounded context tasks after the historical sources
+settle. Pregame investigation retains per-game stages, errors and retry controls;
+parent controls propagate only to owned imports. Recent Orchestrations hides
+single-game selections by default in Vue with a server-paginated visibility flag.
+No statistical or operational table migration is required for these metadata links.
+Authorities: `NhlPregameWorkstreamGoals.yaml`, `NhlDiscoveryPipeline.yaml` and
+`NhlImportOrchestrator.yaml` in their canonical architecture directories.
+
 
 Operational predictions read available context before considering build work.
 Exact snapshots are preferred; latest usable snapshots preserve model/cutoff

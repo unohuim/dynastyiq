@@ -55,14 +55,20 @@ class NhlSatPregameWorkspace
         }
 
         $processed = (int) $run->completed_games + (int) $run->blocked_games + (int) $run->failed_games;
+        $excluded = (int) $run->blocked_games;
+        if (data_get($run->options, 'repair_sources') && ! data_get($run->options, 'source_repairs_complete')) {
+            $excluded = collect(app(NhlPregameSourceRepairs::class)->rows($run))->where('state', 'failed')->count();
+            $processed = (int) $run->completed_games + (int) $run->failed_games + $excluded;
+        }
         $total = (int) $run->total_games;
         $percent = $total > 0 ? round(min(100, 100 * $processed / $total), 1)
             : ($run->status === 'completed' ? 100.0 : null);
 
         return ['id' => (int) $run->id, 'status' => $run->status, 'completed' => (int) $run->completed_games,
             'processed' => $processed, 'progress_pct' => $percent, 'created_at' => $run->created_at?->toIso8601String(),
-            'source_blocked_days' => (int) data_get($run->options, 'source_blocked_days', 0),
-            'total' => (int) $run->total_games, 'excluded' => (int) $run->blocked_games,
+            'source_blocked_days' => data_get($run->options, 'repair_sources') && ! data_get($run->options, 'source_repairs_complete')
+                ? 0 : (int) data_get($run->options, 'source_blocked_days', 0),
+            'total' => (int) $run->total_games, 'excluded' => $excluded,
             'failed' => (int) $run->failed_games, 'error' => $run->last_error,
             'updated_at' => $run->updated_at?->toIso8601String(), 'stages' => $run->stageProgress(),
             'up_to_date' => (bool) data_get($run->options, 'up_to_date', false),
@@ -191,6 +197,7 @@ class NhlSatPregameWorkspace
                 'test' => $pilot->target_season_id], 'health' => $health, 'issues' => $issues,
             'workstreams' => $streams, 'workers' => $workers,
             'workstream_goals' => $goals, 'goals_url' => route('admin.nhl-sat-models.workspace.goals'),
+            'source_repairs' => $run === null ? [] : app(NhlPregameSourceRepairs::class)->rows($run),
             'worker_activity' => app(NhlPregameWorkerActivity::class)->snapshot($pilot), 'coverage' => $facts['seasons'], 'dates' => $facts['dates'] ?? [],
             'snapshots' => ['players' => $facts['players'], 'teams' => $facts['teams']],
             'source_cutoff_at' => $facts['cutoff'], 'counts_checked_at' => $facts['checked_at'],

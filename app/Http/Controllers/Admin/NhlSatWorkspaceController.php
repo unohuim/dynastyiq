@@ -24,9 +24,20 @@ class NhlSatWorkspaceController extends Controller
     {
         $pilot = $workspace->pilot();
         abort_if($pilot === null, 409, 'Sep2026 pilot source is unavailable.');
-        $input = $request->validate(['area' => ['nullable', Rule::in(array_keys(NhlPregameWorkstreams::AREAS))]]);
-        $run = isset($input['area']) ? app(NhlPregameWorkstreams::class)->repairArea($pilot, $input['area'], $request->user()?->id)
-            : app(NhlPregameWorkstreams::class)->repair($pilot, $request->user()?->id);
+        $input = $request->validate(['area' => ['nullable', Rule::in(array_keys(NhlPregameWorkstreams::AREAS))],
+            'game_id' => ['nullable', 'integer', 'min:1']]);
+        if (isset($input['game_id'])) {
+            $latest = NhlPregameContextRun::latestForModel((int) $pilot->id);
+            $failed = $latest === null ? null : DB::table('nhl_pregame_context_run_games')->where('run_id', $latest->id)
+                ->where('nhl_game_id', $input['game_id'])->whereIn('state', ['blocked', 'failed'])->first();
+            abort_if($failed === null, 422, 'Choose a failed game from this pilot repair.');
+            if (in_array($latest->status, ['queued', 'running', 'pausing', 'paused'], true)) {
+                abort(422, 'Retry this game after the current repair settles.');
+            }
+        }
+        $run = isset($input['game_id']) ? app(NhlPregameWorkstreams::class)->repair($pilot, $request->user()?->id, [(int) $input['game_id']])
+            : (isset($input['area']) ? app(NhlPregameWorkstreams::class)->repairArea($pilot, $input['area'], $request->user()?->id)
+            : app(NhlPregameWorkstreams::class)->repair($pilot, $request->user()?->id));
 
         return response()->json(['message' => 'Queued missing Train and Test context repair. Source blockers will be listed by game.',
             'progress' => $workspace->progress($run)], 202);

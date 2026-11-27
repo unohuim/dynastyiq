@@ -56,6 +56,12 @@ beforeEach(function (): void {
         ->join('nhl_pregame_workstream_goals as g', 'g.id', '=', 't.goal_id')->where('g.area', $area)->orderByDesc('t.id')->first('t.*');
     $this->read = fn () => $this->actingAs($this->admin)->withHeaders(['X-Inertia' => 'true',
         'X-Inertia-Partial-Component' => 'Admin/SatModels/Index', 'X-Inertia-Partial-Data' => 'pregame'])->get('/admin/nhl-sat-models');
+    $this->missingSources = function (): NhlPregameContextRun {
+        ($this->game)();
+        DB::table('nhl_game_summaries')->delete();
+        return ($this->start)();
+    };
+    $this->sourceChild = fn () => \App\Models\NhlGameImportRun::whereNotNull('payload->pregame_repair_run_id')->firstOrFail();
 });
 
 afterEach(function (): void {
@@ -460,4 +466,157 @@ it('resumes the blocked cleanup belonging to a failed game without discarding it
     $cleanup = DB::table('nhl_pregame_workstream_tasks')->where('run_id', $run->id)->where('kind', 'cleanup')->first();
     expect($cleanup->state)->toBe('pending')->and((int) $cleanup->cursor)->toBe(12)
         ->and(($this->task)('teams')->state)->toBe('pending')->and($run->fresh()->status)->toBe('running');
+});
+
+it('creates an automatically processed single game discovery and exposes its linked progress through HTTP', function (): void {
+    $run = ($this->missingSources)();
+    $child = ($this->sourceChild)();
+    expect($child->action)->toBe('discover')->and(data_get($child->payload, 'pregame_repair_game_id'))->toBe(2022020001)
+        ->and(data_get($child->payload, 'pregame_repair_run_id'))->toBe($run->id)
+        ->and(data_get($child->payload, 'auto_process'))->toBeTrue();
+    ($this->read)()->assertJsonPath('props.pregame.source_repairs.0.game_id', 2022020001)
+        ->assertJsonPath('props.pregame.source_repairs.0.import_run_id', $child->id)
+        ->assertJsonPath('props.pregame.source_repairs.0.state', 'queued');
+});
+
+it('reuses source discoveries and postpones context while their historical imports are active', function (): void {
+    $run = ($this->missingSources)();
+    $this->service->coordinate($this->model->id);
+    $this->service->coordinate($this->model->id);
+    expect(\App\Models\NhlGameImportRun::count())->toBe(1)
+        ->and(DB::table('nhl_pregame_workstream_tasks')->count())->toBe(0)->and($run->fresh()->status)->toBe('running');
+    ($this->read)()->assertJsonPath('props.pregame.run.processed', 0)->assertJsonPath('props.pregame.run.excluded', 0);
+});
+
+it('distinguishes discovery from Full import activity', function (): void {
+    ($this->missingSources)();
+    $child = ($this->sourceChild)();
+    $child->update(['status' => 'running']);
+    ($this->read)()->assertJsonPath('props.pregame.source_repairs.0.state', 'discovering');
+    $child->update(['payload' => array_merge($child->payload, ['processing_started_at' => now()->toIso8601String()])]);
+    ($this->read)()->assertJsonPath('props.pregame.source_repairs.0.state', 'importing');
+});
+
+it('retains the provider error in source repair rows and blocked outcomes', function (): void {
+    $run = ($this->missingSources)();
+    ($this->sourceChild)()->update(['status' => 'failed', 'last_error' => 'Shift source unavailable.']);
+    $this->service->coordinate($this->model->id);
+    $this->assertDatabaseHas('nhl_pregame_context_run_games', ['run_id' => $run->id, 'state' => 'blocked', 'last_error' => 'Shift source unavailable.']);
+    ($this->read)()->assertJsonPath('props.pregame.source_repairs.0.error', 'Shift source unavailable.');
+});
+
+it('waits for the queued Full listener after discovery completes', function (): void {
+    $run = ($this->missingSources)();
+    $child = ($this->sourceChild)();
+    DB::table('nhl_import_progress')->insert(['run_id' => $child->id, 'game_id' => 2022020001,
+        'season_id' => '20222023', 'game_date' => '2022-10-10', 'import_type' => 'pbp', 'status' => 'scheduled']);
+    $child->update(['status' => 'completed']);
+    expect(app(\App\Services\NhlPregameSourceRepairs::class)->ready($run))->toBeFalse();
+    ($this->read)()->assertJsonPath('props.pregame.source_repairs.0.imported', false)
+        ->assertJsonPath('props.pregame.source_repairs.0.state', 'queued');
+});
+
+it('reports an empty completed discovery as failed rather than imported', function (): void {
+    ($this->missingSources)();
+    ($this->sourceChild)()->update(['status' => 'completed']);
+    ($this->read)()->assertJsonPath('props.pregame.source_repairs.0.state', 'failed');
+});
+
+it('admits context after Full enrichment and both team summaries have committed', function (): void {
+    ($this->missingSources)();
+    $child = ($this->sourceChild)();
+    foreach ([1, 2] as $team) {
+        DB::table('nhl_game_summaries')->insert(['nhl_game_id' => 2022020001, 'nhl_team_id' => $team, 'nhl_player_id' => 100 + $team, 'toi' => 900]);
+    }
+    $child->update(['status' => 'completed', 'payload' => array_merge($child->payload,
+        ['post_process_enrichment_completed_at' => now()->toIso8601String()])]);
+    $this->service->coordinate($this->model->id);
+    expect(DB::table('nhl_pregame_workstream_tasks')->count())->toBe(7)->and(($this->task)('teams')->state)->toBe('claimed');
+});
+
+it('does not accept completed imports that still lack both team summaries', function (): void {
+    $run = ($this->missingSources)();
+    $child = ($this->sourceChild)();
+    $child->update(['status' => 'completed', 'payload' => array_merge($child->payload,
+        ['post_process_enrichment_completed_at' => now()->toIso8601String()])]);
+    $this->service->coordinate($this->model->id);
+    $this->assertDatabaseHas('nhl_pregame_context_run_games', ['run_id' => $run->id, 'state' => 'blocked',
+        'last_error' => 'Full import finished without player summaries for both teams.']);
+});
+
+it('pauses linked imports when their parent maintenance pauses', function (): void {
+    $run = ($this->missingSources)();
+    $run->update(['status' => 'pausing']);
+    $this->service->coordinate($this->model->id);
+    expect(($this->sourceChild)()->fresh()->status)->toBe('paused')->and($run->fresh()->status)->toBe('paused');
+});
+
+it('cancels only owned source imports when maintenance stops', function (): void {
+    ($this->missingSources)();
+    $other = \App\Models\NhlGameImportRun::create(['action' => 'discover', 'mode' => 'date', 'status' => 'queued',
+        'start_date' => '2022-10-11', 'end_date' => '2022-10-11', 'date_count' => 1, 'payload' => []]);
+    app(NhlPregameContextOrchestrator::class)->stopModelBackfill($this->model);
+    expect(($this->sourceChild)()->fresh()->status)->toBe('cancelled')->and($other->fresh()->status)->toBe('queued');
+});
+
+it('rejects retrying games outside the latest pilot repair', function (): void {
+    ($this->missingSources)();
+    $this->actingAs($this->admin)->postJson('/admin/nhl-sat-models/pregame/repair', ['game_id' => 999])->assertUnprocessable();
+});
+
+it('keeps autonomous source invalidation from opting into new imports', function (): void {
+    $run = $this->service->repair($this->model);
+    expect(data_get($run->options, 'repair_sources'))->toBeFalse();
+});
+
+it('discovers only the requested repair game even when the NHL date contains other games', function (): void {
+    ($this->missingSources)();
+    $child = ($this->sourceChild)();
+    $service = \Mockery::mock(\App\Services\NhlDiscoverGames::class, [app(\App\Repositories\NhlImportProgressRepo::class)])->makePartial();
+    $service->shouldReceive('getAPIData')->once()->andReturn(['games' => array_map(fn ($id) => [
+        'id' => $id, 'season' => 20222023, 'gameType' => 2, 'gameState' => 'OFF', 'gameDate' => '2022-10-10',
+    ], [2022020001, 2022020002])]);
+    $service->discoverDay('2022-10-10', $child->id);
+    expect(DB::table('nhl_import_progress')->where('run_id', $child->id)->distinct()->pluck('game_id')->map(fn ($id) => (int) $id)->all())
+        ->toBe([2022020001]);
+});
+
+it('prevents the queued Full listener from starting imports after its repair parent pauses', function (): void {
+    $run = ($this->missingSources)();
+    $child = ($this->sourceChild)();
+    $child->update(['status' => 'completed', 'payload' => array_merge($child->payload,
+        ['discovery_completed_dates' => ['2022-10-10']])]);
+    $run->update(['status' => 'paused']);
+    app(\App\Services\DiscoveredGameProcessing::class)->start($child->id);
+    expect($child->fresh()->status)->toBe('completed')
+        ->and(data_get($child->fresh()->payload, 'processing_started_at'))->toBeNull();
+});
+
+it('fences linked import admission immediately when its repair parent pauses', function (): void {
+    $run = ($this->missingSources)();
+    $child = ($this->sourceChild)();
+    $run->update(['status' => 'paused']);
+    expect(app(\App\Services\NhlGameImportRunControl::class)->canAdvance($child->id))->toBeFalse();
+});
+
+it('rejects late import commits after the parent Stop fence wins', function (): void {
+    $run = ($this->missingSources)();
+    $child = ($this->sourceChild)();
+    $control = app(\App\Services\NhlGameImportRunControl::class);
+    $generation = $control->generationFor($child->id);
+    $token = $control->claim($child->id, $generation, 'discovery:2022-10-10', 60);
+    $run->update(['status' => 'stopped']);
+    expect(fn () => $control->finish($child->id, $generation, 'discovery:2022-10-10', $token, true))
+        ->toThrow(\App\Exceptions\NhlGameImportRunCancelled::class);
+});
+
+it('accepts a settled failed game retry with a new game scoped repair and exposes that run through HTTP', function (): void {
+    $old = ($this->missingSources)();
+    ($this->sourceChild)()->update(['status' => 'failed', 'last_error' => 'Source unavailable.']);
+    $this->service->coordinate($this->model->id);
+    expect($old->fresh()->status)->toBe('completed');
+    $response = $this->actingAs($this->admin)->postJson('/admin/nhl-sat-models/pregame/repair', ['game_id' => 2022020001])->assertAccepted();
+    $retry = NhlPregameContextRun::findOrFail($response->json('progress.id'));
+    expect($retry->id)->not->toBe($old->id)->and(data_get($retry->options, 'game_ids'))->toBe([2022020001]);
+    ($this->read)()->assertJsonPath('props.pregame.run.id', $retry->id);
 });

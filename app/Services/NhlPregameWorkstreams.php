@@ -48,13 +48,15 @@ class NhlPregameWorkstreams
     }
 
     /** Start missing-context maintenance without touching valid games or active legacy runs. */
-    public function repair(NhlModelRun $model, ?int $userId = null): NhlPregameContextRun
+    public function repair(NhlModelRun $model, ?int $userId = null, array $gameIds = []): NhlPregameContextRun
     {
         $this->enrol($model);
         $goals = DB::table(self::GOALS)->where('model_run_id', $model->id)->get();
         $dirty = $goals->whereNotNull('dirty_from')->min('dirty_from');
         $run = app(NhlPregameContextOrchestrator::class)->queueModelRepair($model, $userId, [
             'workstream_pipeline' => true, 'source_dirty_from' => $dirty,
+            'repair_sources' => $userId !== null,
+            ...($gameIds === [] ? [] : ['game_ids' => $gameIds]),
             'goal_generations' => $goals->pluck('generation', 'area')->all(),
         ]);
         DB::table(self::GOALS)->where('model_run_id', $model->id)->update(['run_id' => $run->id,
@@ -90,6 +92,11 @@ class NhlPregameWorkstreams
         }
         $model = NhlModelRun::findOrFail($run->model_run_id);
         $this->enrol($model);
+        if (! app(NhlPregameSourceRepairs::class)->ready($run)) {
+            CoordinateNhlPregameWorkstreamsJob::dispatch((int) $model->id);
+            return;
+        }
+        $run->refresh();
         $goals = DB::table(self::GOALS)->where('model_run_id', $model->id)->pluck('id', 'area');
         $days = DB::table('nhl_pregame_context_run_days')->where('run_id', $run->id)->pluck('id', 'game_date');
         $games = DB::table('nhl_pregame_context_run_games')->where('run_id', $run->id)->orderBy('id');
@@ -192,6 +199,19 @@ class NhlPregameWorkstreams
                 $this->stop($run);
                 $this->refreshGoals($run);
                 return;
+            }
+            if (! data_get($run->options, 'workstream_seeded') && data_get($run->options, 'repair_sources')) {
+                $sources = app(NhlPregameSourceRepairs::class);
+                if (in_array($run->status, ['pausing', 'paused'], true)) {
+                    if ($sources->control($run, 'pause') && $run->status === 'pausing') {
+                        $run->update(['status' => 'paused']);
+                    }
+                    return;
+                }
+                if ($run->status === 'running' && ! $sources->ready($run)) {
+                    return;
+                }
+                $run->refresh();
             }
             if (! data_get($run->options, 'workstream_seeded')) {
                 $this->seed($run);
@@ -363,6 +383,13 @@ class NhlPregameWorkstreams
     /** Resume only unfinished task checkpoints; a new repair handles newly imported source blockers. */
     public function resume(NhlPregameContextRun $run): NhlPregameContextRun
     {
+        if (data_get($run->options, 'repair_sources') && ! data_get($run->options, 'workstream_seeded')
+            && in_array($run->status, ['paused', 'pausing'], true)) {
+            $run->update(['status' => 'running']);
+            app(NhlPregameSourceRepairs::class)->control($run, 'resume');
+            CoordinateNhlPregameWorkstreamsJob::dispatch((int) $run->model_run_id);
+            return $run->fresh();
+        }
         if ($this->tasks($run)->count() !== 5 * (int) $run->total_games + 2 * $run->days()->count()) {
             throw ValidationException::withMessages(['pregame' => 'Task inventory is incomplete. Start a fresh missing-context repair.']);
         }
@@ -411,6 +438,7 @@ class NhlPregameWorkstreams
         if (! NhlPregameContextRun::whereKey($run->id)->where('status', 'stopped')->exists()) {
             return;
         }
+        app(NhlPregameSourceRepairs::class)->control($run, 'cancel');
         $this->tasks($run)->whereIn('state', ['pending', 'claimed', 'working'])->update(['state' => 'stopped',
             'claim_token' => null, 'lease_expires_at' => null, 'updated_at' => now()]);
         DB::table('nhl_pregame_context_run_games')->where('run_id', $run->id)->whereNotIn('state', ['complete', 'blocked'])

@@ -20,6 +20,7 @@ when_not_to_use:
   - Importing shifts or boxscores.
   - Summarizing already discovered games.
 rules:
+  - Pregame source repairs may create explicitly opted-in single-game discoveries linked to their historical pilot maintenance run. Restrict discovery seeding to that exact game ID even when the provider returns a full date slate. Ordinary date/range discoveries retain their full selection. Canonical Full import and overlap admission remain authoritative; repair metadata does not bypass them.
   - Discovery prepares work for the staged import pipeline.
   - Discovery must not perform downstream stage transformations.
   - Discovery output must remain compatible with NhlImportOrchestrator.
